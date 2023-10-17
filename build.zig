@@ -1,4 +1,5 @@
 const std = @import("std");
+const zwin32 = @import("libs/zig-gamedev/libs/zwin32/build.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -16,7 +17,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "zig_dx12",
+        .name = "zig_dx11",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/main.zig" },
@@ -45,6 +46,16 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
+
+
+    const zwin32_pkg = zwin32.package(b, target, optimize, .{});
+
+    zwin32_pkg.link(exe, .{ 
+        .d3d12 = true, 
+        .xaudio2 = false, 
+        .directml = false 
+    });
+
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`
