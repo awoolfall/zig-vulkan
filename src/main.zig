@@ -1,7 +1,7 @@
 const std = @import("std");
 const zwin32 = @import("zwin32");
 const w32 = zwin32.w32;
-const d3d12 = zwin32.d3d12;
+const d3d11 = zwin32.d3d11;
 
 const engine = @import("engine.zig");
 const window = @import("platform/windows.zig");
@@ -9,29 +9,137 @@ const window = @import("platform/windows.zig");
 const App = struct {
     const Self = @This();
 
+    const vertices: [3 * 3]zwin32.w32.FLOAT = [_]zwin32.w32.FLOAT{
+        0.0, 0.5, 0.0,
+        -0.5, -0.5, 0.0,
+        0.5, -0.5, 0.0,
+    };
+
     engine: *engine.Engine(Self),
-    a: i32,
-    b: i32,
-    c: i32,
+
+    vso: *d3d11.IVertexShader,
+    pso: *d3d11.IPixelShader,
+    vso_input_layout: *d3d11.IInputLayout,
+    vertex_buffer: *d3d11.IBuffer,
+    rasterizer_state: *d3d11.IRasterizerState,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
 
+        var shader_file = try std.fs.cwd().openFile("../../src/shader.hlsl", std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
+        defer shader_file.close();
+
+        const shader_file_size = try shader_file.getEndPos();
+
+        var shader_buffer: []u8 = try std.heap.page_allocator.alloc(u8, shader_file_size);
+        defer std.heap.page_allocator.free(shader_buffer);
+
+        if (try shader_file.readAll(shader_buffer) != shader_file_size) {
+            return error.FAILED_SHADER_FILE_READ;
+        }
+        
+        var vs_blob: *zwin32.d3d.IBlob = undefined;
+        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&shader_buffer[0], shader_file_size, null, null, null, "vs_main", "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
+        defer _ = vs_blob.Release();
+
+        var vso: *d3d11.IVertexShader = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
+
+        var ps_blob: *zwin32.d3d.IBlob = undefined;
+        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&shader_buffer[0], shader_file_size, null, null, null, "ps_main", "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
+        defer _ = ps_blob.Release();
+
+        var pso: *d3d11.IPixelShader = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
+
+        const vso_input_layout_desc = [_]d3d11.INPUT_ELEMENT_DESC {
+            d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = "POS",
+                .SemanticIndex = 0,
+                .Format = zwin32.dxgi.FORMAT.R32G32B32_FLOAT,
+                .InputSlot = 0,
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
+                .InstanceDataStepRate = 0,
+            },
+        };
+        var vso_input_layout: *d3d11.IInputLayout = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
+
+        const vertex_buffer_desc = d3d11.BUFFER_DESC {
+            .Usage = d3d11.USAGE.IMMUTABLE,
+            .ByteWidth = @sizeOf(f32) * 3 * 3,
+            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
+        };
+        var vertex_buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&vertex_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &vertices, }, @ptrCast(&vertex_buffer)));
+
+        const rasterizer_state_desc = d3d11.RASTERIZER_DESC {
+            .FillMode = d3d11.FILL_MODE.SOLID,
+            .CullMode = d3d11.CULL_MODE.NONE,
+        };
+        var rasterizer_state: *d3d11.IRasterizerState = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterizer_state)));
+
         return Self {
             .engine = eng,
-            .a = undefined,
-            .b = undefined,
-            .c = undefined,
+            .vso = vso,
+            .pso = pso,
+            .vso_input_layout = vso_input_layout,
+            .vertex_buffer = vertex_buffer,
+            .rasterizer_state = rasterizer_state,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        _ = self;
         std.log.info("App deinit!", .{});
+        _ = self.rasterizer_state.Release();
+        _ = self.vertex_buffer.Release();
+        _ = self.vso_input_layout.Release();
+        _ = self.vso.Release();
+        _ = self.pso.Release();
     }
 
     fn update(self: *Self) void {
-        _ = self;
+        var rtv = self.engine.gfx.begin_frame() catch |err| {
+            std.log.err("unable to begin frame: {}", .{err});
+            return;
+        };
+        self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{1.0, 1.0, 0.0, 1.0});
+
+        self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
+        const stride: c_uint = @sizeOf(f32) * 3;
+        const offset: c_uint = 0;
+        self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.vertex_buffer), @ptrCast(&stride), @ptrCast(&offset));
+        self.engine.gfx.context.VSSetShader(self.vso, null, 0);
+
+        var v2 = self.engine.window.get_client_size() catch |err| {
+            std.log.info("err: {}", .{err});
+            return;
+        };
+        const viewport = d3d11.VIEWPORT {
+            .Width = v2.x,
+            .Height = v2.y,
+            .TopLeftX = 0,
+            .TopLeftY = 0,
+            .MinDepth = 0.0,
+            .MaxDepth = 1.0,
+        };
+        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&viewport));
+        self.engine.gfx.context.RSSetState(self.rasterizer_state);
+
+        self.engine.gfx.context.PSSetShader(self.pso, null, 0);
+
+        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
+        self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
+
+        self.engine.gfx.context.Draw(3, 0);
+
+        self.engine.gfx.end_frame(rtv) catch |err| {
+            std.log.err("unable to end frame: {}", .{err});
+            return;
+        };
         return;
     }
 
@@ -45,10 +153,6 @@ const App = struct {
 
 pub fn main() !void {
     std.debug.print("Hello from zig!!\n", .{});
-
-    var e = try engine.Engine(App).init();
-    defer e.deinit();
-
-    try e.run();
+    try engine.Engine(App).run();
 }
 
