@@ -1,10 +1,16 @@
 const std = @import("std");
 const zwin32 = @import("zwin32");
+const zm = @import("zmath");
 const w32 = zwin32.w32;
 const d3d11 = zwin32.d3d11;
 
 const engine = @import("engine.zig");
-const window = @import("platform/windows.zig");
+const window = @import("window.zig");
+
+const CameraStruct = extern struct {
+    projection: [4]zm.F32x4,
+    view: [4]zm.F32x4,
+};
 
 const App = struct {
     const Self = @This();
@@ -22,10 +28,15 @@ const App = struct {
     vso_input_layout: *d3d11.IInputLayout,
     vertex_buffer: *d3d11.IBuffer,
     rasterizer_state: *d3d11.IRasterizerState,
+    
+    camera_data_buffer: *d3d11.IBuffer,
+    camera_position: zm.F32x4,
+    camera_rotation: zm.F32x4,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
 
+        // Load Shader file
         var shader_file = try std.fs.cwd().openFile("../../src/shader.hlsl", std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
         defer shader_file.close();
 
@@ -38,6 +49,7 @@ const App = struct {
             return error.FAILED_SHADER_FILE_READ;
         }
         
+        // Compile VS and PS shader blobs from hlsl source
         var vs_blob: *zwin32.d3d.IBlob = undefined;
         try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&shader_buffer[0], shader_file_size, null, null, null, "vs_main", "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
         defer _ = vs_blob.Release();
@@ -49,6 +61,7 @@ const App = struct {
         try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&shader_buffer[0], shader_file_size, null, null, null, "ps_main", "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
         defer _ = ps_blob.Release();
 
+        // Create vertex and pixel shaders
         var pso: *d3d11.IPixelShader = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
 
@@ -66,6 +79,7 @@ const App = struct {
         var vso_input_layout: *d3d11.IInputLayout = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
 
+        // Define vertex buffer input
         const vertex_buffer_desc = d3d11.BUFFER_DESC {
             .Usage = d3d11.USAGE.IMMUTABLE,
             .ByteWidth = @sizeOf(f32) * 3 * 3,
@@ -74,12 +88,23 @@ const App = struct {
         var vertex_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&vertex_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &vertices, }, @ptrCast(&vertex_buffer)));
 
+        // Define rasterizer state
         const rasterizer_state_desc = d3d11.RASTERIZER_DESC {
             .FillMode = d3d11.FILL_MODE.SOLID,
             .CullMode = d3d11.CULL_MODE.NONE,
         };
         var rasterizer_state: *d3d11.IRasterizerState = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterizer_state)));
+
+        // Create camera constant buffer
+        const camera_constant_buffer_desc = d3d11.BUFFER_DESC {
+            .ByteWidth = @sizeOf(CameraStruct),
+            .Usage = d3d11.USAGE.DYNAMIC,
+            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
+            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
+        };
+        var camera_data_buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
 
         return Self {
             .engine = eng,
@@ -88,11 +113,16 @@ const App = struct {
             .vso_input_layout = vso_input_layout,
             .vertex_buffer = vertex_buffer,
             .rasterizer_state = rasterizer_state,
+
+            .camera_data_buffer = camera_data_buffer,
+            .camera_position = zm.f32x4(0.0, 0.0, -1.0, 1.0),
+            .camera_rotation = zm.quatFromRollPitchYaw(0.0, 0.0, 0.0),
         };
     }
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
+        _ = self.camera_data_buffer.Release();
         _ = self.rasterizer_state.Release();
         _ = self.vertex_buffer.Release();
         _ = self.vso_input_layout.Release();
@@ -101,11 +131,25 @@ const App = struct {
     }
 
     fn update(self: *Self) void {
+        var time_milli_mod_2pi: f32 = @floatFromInt(@mod(std.time.milliTimestamp(), 6282));
+        self.camera_position[0] = @sin(time_milli_mod_2pi / 1000.0);
+
+        {
+            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+            zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.camera_data_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+            defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
+
+            var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+            const model_matrix: zm.Mat = zm.mul(zm.matFromQuat(self.camera_rotation), zm.translationV(self.camera_position));
+            buffer_data.view = zm.inverse(model_matrix);
+            buffer_data.projection = zm.perspectiveFovLh(40.0, 16.0/9.0, 0.1, 100.0);
+        }
+
         var rtv = self.engine.gfx.begin_frame() catch |err| {
             std.log.err("unable to begin frame: {}", .{err});
             return;
         };
-        self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{1.0, 1.0, 0.0, 1.0});
+        self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
 
         self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
         self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
@@ -113,6 +157,7 @@ const App = struct {
         const offset: c_uint = 0;
         self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.vertex_buffer), @ptrCast(&stride), @ptrCast(&offset));
         self.engine.gfx.context.VSSetShader(self.vso, null, 0);
+        self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
 
         var v2 = self.engine.window.get_client_size() catch |err| {
             std.log.info("err: {}", .{err});
@@ -146,6 +191,10 @@ const App = struct {
     pub fn window_event_received(self: *Self, event: window.WindowEvent) void {
         switch (event) {
             .EVENTS_CLEARED => { self.update(); },
+            .KEY_DOWN => |k| { std.log.info(  "Received key down!   key is: {}", .{k.keycode}); },
+            .KEY_UP => |k| { std.log.info(    "Received key up!     key is: {}", .{k.keycode}); },
+            .KEY_REPEAT => |k| { std.log.info("Received key repeat! key is: {}", .{k.keycode}); },
+            .CHAR => |c| { std.log.info(      "Received char!      char is: {}", .{c.utf32_char_code}); },
             else => {},
         }
     }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const zwin32 = @import("libs/zig-gamedev/libs/zwin32/build.zig");
+const zmath = @import("libs/zig-gamedev/libs/zmath/build.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -49,12 +50,14 @@ pub fn build(b: *std.Build) void {
 
 
     const zwin32_pkg = zwin32.package(b, target, optimize, .{});
-
     zwin32_pkg.link(exe, .{ 
         .d3d12 = true, 
         .xaudio2 = false, 
         .directml = false 
     });
+
+    const zmath_pkg = zmath.package(b, target, optimize, .{});
+    zmath_pkg.link(exe);
 
 
     // This creates a build step. It will be visible in the `zig build --help` menu,

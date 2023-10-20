@@ -2,16 +2,22 @@ const std = @import("std");
 const zwin32 = @import("zwin32");
 const w32 = zwin32.w32;
 
+const __c = @import("windows_keycode.zig");
+const convert_windows_keycode = __c.convert_windows_keycode;
+const __k = @import("../input/keycode.zig");
+const wb = @import("../window.zig");
+
+
 pub const Vec2 = struct {
     x: f32,
     y: f32,
 };
 
 const GlobalEnginePtr = struct {
-    engine: ?*align(8) anyopaque,
-    window_event_callback: *const fn (*align(8) anyopaque, WindowEvent) void,
+    engine: ?*anyopaque,
+    window_event_callback: *const fn (*anyopaque, wb.WindowEvent) void,
 
-    pub fn send_window_event(self: *@This(), event: WindowEvent) void {
+    pub fn send_window_event(self: *@This(), event: wb.WindowEvent) void {
         if (self.engine != null) {
             self.window_event_callback(self.engine.?, event);
         } else {
@@ -30,7 +36,7 @@ pub const Win32Window = struct {
     wc: w32.WNDCLASSEXA,
     hwnd: w32.HWND,
 
-    pub fn init(engine: *align(8) anyopaque, window_event_callback: *const fn(*align(8) anyopaque, WindowEvent) void) !Win32Window {
+    pub fn init(engine: *anyopaque, window_event_callback: *const fn(*anyopaque, wb.WindowEvent) void) !Win32Window {
         if (g_engine.engine == null) {
             g_engine.window_event_callback = window_event_callback;
             g_engine.engine = engine;
@@ -91,7 +97,7 @@ pub const Win32Window = struct {
             }
 
             // update
-            g_engine.send_window_event(WindowEvent {.EVENTS_CLEARED = undefined});
+            g_engine.send_window_event(wb.WindowEvent {.EVENTS_CLEARED = undefined});
         }
     }
 
@@ -107,27 +113,64 @@ pub const Win32Window = struct {
         return Vec2 { .x = @floatFromInt(rect.right), .y = @floatFromInt(rect.bottom) };
     }
 
+    fn construct_key_event(w_param: w32.WPARAM, l_param: w32.LPARAM) ?wb.KeyEvent {
+        const key = convert_windows_keycode(w_param);
+        if (key == null) { return null; }
+
+        return wb.KeyEvent {
+            .keycode = key.?,
+            .scan_code = @intCast((l_param >> 16) & 0xff),
+            .repeat_count = @intCast(l_param & 0xffff),
+        };
+    }
+
+    fn construct_char_event(w_param: w32.WPARAM, l_param: w32.LPARAM) wb.CharEvent {
+        return wb.CharEvent {
+            .utf32_char_code = @intCast(w_param),
+            .scan_code = @intCast((l_param >> 16) & 0xff),
+            .repeat_count = @intCast(l_param & 0xffff),
+        };
+    }
+
     export fn window_proc(hwnd: w32.HWND, u_msg: w32.UINT, w_param: w32.WPARAM, l_param: w32.LPARAM) callconv(w32.WINAPI) w32.LRESULT {
         switch (u_msg) {
             w32.WM_DESTROY => {
                 w32.PostQuitMessage(0);
                 return 0;
             },
-            w32.WM_SIZE => { g_engine.send_window_event(WindowEvent { .RESIZED = undefined }); },
-            else => {
-                return w32.DefWindowProcA(hwnd, u_msg, w_param, l_param);
+            w32.WM_SIZE => { 
+                g_engine.send_window_event(wb.WindowEvent { .RESIZED = undefined });
+                return 0;
             },
+            w32.WM_KEYDOWN => { 
+                const keyevent = construct_key_event(w_param, l_param);
+                if (keyevent == null) { return 0; }
+
+                // Check if the previous key state bit is set
+                if ((l_param & (1 << 30)) != 0) {
+                    g_engine.send_window_event(wb.WindowEvent { .KEY_REPEAT = keyevent.? });
+                } else {
+                    g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = keyevent.? });
+                }
+                return 0;
+            },
+            w32.WM_KEYUP => { 
+                const keyevent = construct_key_event(w_param, l_param);
+                if (keyevent == null) { return 0; }
+
+                g_engine.send_window_event(wb.WindowEvent { .KEY_UP = keyevent.? }); 
+                return 0;
+            },
+            w32.WM_CHAR => { 
+                // Handle UNICODE_NOCHAR case
+                if (w_param == 65535) { return w32.TRUE; }
+
+                g_engine.send_window_event(wb.WindowEvent { .CHAR = construct_char_event(w_param, l_param) });
+                return 0;
+            },
+            else => {},
         }
-        return 0;
+        return w32.DefWindowProcA(hwnd, u_msg, w_param, l_param);
     }
 };
 
-pub const WindowEventTag = enum {
-    RESIZED,
-    EVENTS_CLEARED,
-};
-
-pub const WindowEvent = union(WindowEventTag) {
-    RESIZED: void,
-    EVENTS_CLEARED: void,
-};

@@ -5,6 +5,8 @@ const hrPanic = zwin32.hrPanicOnFail;
 const d3d11 = @import("gfx/d3d11.zig");
 const w32 = @import("platform/windows.zig");
 
+const wb = @import("window.zig");
+
 pub fn Engine(comptime App: type) type {
     return struct {
         const Self = @This();
@@ -39,8 +41,8 @@ pub fn Engine(comptime App: type) type {
             engine.window.run();
         }
 
-        fn window_event_received(engine_void_ptr: *align(8) anyopaque, event: w32.WindowEvent) void {
-            const self: *Self = @ptrCast(engine_void_ptr);
+        fn window_event_received(engine_void_ptr: *anyopaque, event: wb.WindowEvent) void {
+            const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
 
             switch (event) {
                 .RESIZED => { self.gfx.window_resized(); },
