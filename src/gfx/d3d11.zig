@@ -18,6 +18,9 @@ pub const D3D11State = struct {
     context: *d3d11.IDeviceContext,
     rtv: *d3d11.IRenderTargetView,
 
+    swapchain_flags: zwin32.dxgi.SWAP_CHAIN_FLAG,
+    swapchain_size: struct{width: i32, height: i32},
+
     const enable_debug_layers = true;
     const swapchain_buffer_count: u32 = 3;
 
@@ -57,10 +60,15 @@ pub const D3D11State = struct {
 
         var window_size = try window.get_client_size();
 
+        const swapchain_flags = zwin32.dxgi.SWAP_CHAIN_FLAG {
+            .ALLOW_MODE_SWITCH = true,
+            .ALLOW_TEARING = true,
+        };
+
         const swapchain_desc = zwin32.dxgi.SWAP_CHAIN_DESC {
             .BufferDesc = zwin32.dxgi.MODE_DESC {
-                .Width = @intFromFloat(window_size.x),
-                .Height = @intFromFloat(window_size.y),
+                .Width = @intCast(window_size.width),
+                .Height = @intCast(window_size.height),
                 .Format = zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
                 .Scaling = zwin32.dxgi.MODE_SCALING.STRETCHED,
                 .RefreshRate = zwin32.dxgi.RATIONAL{
@@ -80,10 +88,7 @@ pub const D3D11State = struct {
             .OutputWindow = window.hwnd,
             .Windowed = zwin32.w32.TRUE,
             .SwapEffect = zwin32.dxgi.SWAP_EFFECT.FLIP_DISCARD,
-            .Flags = zwin32.dxgi.SWAP_CHAIN_FLAG {
-                .ALLOW_MODE_SWITCH = true,
-                .ALLOW_TEARING = true, // This is not a UWP app
-            }
+            .Flags = swapchain_flags,
         };
 
         var device: *d3d11.IDevice = undefined;
@@ -138,6 +143,8 @@ pub const D3D11State = struct {
         return Self {
             .device = device,
             .swapchain = swapchain,
+            .swapchain_flags = swapchain_flags,
+            .swapchain_size = .{.width = window_size.width, .height = window_size.height},
             .context = context,
             .rtv = rtv,
         };
@@ -161,16 +168,38 @@ pub const D3D11State = struct {
         }));
     }
 
-    pub fn window_resized(self: *Self) void {
-        _ = self;
-        std.log.info("GFX resize", .{});
+    pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {
+        // Release help render target view before we update the swapchain.
+        // If we dont do this swapchain resize buffers will fail.
+        _ = self.rtv.Release();
 
-        // zwin32.hrPanicOnFail(self.swapchain.ResizeBuffers(
-        //         0, 0, 0, zwin32.dxgi.FORMAT.UNKNOWN, // automatic
-        //         zwin32.dxgi.SWAP_CHAIN_FLAG {
-        //             .ALLOW_MODE_SWITCH = true,
-        //             .ALLOW_TEARING = true,
-        //         })); 
+        zwin32.hrPanicOnFail(self.swapchain.ResizeBuffers(
+                0, 0, 0, zwin32.dxgi.FORMAT.UNKNOWN, // automatic
+                self.swapchain_flags)); 
+
+        // Reacquire render target view from new swapchain
+        var framebuffer: *d3d11.ITexture2D = undefined;
+        zwin32.hrPanicOnFail(self.swapchain.GetBuffer(0, &d3d11.IID_ITexture2D, @ptrCast(&framebuffer)));
+        defer _ = framebuffer.Release();
+
+        zwin32.hrPanicOnFail(self.device.CreateRenderTargetView(
+                @ptrCast(framebuffer), 
+                &d3d11.RENDER_TARGET_VIEW_DESC{
+                    .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
+                    .Format = .@"UNKNOWN",
+                    .u = .{.Texture2D = d3d11.TEX2D_RTV {
+                        .MipSlice = 0,
+                    }},
+                }, 
+                @ptrCast(&self.rtv)
+        ));
+
+        self.swapchain_size.width = new_width;
+        self.swapchain_size.height = new_height;
+    }
+
+    pub fn swapchain_aspect(self: *Self) f32 {
+        return @as(f32, @floatFromInt(self.swapchain_size.width)) / @as(f32, @floatFromInt(self.swapchain_size.height));
     }
 };
 

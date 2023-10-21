@@ -10,12 +10,17 @@ pub const WindowEventTag = enum {
 };
 
 pub const WindowEvent = union(WindowEventTag) {
-    RESIZED: void,
+    RESIZED: WindowSize,
     EVENTS_CLEARED: void,
     KEY_DOWN: KeyEvent,
     KEY_REPEAT: KeyEvent,
     KEY_UP: KeyEvent,
     CHAR: CharEvent,
+};
+
+pub const WindowSize = struct {
+    width: i32,
+    height: i32,
 };
 
 pub const KeyEvent = struct {
@@ -25,7 +30,9 @@ pub const KeyEvent = struct {
 };
 
 pub const CharEvent = struct {
-    utf32_char_code: u32,
+    utf8_char_seq: [2:0]u8,
+    utf8_char_len: usize,
     repeat_count: u16,
     scan_code: u16,
 };
+

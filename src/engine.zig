@@ -26,7 +26,7 @@ pub fn Engine(comptime App: type) type {
             };
 
             Log.debug("Calling Window init!", .{});
-            engine.window = try w32.Win32Window.init(@ptrCast(&engine), &Self.window_event_received);
+            engine.window = try w32.Win32Window.init();
             defer engine.window.deinit();
 
             Log.debug("Calling GFX init!", .{});
@@ -38,14 +38,14 @@ pub fn Engine(comptime App: type) type {
             defer engine.app.deinit();
 
             Log.debug("Engine inited!", .{});
-            engine.window.run();
+            engine.window.run(@ptrCast(&engine), &Self.window_event_received);
         }
 
         fn window_event_received(engine_void_ptr: *anyopaque, event: wb.WindowEvent) void {
             const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
 
             switch (event) {
-                .RESIZED => { self.gfx.window_resized(); },
+                .RESIZED => |new_size| { self.gfx.window_resized(new_size.width, new_size.height); },
                 else => {},
             }
             self.app.window_event_received(event);

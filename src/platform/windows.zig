@@ -8,11 +8,6 @@ const __k = @import("../input/keycode.zig");
 const wb = @import("../window.zig");
 
 
-pub const Vec2 = struct {
-    x: f32,
-    y: f32,
-};
-
 const GlobalEnginePtr = struct {
     engine: ?*anyopaque,
     window_event_callback: *const fn (*anyopaque, wb.WindowEvent) void,
@@ -36,12 +31,7 @@ pub const Win32Window = struct {
     wc: w32.WNDCLASSEXA,
     hwnd: w32.HWND,
 
-    pub fn init(engine: *anyopaque, window_event_callback: *const fn(*anyopaque, wb.WindowEvent) void) !Win32Window {
-        if (g_engine.engine == null) {
-            g_engine.window_event_callback = window_event_callback;
-            g_engine.engine = engine;
-        }
-
+    pub fn init() !Win32Window {
         _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
         errdefer w32.CoUninitialize();
 
@@ -73,7 +63,7 @@ pub const Win32Window = struct {
         return Win32Window {
             .hInstance = hInstance,
             .wc = wc,
-            .hwnd = hwnd
+            .hwnd = hwnd,
         };
     }
 
@@ -83,8 +73,17 @@ pub const Win32Window = struct {
         w32.CoUninitialize();
     }
 
-    pub fn run(self: *Win32Window) void {
+    pub fn run(self: *Win32Window, engine: *anyopaque, window_event_callback: *const fn(*anyopaque, wb.WindowEvent) void) void {
         _ = self;
+        if (g_engine.engine != null) { 
+            std.log.warn("Only one Windows window is currently supported.", .{});
+            return;
+        }
+
+        g_engine.window_event_callback = window_event_callback;
+        g_engine.engine = engine;
+        defer g_engine.engine = null;
+
         var msg = std.mem.zeroes(w32.MSG);
         main_loop: while (msg.message != w32.WM_QUIT) {
             while (w32.PeekMessageA(&msg, null, 0, 0, w32.PM_REMOVE) == w32.TRUE) {
@@ -105,12 +104,12 @@ pub const Win32Window = struct {
         return self.hwnd;
     }
 
-    pub fn get_client_size(self: *Win32Window) !Vec2 {
+    pub fn get_client_size(self: *Win32Window) !wb.WindowSize {
         var rect: w32.RECT = undefined;
         if (w32.GetClientRect(self.hwnd, &rect) == w32.FALSE) {
             return error.FailedToGetClientRect;
         }
-        return Vec2 { .x = @floatFromInt(rect.right), .y = @floatFromInt(rect.bottom) };
+        return wb.WindowSize{.width = rect.right, .height = rect.bottom};
     }
 
     fn construct_key_event(w_param: w32.WPARAM, l_param: w32.LPARAM) ?wb.KeyEvent {
@@ -125,11 +124,14 @@ pub const Win32Window = struct {
     }
 
     fn construct_char_event(w_param: w32.WPARAM, l_param: w32.LPARAM) wb.CharEvent {
-        return wb.CharEvent {
-            .utf32_char_code = @intCast(w_param),
+        const utf8_seq = [2:0]u8{@intCast(w_param), @intCast(w_param >> 8)};
+        var ce = wb.CharEvent {
+            .utf8_char_seq = utf8_seq,
+            .utf8_char_len = if (utf8_seq[1] == 0) 1 else 2,
             .scan_code = @intCast((l_param >> 16) & 0xff),
             .repeat_count = @intCast(l_param & 0xffff),
         };
+        return ce;
     }
 
     export fn window_proc(hwnd: w32.HWND, u_msg: w32.UINT, w_param: w32.WPARAM, l_param: w32.LPARAM) callconv(w32.WINAPI) w32.LRESULT {
@@ -139,9 +141,13 @@ pub const Win32Window = struct {
                 return 0;
             },
             w32.WM_SIZE => { 
-                g_engine.send_window_event(wb.WindowEvent { .RESIZED = undefined });
+                g_engine.send_window_event(wb.WindowEvent { .RESIZED = wb.WindowSize {
+                    .width = @intCast(w32.LOWORD(@intCast(l_param))),
+                    .height = @intCast(w32.HIWORD(@intCast(l_param))),
+                } });
                 return 0;
             },
+
             w32.WM_KEYDOWN => { 
                 const keyevent = construct_key_event(w_param, l_param);
                 if (keyevent == null) { return 0; }
@@ -161,13 +167,11 @@ pub const Win32Window = struct {
                 g_engine.send_window_event(wb.WindowEvent { .KEY_UP = keyevent.? }); 
                 return 0;
             },
-            w32.WM_CHAR => { 
-                // Handle UNICODE_NOCHAR case
-                if (w_param == 65535) { return w32.TRUE; }
-
+            w32.WM_CHAR => {
                 g_engine.send_window_event(wb.WindowEvent { .CHAR = construct_char_event(w_param, l_param) });
                 return 0;
             },
+
             else => {},
         }
         return w32.DefWindowProcA(hwnd, u_msg, w_param, l_param);

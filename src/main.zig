@@ -142,7 +142,7 @@ const App = struct {
             var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
             const model_matrix: zm.Mat = zm.mul(zm.matFromQuat(self.camera_rotation), zm.translationV(self.camera_position));
             buffer_data.view = zm.inverse(model_matrix);
-            buffer_data.projection = zm.perspectiveFovLh(40.0, 16.0/9.0, 0.1, 100.0);
+            buffer_data.projection = zm.perspectiveFovLh(40.0, self.engine.gfx.swapchain_aspect(), 0.1, 100.0);
         }
 
         var rtv = self.engine.gfx.begin_frame() catch |err| {
@@ -159,13 +159,9 @@ const App = struct {
         self.engine.gfx.context.VSSetShader(self.vso, null, 0);
         self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
 
-        var v2 = self.engine.window.get_client_size() catch |err| {
-            std.log.info("err: {}", .{err});
-            return;
-        };
         const viewport = d3d11.VIEWPORT {
-            .Width = v2.x,
-            .Height = v2.y,
+            .Width = @floatFromInt(self.engine.gfx.swapchain_size.width),
+            .Height = @floatFromInt(self.engine.gfx.swapchain_size.height),
             .TopLeftX = 0,
             .TopLeftY = 0,
             .MinDepth = 0.0,
@@ -191,10 +187,12 @@ const App = struct {
     pub fn window_event_received(self: *Self, event: window.WindowEvent) void {
         switch (event) {
             .EVENTS_CLEARED => { self.update(); },
-            .KEY_DOWN => |k| { std.log.info(  "Received key down!   key is: {}", .{k.keycode}); },
-            .KEY_UP => |k| { std.log.info(    "Received key up!     key is: {}", .{k.keycode}); },
-            .KEY_REPEAT => |k| { std.log.info("Received key repeat! key is: {}", .{k.keycode}); },
-            .CHAR => |c| { std.log.info(      "Received char!      char is: {}", .{c.utf32_char_code}); },
+            .KEY_DOWN => |k| { std.log.info("Received key down!\t\tkey is: {}, rep: {}, scan: {}", .{k.keycode, k.repeat_count, k.scan_code}); },
+            .KEY_UP => |k| { std.log.info("Received key up!\t\tkey is: {}, rep: {}", .{k.keycode, k.repeat_count}); },
+            .KEY_REPEAT => |k| { std.log.info("Received key repeat!\t\tkey is: {}, rep: {}", .{k.keycode, k.repeat_count}); },
+            .CHAR => |c| { 
+                std.log.info("Received char!\t\tchar is: {s}, len: {}, rep: {}, scan: {}", .{c.utf8_char_seq[0..], c.utf8_char_len, c.repeat_count, c.scan_code}); 
+            },
             else => {},
         }
     }
