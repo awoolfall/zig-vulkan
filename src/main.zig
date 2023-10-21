@@ -6,6 +6,7 @@ const d3d11 = zwin32.d3d11;
 
 const engine = @import("engine.zig");
 const window = @import("window.zig");
+const kc = @import("input/keycode.zig");
 
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
@@ -130,9 +131,18 @@ const App = struct {
         _ = self.pso.Release();
     }
 
+    inline fn float_from_bool(in: bool) f32 {
+        return @floatFromInt(@intFromBool(in));
+    }
+
     fn update(self: *Self) void {
-        var time_milli_mod_2pi: f32 = @floatFromInt(@mod(std.time.milliTimestamp(), 6282));
-        self.camera_position[0] = @sin(time_milli_mod_2pi / 1000.0);
+        const move_speed = 0.001;
+        self.camera_position[0] += 
+            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.A)) * -move_speed + 
+            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.D)) * move_speed; 
+        self.camera_position[2] += 
+            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.S)) * -move_speed + 
+            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.W)) * move_speed;
 
         {
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
@@ -187,12 +197,6 @@ const App = struct {
     pub fn window_event_received(self: *Self, event: window.WindowEvent) void {
         switch (event) {
             .EVENTS_CLEARED => { self.update(); },
-            .KEY_DOWN => |k| { std.log.info("Received key down!\t\tkey is: {}, rep: {}, scan: {}", .{k.keycode, k.repeat_count, k.scan_code}); },
-            .KEY_UP => |k| { std.log.info("Received key up!\t\tkey is: {}, rep: {}", .{k.keycode, k.repeat_count}); },
-            .KEY_REPEAT => |k| { std.log.info("Received key repeat!\t\tkey is: {}, rep: {}", .{k.keycode, k.repeat_count}); },
-            .CHAR => |c| { 
-                std.log.info("Received char!\t\tchar is: {s}, len: {}, rep: {}, scan: {}", .{c.utf8_char_seq[0..], c.utf8_char_len, c.repeat_count, c.scan_code}); 
-            },
             else => {},
         }
     }

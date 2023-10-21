@@ -147,6 +147,14 @@ pub const Win32Window = struct {
                 } });
                 return 0;
             },
+            w32.WM_SETFOCUS => {
+                g_engine.send_window_event(wb.WindowEvent { .GAINED_FOCUS = undefined });
+                return 0;
+            },
+            w32.WM_KILLFOCUS => {
+                g_engine.send_window_event(wb.WindowEvent { .LOST_FOCUS = undefined });
+                return 0;
+            },
 
             w32.WM_KEYDOWN => { 
                 const keyevent = construct_key_event(w_param, l_param);

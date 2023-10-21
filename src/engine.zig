@@ -4,6 +4,7 @@ const hrPanic = zwin32.hrPanicOnFail;
 
 const d3d11 = @import("gfx/d3d11.zig");
 const w32 = @import("platform/windows.zig");
+const input = @import("input/input.zig");
 
 const wb = @import("window.zig");
 
@@ -14,16 +15,23 @@ pub fn Engine(comptime App: type) type {
 
         window: w32.Win32Window,
         gfx: d3d11.D3D11State,
+        input: input.InputState,
         app: App,
 
         pub fn run() !void {
             Log.debug("Engine init!", .{});
+            defer std.log.debug("Engine deinit!", .{});
 
             var engine = Self {
                 .window = undefined,
                 .gfx = undefined,
+                .input = undefined,
                 .app = undefined,
             };
+
+            Log.debug("Calling Input init", .{});
+            engine.input = try input.InputState.init();
+            defer engine.input.deinit();
 
             Log.debug("Calling Window init!", .{});
             engine.window = try w32.Win32Window.init();
@@ -48,7 +56,15 @@ pub fn Engine(comptime App: type) type {
                 .RESIZED => |new_size| { self.gfx.window_resized(new_size.width, new_size.height); },
                 else => {},
             }
+
+            // Update input struct with key events
+            self.input.received_window_event_early(&event);
+
+            // Send event to the client app
             self.app.window_event_received(event);
+
+            // Run update procedure on inputs after everything has finished their update()
+            self.input.received_window_event_late(&event);
         }
     };
 }

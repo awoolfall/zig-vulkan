@@ -152,9 +152,10 @@ pub const D3D11State = struct {
 
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
+        self.context.Flush();
         _ = self.rtv.Release();
-        _ = self.context.Release();
         _ = self.swapchain.Release();
+        _ = self.context.Release();
         _ = self.device.Release();
     }
 
@@ -164,8 +165,7 @@ pub const D3D11State = struct {
 
     pub fn end_frame(self: *Self, rtv: *d3d11.IRenderTargetView) !void {
         _ = rtv;
-        try hrErr(self.swapchain.Present(1, zwin32.dxgi.PRESENT_FLAG {
-        }));
+        try hrErr(self.swapchain.Present(1, zwin32.dxgi.PRESENT_FLAG {}));
     }
 
     pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {
@@ -194,6 +194,7 @@ pub const D3D11State = struct {
                 @ptrCast(&self.rtv)
         ));
 
+        // Update swapchain size variables
         self.swapchain_size.width = new_width;
         self.swapchain_size.height = new_height;
     }
