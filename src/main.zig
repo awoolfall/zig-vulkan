@@ -136,7 +136,12 @@ const App = struct {
     }
 
     fn update(self: *Self) void {
-        const move_speed = 0.001;
+        std.log.info("frame time is: {d}ms, fps is {d}", .{
+            self.engine.time.delta_time_f32() * std.time.ms_per_s,
+            self.engine.time.get_fps()
+        });
+
+        const move_speed: f32 = 1.0 * self.engine.time.delta_time_f32();
         self.camera_position[0] += 
             float_from_bool(self.engine.input.get_key_down(kc.KeyCode.A)) * -move_speed + 
             float_from_bool(self.engine.input.get_key_down(kc.KeyCode.D)) * move_speed; 
@@ -194,8 +199,8 @@ const App = struct {
         return;
     }
 
-    pub fn window_event_received(self: *Self, event: window.WindowEvent) void {
-        switch (event) {
+    pub fn window_event_received(self: *Self, event: *const window.WindowEvent) void {
+        switch (event.*) {
             .EVENTS_CLEARED => { self.update(); },
             else => {},
         }
