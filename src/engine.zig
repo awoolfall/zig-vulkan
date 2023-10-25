@@ -57,7 +57,8 @@ pub fn Engine(comptime App: type) type {
 
         fn window_event_received(engine_void_ptr: *anyopaque, event: wb.WindowEvent) void {
             const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
-
+            
+            // Timing needs to be updated at the very beginning of a frame
             self.time.received_window_event(&event);
 
             switch (event) {

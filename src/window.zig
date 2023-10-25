@@ -9,6 +9,8 @@ pub const WindowEventTag = enum {
     KEY_REPEAT,
     KEY_UP,
     CHAR,
+    CURSOR_MOVED,
+    RAW_MOUSE_MOVED,
 };
 
 pub const WindowEvent = union(WindowEventTag) {
@@ -20,6 +22,8 @@ pub const WindowEvent = union(WindowEventTag) {
     KEY_REPEAT: KeyEvent,
     KEY_UP: KeyEvent,
     CHAR: CharEvent,
+    CURSOR_MOVED: CursorMoveEvent,
+    RAW_MOUSE_MOVED: RawMouseMoveEvent,
 };
 
 pub const WindowSize = struct {
@@ -40,3 +44,12 @@ pub const CharEvent = struct {
     scan_code: u16,
 };
 
+pub const CursorMoveEvent = struct {
+    x_coord: i32,
+    y_coord: i32,
+};
+
+pub const RawMouseMoveEvent = struct {
+    x_delta: i32,
+    y_delta: i32,
+};

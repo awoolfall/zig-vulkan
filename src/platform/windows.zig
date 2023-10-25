@@ -48,6 +48,8 @@ pub const Win32Window = struct {
             .hIconSm = null,
         };
         _ = w32.RegisterClassExA(&wc);
+        const width = 1920;
+        const height = 1080;
         var hwnd = w32.CreateWindowExA(
             0, 
             "Window Class", 
@@ -55,10 +57,14 @@ pub const Win32Window = struct {
             w32.WS_OVERLAPPEDWINDOW + w32.WS_VISIBLE,
             w32.CW_USEDEFAULT,
             w32.CW_USEDEFAULT, 
-            1920, 1080, 
+            width, height, 
             null, null,
             hInstance, 
             null).?;
+
+        if (!register_mouse_for_raw_input(hwnd)) {
+            std.log.warn("Failed to get raw mouse input..", .{});
+        }
 
         return Win32Window {
             .hInstance = hInstance,
@@ -134,6 +140,14 @@ pub const Win32Window = struct {
         return ce;
     }
 
+    fn construct_cursor_move_event(w_param: w32.WPARAM, l_param: w32.LPARAM) wb.CursorMoveEvent {
+        _ = w_param;
+        return wb.CursorMoveEvent {
+            .x_coord = w32.GET_X_LPARAM(l_param),
+            .y_coord = w32.GET_Y_LPARAM(l_param),
+        };
+    }
+
     export fn window_proc(hwnd: w32.HWND, u_msg: w32.UINT, w_param: w32.WPARAM, l_param: w32.LPARAM) callconv(w32.WINAPI) w32.LRESULT {
         switch (u_msg) {
             w32.WM_DESTROY => {
@@ -180,9 +194,163 @@ pub const Win32Window = struct {
                 return 0;
             },
 
+            w32.WM_MOUSEMOVE => {
+                g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
+                return 0;
+            },
+            w32.WM_LBUTTONDOWN => {
+                g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
+                g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
+                    .keycode = __k.KeyCode.MouseLeft,
+                    .repeat_count = 1,
+                    .scan_code = 0,
+                }});
+                return 0;
+            },
+            w32.WM_LBUTTONUP => {
+                g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
+                g_engine.send_window_event(wb.WindowEvent { .KEY_UP = wb.KeyEvent {
+                    .keycode = __k.KeyCode.MouseLeft,
+                    .repeat_count = 1,
+                    .scan_code = 0,
+                }});
+                return 0;
+            },
+            w32.WM_MBUTTONDOWN => {
+                g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
+                g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
+                    .keycode = __k.KeyCode.MouseMiddle,
+                    .repeat_count = 1,
+                    .scan_code = 0,
+                }});
+                return 0;
+            },
+            w32.WM_MBUTTONUP => {
+                g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
+                g_engine.send_window_event(wb.WindowEvent { .KEY_UP = wb.KeyEvent {
+                    .keycode = __k.KeyCode.MouseMiddle,
+                    .repeat_count = 1,
+                    .scan_code = 0,
+                }});
+                return 0;
+            },
+            w32.WM_RBUTTONDOWN => {
+                g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
+                g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
+                    .keycode = __k.KeyCode.MouseRight,
+                    .repeat_count = 1,
+                    .scan_code = 0,
+                }});
+                return 0;
+            },
+            w32.WM_RBUTTONUP => {
+                g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
+                g_engine.send_window_event(wb.WindowEvent { .KEY_UP = wb.KeyEvent {
+                    .keycode = __k.KeyCode.MouseRight,
+                    .repeat_count = 1,
+                    .scan_code = 0,
+                }});
+                return 0;
+            },
+
+            w32.WM_INPUT => {
+                const mouse_data = get_mouse_raw_data(l_param);
+                if (mouse_data != null) {
+                    g_engine.send_window_event(wb.WindowEvent { .RAW_MOUSE_MOVED = wb.RawMouseMoveEvent {
+                        .x_delta = mouse_data.?.lLastX,
+                        .y_delta = mouse_data.?.lLastY,
+                    }});
+                }
+                return 0;
+            },
+
             else => {},
         }
         return w32.DefWindowProcA(hwnd, u_msg, w_param, l_param);
     }
 };
 
+
+// Raw Input Windows API //
+
+const RAWINPUTDEVICE = extern struct {
+    usUsagePage: w32.USHORT,
+    usUsage: w32.USHORT,
+    dwFlags: w32.DWORD,
+    hwndTarget: w32.HWND,
+};
+
+const PCRAWINPUTDEVICE = ?[*]const *RAWINPUTDEVICE;
+
+extern "user32" fn RegisterRawInputDevices(pRawInputDevices: PCRAWINPUTDEVICE, uiNumDevices: w32.UINT, cbSize: w32.UINT) callconv(w32.WINAPI) w32.BOOL;
+
+fn register_mouse_for_raw_input(hwnd: w32.HWND) bool {
+    const raw_input_devices = [_]RAWINPUTDEVICE {
+        RAWINPUTDEVICE {
+            .hwndTarget = hwnd,
+            .usUsagePage = 0x01, // Generic Desktop Controls Usage Page
+            .usUsage = 0x02, // Mouse ID within the above page
+            .dwFlags = 0x00, // Dont apply any flags
+        },
+    };
+    return RegisterRawInputDevices(@ptrCast(&raw_input_devices), raw_input_devices.len, @sizeOf(RAWINPUTDEVICE)) == w32.TRUE;
+}
+
+const RAWINPUTHEADER = extern struct {
+    dwType: w32.DWORD,
+    dwSize: w32.DWORD,
+    hDevice: w32.HANDLE,
+    wParam: w32.WPARAM,
+};
+
+const RAWMOUSE = extern struct {
+    usFlags: w32.USHORT,
+    dummy: extern union {
+        ulButtons: w32.ULONG,
+        dummy: extern struct {
+            usButtonFlags: w32.USHORT,
+            usButtonData: w32.USHORT,
+        },
+    },
+    ulRawButtons: w32.ULONG,
+    lLastX: w32.LONG,
+    lLastY: w32.LONG,
+    ulExtraInformation: w32.ULONG,
+};
+
+const RAWKEYBOARD = extern struct {
+    MakeCode: w32.USHORT,
+    Flags: w32.USHORT,
+    Reserved: w32.USHORT,
+    VKey: w32.USHORT,
+    Message: w32.UINT,
+    ExtraInformation: w32.ULONG,
+};
+
+const RAWHID = extern struct {
+    dwSizeHid: w32.DWORD,
+    dwCount: w32.DWORD,
+    bRawData: [1]w32.BYTE,
+};
+
+const RAWINPUT = extern struct {
+    header: RAWINPUTHEADER,
+    data: extern union {
+        mouse: RAWMOUSE,
+        keyboard: RAWKEYBOARD,
+        hid: RAWHID,
+    },
+};
+
+extern "user32" fn GetRawInputData(hRawInput: w32.LPARAM, uiCommand: w32.UINT, pData: w32.LPVOID, pcbSize: ?*w32.UINT, cbSizeHeader: w32.UINT) callconv(w32.WINAPI) w32.UINT;
+
+fn get_mouse_raw_data(l_param: w32.LPARAM) ?RAWMOUSE {
+    var raw_input: RAWINPUT = undefined;
+    var pcbSize: w32.UINT = @sizeOf(RAWINPUT);
+    const bytesCopied = GetRawInputData(l_param, 0x10000003, @ptrCast(&raw_input), &pcbSize, @sizeOf(RAWINPUTHEADER));
+    if (bytesCopied == 0 or bytesCopied > @sizeOf(RAWINPUT)) {
+        std.log.err("Windows getting raw input failed... value is: {}", .{bytesCopied});
+        return null;
+    }
+    return raw_input.data.mouse;
+}

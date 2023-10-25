@@ -32,7 +32,7 @@ const App = struct {
     
     camera_data_buffer: *d3d11.IBuffer,
     camera_position: zm.F32x4,
-    camera_rotation: zm.F32x4,
+    camera_rotation: zm.Quat,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
@@ -136,18 +136,46 @@ const App = struct {
     }
 
     fn update(self: *Self) void {
-        std.log.info("frame time is: {d}ms, fps is {d}", .{
-            self.engine.time.delta_time_f32() * std.time.ms_per_s,
-            self.engine.time.get_fps()
-        });
+        // std.log.info("frame time is: {d}ms, fps is {d}", .{
+        //     self.engine.time.delta_time_f32() * std.time.ms_per_s,
+        //     self.engine.time.get_fps()
+        // });
+
+        if (self.engine.input.get_key_down(kc.KeyCode.MouseLeft)) {
+            std.log.info("left click!!!", .{});
+        }
+        if (self.engine.input.get_key_down(kc.KeyCode.MouseMiddle)) {
+            std.log.info("middle click!!!", .{});
+        }
+        if (self.engine.input.get_key_down(kc.KeyCode.MouseRight)) {
+            std.log.info("right click!!!", .{});
+        }
 
         const move_speed: f32 = 1.0 * self.engine.time.delta_time_f32();
         self.camera_position[0] += 
-            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.A)) * -move_speed + 
-            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.D)) * move_speed; 
+            float_from_bool(self.engine.input.get_key(kc.KeyCode.A)) * -move_speed + 
+            float_from_bool(self.engine.input.get_key(kc.KeyCode.D)) * move_speed; 
         self.camera_position[2] += 
-            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.S)) * -move_speed + 
-            float_from_bool(self.engine.input.get_key_down(kc.KeyCode.W)) * move_speed;
+            float_from_bool(self.engine.input.get_key(kc.KeyCode.S)) * -move_speed + 
+            float_from_bool(self.engine.input.get_key(kc.KeyCode.W)) * move_speed;
+
+        if (self.engine.input.get_key(kc.KeyCode.MouseRight)) {
+            const mouse_sens = 0.001;
+            self.camera_rotation = zm.qmul(
+                self.camera_rotation, 
+                zm.quatFromAxisAngle(
+                    zm.f32x4(0.0, 1.0, 0.0, 0.0), 
+                    mouse_sens * self.engine.input.mouse_delta.x
+                )
+            );
+            self.camera_rotation = zm.qmul(
+                self.camera_rotation, 
+                zm.quatFromAxisAngle(
+                    zm.rotate(self.camera_rotation, zm.f32x4(1.0, 0.0, 0.0, 0.0)), 
+                    mouse_sens * self.engine.input.mouse_delta.y
+                )
+            );
+        }
 
         {
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
@@ -157,7 +185,7 @@ const App = struct {
             var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
             const model_matrix: zm.Mat = zm.mul(zm.matFromQuat(self.camera_rotation), zm.translationV(self.camera_position));
             buffer_data.view = zm.inverse(model_matrix);
-            buffer_data.projection = zm.perspectiveFovLh(40.0, self.engine.gfx.swapchain_aspect(), 0.1, 100.0);
+            buffer_data.projection = zm.perspectiveFovLh(20.0, self.engine.gfx.swapchain_aspect(), 0.1, 100.0);
         }
 
         var rtv = self.engine.gfx.begin_frame() catch |err| {
