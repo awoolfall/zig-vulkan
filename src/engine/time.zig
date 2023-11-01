@@ -51,15 +51,15 @@ pub const TimeState = struct {
         }
     }
 
-    pub inline fn get_fps(self: *Self) f64 {
+    pub inline fn get_fps(self: *const Self) f64 {
         return 1.0 / self.last_frame_time_s;
     }
 
-    pub inline fn delta_time(self: *Self) f64 {
+    pub inline fn delta_time(self: *const Self) f64 {
         return self.last_frame_time_s;
     }
 
-    pub inline fn delta_time_f32(self: *Self) f32 {
+    pub inline fn delta_time_f32(self: *const Self) f32 {
         return @floatCast(self.last_frame_time_s);
     }
 

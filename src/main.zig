@@ -5,8 +5,11 @@ const w32 = zwin32.w32;
 const d3d11 = zwin32.d3d11;
 
 const engine = @import("engine.zig");
+const Transform = engine.Transform;
 const window = @import("window.zig");
 const kc = @import("input/keycode.zig");
+const cm = @import("engine/camera.zig");
+const ms = @import("engine/mesh.zig");
 
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
@@ -31,8 +34,9 @@ const App = struct {
     rasterizer_state: *d3d11.IRasterizerState,
     
     camera_data_buffer: *d3d11.IBuffer,
-    camera_position: zm.F32x4,
-    camera_rotation: zm.Quat,
+    camera: cm.Camera,
+
+    tree_mesh_set: ms.MeshSet,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
@@ -76,6 +80,24 @@ const App = struct {
                 .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
                 .InstanceDataStepRate = 0,
             },
+            d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = "NORMAL",
+                .SemanticIndex = 0,
+                .Format = zwin32.dxgi.FORMAT.R32G32B32_FLOAT,
+                .InputSlot = 1,
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
+                .InstanceDataStepRate = 0,
+            },
+            d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = "TEXCOORD",
+                .SemanticIndex = 0,
+                .Format = zwin32.dxgi.FORMAT.R32G32_FLOAT,
+                .InputSlot = 2,
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
+                .InstanceDataStepRate = 0,
+            },
         };
         var vso_input_layout: *d3d11.IInputLayout = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
@@ -92,7 +114,7 @@ const App = struct {
         // Define rasterizer state
         const rasterizer_state_desc = d3d11.RASTERIZER_DESC {
             .FillMode = d3d11.FILL_MODE.SOLID,
-            .CullMode = d3d11.CULL_MODE.NONE,
+            .CullMode = d3d11.CULL_MODE.BACK,
         };
         var rasterizer_state: *d3d11.IRasterizerState = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterizer_state)));
@@ -107,6 +129,9 @@ const App = struct {
         var camera_data_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
 
+        var camera_transform = Transform.new();
+        camera_transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
+
         return Self {
             .engine = eng,
             .vso = vso,
@@ -116,13 +141,21 @@ const App = struct {
             .rasterizer_state = rasterizer_state,
 
             .camera_data_buffer = camera_data_buffer,
-            .camera_position = zm.f32x4(0.0, 0.0, -1.0, 1.0),
-            .camera_rotation = zm.quatFromRollPitchYaw(0.0, 0.0, 0.0),
+            .camera = cm.Camera {
+                .transform = camera_transform,
+                .field_of_view_y = 20.0,
+                .near_field = 0.1,
+                .far_field = 100.0,
+            },
+
+            .tree_mesh_set = try ms.MeshSet.init_from_file(std.heap.page_allocator, "../../res/SM_Generic_Tree_04.glb", eng.gfx.device),
         };
     }
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
+        self.tree_mesh_set.deinit();
+
         _ = self.camera_data_buffer.Release();
         _ = self.rasterizer_state.Release();
         _ = self.vertex_buffer.Release();
@@ -131,61 +164,22 @@ const App = struct {
         _ = self.pso.Release();
     }
 
-    inline fn float_from_bool(in: bool) f32 {
-        return @floatFromInt(@intFromBool(in));
-    }
-
     fn update(self: *Self) void {
         // std.log.info("frame time is: {d}ms, fps is {d}", .{
         //     self.engine.time.delta_time_f32() * std.time.ms_per_s,
         //     self.engine.time.get_fps()
         // });
 
-        if (self.engine.input.get_key_down(kc.KeyCode.MouseLeft)) {
-            std.log.info("left click!!!", .{});
-        }
-        if (self.engine.input.get_key_down(kc.KeyCode.MouseMiddle)) {
-            std.log.info("middle click!!!", .{});
-        }
-        if (self.engine.input.get_key_down(kc.KeyCode.MouseRight)) {
-            std.log.info("right click!!!", .{});
-        }
+        self.camera.update(&self.engine.input, &self.engine.time);
 
-        const move_speed: f32 = 1.0 * self.engine.time.delta_time_f32();
-        self.camera_position[0] += 
-            float_from_bool(self.engine.input.get_key(kc.KeyCode.A)) * -move_speed + 
-            float_from_bool(self.engine.input.get_key(kc.KeyCode.D)) * move_speed; 
-        self.camera_position[2] += 
-            float_from_bool(self.engine.input.get_key(kc.KeyCode.S)) * -move_speed + 
-            float_from_bool(self.engine.input.get_key(kc.KeyCode.W)) * move_speed;
-
-        if (self.engine.input.get_key(kc.KeyCode.MouseRight)) {
-            const mouse_sens = 0.001;
-            self.camera_rotation = zm.qmul(
-                self.camera_rotation, 
-                zm.quatFromAxisAngle(
-                    zm.f32x4(0.0, 1.0, 0.0, 0.0), 
-                    mouse_sens * self.engine.input.mouse_delta.x
-                )
-            );
-            self.camera_rotation = zm.qmul(
-                self.camera_rotation, 
-                zm.quatFromAxisAngle(
-                    zm.rotate(self.camera_rotation, zm.f32x4(1.0, 0.0, 0.0, 0.0)), 
-                    mouse_sens * self.engine.input.mouse_delta.y
-                )
-            );
-        }
-
-        {
+        { // Update camera buffer
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
             zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.camera_data_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
             defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
 
             var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-            const model_matrix: zm.Mat = zm.mul(zm.matFromQuat(self.camera_rotation), zm.translationV(self.camera_position));
-            buffer_data.view = zm.inverse(model_matrix);
-            buffer_data.projection = zm.perspectiveFovLh(20.0, self.engine.gfx.swapchain_aspect(), 0.1, 100.0);
+            buffer_data.view = self.camera.transform.generate_view_matrix();
+            buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
         }
 
         var rtv = self.engine.gfx.begin_frame() catch |err| {
@@ -193,14 +187,6 @@ const App = struct {
             return;
         };
         self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
-
-        self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
-        const stride: c_uint = @sizeOf(f32) * 3;
-        const offset: c_uint = 0;
-        self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.vertex_buffer), @ptrCast(&stride), @ptrCast(&offset));
-        self.engine.gfx.context.VSSetShader(self.vso, null, 0);
-        self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(self.engine.gfx.swapchain_size.width),
@@ -218,7 +204,29 @@ const App = struct {
         self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
         self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
 
-        self.engine.gfx.context.Draw(3, 0);
+        self.engine.gfx.context.VSSetShader(self.vso, null, 0);
+        self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
+
+        self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
+        const pos_stride: c_uint = @sizeOf(f32) * 3;
+        const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
+        const offset: c_uint = 0;
+        //self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.vertex_buffer), @ptrCast(&stride), @ptrCast(&offset));
+        self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.tree_mesh_set.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
+        self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.tree_mesh_set.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
+        self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.tree_mesh_set.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
+        self.engine.gfx.context.IASetIndexBuffer(self.tree_mesh_set.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
+
+        for (self.tree_mesh_set.meshes.items) |m| {
+            for (m.primitives.items) |p| {
+                if (p.has_indices()) {
+                    self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
+                } else {
+                    self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+                }
+            }
+        }
 
         self.engine.gfx.end_frame(rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});

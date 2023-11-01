@@ -1,11 +1,14 @@
 const std = @import("std");
 const zwin32 = @import("zwin32");
+const zmesh = @import("zmesh");
 const hrPanic = zwin32.hrPanicOnFail;
 
 const d3d11 = @import("gfx/d3d11.zig");
 const w32 = @import("platform/windows.zig");
 const input = @import("input/input.zig");
 const time = @import("engine/time.zig");
+const tf = @import("engine/transform.zig");
+pub const Transform = tf.Transform;
 
 const wb = @import("window.zig");
 
@@ -31,6 +34,9 @@ pub fn Engine(comptime App: type) type {
                 .time = undefined,
                 .app = undefined,
             };
+
+            zmesh.init(std.heap.page_allocator);
+            defer zmesh.deinit();
 
             engine.time = time.TimeState.init();
             defer engine.time.deinit();

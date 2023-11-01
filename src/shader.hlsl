@@ -7,6 +7,8 @@ cbuffer camera_data : register(b0)
 struct vs_in
 {
     float3 pos : POS;
+    float3 normals : NORMAL;
+    float2 tex_coord : TEXCOORD;
 };
 
 struct vs_out
@@ -21,7 +23,7 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
     float4x4 vp = mul(view, projection);
     output.position = mul(float4(input.pos, 1.0), vp);
     float4 colour = float4(vertId == 0, vertId == 1, vertId == 2, 1.0);
-    output.colour = colour;
+    output.colour = float4(input.normals, 1.0);
     return output;
 }
 
