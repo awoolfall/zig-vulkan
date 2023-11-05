@@ -27,6 +27,8 @@ const App = struct {
 
     engine: *engine.Engine(Self),
 
+    depth_stencil_view: *d3d11.IDepthStencilView,
+
     vso: *d3d11.IVertexShader,
     pso: *d3d11.IPixelShader,
     vso_input_layout: *d3d11.IInputLayout,
@@ -40,6 +42,38 @@ const App = struct {
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
+
+        const depth_texture_desc = d3d11.TEXTURE2D_DESC {
+            .Width = @intCast(eng.gfx.swapchain_size.width),
+            .Height = @intCast(eng.gfx.swapchain_size.height),
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
+            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+                .Count = 1,
+                .Quality = 0,
+            },
+            .Usage = d3d11.USAGE.DEFAULT,
+            .BindFlags = d3d11.BIND_FLAG {.DEPTH_STENCIL = true,},
+            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG {},
+            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
+        };
+        var depth_texture: *d3d11.ITexture2D = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateTexture2D(&depth_texture_desc, null, @ptrCast(&depth_texture)));
+        defer _ = depth_texture.Release();
+
+        const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
+            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
+            .ViewDimension = d3d11.DSV_DIMENSION.TEXTURE2D,
+            .u = .{
+                .Texture2D = d3d11.TEX2D_DSV {
+                    .MipSlice = 0,
+                },
+            },
+            .Flags = d3d11.DSV_FLAGS {},
+        };
+        var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateDepthStencilView(@ptrCast(depth_texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
 
         // Load Shader file
         var shader_file = try std.fs.cwd().openFile("../../src/shader.hlsl", std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
@@ -134,6 +168,7 @@ const App = struct {
 
         return Self {
             .engine = eng,
+            .depth_stencil_view = depth_stencil_view,
             .vso = vso,
             .pso = pso,
             .vso_input_layout = vso_input_layout,
@@ -165,6 +200,7 @@ const App = struct {
         _ = self.vso_input_layout.Release();
         _ = self.vso.Release();
         _ = self.pso.Release();
+        _ = self.depth_stencil_view.Release();
     }
 
     fn update(self: *Self) void {
@@ -190,6 +226,7 @@ const App = struct {
             return;
         };
         self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
+        self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(self.engine.gfx.swapchain_size.width),
@@ -204,7 +241,7 @@ const App = struct {
 
         self.engine.gfx.context.PSSetShader(self.pso, null, 0);
 
-        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
+        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view);
         self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
 
         self.engine.gfx.context.VSSetShader(self.vso, null, 0);
