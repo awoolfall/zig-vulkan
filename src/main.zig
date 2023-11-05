@@ -36,7 +36,7 @@ const App = struct {
     camera_data_buffer: *d3d11.IBuffer,
     camera: cm.Camera,
 
-    tree_mesh_set: ms.MeshSet,
+    tree_mesh_set: ms.Model,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
@@ -146,9 +146,11 @@ const App = struct {
                 .field_of_view_y = 20.0,
                 .near_field = 0.1,
                 .far_field = 100.0,
+                .move_speed = 2.0,
+                .mouse_sensitivity = 0.001,
             },
 
-            .tree_mesh_set = try ms.MeshSet.init_from_file(std.heap.page_allocator, "../../res/SM_Generic_Tree_04.glb", eng.gfx.device),
+            .tree_mesh_set = try ms.Model.init_from_file(std.heap.page_allocator, "../../res/SM_Generic_Tree_04.glb", eng.gfx.device),
         };
     }
 
@@ -156,6 +158,7 @@ const App = struct {
         std.log.info("App deinit!", .{});
         self.tree_mesh_set.deinit();
 
+        self.engine.gfx.context.Flush();
         _ = self.camera_data_buffer.Release();
         _ = self.rasterizer_state.Release();
         _ = self.vertex_buffer.Release();
