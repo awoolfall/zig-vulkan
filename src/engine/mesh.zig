@@ -1,8 +1,10 @@
 const std = @import("std");
 const zmesh = @import("zmesh");
 const zwin32 = @import("zwin32");
+const zm = @import("zmath");
 const d3d11 = zwin32.d3d11;
 const assert = std.debug.assert;
+const tm = @import("../engine/transform.zig");
 
 pub const RenderMode = enum {
     TRIANGLES,
@@ -38,14 +40,59 @@ pub const Mesh = struct {
     }
 };
 
+fn recursive_load_node(alloc: std.mem.Allocator, node: *const zmesh.io.zcgltf.Node, meshes: *const std.ArrayList(Mesh), data: *const zmesh.io.zcgltf.Data) !ModelNode {
+    var name: ?[]u8 = null;
+    if (node.name != null) {
+        name = try std.fmt.allocPrint(alloc, "{s}", .{node.name.?});
+    }
+
+    var transform = tm.Transform.new();
+    transform.position = zm.f32x4(node.translation[0], node.translation[1], node.translation[2], 0.0);
+    transform.rotation = zm.f32x4(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3]);
+    std.debug.assert(node.scale[0] == node.scale[1] and node.scale[1] == node.scale[2]);
+    transform.scale = node.scale[0];
+
+    var mesh: ?*Mesh = null;
+    if (node.mesh) |m| {
+        // pointer math to convert zmesh mesh pointer to its index in the meshes array in data
+        const mesh_index = (@intFromPtr(m) - @intFromPtr(data.meshes)) / @sizeOf(zmesh.io.zcgltf.Mesh);
+        std.debug.assert(mesh_index >= 0 and mesh_index < meshes.items.len);
+
+        mesh = &meshes.items[mesh_index];
+    }
+
+    var children = std.ArrayList(ModelNode).init(alloc);
+    if (node.children) |node_children| {
+        for (0..node.children_count) |child_idx| {
+            try children.append(try recursive_load_node(alloc, node_children[child_idx], meshes, data));
+        }
+    }
+
+    return ModelNode {
+        .name = name,
+        .transform = transform,
+        .mesh = mesh,
+        .children = children,
+    };
+}
+
+pub const ModelNode = struct {
+    name: ?[]u8,
+    transform: tm.Transform,
+    mesh: ?*Mesh,
+    children: std.ArrayList(ModelNode),
+};
+
 pub const Model = struct {
     const Self = @This();
     indices: *d3d11.IBuffer,
     positions: *d3d11.IBuffer,
-    normals: *d3d11.IBuffer,
-    tex_coords: *d3d11.IBuffer,
-    tangents: *d3d11.IBuffer,
-    meshes: std.ArrayList(Mesh),
+    normals: ?*d3d11.IBuffer,
+    tex_coords: ?*d3d11.IBuffer,
+    tangents: ?*d3d11.IBuffer,
+    mesh_list: std.ArrayList(Mesh),
+    root_nodes: std.ArrayList(ModelNode),
+    arena_allocator: *std.heap.ArenaAllocator,
 
     pub fn init_from_file(alloc: std.mem.Allocator, file: [:0]const u8, gfx_device: *d3d11.IDevice) !Self {
         const data = try zmesh.io.parseAndLoadFile(file);
@@ -63,6 +110,10 @@ pub const Model = struct {
         defer mesh_tangents.deinit();
 
         var meshes = std.ArrayList(Mesh).init(alloc);
+        errdefer {
+            for (meshes.items) |m| { m.deinit(); }
+            meshes.deinit();
+        }
         // Iterate through meshes and their primitives adding all data to 
         // the above arraylists and appending mesh data to a arraylist
         for (0..data.meshes_count) |mi| {
@@ -107,33 +158,43 @@ pub const Model = struct {
         };
         var vert_pos_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_pos_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_positions.items.ptr), }, @ptrCast(&vert_pos_buffer)));
+        errdefer _ = vert_pos_buffer.Release();
 
         // Normals
-        const vert_norm_buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_normals.items.len)),
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-        };
-        var vert_norm_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_norm_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_normals.items.ptr), }, @ptrCast(&vert_norm_buffer)));
+        var vert_norm_buffer: ?*d3d11.IBuffer = null;
+        if (mesh_normals.items.len != 0) {
+            const vert_norm_buffer_desc = d3d11.BUFFER_DESC {
+                .Usage = d3d11.USAGE.IMMUTABLE,
+                .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_normals.items.len)),
+                .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
+            };
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_norm_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_normals.items.ptr), }, @ptrCast(&vert_norm_buffer)));
+        }
+        errdefer { if (vert_norm_buffer) |n| { _ = n.Release(); } }
 
         // Tex Coords
-        const vert_tex_coord_buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(f32) * 2 * @as(c_uint, @intCast(mesh_tex_coords.items.len)),
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-        };
-        var vert_tex_coord_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tex_coord_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tex_coords.items.ptr), }, @ptrCast(&vert_tex_coord_buffer)));
+        var vert_tex_coord_buffer: ?*d3d11.IBuffer = null;
+        if (mesh_tex_coords.items.len != 0) {
+            const vert_tex_coord_buffer_desc = d3d11.BUFFER_DESC {
+                .Usage = d3d11.USAGE.IMMUTABLE,
+                .ByteWidth = @sizeOf(f32) * 2 * @as(c_uint, @intCast(mesh_tex_coords.items.len)),
+                .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
+            };
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tex_coord_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tex_coords.items.ptr), }, @ptrCast(&vert_tex_coord_buffer)));
+        }
+        errdefer { if (vert_tex_coord_buffer) |b| { _ = b.Release(); } }
 
         // Tangents
-        const vert_tangents_buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(f32) * 4 * @as(c_uint, @intCast(mesh_tangents.items.len)),
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-        };
-        var vert_tangents_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tangents_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tangents.items.ptr), }, @ptrCast(&vert_tangents_buffer)));
+        var vert_tangents_buffer: ?*d3d11.IBuffer = null;
+        if (mesh_tangents.items.len != 0) {
+            const vert_tangents_buffer_desc = d3d11.BUFFER_DESC {
+                .Usage = d3d11.USAGE.IMMUTABLE,
+                .ByteWidth = @sizeOf(f32) * 4 * @as(c_uint, @intCast(mesh_tangents.items.len)),
+                .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
+            };
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tangents_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tangents.items.ptr), }, @ptrCast(&vert_tangents_buffer)));
+        }
+        errdefer { if (vert_tangents_buffer) |b| { _ = b.Release(); } }
 
         // Indices
         const indices_buffer_desc = d3d11.BUFFER_DESC {
@@ -143,28 +204,48 @@ pub const Model = struct {
         };
         var indices_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.items.ptr), }, @ptrCast(&indices_buffer)));
+        errdefer _ = indices_buffer.Release();
 
+        // Nodes
+        var arena_allocator = try alloc.create(std.heap.ArenaAllocator);
+        errdefer alloc.destroy(arena_allocator);
+
+        arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
+        errdefer arena_allocator.deinit();
+
+        var root_nodes = std.ArrayList(ModelNode).init(arena_allocator.allocator());
+        if (data.scene) |s| {
+            for (0..s.nodes_count) |node_index| {
+                try root_nodes.append(try recursive_load_node(arena_allocator.allocator(), s.nodes.?[node_index], &meshes, data));
+            }
+        }
+        
         return Self {
             .indices = indices_buffer,
             .positions = vert_pos_buffer,
             .normals = vert_norm_buffer,
             .tex_coords = vert_tex_coord_buffer,
             .tangents = vert_tangents_buffer,
-            .meshes = meshes,
+            .mesh_list = meshes,
+            .root_nodes = root_nodes,
+            .arena_allocator = arena_allocator,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        for (self.meshes.items) |m| {
+        self.arena_allocator.deinit();
+        self.arena_allocator.child_allocator.destroy(self.arena_allocator);
+
+        for (self.mesh_list.items) |m| {
             m.deinit();
         }
-        self.meshes.deinit();
+        self.mesh_list.deinit();
 
         _ = self.indices.Release();
         _ = self.positions.Release();
-        _ = self.normals.Release();
-        _ = self.tex_coords.Release();
-        _ = self.tangents.Release();
+        if (self.normals) |b| { _ = b.Release(); }
+        if (self.tex_coords) |b| { _ = b.Release(); }
+        if (self.tangents) |b| { _ = b.Release(); }
     }
 };
 
@@ -232,7 +313,6 @@ pub fn appendMeshPrimitive(
         const attributes = prim.attributes[0..prim.attributes_count];
         for (attributes) |attrib| {
             const accessor = attrib.data;
-            assert(accessor.component_type == .r_32f);
 
             const buffer_view = accessor.buffer_view.?;
             assert(buffer_view.buffer.data != null);

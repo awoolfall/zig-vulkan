@@ -10,6 +10,7 @@ const window = @import("window.zig");
 const kc = @import("input/keycode.zig");
 const cm = @import("engine/camera.zig");
 const ms = @import("engine/mesh.zig");
+const ent = @import("engine/entity.zig");
 
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
@@ -37,8 +38,11 @@ const App = struct {
     
     camera_data_buffer: *d3d11.IBuffer,
     camera: cm.Camera,
+    camera_idx: ent.GenerationalIndex,
 
     tree_mesh_set: ms.Model,
+    entity_transforms: ent.GenerationalList(Transform),
+    general_allocator: *std.heap.GeneralPurposeAllocator(.{}),
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
@@ -166,8 +170,16 @@ const App = struct {
         var camera_transform = Transform.new();
         camera_transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
 
+        var entity_transforms = try ent.GenerationalList(Transform).init(std.heap.page_allocator);
+        var camera_transform_idx = try entity_transforms.insert(Transform.new());
+        (try entity_transforms.get(camera_transform_idx)).position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
+
+        var general_allocator = try std.heap.page_allocator.create(std.heap.GeneralPurposeAllocator(.{}));
+        general_allocator.* = std.heap.GeneralPurposeAllocator(.{}){};
+
         return Self {
             .engine = eng,
+            .entity_transforms = entity_transforms,
             .depth_stencil_view = depth_stencil_view,
             .vso = vso,
             .pso = pso,
@@ -177,15 +189,17 @@ const App = struct {
 
             .camera_data_buffer = camera_data_buffer,
             .camera = cm.Camera {
-                .transform = camera_transform,
                 .field_of_view_y = 20.0,
                 .near_field = 0.1,
                 .far_field = 100.0,
                 .move_speed = 2.0,
                 .mouse_sensitivity = 0.001,
             },
+            .camera_idx = camera_transform_idx,
 
-            .tree_mesh_set = try ms.Model.init_from_file(std.heap.page_allocator, "../../res/SM_Generic_Tree_04.glb", eng.gfx.device),
+            //.tree_mesh_set = try ms.Model.init_from_file(std.heap.page_allocator, "../../res/SM_Generic_Tree_04.glb", eng.gfx.device),
+            .tree_mesh_set = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device),
+            .general_allocator = general_allocator,
         };
     }
 
@@ -201,6 +215,9 @@ const App = struct {
         _ = self.vso.Release();
         _ = self.pso.Release();
         _ = self.depth_stencil_view.Release();
+        _ = self.entity_transforms.deinit();
+        std.debug.assert(self.general_allocator.deinit() == std.heap.Check.ok);
+        std.heap.page_allocator.destroy(self.general_allocator);
     }
 
     fn update(self: *Self) void {
@@ -209,17 +226,19 @@ const App = struct {
         //     self.engine.time.get_fps()
         // });
 
-        self.camera.update(&self.engine.input, &self.engine.time);
+        if (self.entity_transforms.get(self.camera_idx)) |camera_transform| {
+            self.camera.fly_camera_update(camera_transform, &self.engine.input, &self.engine.time);
 
-        { // Update camera buffer
-            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-            zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.camera_data_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-            defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
+            { // Update camera buffer
+                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.camera_data_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
 
-            var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-            buffer_data.view = self.camera.transform.generate_view_matrix();
-            buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
-        }
+                var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+                buffer_data.view = camera_transform.generate_view_matrix();
+                buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
+            }
+        } else |_| {}
 
         var rtv = self.engine.gfx.begin_frame() catch |err| {
             std.log.err("unable to begin frame: {}", .{err});
@@ -252,13 +271,12 @@ const App = struct {
         const pos_stride: c_uint = @sizeOf(f32) * 3;
         const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
         const offset: c_uint = 0;
-        //self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.vertex_buffer), @ptrCast(&stride), @ptrCast(&offset));
         self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.tree_mesh_set.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
         self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.tree_mesh_set.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
         self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.tree_mesh_set.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
         self.engine.gfx.context.IASetIndexBuffer(self.tree_mesh_set.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
 
-        for (self.tree_mesh_set.meshes.items) |m| {
+        for (self.tree_mesh_set.mesh_list.items) |m| {
             for (m.primitives.items) |p| {
                 if (p.has_indices()) {
                     self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));

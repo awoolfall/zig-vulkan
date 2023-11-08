@@ -16,7 +16,6 @@ inline fn float_from_bool(in: bool) f32 {
 pub const Camera = struct {
     const Self = @This();
 
-    transform: tf.Transform,
     field_of_view_y: f32,
     near_field: f32,
     far_field: f32,
@@ -28,7 +27,7 @@ pub const Camera = struct {
         return zm.perspectiveFovLh(self.field_of_view_y, aspect_ratio, self.near_field, self.far_field);
     }
 
-    pub fn update(self: *Self, input: *const ip.InputState, time: *const tm.TimeState) void {
+    pub fn fly_camera_update(self: *Self, camera_transform: *tf.Transform, input: *const ip.InputState, time: *const tm.TimeState) void {
         { // Camera Movement
             const move_amount = self.move_speed * time.delta_time_f32();
             const cam_x = 
@@ -37,24 +36,24 @@ pub const Camera = struct {
             const cam_z = 
                 float_from_bool(input.get_key(kc.KeyCode.S)) * -move_amount + 
                 float_from_bool(input.get_key(kc.KeyCode.W)) * move_amount;
-            self.transform.position += 
-                self.transform.forward_direction() * zm.f32x4s(cam_z) + 
-                self.transform.right_direction() * zm.f32x4s(cam_x);
+            camera_transform.position += 
+                camera_transform.forward_direction() * zm.f32x4s(cam_z) + 
+                camera_transform.right_direction() * zm.f32x4s(cam_x);
         }
         
         // Camera rotation
         if (input.get_key(kc.KeyCode.MouseRight)) {
-            self.transform.rotation = zm.qmul(
-                self.transform.rotation, 
+            camera_transform.rotation = zm.qmul(
+                camera_transform.rotation, 
                 zm.quatFromAxisAngle(
                     zm.f32x4(0.0, 1.0, 0.0, 0.0), 
                     self.mouse_sensitivity * input.mouse_delta.x
                 )
             );
-            self.transform.rotation = zm.qmul(
-                self.transform.rotation, 
+            camera_transform.rotation = zm.qmul(
+                camera_transform.rotation, 
                 zm.quatFromAxisAngle(
-                    self.transform.right_direction(), 
+                    camera_transform.right_direction(), 
                     self.mouse_sensitivity * input.mouse_delta.y
                 )
             );
