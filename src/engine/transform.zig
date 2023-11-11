@@ -15,7 +15,7 @@ pub const Transform = struct {
         };
     }
 
-    pub inline fn generate_transform_matrix(self: *Self) zm.Mat {
+    pub inline fn generate_model_matrix(self: *const Self) zm.Mat {
         return zm.mul(
             zm.scaling(self.scale, self.scale, self.scale),
             zm.mul(
@@ -25,19 +25,19 @@ pub const Transform = struct {
         );
     }
 
-    pub inline fn generate_view_matrix(self: *Self) zm.Mat {
-        return zm.inverse(self.generate_transform_matrix());
+    pub inline fn generate_view_matrix(self: *const Self) zm.Mat {
+        return zm.inverse(self.generate_model_matrix());
     }
 
-    pub inline fn right_direction(self: *Self) zm.F32x4 {
+    pub inline fn right_direction(self: *const Self) zm.F32x4 {
         return zm.rotate(self.rotation, zm.f32x4(1.0, 0.0, 0.0, 0.0));
     }
 
-    pub inline fn up_direction(self: *Self) zm.F32x4 {
+    pub inline fn up_direction(self: *const Self) zm.F32x4 {
         return zm.rotate(self.rotation, zm.f32x4(0.0, 1.0, 0.0, 0.0));
     }
 
-    pub inline fn forward_direction(self: *Self) zm.F32x4 {
+    pub inline fn forward_direction(self: *const Self) zm.F32x4 {
         return zm.rotate(self.rotation, zm.f32x4(0.0, 0.0, 1.0, 0.0));
     }
 };

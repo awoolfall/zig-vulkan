@@ -21,66 +21,22 @@ pub const MeshPrimitive = struct {
     tex_coord_offset: usize,
     tangents_offset: usize,
 
+    // Check whether the mesh primitive has indices
     pub inline fn has_indices(self: *const MeshPrimitive) bool {
         return self.num_indices != 0;
     }
 };
 
 pub const Mesh = struct {
-    primitives: std.ArrayList(MeshPrimitive),
-
-    pub fn init(alloc: std.mem.Allocator) Mesh {
-        return Mesh {
-            .primitives = std.ArrayList(MeshPrimitive).init(alloc),
-        };
-    }
-
-    pub fn deinit(self: *const Mesh) void {
-        self.primitives.deinit();
-    }
+    primitives: []MeshPrimitive,
 };
 
-fn recursive_load_node(alloc: std.mem.Allocator, node: *const zmesh.io.zcgltf.Node, meshes: *const std.ArrayList(Mesh), data: *const zmesh.io.zcgltf.Data) !ModelNode {
-    var name: ?[]u8 = null;
-    if (node.name != null) {
-        name = try std.fmt.allocPrint(alloc, "{s}", .{node.name.?});
-    }
-
-    var transform = tm.Transform.new();
-    transform.position = zm.f32x4(node.translation[0], node.translation[1], node.translation[2], 0.0);
-    transform.rotation = zm.f32x4(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3]);
-    std.debug.assert(node.scale[0] == node.scale[1] and node.scale[1] == node.scale[2]);
-    transform.scale = node.scale[0];
-
-    var mesh: ?*Mesh = null;
-    if (node.mesh) |m| {
-        // pointer math to convert zmesh mesh pointer to its index in the meshes array in data
-        const mesh_index = (@intFromPtr(m) - @intFromPtr(data.meshes)) / @sizeOf(zmesh.io.zcgltf.Mesh);
-        std.debug.assert(mesh_index >= 0 and mesh_index < meshes.items.len);
-
-        mesh = &meshes.items[mesh_index];
-    }
-
-    var children = std.ArrayList(ModelNode).init(alloc);
-    if (node.children) |node_children| {
-        for (0..node.children_count) |child_idx| {
-            try children.append(try recursive_load_node(alloc, node_children[child_idx], meshes, data));
-        }
-    }
-
-    return ModelNode {
-        .name = name,
-        .transform = transform,
-        .mesh = mesh,
-        .children = children,
-    };
-}
-
 pub const ModelNode = struct {
-    name: ?[]u8,
-    transform: tm.Transform,
-    mesh: ?*Mesh,
-    children: std.ArrayList(ModelNode),
+    name: ?[]u8 = null,
+    transform: tm.Transform = tm.Transform.new(),
+    mesh: ?*Mesh = null,
+    children: ?[]usize = null,
+    parent: ?usize = null,
 };
 
 pub const Model = struct {
@@ -90,35 +46,42 @@ pub const Model = struct {
     normals: ?*d3d11.IBuffer,
     tex_coords: ?*d3d11.IBuffer,
     tangents: ?*d3d11.IBuffer,
-    mesh_list: std.ArrayList(Mesh),
-    root_nodes: std.ArrayList(ModelNode),
+    mesh_list: []Mesh,
+    nodes_list: []ModelNode,
+    root_nodes: []usize,
     arena_allocator: *std.heap.ArenaAllocator,
 
     pub fn init_from_file(alloc: std.mem.Allocator, file: [:0]const u8, gfx_device: *d3d11.IDevice) !Self {
         const data = try zmesh.io.parseAndLoadFile(file);
         defer zmesh.io.freeData(data);
 
-        var mesh_indices = std.ArrayList(u32).init(alloc);
-        defer mesh_indices.deinit();
-        var mesh_positions = std.ArrayList([3]f32).init(alloc);
-        defer mesh_positions.deinit();
-        var mesh_normals = std.ArrayList([3]f32).init(alloc);
-        defer mesh_normals.deinit();
-        var mesh_tex_coords = std.ArrayList([2]f32).init(alloc);
-        defer mesh_tex_coords.deinit();
-        var mesh_tangents = std.ArrayList([4]f32).init(alloc);
-        defer mesh_tangents.deinit();
+        var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
+        errdefer alloc.destroy(model_arena_allocator);
+        model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
+        errdefer model_arena_allocator.deinit();
+        var model_arena = model_arena_allocator.allocator();
 
-        var meshes = std.ArrayList(Mesh).init(alloc);
-        errdefer {
-            for (meshes.items) |m| { m.deinit(); }
-            meshes.deinit();
-        }
+        var local_arena = std.heap.ArenaAllocator.init(alloc);
+        defer local_arena.deinit();
+
+        // Create a number of array lists to store attribute data of various types.
+        // This will later be used to construct model-wide gfx buffers.
+        var mesh_indices = std.ArrayList(u32).init(local_arena.allocator());
+        var mesh_positions = std.ArrayList([3]f32).init(local_arena.allocator());
+        var mesh_normals = std.ArrayList([3]f32).init(local_arena.allocator());
+        var mesh_tex_coords = std.ArrayList([2]f32).init(local_arena.allocator());
+        var mesh_tangents = std.ArrayList([4]f32).init(local_arena.allocator());
+
+        // Create an arraylist ready to store upcoming meshes
+        var meshes = try model_arena.alloc(Mesh, data.meshes_count);
+
         // Iterate through meshes and their primitives adding all data to 
         // the above arraylists and appending mesh data to a arraylist
         for (0..data.meshes_count) |mi| {
-            var mesh = Mesh.init(alloc);
-            const m = data.meshes.?[mi];
+            const m = &data.meshes.?[mi];
+            var mesh = Mesh{
+                .primitives = try model_arena.alloc(MeshPrimitive, m.primitives_count),
+            };
 
             for (0..m.primitives_count) |pi| {
                 var prim = MeshPrimitive {
@@ -144,9 +107,9 @@ pub const Model = struct {
 
                 prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
                 prim.num_indices = mesh_indices.items.len - prim.indices_offset;
-                try mesh.primitives.append(prim);
+                mesh.primitives[pi] = prim;
             }
-            try meshes.append(mesh);
+            meshes[mi] = mesh;
         }
 
         // Create buffers on GPU
@@ -207,19 +170,65 @@ pub const Model = struct {
         errdefer _ = indices_buffer.Release();
 
         // Nodes
-        var arena_allocator = try alloc.create(std.heap.ArenaAllocator);
-        errdefer alloc.destroy(arena_allocator);
+        var nodes_list = try model_arena.alloc(ModelNode, data.nodes_count);
+        @memset(nodes_list, ModelNode{});
 
-        arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
-        errdefer arena_allocator.deinit();
+        for (0..data.nodes_count) |gltf_node_idx| {
+            const gltf_node = &data.nodes.?[gltf_node_idx];   
 
-        var root_nodes = std.ArrayList(ModelNode).init(arena_allocator.allocator());
-        if (data.scene) |s| {
-            for (0..s.nodes_count) |node_index| {
-                try root_nodes.append(try recursive_load_node(arena_allocator.allocator(), s.nodes.?[node_index], &meshes, data));
+            var name: ?[]u8 = null;
+            if (gltf_node.name != null) {
+                name = try std.fmt.allocPrint(model_arena, "{s}", .{gltf_node.name.?});
             }
+
+            var transform = tm.Transform.new();
+            transform.position = zm.f32x4(gltf_node.translation[0], gltf_node.translation[1], gltf_node.translation[2], 0.0);
+            transform.rotation = zm.f32x4(gltf_node.rotation[0], gltf_node.rotation[1], gltf_node.rotation[2], gltf_node.rotation[3]);
+            std.debug.assert(gltf_node.scale[0] == gltf_node.scale[1] and gltf_node.scale[1] == gltf_node.scale[2]);
+            transform.scale = gltf_node.scale[0];
+
+            var mesh: ?*Mesh = null;
+            if (gltf_node.mesh) |m| {
+                // pointer math to convert zmesh mesh pointer to its index in the meshes array in data
+                const mesh_index = (@intFromPtr(m) - @intFromPtr(data.meshes)) / @sizeOf(zmesh.io.zcgltf.Mesh);
+                std.debug.assert(mesh_index >= 0 and mesh_index < meshes.len);
+
+                mesh = &meshes[mesh_index];
+            }
+
+            // link all children
+            var children = try model_arena.alloc(usize, gltf_node.children_count);
+            if (gltf_node.children) |_| {
+                for (0..gltf_node.children_count) |child_idx| {
+                    const node_index_in_model_nodes_list = (@intFromPtr(gltf_node.children.?[child_idx]) - @intFromPtr(data.nodes.?)) / @sizeOf(zmesh.io.zcgltf.Node);
+                    // Assert child node index is within bounds
+                    std.debug.assert(node_index_in_model_nodes_list >= 0 and node_index_in_model_nodes_list < data.nodes_count);
+                    // Assert child does not already have a parent set
+                    std.debug.assert(nodes_list[node_index_in_model_nodes_list].parent == null);
+                    // Set parent on the child node
+                    nodes_list[node_index_in_model_nodes_list].parent = gltf_node_idx;
+
+                    // Add child to current node
+                    children[child_idx] = node_index_in_model_nodes_list;
+                }
+            }
+
+            nodes_list[gltf_node_idx] = ModelNode {
+                .name = name,
+                .transform = transform,
+                .mesh = mesh,
+                .children = children,
+            };
         }
-        
+
+        std.debug.assert(data.scene != null);
+        var root_nodes_list = try model_arena.alloc(usize, data.scene.?.nodes_count);
+        for (0..data.scene.?.nodes_count) |n_idx| {
+            const node_index_in_model_nodes_list = (@intFromPtr(data.scene.?.nodes.?[n_idx]) - @intFromPtr(data.nodes.?)) / @sizeOf(zmesh.io.zcgltf.Node);
+            std.debug.assert(node_index_in_model_nodes_list >= 0 and node_index_in_model_nodes_list < data.nodes_count);
+            root_nodes_list[n_idx] = node_index_in_model_nodes_list;
+        }
+
         return Self {
             .indices = indices_buffer,
             .positions = vert_pos_buffer,
@@ -227,19 +236,15 @@ pub const Model = struct {
             .tex_coords = vert_tex_coord_buffer,
             .tangents = vert_tangents_buffer,
             .mesh_list = meshes,
-            .root_nodes = root_nodes,
-            .arena_allocator = arena_allocator,
+            .nodes_list = nodes_list,
+            .root_nodes = root_nodes_list,
+            .arena_allocator = model_arena_allocator,
         };
     }
 
     pub fn deinit(self: *Self) void {
         self.arena_allocator.deinit();
         self.arena_allocator.child_allocator.destroy(self.arena_allocator);
-
-        for (self.mesh_list.items) |m| {
-            m.deinit();
-        }
-        self.mesh_list.deinit();
 
         _ = self.indices.Release();
         _ = self.positions.Release();

@@ -17,6 +17,14 @@ const CameraStruct = extern struct {
     view: [4]zm.F32x4,
 };
 
+const EntityData = struct {
+    transform: Transform = Transform.new(),
+    mesh: ?*ms.Mesh = null,
+    name: ?[]u8 = null,
+    parent: ?ent.GenerationalIndex = null,
+    children: ?std.ArrayList(ent.GenerationalIndex) = null,
+};
+
 const App = struct {
     const Self = @This();
 
@@ -41,7 +49,8 @@ const App = struct {
     camera_idx: ent.GenerationalIndex,
 
     tree_mesh_set: ms.Model,
-    entity_transforms: ent.GenerationalList(Transform),
+    // entity_transforms: ent.GenerationalList(Transform),
+    entities: ent.GenerationalList(EntityData),
     general_allocator: *std.heap.GeneralPurposeAllocator(.{}),
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
@@ -170,16 +179,50 @@ const App = struct {
         var camera_transform = Transform.new();
         camera_transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
 
-        var entity_transforms = try ent.GenerationalList(Transform).init(std.heap.page_allocator);
-        var camera_transform_idx = try entity_transforms.insert(Transform.new());
-        (try entity_transforms.get(camera_transform_idx)).position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
+        // var entity_transforms = try ent.GenerationalList(Transform).init(std.heap.page_allocator);
+        // var camera_transform_idx = try entity_transforms.insert(Transform.new());
+        // (try entity_transforms.get(camera_transform_idx)).position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
 
         var general_allocator = try std.heap.page_allocator.create(std.heap.GeneralPurposeAllocator(.{}));
         general_allocator.* = std.heap.GeneralPurposeAllocator(.{}){};
 
+        var entities = try ent.GenerationalList(EntityData).init(general_allocator.allocator());
+        var camera_transform_idx = try entities.insert(.{});
+        (try entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
+
+        // Load model
+        const model = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device);
+
+        // Create entities from model
+        {
+            const new_entities = try general_allocator.allocator().alloc(ent.GenerationalIndex, model.nodes_list.len);
+            defer general_allocator.allocator().free(new_entities);
+
+            for (model.nodes_list, 0..) |*n, n_idx| {
+                const ent_idx = try entities.insert(EntityData {
+                    .name = n.name,
+                    .transform = n.transform,
+                    .mesh = n.mesh,
+                });
+                new_entities[n_idx] = ent_idx;
+            }
+            for (model.nodes_list, 0..) |*n, n_idx| {
+                var entity = entities.get(new_entities[n_idx]) catch unreachable;
+                if (n.parent) |p_idx| {
+                    entity.parent = new_entities[p_idx];
+                }
+                if (n.children) |children| {
+                    entity.children = try std.ArrayList(ent.GenerationalIndex).initCapacity(general_allocator.allocator(), n.children.?.len);
+                    for (children) |c_node_idx| {
+                        try entity.children.?.append(new_entities[c_node_idx]);
+                    }
+                }
+            }
+        }
+
         return Self {
             .engine = eng,
-            .entity_transforms = entity_transforms,
+            .entities = entities,
             .depth_stencil_view = depth_stencil_view,
             .vso = vso,
             .pso = pso,
@@ -198,13 +241,22 @@ const App = struct {
             .camera_idx = camera_transform_idx,
 
             //.tree_mesh_set = try ms.Model.init_from_file(std.heap.page_allocator, "../../res/SM_Generic_Tree_04.glb", eng.gfx.device),
-            .tree_mesh_set = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device),
+            .tree_mesh_set = model,
             .general_allocator = general_allocator,
         };
     }
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
+        for (self.entities.data.items) |*maybe_en| {
+            if (maybe_en.*) |*en| {
+                if (en.children != null) {
+                    en.children.?.deinit();
+                }
+            }
+        }
+        self.entities.deinit();
+
         self.tree_mesh_set.deinit();
 
         self.engine.gfx.context.Flush();
@@ -215,7 +267,6 @@ const App = struct {
         _ = self.vso.Release();
         _ = self.pso.Release();
         _ = self.depth_stencil_view.Release();
-        _ = self.entity_transforms.deinit();
         std.debug.assert(self.general_allocator.deinit() == std.heap.Check.ok);
         std.heap.page_allocator.destroy(self.general_allocator);
     }
@@ -226,8 +277,8 @@ const App = struct {
         //     self.engine.time.get_fps()
         // });
 
-        if (self.entity_transforms.get(self.camera_idx)) |camera_transform| {
-            self.camera.fly_camera_update(camera_transform, &self.engine.input, &self.engine.time);
+        if (self.entities.get(self.camera_idx)) |camera_entity| {
+            self.camera.fly_camera_update(&camera_entity.transform, &self.engine.input, &self.engine.time);
 
             { // Update camera buffer
                 var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
@@ -235,7 +286,7 @@ const App = struct {
                 defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
 
                 var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-                buffer_data.view = camera_transform.generate_view_matrix();
+                buffer_data.view = camera_entity.transform.generate_view_matrix();
                 buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
         } else |_| {}
@@ -276,12 +327,30 @@ const App = struct {
         self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.tree_mesh_set.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
         self.engine.gfx.context.IASetIndexBuffer(self.tree_mesh_set.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
 
-        for (self.tree_mesh_set.mesh_list.items) |m| {
-            for (m.primitives.items) |p| {
-                if (p.has_indices()) {
-                    self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
-                } else {
-                    self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+        var arena_allocator = std.heap.ArenaAllocator.init(self.general_allocator.allocator());
+        defer arena_allocator.deinit();
+        var arena = arena_allocator.allocator();
+
+        var resolved_transforms = arena.alloc(?zm.Mat, self.entities.data.items.len) catch unreachable;
+        @memset(resolved_transforms, null);
+
+        for (self.entities.data.items, 0..) |maybe_ent, ent_idx| {
+            if (maybe_ent) |entity| {
+                var model_matrix = entity.transform.generate_model_matrix();
+                if (entity.parent) |parent_idx| {
+                    const parent_model_matrix = recursive_get_model_matrix(parent_idx, &self.entities, resolved_transforms);
+                    model_matrix = zm.mul(parent_model_matrix, model_matrix);
+                }  
+                resolved_transforms[ent_idx] = model_matrix;
+
+                if (entity.mesh) |m| {
+                    for (m.primitives) |p| {
+                        if (p.has_indices()) {
+                            self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
+                        } else {
+                            self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+                        }
+                    }
                 }
             }
         }
@@ -291,6 +360,32 @@ const App = struct {
             return;
         };
         return;
+    }
+
+    fn recursive_get_model_matrix(idx: ent.GenerationalIndex, entities: *ent.GenerationalList(EntityData), resolved_transforms: []?zm.Mat) zm.Mat {
+        // Return cached transform if available
+        if (resolved_transforms[idx.index] != null) {
+            return resolved_transforms[idx.index].?;
+        }
+
+        // Get entity from generational index
+        const entity = entities.get(idx) catch unreachable;
+
+        // generate the parent's local model matrix
+        var model_matrix = entity.transform.generate_model_matrix();
+
+        // if the parent also has a parent, recursively get their model matrix and combine
+        if (entity.parent) |parent_idx| {
+            model_matrix = zm.mul(
+                recursive_get_model_matrix(parent_idx, entities, resolved_transforms),
+                model_matrix
+            );
+        }
+        
+        // cache the model matrix in case it is needed later on
+        resolved_transforms[idx.index] = model_matrix;
+
+        return model_matrix;
     }
 
     pub fn window_event_received(self: *Self, event: *const window.WindowEvent) void {
