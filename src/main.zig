@@ -48,7 +48,10 @@ const App = struct {
     camera: cm.Camera,
     camera_idx: ent.GenerationalIndex,
 
-    tree_mesh_set: ms.Model,
+    model_buffer: *d3d11.IBuffer,
+    model_idx: ent.GenerationalIndex,
+
+    model: ms.Model,
     // entity_transforms: ent.GenerationalList(Transform),
     entities: ent.GenerationalList(EntityData),
     general_allocator: *std.heap.GeneralPurposeAllocator(.{}),
@@ -176,24 +179,21 @@ const App = struct {
         var camera_data_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
 
-        var camera_transform = Transform.new();
-        camera_transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
-
-        // var entity_transforms = try ent.GenerationalList(Transform).init(std.heap.page_allocator);
-        // var camera_transform_idx = try entity_transforms.insert(Transform.new());
-        // (try entity_transforms.get(camera_transform_idx)).position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
-
         var general_allocator = try std.heap.page_allocator.create(std.heap.GeneralPurposeAllocator(.{}));
         general_allocator.* = std.heap.GeneralPurposeAllocator(.{}){};
 
+        // Create the entities generational list
         var entities = try ent.GenerationalList(EntityData).init(general_allocator.allocator());
+
+        // Create the camera entity
         var camera_transform_idx = try entities.insert(.{});
         (try entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
 
         // Load model
         const model = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device);
 
-        // Create entities from model
+        // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
+        var model_root_idx: ent.GenerationalIndex = undefined;
         {
             const new_entities = try general_allocator.allocator().alloc(ent.GenerationalIndex, model.nodes_list.len);
             defer general_allocator.allocator().free(new_entities);
@@ -206,11 +206,15 @@ const App = struct {
                 });
                 new_entities[n_idx] = ent_idx;
             }
+
+            // Once all the entities have been created we can then assign heirarchy
             for (model.nodes_list, 0..) |*n, n_idx| {
                 var entity = entities.get(new_entities[n_idx]) catch unreachable;
+
                 if (n.parent) |p_idx| {
                     entity.parent = new_entities[p_idx];
                 }
+
                 if (n.children) |children| {
                     entity.children = try std.ArrayList(ent.GenerationalIndex).initCapacity(general_allocator.allocator(), n.children.?.len);
                     for (children) |c_node_idx| {
@@ -218,7 +222,22 @@ const App = struct {
                     }
                 }
             }
+
+            // @TODO: figure out a better way to return new entity data to the user
+            // This will be necessary when this scope becomes a function.
+            model_root_idx = new_entities[model.root_nodes[0]];
         }
+
+        const model_constant_buffer_desc = d3d11.BUFFER_DESC {
+            .ByteWidth = @sizeOf(zm.Mat),
+            .Usage = d3d11.USAGE.DYNAMIC,
+            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
+            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
+        };
+        var model_buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&model_constant_buffer_desc, null, @ptrCast(&model_buffer)));
+        errdefer _ = model_buffer.Release();
+
 
         return Self {
             .engine = eng,
@@ -240,8 +259,10 @@ const App = struct {
             },
             .camera_idx = camera_transform_idx,
 
-            //.tree_mesh_set = try ms.Model.init_from_file(std.heap.page_allocator, "../../res/SM_Generic_Tree_04.glb", eng.gfx.device),
-            .tree_mesh_set = model,
+            .model_idx = model_root_idx,
+            .model_buffer = model_buffer,
+
+            .model = model,
             .general_allocator = general_allocator,
         };
     }
@@ -257,16 +278,18 @@ const App = struct {
         }
         self.entities.deinit();
 
-        self.tree_mesh_set.deinit();
+        self.model.deinit();
 
         self.engine.gfx.context.Flush();
         _ = self.camera_data_buffer.Release();
+        _ = self.model_buffer.Release();
         _ = self.rasterizer_state.Release();
         _ = self.vertex_buffer.Release();
         _ = self.vso_input_layout.Release();
         _ = self.vso.Release();
         _ = self.pso.Release();
         _ = self.depth_stencil_view.Release();
+
         std.debug.assert(self.general_allocator.deinit() == std.heap.Check.ok);
         std.heap.page_allocator.destroy(self.general_allocator);
     }
@@ -276,7 +299,19 @@ const App = struct {
         //     self.engine.time.delta_time_f32() * std.time.ms_per_s,
         //     self.engine.time.get_fps()
         // });
+        //
 
+        // Input to move the model around
+        if (self.entities.get(self.model_idx)) |model_entity| {
+            if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
+                model_entity.transform.position[0] += self.engine.time.delta_time_f32();
+            }
+            if (self.engine.input.get_key(kc.KeyCode.ArrowLeft)) {
+                model_entity.transform.position[0] -= self.engine.time.delta_time_f32();
+            }
+        } else |_| {}
+
+        // Camera input and buffer data management
         if (self.entities.get(self.camera_idx)) |camera_entity| {
             self.camera.fly_camera_update(&camera_entity.transform, &self.engine.input, &self.engine.time);
 
@@ -322,10 +357,10 @@ const App = struct {
         const pos_stride: c_uint = @sizeOf(f32) * 3;
         const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
         const offset: c_uint = 0;
-        self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.tree_mesh_set.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
-        self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.tree_mesh_set.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
-        self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.tree_mesh_set.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
-        self.engine.gfx.context.IASetIndexBuffer(self.tree_mesh_set.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
+        self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.model.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
+        self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.model.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
+        self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.model.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
+        self.engine.gfx.context.IASetIndexBuffer(self.model.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
 
         var arena_allocator = std.heap.ArenaAllocator.init(self.general_allocator.allocator());
         defer arena_allocator.deinit();
@@ -334,8 +369,10 @@ const App = struct {
         var resolved_transforms = arena.alloc(?zm.Mat, self.entities.data.items.len) catch unreachable;
         @memset(resolved_transforms, null);
 
+        // Iterate through all entities finding those which contain a mesh to be rendered
         for (self.entities.data.items, 0..) |maybe_ent, ent_idx| {
             if (maybe_ent) |entity| {
+                // Find the transform of the entity to be rendered taking into account it's parent
                 var model_matrix = entity.transform.generate_model_matrix();
                 if (entity.parent) |parent_idx| {
                     const parent_model_matrix = recursive_get_model_matrix(parent_idx, &self.entities, resolved_transforms);
@@ -344,6 +381,19 @@ const App = struct {
                 resolved_transforms[ent_idx] = model_matrix;
 
                 if (entity.mesh) |m| {
+                    { // Setup model buffer from transform
+                        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                        zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.model_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                        defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
+
+                        var buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
+                        buffer_data.* = model_matrix;
+                    }
+                    
+                    // Set model constant buffer
+                    self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
+
+                    // Finally, render the mesh
                     for (m.primitives) |p| {
                         if (p.has_indices()) {
                             self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
@@ -378,7 +428,7 @@ const App = struct {
         if (entity.parent) |parent_idx| {
             model_matrix = zm.mul(
                 recursive_get_model_matrix(parent_idx, entities, resolved_transforms),
-                model_matrix
+                model_matrix,
             );
         }
         

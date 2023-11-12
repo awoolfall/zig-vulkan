@@ -203,6 +203,7 @@ pub const Model = struct {
                     const node_index_in_model_nodes_list = (@intFromPtr(gltf_node.children.?[child_idx]) - @intFromPtr(data.nodes.?)) / @sizeOf(zmesh.io.zcgltf.Node);
                     // Assert child node index is within bounds
                     std.debug.assert(node_index_in_model_nodes_list >= 0 and node_index_in_model_nodes_list < data.nodes_count);
+
                     // Assert child does not already have a parent set
                     std.debug.assert(nodes_list[node_index_in_model_nodes_list].parent == null);
                     // Set parent on the child node
@@ -218,6 +219,10 @@ pub const Model = struct {
                 .transform = transform,
                 .mesh = mesh,
                 .children = children,
+
+                // the parent field is set out of order, hence we need to copy it from the already 
+                // existing data when creating the new ModelNode
+                .parent = nodes_list[gltf_node_idx].parent,
             };
         }
 
