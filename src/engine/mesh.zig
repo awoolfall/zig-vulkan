@@ -28,6 +28,7 @@ pub const MeshPrimitive = struct {
 };
 
 pub const Mesh = struct {
+    buffers: Buffers,
     primitives: []MeshPrimitive,
 };
 
@@ -39,13 +40,17 @@ pub const ModelNode = struct {
     parent: ?usize = null,
 };
 
-pub const Model = struct {
-    const Self = @This();
+pub const Buffers = struct {
     indices: *d3d11.IBuffer,
     positions: *d3d11.IBuffer,
     normals: ?*d3d11.IBuffer,
     tex_coords: ?*d3d11.IBuffer,
     tangents: ?*d3d11.IBuffer,
+};
+
+pub const Model = struct {
+    const Self = @This();
+    buffers: Buffers,
     mesh_list: []Mesh,
     nodes_list: []ModelNode,
     root_nodes: []usize,
@@ -81,6 +86,8 @@ pub const Model = struct {
             const m = &data.meshes.?[mi];
             var mesh = Mesh{
                 .primitives = try model_arena.alloc(MeshPrimitive, m.primitives_count),
+                // will set this later after the gpu buffers are created
+                .buffers = undefined,
             };
 
             for (0..m.primitives_count) |pi| {
@@ -113,51 +120,55 @@ pub const Model = struct {
         }
 
         // Create buffers on GPU
+        var buffers = Buffers {
+            .indices = undefined,
+            .positions = undefined,
+            .normals = null,
+            .tex_coords = null,
+            .tangents = null,
+        };
+
         // Positions
         const vert_pos_buffer_desc = d3d11.BUFFER_DESC {
             .Usage = d3d11.USAGE.IMMUTABLE,
             .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_positions.items.len)),
             .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
         };
-        var vert_pos_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_pos_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_positions.items.ptr), }, @ptrCast(&vert_pos_buffer)));
-        errdefer _ = vert_pos_buffer.Release();
+        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_pos_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_positions.items.ptr), }, @ptrCast(&buffers.positions)));
+        errdefer _ = buffers.positions.Release();
 
         // Normals
-        var vert_norm_buffer: ?*d3d11.IBuffer = null;
         if (mesh_normals.items.len != 0) {
             const vert_norm_buffer_desc = d3d11.BUFFER_DESC {
                 .Usage = d3d11.USAGE.IMMUTABLE,
                 .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_normals.items.len)),
                 .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
             };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_norm_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_normals.items.ptr), }, @ptrCast(&vert_norm_buffer)));
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_norm_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_normals.items.ptr), }, @ptrCast(&buffers.normals)));
         }
-        errdefer { if (vert_norm_buffer) |n| { _ = n.Release(); } }
+        errdefer { if (buffers.normals) |n| { _ = n.Release(); } }
 
         // Tex Coords
-        var vert_tex_coord_buffer: ?*d3d11.IBuffer = null;
         if (mesh_tex_coords.items.len != 0) {
             const vert_tex_coord_buffer_desc = d3d11.BUFFER_DESC {
                 .Usage = d3d11.USAGE.IMMUTABLE,
                 .ByteWidth = @sizeOf(f32) * 2 * @as(c_uint, @intCast(mesh_tex_coords.items.len)),
                 .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
             };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tex_coord_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tex_coords.items.ptr), }, @ptrCast(&vert_tex_coord_buffer)));
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tex_coord_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tex_coords.items.ptr), }, @ptrCast(&buffers.tex_coords)));
         }
-        errdefer { if (vert_tex_coord_buffer) |b| { _ = b.Release(); } }
+        errdefer { if (buffers.tex_coords) |b| { _ = b.Release(); } }
 
         // Tangents
-        var vert_tangents_buffer: ?*d3d11.IBuffer = null;
         if (mesh_tangents.items.len != 0) {
             const vert_tangents_buffer_desc = d3d11.BUFFER_DESC {
                 .Usage = d3d11.USAGE.IMMUTABLE,
                 .ByteWidth = @sizeOf(f32) * 4 * @as(c_uint, @intCast(mesh_tangents.items.len)),
                 .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
             };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tangents_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tangents.items.ptr), }, @ptrCast(&vert_tangents_buffer)));
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tangents_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tangents.items.ptr), }, @ptrCast(&buffers.tangents)));
         }
-        errdefer { if (vert_tangents_buffer) |b| { _ = b.Release(); } }
+        errdefer { if (buffers.tangents) |b| { _ = b.Release(); } }
 
         // Indices
         const indices_buffer_desc = d3d11.BUFFER_DESC {
@@ -165,9 +176,13 @@ pub const Model = struct {
             .ByteWidth = @sizeOf(u32) * @as(c_uint, @intCast(mesh_indices.items.len)),
             .BindFlags = d3d11.BIND_FLAG{ .INDEX_BUFFER = true, },
         };
-        var indices_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.items.ptr), }, @ptrCast(&indices_buffer)));
-        errdefer _ = indices_buffer.Release();
+        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.items.ptr), }, @ptrCast(&buffers.indices)));
+        errdefer _ = buffers.indices.Release();
+
+        // Link buffers in all meshes
+        for (meshes) |*m| {
+            m.buffers = buffers;
+        }
 
         // Nodes
         var nodes_list = try model_arena.alloc(ModelNode, data.nodes_count);
@@ -235,11 +250,7 @@ pub const Model = struct {
         }
 
         return Self {
-            .indices = indices_buffer,
-            .positions = vert_pos_buffer,
-            .normals = vert_norm_buffer,
-            .tex_coords = vert_tex_coord_buffer,
-            .tangents = vert_tangents_buffer,
+            .buffers = buffers,
             .mesh_list = meshes,
             .nodes_list = nodes_list,
             .root_nodes = root_nodes_list,
@@ -251,11 +262,11 @@ pub const Model = struct {
         self.arena_allocator.deinit();
         self.arena_allocator.child_allocator.destroy(self.arena_allocator);
 
-        _ = self.indices.Release();
-        _ = self.positions.Release();
-        if (self.normals) |b| { _ = b.Release(); }
-        if (self.tex_coords) |b| { _ = b.Release(); }
-        if (self.tangents) |b| { _ = b.Release(); }
+        _ = self.buffers.indices.Release();
+        _ = self.buffers.positions.Release();
+        if (self.buffers.normals) |b| { _ = b.Release(); }
+        if (self.buffers.tex_coords) |b| { _ = b.Release(); }
+        if (self.buffers.tangents) |b| { _ = b.Release(); }
     }
 };
 
