@@ -5,19 +5,19 @@ pub const Transform = struct {
 
     position: zm.F32x4,
     rotation: zm.Quat,
-    scale: f32,
+    scale: zm.F32x4,
 
     pub fn new() Self {
         return Self {
             .position = zm.f32x4s(0.0),
             .rotation = zm.qidentity(),
-            .scale = 1.0,
+            .scale = zm.f32x4s(1.0),
         };
     }
 
     pub inline fn generate_model_matrix(self: *const Self) zm.Mat {
         return zm.mul(
-            zm.scaling(self.scale, self.scale, self.scale),
+            zm.scaling(self.scale[0], self.scale[1], self.scale[2]),
             zm.mul(
                 zm.matFromQuat(self.rotation), 
                 zm.translationV(self.position)

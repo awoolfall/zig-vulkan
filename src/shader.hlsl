@@ -29,11 +29,17 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
     float4x4 mvp = mul(model_matrix, vp);
     output.position = mul(float4(input.pos, 1.0), mvp);
     float4 colour = float4(vertId == 0, vertId == 1, vertId == 2, 1.0);
-    output.colour = float4(input.normals, 1.0);
+    float4x4 model_rotation_matrix = float4x4(
+        float4(model_matrix[0].xyz, 0.0),
+        float4(model_matrix[1].xyz, 0.0),
+        float4(model_matrix[2].xyz, 0.0),
+        float4(0.0, 0.0, 0.0, 1.0)
+    );
+    output.colour = mul(float4(input.normals, 0.0), model_rotation_matrix);
     return output;
 }
 
 float4 ps_main(vs_out input) : SV_TARGET
 {
-    return (input.colour / 2.0) + 0.5;
+    return (((input.colour / 2.0) + 0.5) / 2.0) + 0.5;
 }

@@ -25,6 +25,78 @@ const EntityData = struct {
     children: ?std.ArrayList(ent.GenerationalIndex) = null,
 };
 
+pub fn create_entities_from_model(alloc: std.mem.Allocator, model: *const ms.Model, entities: *ent.GenerationalList(EntityData)) !ent.GenerationalIndex {
+    const new_entities = try alloc.alloc(ent.GenerationalIndex, model.nodes_list.len);
+    defer alloc.free(new_entities);
+
+    for (model.nodes_list, 0..) |*n, n_idx| {
+        const ent_idx = try entities.insert(EntityData {
+            .name = n.name,
+            .transform = n.transform,
+            .mesh = n.mesh,
+        });
+        new_entities[n_idx] = ent_idx;
+    }
+
+    // Once all the entities have been created we can then assign heirarchy
+    for (model.nodes_list, 0..) |*n, n_idx| {
+        var entity = entities.get(new_entities[n_idx]) catch unreachable;
+
+        if (n.parent) |p_idx| {
+            entity.parent = new_entities[p_idx];
+        }
+
+        if (n.children) |children| {
+            entity.children = try std.ArrayList(ent.GenerationalIndex).initCapacity(alloc, n.children.?.len);
+            for (children) |c_node_idx| {
+                try entity.children.?.append(new_entities[c_node_idx]);
+            }
+        }
+    }
+
+    // Return the first root node
+    return new_entities[model.root_nodes[0]];
+}
+
+pub fn find_child_with_name(ent_idx: ent.GenerationalIndex, name: []const u8, entities: *ent.GenerationalList(EntityData)) ?ent.GenerationalIndex {
+    // Return null if ent_idx is not a valid entity
+    const entity = entities.get(ent_idx) catch return null;
+
+    // Return entity idx if this entity has the required name
+    if (std.mem.eql(u8, name, entity.name)) {
+        return ent_idx;
+    }
+
+    // Otherwise search all entity's children
+    if (entity.children) |*children| {
+        for (children) |child_idx| {
+            if (find_child_with_name(child_idx, name, entities)) |idx| {
+                return idx;
+            }
+        }
+    }
+
+    // If no children have the required name, return null
+    return null;
+}
+
+pub fn print_entity_chain(ent_idx: ent.GenerationalIndex, indent: usize, entities: *ent.GenerationalList(EntityData)) void {
+    for (0..indent) |_| {
+        std.debug.print("| ", .{});
+    }
+    const entity = entities.get(ent_idx) catch unreachable;
+    if (entity.name) |name| {
+        std.debug.print("{s}\n", .{name});
+    } else {
+        std.debug.print("unnamed\n", .{});
+    }
+    if (entity.children) |*children| {
+        for (children.items) |child_idx| {
+            print_entity_chain(child_idx, indent + 1, entities);
+        }
+    }
+}
+
 const App = struct {
     const Self = @This();
 
@@ -192,72 +264,20 @@ const App = struct {
 
         // Load model
         const chara_model = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device);
-        const tree_model = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/SM_Generic_Tree_04.glb", eng.gfx.device);
+        const tree_model = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/Demonstration.glb", eng.gfx.device);
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
-        var model_root_idx: ent.GenerationalIndex = undefined;
-        {
-            const new_entities = try general_allocator.allocator().alloc(ent.GenerationalIndex, chara_model.nodes_list.len);
-            defer general_allocator.allocator().free(new_entities);
-
-            for (chara_model.nodes_list, 0..) |*n, n_idx| {
-                const ent_idx = try entities.insert(EntityData {
-                    .name = n.name,
-                    .transform = n.transform,
-                    .mesh = n.mesh,
-                });
-                new_entities[n_idx] = ent_idx;
-            }
-
-            // Once all the entities have been created we can then assign heirarchy
-            for (chara_model.nodes_list, 0..) |*n, n_idx| {
-                var entity = entities.get(new_entities[n_idx]) catch unreachable;
-
-                if (n.parent) |p_idx| {
-                    entity.parent = new_entities[p_idx];
-                }
-
-                if (n.children) |children| {
-                    entity.children = try std.ArrayList(ent.GenerationalIndex).initCapacity(general_allocator.allocator(), n.children.?.len);
-                    for (children) |c_node_idx| {
-                        try entity.children.?.append(new_entities[c_node_idx]);
-                    }
-                }
-            }
-
-            // @TODO: figure out a better way to return new entity data to the user
-            // This will be necessary when this scope becomes a function.
-            model_root_idx = new_entities[chara_model.root_nodes[0]];
-        }
-        {
-            const new_entities = try general_allocator.allocator().alloc(ent.GenerationalIndex, tree_model.nodes_list.len);
-            defer general_allocator.allocator().free(new_entities);
-
-            for (tree_model.nodes_list, 0..) |*n, n_idx| {
-                const ent_idx = try entities.insert(EntityData {
-                    .name = n.name,
-                    .transform = n.transform,
-                    .mesh = n.mesh,
-                });
-                new_entities[n_idx] = ent_idx;
-            }
-
-            // Once all the entities have been created we can then assign heirarchy
-            for (tree_model.nodes_list, 0..) |*n, n_idx| {
-                var entity = entities.get(new_entities[n_idx]) catch unreachable;
-
-                if (n.parent) |p_idx| {
-                    entity.parent = new_entities[p_idx];
-                }
-
-                if (n.children) |children| {
-                    entity.children = try std.ArrayList(ent.GenerationalIndex).initCapacity(general_allocator.allocator(), n.children.?.len);
-                    for (children) |c_node_idx| {
-                        try entity.children.?.append(new_entities[c_node_idx]);
-                    }
-                }
-            }
-        }
+        var chara_root_idx = try create_entities_from_model(
+            general_allocator.allocator(),
+            &chara_model,
+            &entities
+        );
+        const tree_idx = try create_entities_from_model(
+            general_allocator.allocator(),
+            &tree_model,
+            &entities
+        );
+        print_entity_chain(tree_idx, 0, &entities);
 
         const model_constant_buffer_desc = d3d11.BUFFER_DESC {
             .ByteWidth = @sizeOf(zm.Mat),
@@ -289,7 +309,7 @@ const App = struct {
             },
             .camera_idx = camera_transform_idx,
 
-            .model_idx = model_root_idx,
+            .model_idx = chara_root_idx,
             .model_buffer = model_buffer,
 
             .chara_model = chara_model,

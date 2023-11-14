@@ -199,8 +199,7 @@ pub const Model = struct {
             var transform = tm.Transform.new();
             transform.position = zm.f32x4(gltf_node.translation[0], gltf_node.translation[1], gltf_node.translation[2], 0.0);
             transform.rotation = zm.f32x4(gltf_node.rotation[0], gltf_node.rotation[1], gltf_node.rotation[2], gltf_node.rotation[3]);
-            std.debug.assert(gltf_node.scale[0] == gltf_node.scale[1] and gltf_node.scale[1] == gltf_node.scale[2]);
-            transform.scale = gltf_node.scale[0];
+            transform.scale = zm.f32x4(gltf_node.scale[0], gltf_node.scale[1], gltf_node.scale[2], 1.0);
 
             var mesh: ?*Mesh = null;
             if (gltf_node.mesh) |m| {
