@@ -199,6 +199,7 @@ pub const Win32Window = struct {
                 return 0;
             },
             w32.WM_LBUTTONDOWN => {
+                _ = w32.SetCapture(hwnd);
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
                     .keycode = __k.KeyCode.MouseLeft,
@@ -214,9 +215,11 @@ pub const Win32Window = struct {
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
+                _ = w32.ReleaseCapture();
                 return 0;
             },
             w32.WM_MBUTTONDOWN => {
+                _ = w32.SetCapture(hwnd);
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
                     .keycode = __k.KeyCode.MouseMiddle,
@@ -232,9 +235,11 @@ pub const Win32Window = struct {
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
+                _ = w32.ReleaseCapture();
                 return 0;
             },
             w32.WM_RBUTTONDOWN => {
+                _ = w32.SetCapture(hwnd);
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
                     .keycode = __k.KeyCode.MouseRight,
@@ -250,6 +255,7 @@ pub const Win32Window = struct {
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
+                _ = w32.ReleaseCapture();
                 return 0;
             },
 

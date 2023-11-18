@@ -6,10 +6,47 @@ const d3d11 = zwin32.d3d11;
 const assert = std.debug.assert;
 const tm = @import("../engine/transform.zig");
 
-pub const RenderMode = enum {
-    TRIANGLES,
-    POINTS,
-    LINES,
+pub const AlphaMode = enum {
+    Opaque,
+    Mask,
+    Transparent,
+};
+
+fn alpha_mode_from_zcgltf(alpha_mode: zmesh.io.zcgltf.AlphaMode) AlphaMode {
+    return switch (alpha_mode) {
+        .@"opaque" => AlphaMode.Opaque,
+        .@"mask" => AlphaMode.Mask,
+        .@"blend" => AlphaMode.Transparent,
+    };
+}
+
+pub const PrimitiveTopology = enum {
+    Points,
+    Lines,
+    LineLoop,
+    LineStrip,
+    Triangles,
+    TriangleStrip,
+    TriangleFan,
+};
+
+fn primitive_topology_from_zcgltf(topology: zmesh.io.zcgltf.PrimitiveType) PrimitiveTopology {
+    return switch (topology) {
+        .@"points" => PrimitiveTopology.Points,
+        .@"lines" => PrimitiveTopology.Lines,
+        .@"line_strip" => PrimitiveTopology.LineStrip,
+        .@"line_loop" => PrimitiveTopology.LineLoop,
+        .@"triangles" => PrimitiveTopology.Triangles,
+        .@"triangle_strip" => PrimitiveTopology.TriangleStrip,
+        .@"triangle_fan" => PrimitiveTopology.TriangleFan,
+    };
+}
+
+pub const MaterialDescriptor = struct {
+    alpha_mode: AlphaMode = AlphaMode.Opaque,
+    alpha_cutoff: f32 = 0.0,
+    double_sided: bool = false,
+    unlit: bool = false,
 };
 
 pub const MeshPrimitive = struct {
@@ -20,6 +57,8 @@ pub const MeshPrimitive = struct {
     nor_offset: usize,
     tex_coord_offset: usize,
     tangents_offset: usize,
+    topology: PrimitiveTopology,
+    material_descriptor: MaterialDescriptor,
 
     // Check whether the mesh primitive has indices
     pub inline fn has_indices(self: *const MeshPrimitive) bool {
@@ -91,6 +130,14 @@ pub const Model = struct {
             };
 
             for (0..m.primitives_count) |pi| {
+                var prim_mat = MaterialDescriptor {};
+                if (m.primitives[pi].material) |material| {
+                    prim_mat.double_sided = material.double_sided != 0;
+                    prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
+                    prim_mat.alpha_cutoff = material.alpha_cutoff;
+                    prim_mat.unlit = material.unlit != 0;
+                }
+
                 var prim = MeshPrimitive {
                     .num_indices = undefined,
                     .num_vertices = undefined,
@@ -99,6 +146,8 @@ pub const Model = struct {
                     .nor_offset = mesh_normals.items.len,
                     .tex_coord_offset = mesh_tex_coords.items.len,
                     .tangents_offset = mesh_tangents.items.len,
+                    .material_descriptor = prim_mat,
+                    .topology = primitive_topology_from_zcgltf(m.primitives[pi].type),
                 };
 
                 try appendMeshPrimitive(
