@@ -26,6 +26,13 @@ pub const WindowEvent = union(WindowEventTag) {
     RAW_MOUSE_MOVED: RawMouseMoveEvent,
 };
 
+pub const Rect = struct {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+};
+
 pub const WindowSize = struct {
     width: i32,
     height: i32,

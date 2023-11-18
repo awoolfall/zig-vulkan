@@ -118,6 +118,46 @@ pub const Win32Window = struct {
         return wb.WindowSize{.width = rect.right, .height = rect.bottom};
     }
 
+    pub fn show_cursor(self: *Win32Window, should_show_cursor: bool) void {
+        _ = self;
+        // Windows shows the cursor if an internal counter is greater than or
+        // equal to 0 and hides it if it is less than 0. The value of this counter
+        // is returned each ShowCursor(). To make sure this function behaves properly
+        // we need to manage this internal counter with while loops.
+        if (should_show_cursor) {
+            while (w32.ShowCursor(1) < 0) {}
+        } else {
+            while (w32.ShowCursor(0) >= 0) {}
+        }
+    }
+
+    pub fn free_confined_cursor(self: *Win32Window) void {
+        _ = self;
+        _ = w32.ClipCursor(null);
+    }
+
+    pub fn confine_cursor(self: *Win32Window, rect: wb.Rect) void {
+        _ = self;
+        const w32rect = w32.RECT {
+            .left = rect.x,
+            .right = rect.x + rect.width,
+            .top = rect.y,
+            .bottom = rect.y + rect.height,
+        };
+        _ = w32.ClipCursor(&w32rect);
+    }
+
+    pub fn confine_cursor_to_current_pos(self: *Win32Window) void {
+        var cursor_pos: w32.POINT = undefined;
+        if (w32.GetCursorPos(&cursor_pos) == 0) { return; }
+        self.confine_cursor(wb.Rect{
+            .x = cursor_pos.x,
+            .y = cursor_pos.y,
+            .width = 1,
+            .height = 1,
+        });
+    }
+
     fn construct_key_event(w_param: w32.WPARAM, l_param: w32.LPARAM) ?wb.KeyEvent {
         const key = convert_windows_keycode(w_param);
         if (key == null) { return null; }

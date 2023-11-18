@@ -367,7 +367,7 @@ pub const App = struct {
 
         // Camera input and buffer data management
         if (self.entities.get(self.camera_idx)) |camera_entity| {
-            self.camera.fly_camera_update(&camera_entity.transform, &self.engine.input, &self.engine.time);
+            self.camera.fly_camera_update(&camera_entity.transform, self.engine);
 
             { // Update camera buffer
                 var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
