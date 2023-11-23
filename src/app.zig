@@ -1,6 +1,7 @@
 const std = @import("std");
 const zwin32 = @import("zwin32");
 const zm = @import("zmath");
+const zphy = @import("zphysics");
 const w32 = zwin32.w32;
 const d3d11 = zwin32.d3d11;
 
@@ -11,102 +12,29 @@ const kc = @import("input/keycode.zig");
 const cm = @import("engine/camera.zig");
 const ms = @import("engine/mesh.zig");
 const ent = @import("engine/entity.zig");
+const ph = @import("engine/physics.zig");
 
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
     view: [4]zm.F32x4,
 };
 
-pub const EntityData = struct {
-    transform: Transform = Transform.new(),
-    mesh: ?*ms.Mesh = null,
-    name: ?[]u8 = null,
-    parent: ?ent.GenerationalIndex = null,
-    children: ?std.ArrayList(ent.GenerationalIndex) = null,
-};
-
-pub const EntityList = ent.GenerationalList(EntityData);
-
-pub fn create_entities_from_model(alloc: std.mem.Allocator, model: *const ms.Model, entities: *EntityList) !ent.GenerationalIndex {
-    const new_entities = try alloc.alloc(ent.GenerationalIndex, model.nodes_list.len);
-    defer alloc.free(new_entities);
-
-    for (model.nodes_list, 0..) |*n, n_idx| {
-        const ent_idx = try entities.insert(EntityData {
-            .name = n.name,
-            .transform = n.transform,
-            .mesh = n.mesh,
-        });
-        new_entities[n_idx] = ent_idx;
-    }
-
-    // Once all the entities have been created we can then assign heirarchy
-    for (model.nodes_list, 0..) |*n, n_idx| {
-        var entity = entities.get(new_entities[n_idx]) catch unreachable;
-
-        if (n.parent) |p_idx| {
-            entity.parent = new_entities[p_idx];
-        }
-
-        if (n.children) |children| {
-            entity.children = try std.ArrayList(ent.GenerationalIndex).initCapacity(alloc, n.children.?.len);
-            for (children) |c_node_idx| {
-                try entity.children.?.append(new_entities[c_node_idx]);
-            }
-        }
-    }
-
-    // Return the first root node
-    return new_entities[model.root_nodes[0]];
-}
-
-pub fn find_child_with_name(ent_idx: ent.GenerationalIndex, name: []const u8, entities: *EntityList) ?ent.GenerationalIndex {
-    // Return null if ent_idx is not a valid entity
-    const entity = entities.get(ent_idx) catch return null;
-
-    // Return entity idx if this entity has the required name
-    if (std.mem.eql(u8, name, entity.name)) {
-        return ent_idx;
-    }
-
-    // Otherwise search all entity's children
-    if (entity.children) |*children| {
-        for (children) |child_idx| {
-            if (find_child_with_name(child_idx, name, entities)) |idx| {
-                return idx;
-            }
-        }
-    }
-
-    // If no children have the required name, return null
-    return null;
-}
-
-pub fn print_entity_chain(ent_idx: ent.GenerationalIndex, indent: usize, entities: *EntityList) void {
-    for (0..indent) |_| {
-        std.debug.print("| ", .{});
-    }
-    const entity = entities.get(ent_idx) catch unreachable;
-    if (entity.name) |name| {
-        std.debug.print("{s}\n", .{name});
-    } else {
-        std.debug.print("unnamed\n", .{});
-    }
-    if (entity.children) |*children| {
-        for (children.items) |child_idx| {
-            print_entity_chain(child_idx, indent + 1, entities);
-        }
-    }
-}
-
 pub const Engine = engine.Engine(App);
 pub const App = struct {
     const Self = @This();
+
+    pub const EntityData = struct {
+    };
 
     const triangle_vertices: [3 * 3]zwin32.w32.FLOAT = [_]zwin32.w32.FLOAT{
         0.0, 0.5, 0.0,
         -0.5, -0.5, 0.0,
         0.5, -0.5, 0.0,
+    };
+
+    const RasterizationStates = struct {
+        double_sided: *d3d11.IRasterizerState,
+        cull_back_face: *d3d11.IRasterizerState,
     };
 
     engine: *engine.Engine(Self),
@@ -117,7 +45,7 @@ pub const App = struct {
     pso: *d3d11.IPixelShader,
     vso_input_layout: *d3d11.IInputLayout,
     vertex_buffer: *d3d11.IBuffer,
-    rasterizer_state: *d3d11.IRasterizerState,
+    rasterizer_states: RasterizationStates,
     
     camera_data_buffer: *d3d11.IBuffer,
     camera: cm.Camera,
@@ -128,9 +56,8 @@ pub const App = struct {
 
     chara_model: ms.Model,
     tree_model: ms.Model,
-    // entity_transforms: ent.GenerationalList(Transform),
-    entities: EntityList,
-    general_allocator: *std.heap.GeneralPurposeAllocator(.{}),
+
+    chara_physics_id: zphy.BodyId,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
@@ -238,12 +165,18 @@ pub const App = struct {
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&vertex_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &triangle_vertices, }, @ptrCast(&vertex_buffer)));
 
         // Define rasterizer state
-        const rasterizer_state_desc = d3d11.RASTERIZER_DESC {
+        var rasterization_states = RasterizationStates {
+            .double_sided = undefined,
+            .cull_back_face = undefined,
+        };
+        var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
             .FillMode = d3d11.FILL_MODE.SOLID,
             .CullMode = d3d11.CULL_MODE.BACK,
         };
-        var rasterizer_state: *d3d11.IRasterizerState = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterizer_state)));
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_states.cull_back_face)));
+
+        rasterizer_state_desc.CullMode = d3d11.CULL_MODE.NONE;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_states.double_sided)));
 
         // Create camera constant buffer
         const camera_constant_buffer_desc = d3d11.BUFFER_DESC {
@@ -255,32 +188,33 @@ pub const App = struct {
         var camera_data_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
 
-        var general_allocator = try std.heap.page_allocator.create(std.heap.GeneralPurposeAllocator(.{}));
-        general_allocator.* = std.heap.GeneralPurposeAllocator(.{}){};
-
-        // Create the entities generational list
-        var entities = try EntityList.init(general_allocator.allocator());
-
         // Create the camera entity
-        var camera_transform_idx = try entities.insert(.{});
-        (try entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
+        var camera_transform_idx = try eng.entities.insert(.{});
+        (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
 
         // Load model
-        const chara_model = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device);
-        const tree_model = try ms.Model.init_from_file(general_allocator.allocator(), "../../res/Demonstration.glb", eng.gfx.device);
+        const chara_model = try ms.Model.init_from_file(eng.general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device);
+        const tree_model = try ms.Model.init_from_file(eng.general_allocator.allocator(), "../../res/Demonstration.glb", eng.gfx.device);
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
-        var chara_root_idx = try create_entities_from_model(
-            general_allocator.allocator(),
-            &chara_model,
-            &entities
-        );
-        const tree_idx = try create_entities_from_model(
-            general_allocator.allocator(),
-            &tree_model,
-            &entities
-        );
-        print_entity_chain(tree_idx, 0, &entities);
+        var chara_root_idx = try eng.create_entities_from_model(&chara_model);
+        const tree_idx = try eng.create_entities_from_model(&tree_model);
+        eng.print_entity_chain(tree_idx, 0);
+
+        const chara_shape_settings = try zphy.CapsuleShapeSettings.create(1.0, 0.2);
+        defer chara_shape_settings.release();
+
+        const chara_shape = try chara_shape_settings.createShape();
+        defer chara_shape.release();
+
+        const chara_transform = (try eng.entities.get(chara_root_idx)).transform;
+        const chara_body_id = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
+            .position = chara_transform.position,
+            .rotation = chara_transform.rotation,
+            .shape = chara_shape,
+            .motion_type = .kinematic,
+            .object_layer = ph.object_layers.moving,
+        }, .activate);
 
         const model_constant_buffer_desc = d3d11.BUFFER_DESC {
             .ByteWidth = @sizeOf(zm.Mat),
@@ -292,15 +226,16 @@ pub const App = struct {
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&model_constant_buffer_desc, null, @ptrCast(&model_buffer)));
         errdefer _ = model_buffer.Release();
 
+        eng.physics.zphy.optimizeBroadPhase();
+
         return Self {
             .engine = eng,
-            .entities = entities,
             .depth_stencil_view = depth_stencil_view,
             .vso = vso,
             .pso = pso,
             .vso_input_layout = vso_input_layout,
             .vertex_buffer = vertex_buffer,
-            .rasterizer_state = rasterizer_state,
+            .rasterizer_states = rasterization_states,
 
             .camera_data_buffer = camera_data_buffer,
             .camera = cm.Camera {
@@ -317,20 +252,14 @@ pub const App = struct {
 
             .chara_model = chara_model,
             .tree_model = tree_model,
-            .general_allocator = general_allocator,
+
+            .chara_physics_id = chara_body_id,
         };
     }
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
-        for (self.entities.data.items) |*maybe_en| {
-            if (maybe_en.*) |*en| {
-                if (en.children != null) {
-                    en.children.?.deinit();
-                }
-            }
-        }
-        self.entities.deinit();
+        self.engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(self.chara_physics_id);
 
         self.chara_model.deinit();
         self.tree_model.deinit();
@@ -338,15 +267,13 @@ pub const App = struct {
         self.engine.gfx.context.Flush();
         _ = self.camera_data_buffer.Release();
         _ = self.model_buffer.Release();
-        _ = self.rasterizer_state.Release();
+        _ = self.rasterizer_states.double_sided.Release();
+        _ = self.rasterizer_states.cull_back_face.Release();
         _ = self.vertex_buffer.Release();
         _ = self.vso_input_layout.Release();
         _ = self.vso.Release();
         _ = self.pso.Release();
         _ = self.depth_stencil_view.Release();
-
-        std.debug.assert(self.general_allocator.deinit() == std.heap.Check.ok);
-        std.heap.page_allocator.destroy(self.general_allocator);
     }
 
     fn update(self: *Self) void {
@@ -356,7 +283,7 @@ pub const App = struct {
         // });
 
         // Input to move the model around
-        if (self.entities.get(self.model_idx)) |model_entity| {
+        if (self.engine.entities.get(self.model_idx)) |model_entity| {
             if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
                 model_entity.transform.position[0] += self.engine.time.delta_time_f32();
             }
@@ -366,7 +293,7 @@ pub const App = struct {
         } else |_| {}
 
         // Camera input and buffer data management
-        if (self.entities.get(self.camera_idx)) |camera_entity| {
+        if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
             self.camera.fly_camera_update(&camera_entity.transform, self.engine);
 
             { // Update camera buffer
@@ -380,6 +307,22 @@ pub const App = struct {
             }
         } else |_| {}
 
+        // Cast ray from camera
+        if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
+            var raycast_result = self.engine.physics.zphy.getNarrowPhaseQuery().castRay(.{
+                .origin = camera_entity.transform.position,
+                .direction = camera_entity.transform.forward_direction(),
+            }, .{});
+            if (raycast_result.has_hit) {
+                std.log.info("  raycast hit! id:{}", .{raycast_result.hit.body_id});
+            }
+        } else |_| {}
+
+        // Update physics
+        self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
+            catch std.log.err("Unable to update physics", .{});
+
+        // Draw frame
         var rtv = self.engine.gfx.begin_frame() catch |err| {
             std.log.err("unable to begin frame: {}", .{err});
             return;
@@ -396,7 +339,6 @@ pub const App = struct {
             .MaxDepth = 1.0,
         };
         self.engine.gfx.context.RSSetViewports(1, @ptrCast(&viewport));
-        self.engine.gfx.context.RSSetState(self.rasterizer_state);
 
         self.engine.gfx.context.PSSetShader(self.pso, null, 0);
 
@@ -408,20 +350,20 @@ pub const App = struct {
 
         self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
         self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
-        var arena_allocator = std.heap.ArenaAllocator.init(self.general_allocator.allocator());
+        var arena_allocator = std.heap.ArenaAllocator.init(self.engine.general_allocator.allocator());
         defer arena_allocator.deinit();
         var arena = arena_allocator.allocator();
 
-        var resolved_transforms = arena.alloc(?zm.Mat, self.entities.data.items.len) catch unreachable;
+        var resolved_transforms = arena.alloc(?zm.Mat, self.engine.entities.data.items.len) catch unreachable;
         @memset(resolved_transforms, null);
 
         // Iterate through all entities finding those which contain a mesh to be rendered
-        for (self.entities.data.items, 0..) |maybe_ent, ent_idx| {
+        for (self.engine.entities.data.items, 0..) |maybe_ent, ent_idx| {
             if (maybe_ent) |entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
                 var model_matrix = entity.transform.generate_model_matrix();
                 if (entity.parent) |parent_idx| {
-                    const parent_model_matrix = recursive_get_model_matrix(parent_idx, &self.entities, resolved_transforms);
+                    const parent_model_matrix = recursive_get_model_matrix(parent_idx, &self.engine.entities, resolved_transforms);
                     model_matrix = zm.mul(parent_model_matrix, model_matrix);
                 }  
                 resolved_transforms[ent_idx] = model_matrix;
@@ -448,7 +390,13 @@ pub const App = struct {
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
 
                     // Finally, render the mesh
-                    for (m.primitives) |p| {
+                    for (m.primitives) |*p| {
+                        if (p.material_descriptor.double_sided) {
+                            self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+                        } else {
+                            self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
+                        }
+
                         if (p.has_indices()) {
                             self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
                         } else {
@@ -466,7 +414,7 @@ pub const App = struct {
         return;
     }
 
-    fn recursive_get_model_matrix(idx: ent.GenerationalIndex, entities: *EntityList, resolved_transforms: []?zm.Mat) zm.Mat {
+    fn recursive_get_model_matrix(idx: ent.GenerationalIndex, entities: *Engine.EntityList, resolved_transforms: []?zm.Mat) zm.Mat {
         // Return cached transform if available
         if (resolved_transforms[idx.index] != null) {
             return resolved_transforms[idx.index].?;

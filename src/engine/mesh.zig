@@ -45,7 +45,7 @@ fn primitive_topology_from_zcgltf(topology: zmesh.io.zcgltf.PrimitiveType) Primi
 pub const MaterialDescriptor = struct {
     alpha_mode: AlphaMode = AlphaMode.Opaque,
     alpha_cutoff: f32 = 0.0,
-    double_sided: bool = false,
+    double_sided: bool = true,
     unlit: bool = false,
 };
 
@@ -101,6 +101,7 @@ pub const Model = struct {
 
         var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
         errdefer alloc.destroy(model_arena_allocator);
+
         model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
         errdefer model_arena_allocator.deinit();
         var model_arena = model_arena_allocator.allocator();
@@ -132,10 +133,10 @@ pub const Model = struct {
             for (0..m.primitives_count) |pi| {
                 var prim_mat = MaterialDescriptor {};
                 if (m.primitives[pi].material) |material| {
-                    prim_mat.double_sided = material.double_sided != 0;
+                    prim_mat.double_sided = material.double_sided > 0;
                     prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
                     prim_mat.alpha_cutoff = material.alpha_cutoff;
-                    prim_mat.unlit = material.unlit != 0;
+                    prim_mat.unlit = material.unlit > 0;
                 }
 
                 var prim = MeshPrimitive {

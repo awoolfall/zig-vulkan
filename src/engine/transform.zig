@@ -9,7 +9,7 @@ pub const Transform = struct {
 
     pub fn new() Self {
         return Self {
-            .position = zm.f32x4s(0.0),
+            .position = zm.f32x4(0.0, 0.0, 0.0, 1.0),
             .rotation = zm.qidentity(),
             .scale = zm.f32x4s(1.0),
         };
