@@ -2,6 +2,7 @@ const std = @import("std");
 const zmesh = @import("zmesh");
 const zwin32 = @import("zwin32");
 const zm = @import("zmath");
+const zphy = @import("zphysics");
 const d3d11 = zwin32.d3d11;
 const assert = std.debug.assert;
 const tm = @import("../engine/transform.zig");
@@ -69,6 +70,7 @@ pub const MeshPrimitive = struct {
 pub const Mesh = struct {
     buffers: Buffers,
     primitives: []MeshPrimitive,
+    physics_shape: *zphy.Shape,
 };
 
 pub const ModelNode = struct {
@@ -128,6 +130,7 @@ pub const Model = struct {
                 .primitives = try model_arena.alloc(MeshPrimitive, m.primitives_count),
                 // will set this later after the gpu buffers are created
                 .buffers = undefined,
+                .physics_shape = undefined,
             };
 
             for (0..m.primitives_count) |pi| {
@@ -166,6 +169,24 @@ pub const Model = struct {
                 prim.num_indices = mesh_indices.items.len - prim.indices_offset;
                 mesh.primitives[pi] = prim;
             }
+
+            // Construct physics shape for the mesh taking into account all its primitives
+            {
+                const primf = &mesh.primitives[0];
+                const total_num_verticies_in_all_primitives = mesh_positions.items.len - primf.pos_offset;
+
+                const settings = try zphy.ConvexHullShapeSettings.create(
+                    &(mesh_positions.items[primf.pos_offset]), 
+                    @intCast(total_num_verticies_in_all_primitives), 
+                    @sizeOf([3]f32));
+                defer settings.release();
+
+                //settings.setMaxConvexRadius(0.1);
+
+                mesh.physics_shape = try settings.createShape();
+            }
+
+            // Finally append mesh to mesh list
             meshes[mi] = mesh;
         }
 
@@ -308,6 +329,10 @@ pub const Model = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        for (self.mesh_list) |*m| {
+            m.physics_shape.release();
+        }
+
         self.arena_allocator.deinit();
         self.arena_allocator.child_allocator.destroy(self.arena_allocator);
 

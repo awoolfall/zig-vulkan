@@ -57,8 +57,6 @@ pub const App = struct {
     chara_model: ms.Model,
     tree_model: ms.Model,
 
-    chara_physics_id: zphy.BodyId,
-
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
 
@@ -198,7 +196,9 @@ pub const App = struct {
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
         var chara_root_idx = try eng.create_entities_from_model(&chara_model);
+
         const tree_idx = try eng.create_entities_from_model(&tree_model);
+        add_physics_bodies_to_entity_chain(eng, tree_idx);
         eng.print_entity_chain(tree_idx, 0);
 
         const chara_shape_settings = try zphy.CapsuleShapeSettings.create(1.0, 0.2);
@@ -208,11 +208,11 @@ pub const App = struct {
         defer chara_shape.release();
 
         const chara_transform = (try eng.entities.get(chara_root_idx)).transform;
-        const chara_body_id = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
+        (try eng.entities.get(chara_root_idx)).physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
             .position = chara_transform.position,
             .rotation = chara_transform.rotation,
             .shape = chara_shape,
-            .motion_type = .kinematic,
+            .motion_type = .dynamic,
             .object_layer = ph.object_layers.moving,
         }, .activate);
 
@@ -252,15 +252,11 @@ pub const App = struct {
 
             .chara_model = chara_model,
             .tree_model = tree_model,
-
-            .chara_physics_id = chara_body_id,
         };
     }
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
-        self.engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(self.chara_physics_id);
-
         self.chara_model.deinit();
         self.tree_model.deinit();
 
@@ -285,10 +281,18 @@ pub const App = struct {
         // Input to move the model around
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
             if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
-                model_entity.transform.position[0] += self.engine.time.delta_time_f32();
+                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] + self.engine.time.delta_time_f32(), 0.0, 0.0, 1.0);
+                // model_entity.transform.position[0] += self.engine.time.delta_time_f32();
+                const pos = model_entity.transform.position;
+                var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
+                body_interface.setPosition(model_entity.physics_body.?, [3]f32{pos[0], pos[1], pos[2]}, .activate);
             }
             if (self.engine.input.get_key(kc.KeyCode.ArrowLeft)) {
-                model_entity.transform.position[0] -= self.engine.time.delta_time_f32();
+                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] - self.engine.time.delta_time_f32(), 0.0, 0.0, 1.0);
+                // model_entity.transform.position[0] -= self.engine.time.delta_time_f32();
+                const pos = model_entity.transform.position;
+                var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
+                body_interface.setPosition(model_entity.physics_body.?, [3]f32{pos[0], pos[1], pos[2]}, .activate);
             }
         } else |_| {}
 
@@ -321,6 +325,18 @@ pub const App = struct {
         // Update physics
         self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
             catch std.log.err("Unable to update physics", .{});
+        {
+            const body_interface = self.engine.physics.zphy.getBodyInterface();
+            for (self.engine.entities.data.items) |*maybe_en| {
+                if (maybe_en.*) |*en| {
+                    if (en.physics_body) |body_id| {
+                        const pos = body_interface.getPosition(body_id);
+                        en.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                        en.transform.rotation = body_interface.getRotation(body_id);
+                    }
+                }
+            }
+        }
 
         // Draw frame
         var rtv = self.engine.gfx.begin_frame() catch |err| {
@@ -438,6 +454,32 @@ pub const App = struct {
         resolved_transforms[idx.index] = model_matrix;
 
         return model_matrix;
+    }
+
+    fn add_physics_bodies_to_entity_chain(eng: *Engine, idx: ent.GenerationalIndex) void {
+        var entity = eng.entities.get(idx) catch unreachable;
+
+        // Create physics body and attach to idx 
+        if (entity.physics_body == null) {
+            if (entity.mesh) |mesh| {
+                var body_inderface = eng.physics.zphy.getBodyInterfaceMut();
+                entity.physics_body = body_inderface.createAndAddBody(.{
+                    // @TODO: get world transform for entity, not local transform
+                    .position = entity.transform.position,
+                    .rotation = entity.transform.rotation,
+                    .shape = mesh.physics_shape,
+                    .motion_type = .static,
+                    .object_layer = ph.object_layers.non_moving,
+                }, .activate) catch unreachable;
+            }
+        }
+
+        // do for all idx children
+        if (entity.children) |*children| {
+            for (children.items) |child_idx| {
+                add_physics_bodies_to_entity_chain(eng, child_idx);
+            }
+        }
     }
 
     pub fn window_event_received(self: *Self, event: *const window.WindowEvent) void {

@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) void {
         .options = .{
             .use_double_precision = false,
             .enable_cross_platform_determinism = true,
+            .enable_debug_renderer = true,
         }
     });
     zphysics_pkg.link(exe);

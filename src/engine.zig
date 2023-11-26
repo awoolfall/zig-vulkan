@@ -24,6 +24,7 @@ pub fn Engine(comptime App: type) type {
             name: ?[]u8 = null,
             transform: tf.Transform = tf.Transform.new(),
             mesh: ?*ms.Mesh = null,
+            physics_body: ?ps.BodyId = null,
             parent: ?gen.GenerationalIndex = null,
             children: ?std.ArrayList(gen.GenerationalIndex) = null,
             app: App.EntityData = App.EntityData {},
@@ -62,24 +63,8 @@ pub fn Engine(comptime App: type) type {
             }
             const alloc = engine.general_allocator.allocator();
 
-            engine.entities = try EntityList.init(alloc);
-            defer {
-                for (engine.entities.data.items) |*maybe_en| {
-                    if (maybe_en.*) |*en| {
-                        if (en.children != null) {
-                            en.children.?.deinit();
-                        }
-                    }
-                }
-                engine.entities.deinit();
-            }
-
             zmesh.init(alloc);
             defer zmesh.deinit();
-
-            Log.debug("Calling physics init", .{});
-            engine.physics = try ps.PhysicsSystem.init(alloc);
-            defer engine.physics.deinit();
 
             engine.time = time.TimeState.init();
             defer engine.time.deinit();
@@ -95,6 +80,26 @@ pub fn Engine(comptime App: type) type {
             Log.debug("Calling GFX init!", .{});
             engine.gfx = try d3d11.D3D11State.init(&engine.window);
             defer engine.gfx.deinit();
+
+            Log.debug("Calling physics init", .{});
+            engine.physics = try ps.PhysicsSystem.init(alloc);
+            defer engine.physics.deinit();
+
+            engine.entities = try EntityList.init(alloc);
+            defer {
+                for (engine.entities.data.items) |*maybe_en| {
+                    if (maybe_en.*) |*en| {
+                        if (en.physics_body) |body_id| {
+                            engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(body_id);
+                            en.physics_body = null;
+                        }
+                        if (en.children != null) {
+                            en.children.?.deinit();
+                        }
+                    }
+                }
+                engine.entities.deinit();
+            }
 
             Log.debug("Calling app init!", .{});
             engine.app = try App.init(&engine);
