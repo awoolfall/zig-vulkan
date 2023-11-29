@@ -2,6 +2,8 @@ const std = @import("std");
 const zphy = @import("zphysics");
 pub const BodyId = zphy.BodyId;
 const en = @import("../engine.zig");
+const graphics = @import("../gfx/d3d11.zig");
+const debug = @import("physics_debug_renderer.zig");
 
 pub const PhysicsSystem = struct {
     const Self = @This();
@@ -11,11 +13,11 @@ pub const PhysicsSystem = struct {
         broad_phase_layer_interface: *BroadPhaseLayerInterface,
         object_vs_broad_phase_layer_filter: *ObjectVsBroadPhaseLayerFilter,
         object_layer_pair_filter: *ObjectLayerPairFilter,
-        debug_renderer: *DebugRenderer,
+        debug_renderer: *debug.D3D11DebugRenderer,
     },
     zphy: *zphy.PhysicsSystem,
 
-    pub fn init(alloc: std.mem.Allocator) !Self {
+    pub fn init(alloc: std.mem.Allocator, gfx: *graphics.D3D11State) !Self {
         try zphy.init(alloc, .{});
         errdefer zphy.deinit();
 
@@ -44,12 +46,12 @@ pub const PhysicsSystem = struct {
         );
         errdefer physics_system.destroy();
 
-        const debug_renderer = try alloc.create(DebugRenderer);
+        const debug_renderer = try alloc.create(debug.D3D11DebugRenderer);
         errdefer alloc.destroy(debug_renderer);
-        // debug_renderer.* = DebugRenderer{};
-        //
-        // try zphy.DebugRenderer.createSingleton(debug_renderer);
-        // errdefer zphy.DebugRenderer.destroySingleton();
+        debug_renderer.* = try debug.D3D11DebugRenderer.init(gfx);
+
+        try zphy.DebugRenderer.createSingleton(debug_renderer);
+        errdefer zphy.DebugRenderer.destroySingleton();
 
         return Self {
             ._allocator = alloc,
@@ -64,8 +66,9 @@ pub const PhysicsSystem = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        // zphy.DebugRenderer.destroySingleton();
+        zphy.DebugRenderer.destroySingleton();
         self.zphy.destroy();
+        self._interfaces.debug_renderer.deinit();
         self._allocator.destroy(self._interfaces.broad_phase_layer_interface);
         self._allocator.destroy(self._interfaces.object_vs_broad_phase_layer_filter);
         self._allocator.destroy(self._interfaces.object_layer_pair_filter);
@@ -178,119 +181,3 @@ const ContactListener = extern struct {
     }
 };
 
-const DebugRenderer = extern struct {
-    const MyRenderPrimitive = extern struct {
-        // Actual render data goes here
-        foobar: i32 = 0,
-    };
-
-    usingnamespace zphy.DebugRenderer.Methods(@This());
-    __v: *const zphy.DebugRenderer.VTable(@This()) = &vtable,
-
-    primitives: [32]MyRenderPrimitive = [_]MyRenderPrimitive{.{}} ** 32,
-    prim_head: i32 = -1,
-
-    const vtable = zphy.DebugRenderer.VTable(@This()){
-        .drawLine = drawLine,
-        .drawTriangle = drawTriangle,
-        .createTriangleBatch = createTriangleBatch,
-        .createTriangleBatchIndexed = createTriangleBatchIndexed,
-        .drawGeometry = drawGeometry,
-        .drawText3D = drawText3D,
-    };
-
-    pub fn shouldBodyDraw(_: *const zphy.Body) align(zphy.DebugRenderer.BodyDrawFilterFuncAlignment) callconv(.C) bool {
-        return true;
-    }
-
-    fn drawLine(
-        self: *DebugRenderer,
-        from: *const [3]zphy.Real,
-        to: *const [3]zphy.Real,
-        color: *const zphy.DebugRenderer.Color,
-    ) callconv(.C) void {
-        _ = self;
-        _ = from;
-        _ = to;
-        _ = color;
-        std.log.info("PhysicsSystem should draw line", .{});
-    }
-    fn drawTriangle(
-        self: *DebugRenderer,
-        v1: *const [3]zphy.Real,
-        v2: *const [3]zphy.Real,
-        v3: *const [3]zphy.Real,
-        color: *const zphy.DebugRenderer.Color,
-    ) callconv(.C) void {
-        _ = self;
-        _ = v1;
-        _ = v2;
-        _ = v3;
-        _ = color;
-        std.log.info("PhysicsSystem should draw triangle", .{});
-    }
-    fn createTriangleBatch(
-        self: *DebugRenderer,
-        triangles: [*]zphy.DebugRenderer.Triangle,
-        triangle_count: u32,
-    ) callconv(.C) *anyopaque {
-        _ = triangles;
-        _ = triangle_count;
-        std.log.info("PhysicsSystem should draw triangle batch", .{});
-        self.prim_head += 1;
-        const prim = &self.primitives[@as(usize, @intCast(self.prim_head))];
-        return zphy.DebugRenderer.createTriangleBatch(prim);
-    }
-    fn createTriangleBatchIndexed(
-        self: *DebugRenderer,
-        vertices: [*]zphy.DebugRenderer.Vertex,
-        vertex_count: u32,
-        indices: [*]u32,
-        index_count: u32,
-    ) callconv(.C) *anyopaque {
-        _ = vertices;
-        _ = vertex_count;
-        _ = indices;
-        _ = index_count;
-        std.log.info("PhysicsSystem should draw triangle batch indexed", .{});
-        self.prim_head += 1;
-        const prim = &self.primitives[@as(usize, @intCast(self.prim_head))];
-        return zphy.DebugRenderer.createTriangleBatch(prim);
-    }
-    fn drawGeometry(
-        self: *DebugRenderer,
-        model_matrix: *const [16]zphy.Real,
-        world_space_bound: *const zphy.DebugRenderer.AABox,
-        lod_scale_sq: f32,
-        color: zphy.DebugRenderer.Color,
-        geometry: *const zphy.DebugRenderer.Geometry,
-        cull_mode: zphy.DebugRenderer.CullMode,
-        cast_shadow: zphy.DebugRenderer.CastShadow,
-        draw_mode: zphy.DebugRenderer.DrawMode,
-    ) callconv(.C) void {
-        _ = self;
-        _ = model_matrix;
-        _ = world_space_bound;
-        _ = lod_scale_sq;
-        _ = color;
-        _ = geometry;
-        _ = cull_mode;
-        _ = cast_shadow;
-        _ = draw_mode;
-        std.log.info("PhysicsSystem should draw geometry", .{});
-    }
-    fn drawText3D(
-        self: *DebugRenderer,
-        positions: *const [3]zphy.Real,
-        string: [*:0]const u8,
-        color: zphy.DebugRenderer.Color,
-        height: f32,
-    ) callconv(.C) void {
-        _ = self;
-        _ = positions;
-        _ = string;
-        _ = color;
-        _ = height;
-        std.log.info("PhysicsSystem should draw text 3d", .{});
-    }
-};

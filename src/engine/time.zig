@@ -13,7 +13,7 @@ pub const TimeState = struct {
         return Self {
             .start_time_ns = std.time.nanoTimestamp(),
             .frame_start_time_ns = std.time.nanoTimestamp(),
-            .last_frame_time_s = 1.0/60.0, // default to 60Hz
+            .last_frame_time_s = 1e-5,
             .target_frame_time_ns = 0,
         };
     }
@@ -23,7 +23,7 @@ pub const TimeState = struct {
     }
 
     fn on_update(self: *Self) void {
-        // collect frame start time
+        // collect frame start time and frame time difference
         var new_frame_start_time_ns = std.time.nanoTimestamp();
         var frame_diff_ns = new_frame_start_time_ns - self.frame_start_time_ns;
 

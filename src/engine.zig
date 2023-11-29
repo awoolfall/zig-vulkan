@@ -82,7 +82,7 @@ pub fn Engine(comptime App: type) type {
             defer engine.gfx.deinit();
 
             Log.debug("Calling physics init", .{});
-            engine.physics = try ps.PhysicsSystem.init(alloc);
+            engine.physics = try ps.PhysicsSystem.init(alloc, &engine.gfx);
             defer engine.physics.deinit();
 
             engine.entities = try EntityList.init(alloc);

@@ -188,7 +188,7 @@ pub const App = struct {
 
         // Create the camera entity
         var camera_transform_idx = try eng.entities.insert(.{});
-        (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 0.0, -1.0, 0.0);
+        (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
         // Load model
         const chara_model = try ms.Model.init_from_file(eng.general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device);
@@ -196,6 +196,7 @@ pub const App = struct {
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
         var chara_root_idx = try eng.create_entities_from_model(&chara_model);
+        (try eng.entities.get(chara_root_idx)).transform.position = zm.f32x4(-1.0, 4.0, 0.0, 1.0);
 
         const tree_idx = try eng.create_entities_from_model(&tree_model);
         add_physics_bodies_to_entity_chain(eng, tree_idx);
@@ -281,14 +282,14 @@ pub const App = struct {
         // Input to move the model around
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
             if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
-                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] + self.engine.time.delta_time_f32(), 0.0, 0.0, 1.0);
+                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] + self.engine.time.delta_time_f32(), 1.0, 0.0, 1.0);
                 // model_entity.transform.position[0] += self.engine.time.delta_time_f32();
                 const pos = model_entity.transform.position;
                 var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
                 body_interface.setPosition(model_entity.physics_body.?, [3]f32{pos[0], pos[1], pos[2]}, .activate);
             }
             if (self.engine.input.get_key(kc.KeyCode.ArrowLeft)) {
-                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] - self.engine.time.delta_time_f32(), 0.0, 0.0, 1.0);
+                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] - self.engine.time.delta_time_f32(), 1.0, 0.0, 1.0);
                 // model_entity.transform.position[0] -= self.engine.time.delta_time_f32();
                 const pos = model_entity.transform.position;
                 var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
@@ -322,17 +323,25 @@ pub const App = struct {
             }
         } else |_| {}
 
-        // Update physics
-        self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
-            catch std.log.err("Unable to update physics", .{});
-        {
-            const body_interface = self.engine.physics.zphy.getBodyInterface();
-            for (self.engine.entities.data.items) |*maybe_en| {
-                if (maybe_en.*) |*en| {
-                    if (en.physics_body) |body_id| {
-                        const pos = body_interface.getPosition(body_id);
-                        en.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-                        en.transform.rotation = body_interface.getRotation(body_id);
+        // Update physics. If frame time is greater than 1 second then skip physics for this frame.
+        // @TODO: It is most likely we loaded something in and caused a spike... Fix this permanently 
+        // by adding async loads and/or loading screens.
+        if (self.engine.time.last_frame_time_s > 1.0) {
+            std.log.warn("Skipping physics for this frame since the frame time was too large at {}s", .{self.engine.time.last_frame_time_s});
+        } else {
+            self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
+                catch std.log.err("Unable to update physics", .{});
+            
+            // After physics update set all entity transforms to match physics bodies
+            {
+                const body_interface = self.engine.physics.zphy.getBodyInterface();
+                for (self.engine.entities.data.items) |*maybe_en| {
+                    if (maybe_en.*) |*en| {
+                        if (en.physics_body) |body_id| {
+                            const pos = body_interface.getPosition(body_id);
+                            en.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                            en.transform.rotation = body_interface.getRotation(body_id);
+                        }
                     }
                 }
             }
@@ -422,6 +431,12 @@ pub const App = struct {
                 }
             }
         }
+
+        // Draw Physics Debug Wireframes
+        if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
+            self.engine.physics._interfaces.debug_renderer.new_frame(&self.camera, zm.matToArr(camera_entity.transform.generate_view_matrix()));
+            self.engine.physics.zphy.drawBodies(&.{}, null);
+        } else |_| {}
 
         self.engine.gfx.end_frame(rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});
