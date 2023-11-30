@@ -433,10 +433,18 @@ pub const App = struct {
         }
 
         // Draw Physics Debug Wireframes
-        if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
-            self.engine.physics._interfaces.debug_renderer.new_frame(&self.camera, zm.matToArr(camera_entity.transform.generate_view_matrix()));
-            self.engine.physics.zphy.drawBodies(&.{}, null);
-        } else |_| {}
+        if (self.engine.input.get_key(kc.KeyCode.C)) {
+            if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
+                self.engine.physics._interfaces.debug_renderer.draw_bodies(
+                    self.engine.physics.zphy, 
+                    rtv, 
+                    self.engine.gfx.swapchain_size.width,
+                    self.engine.gfx.swapchain_size.height,
+                    &self.camera, 
+                    zm.matToArr(camera_entity.transform.generate_view_matrix())
+                );
+            } else |_| {}
+        }
 
         self.engine.gfx.end_frame(rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});

@@ -12,6 +12,11 @@ const CameraStruct = extern struct {
     view: [16]f32,
 };
 
+const MaterialStruct = extern struct {
+    model_matrix: [16]f32,
+    material_color: [4]f32,
+};
+
 pub const D3D11DebugRenderer = extern struct {
     const MyRenderPrimitive = extern struct {
         buffer: ?*d3d11.IBuffer = null,
@@ -35,11 +40,8 @@ pub const D3D11DebugRenderer = extern struct {
         vso: *d3d11.IVertexShader,
         pso: *d3d11.IPixelShader,
         rasterization_state: *d3d11.IRasterizerState,
-        compose_rasterization_state: *d3d11.IRasterizerState,
         model_matrix_buffer: *d3d11.IBuffer,
         camera_buffer: *d3d11.IBuffer,
-        render_target_size: extern struct { width: i32, height: i32 },
-        render_target_view: *d3d11.IRenderTargetView,
     },
 
     const vtable = zphy.DebugRenderer.VTable(@This()){
@@ -62,6 +64,7 @@ pub const D3D11DebugRenderer = extern struct {
 \\  cbuffer instance_data : register(b1)
 \\  {
 \\      row_major float4x4 model_matrix;
+\\      float4 material_color;
 \\  }
 \\ 
 \\  struct vs_in
@@ -84,7 +87,7 @@ pub const D3D11DebugRenderer = extern struct {
 \\      float4x4 vp = mul(view, projection);
 \\      float4x4 mvp = mul(model_matrix, vp);
 \\      output.position = mul(float4(input.pos, 1.0), mvp);
-\\      output.colour = float4(input.color, 1.0);
+\\      output.colour = float4(input.color * material_color.xyz, 1.0);
 \\      return output;
 \\  }
 \\ 
@@ -172,7 +175,7 @@ pub const D3D11DebugRenderer = extern struct {
 
         // Create model constant buffer
         const model_constant_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @intCast(@sizeOf(f32) * 16),
+            .ByteWidth = @intCast(@sizeOf(MaterialStruct)),
             .Usage = d3d11.USAGE.DYNAMIC,
             .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
             .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
@@ -192,72 +195,6 @@ pub const D3D11DebugRenderer = extern struct {
         try zwin32.hrErrorOnFail(gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
         errdefer _ = camera_data_buffer.Release();
 
-        // Create Render target image
-        const render_target_width = gfx.swapchain_size.width;
-        const render_target_height = gfx.swapchain_size.height;
-
-        const render_texture_desc = d3d11.TEXTURE2D_DESC {
-            .Width = @intCast(render_target_width),
-            .Height = @intCast(render_target_height),
-            .MipLevels = 1,
-            .ArraySize = 1,
-            .Format = zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
-            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
-                .Count = 1,
-                .Quality = 0,
-            },
-            .Usage = d3d11.USAGE.DEFAULT,
-            .BindFlags = d3d11.BIND_FLAG {.RENDER_TARGET = true,},
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG {},
-            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
-        };
-        var render_texture: *d3d11.ITexture2D = undefined;
-        try zwin32.hrErrorOnFail(gfx.device.CreateTexture2D(&render_texture_desc, null, @ptrCast(&render_texture)));
-        defer _ = render_texture.Release();
-
-        const render_target_desc = d3d11.RENDER_TARGET_VIEW_DESC {
-            .Format = zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
-            .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
-            .u = .{
-                .Texture2D = d3d11.TEX2D_RTV {
-                    .MipSlice = 0,
-                },
-            },
-        };
-        var render_target_view: *d3d11.IRenderTargetView = undefined;
-        try zwin32.hrErrorOnFail(gfx.device.CreateRenderTargetView(@ptrCast(render_texture), &render_target_desc, @ptrCast(&render_target_view)));
-        errdefer _ = render_target_view.Release();
-
-//         const compose_shader_buffer = \\
-// \\  struct vs_in
-// \\  {
-// \\      float3 pos : POS;
-// \\      float3 normals : NORMAL;
-// \\      float2 tex_coord : TEXCOORD;
-// \\      float3 color: COLOR;
-// \\  };
-// \\ 
-// \\  struct vs_out
-// \\  {
-// \\      float4 position : SV_POSITION;
-// \\      float4 colour : POS;
-// \\  };
-// \\ 
-// \\  vs_out vs_main(vs_in input)
-// \\  {
-// \\      vs_out output = (vs_out) 0;
-// \\      float4x4 vp = mul(view, projection);
-// \\      float4x4 mvp = mul(model_matrix, vp);
-// \\      output.position = mul(float4(input.pos, 1.0), mvp);
-// \\      output.colour = float4(input.color, 1.0);
-// \\      return output;
-// \\  }
-// \\ 
-// \\  float4 ps_main(vs_out input) : SV_TARGET
-// \\  {
-// \\      return input.colour;
-// \\  }
-// ;
         return D3D11DebugRenderer{
             .gfx = gfx,
             .gfx_data = .{
@@ -265,15 +202,8 @@ pub const D3D11DebugRenderer = extern struct {
                 .vso = vso,
                 .pso = pso,
                 .rasterization_state = rasterization_state,
-                .compose_rasterization_state = compose_rasterization_state,
                 .model_matrix_buffer = model_buffer,
                 .camera_buffer = camera_data_buffer,
-                .render_target_size = .{
-                    .width = render_target_width,
-                    .height = render_target_height,
-                },
-                // .depth_stencil_view = depth_stencil_view,
-                .render_target_view = render_target_view,
             },
         };
     }
@@ -284,35 +214,60 @@ pub const D3D11DebugRenderer = extern struct {
                 _ = prim.buffer.?.Release();
             }
         }
-        _ = self.gfx_data.render_target_view.Release();
         _ = self.gfx_data.camera_buffer.Release();
         _ = self.gfx_data.model_matrix_buffer.Release();
         _ = self.gfx_data.rasterization_state.Release();
-        _ = self.gfx_data.compose_rasterization_state.Release();
         _ = self.gfx_data.vso_input_layout.Release();
         _ = self.gfx_data.vso.Release();
         _ = self.gfx_data.pso.Release();
     }
 
-    pub fn new_frame(self: *D3D11DebugRenderer, camera: *cm.Camera, view: [16]f32) void {
+    pub fn draw_bodies(
+        self: *D3D11DebugRenderer, 
+        phys: *zphy.PhysicsSystem, 
+        rtv: *d3d11.IRenderTargetView, 
+        rtv_width: i32,
+        rtv_height: i32,
+        camera: *cm.Camera, 
+        view: [16]f32
+    ) void {
         // Update camera buffer
-        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-        zwin32.hrPanicOnFail(self.gfx.context.Map(@ptrCast(self.gfx_data.camera_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-        defer self.gfx.context.Unmap(@ptrCast(self.gfx_data.camera_buffer), 0);
+        {
+            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+            zwin32.hrPanicOnFail(self.gfx.context.Map(@ptrCast(self.gfx_data.camera_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+            defer self.gfx.context.Unmap(@ptrCast(self.gfx_data.camera_buffer), 0);
 
-        var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-        buffer_data.view = view;
-        const aspect = @as(f32,@floatFromInt(self.gfx_data.render_target_size.width)) / @as(f32,@floatFromInt(self.gfx_data.render_target_size.height));
-        buffer_data.projection = camera.generate_perspective_matrix(aspect);
+            var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+            buffer_data.view = view;
+            const aspect = @as(f32,@floatFromInt(rtv_width)) / @as(f32,@floatFromInt(rtv_height));
+            buffer_data.projection = camera.generate_perspective_matrix(aspect);
+        }
 
-        // Clear render target and depth texture
-        self.gfx.context.ClearRenderTargetView(self.gfx_data.render_target_view, &[4]zwin32.w32.FLOAT{0.0, 0.0, 0.0, 0.0});
-    }
+        const viewport = d3d11.VIEWPORT {
+            .Width = @floatFromInt(rtv_width),
+            .Height = @floatFromInt(rtv_height),
+            .TopLeftX = 0,
+            .TopLeftY = 0,
+            .MinDepth = 0.0,
+            .MaxDepth = 1.0,
+        };
+        self.gfx.context.RSSetViewports(1, @ptrCast(&viewport));
 
-    pub fn compose_debug_wireframes(self: *D3D11DebugRenderer, rtv: *d3d11.IRenderTargetView) void {
-        _ = rtv;
-        _ = self;
-        
+        self.gfx.context.PSSetShader(self.gfx_data.pso, null, 0);
+
+        self.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
+        self.gfx.context.OMSetBlendState(null, null, 0xffffffff);
+
+        self.gfx.context.VSSetShader(self.gfx_data.vso, null, 0);
+        self.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.gfx_data.camera_buffer));
+
+        self.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        self.gfx.context.IASetInputLayout(self.gfx_data.vso_input_layout);
+
+        self.gfx.context.RSSetState(self.gfx_data.rasterization_state);
+
+        // Issue debug draw command to physics system
+        phys.drawBodies(&.{}, null);
     }
 
     pub fn shouldBodyDraw(_: *const zphy.Body) align(zphy.DebugRenderer.BodyDrawFilterFuncAlignment) callconv(.C) bool {
@@ -438,49 +393,30 @@ pub const D3D11DebugRenderer = extern struct {
     ) callconv(.C) void {
         _ = world_space_bound;
         _ = lod_scale_sq;
-        _ = color;
         _ = cull_mode;
         _ = cast_shadow;
         _ = draw_mode;
 
-        const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(self.gfx_data.render_target_size.width),
-            .Height = @floatFromInt(self.gfx_data.render_target_size.height),
-            .TopLeftX = 0,
-            .TopLeftY = 0,
-            .MinDepth = 0.0,
-            .MaxDepth = 1.0,
-        };
-        self.gfx.context.RSSetViewports(1, @ptrCast(&viewport));
-
-        self.gfx.context.PSSetShader(self.gfx_data.pso, null, 0);
-
-        self.gfx.context.OMSetRenderTargets(1, @ptrCast(&self.gfx_data.render_target_view), null);
-        self.gfx.context.OMSetBlendState(null, null, 0xffffffff);
-
-        self.gfx.context.VSSetShader(self.gfx_data.vso, null, 0);
-        self.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.gfx_data.camera_buffer));
-
-        self.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        self.gfx.context.IASetInputLayout(self.gfx_data.vso_input_layout);
-
-        self.gfx.context.RSSetState(self.gfx_data.rasterization_state);
+        if (geometry.num_LODs < 1) { 
+            std.log.warn("Unable to draw physics debug geometry, num LODs is less than 1", .{});
+            return; 
+        }
 
         { // Setup model buffer from transform
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
             zwin32.hrPanicOnFail(self.gfx.context.Map(@ptrCast(self.gfx_data.model_matrix_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
             defer self.gfx.context.Unmap(@ptrCast(self.gfx_data.model_matrix_buffer), 0);
 
-            var buffer_data: *[16]f32 = @ptrCast(@alignCast(mapped_subresource.pData));
+            var buffer_data: *MaterialStruct = @ptrCast(@alignCast(mapped_subresource.pData));
             for (model_matrix, 0..) |v, idx| {
-                (buffer_data.*)[idx] = @floatCast(v);
+                (buffer_data.model_matrix)[idx] = @floatCast(v);
             }
+            buffer_data.material_color[0] = (@as(f32, @floatFromInt(color.comp.r)) / 255.0);
+            buffer_data.material_color[1] = (@as(f32, @floatFromInt(color.comp.g)) / 255.0);
+            buffer_data.material_color[2] = (@as(f32, @floatFromInt(color.comp.b)) / 255.0);
+            buffer_data.material_color[3] = (@as(f32, @floatFromInt(color.comp.a)) / 255.0);
         }
-
-        if (geometry.num_LODs < 1) { 
-            std.log.warn("Unable to draw physics debug geometry, num LODs is less than 1", .{});
-            return; 
-        }
+        self.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.gfx_data.model_matrix_buffer));
 
         const render_data: *const MyRenderPrimitive = @ptrCast(@alignCast(zphy.DebugRenderer.getPrimitiveFromBatch(geometry.LODs[0].batch)));
         std.debug.assert(render_data.buffer != null);
@@ -494,8 +430,6 @@ pub const D3D11DebugRenderer = extern struct {
         self.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&uv_offset));
         const col_offset: c_uint = @sizeOf(f32) * 3 + @sizeOf(f32) * 3 + @sizeOf(f32) * 2;
         self.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&col_offset));
-
-        self.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.gfx_data.model_matrix_buffer));
 
         if (render_data.has_indices()) {
             self.gfx.context.IASetIndexBuffer(render_data.buffer, zwin32.dxgi.FORMAT.R32_UINT, render_data.indices_offset);
