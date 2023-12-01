@@ -70,7 +70,7 @@ pub const MeshPrimitive = struct {
 pub const Mesh = struct {
     buffers: Buffers,
     primitives: []MeshPrimitive,
-    physics_shape: *zphy.Shape,
+    physics_shape_settings: *zphy.ShapeSettings,
 };
 
 pub const ModelNode = struct {
@@ -130,7 +130,7 @@ pub const Model = struct {
                 .primitives = try model_arena.alloc(MeshPrimitive, m.primitives_count),
                 // will set this later after the gpu buffers are created
                 .buffers = undefined,
-                .physics_shape = undefined,
+                .physics_shape_settings = undefined,
             };
 
             for (0..m.primitives_count) |pi| {
@@ -175,15 +175,10 @@ pub const Model = struct {
                 const primf = &mesh.primitives[0];
                 const total_num_verticies_in_all_primitives = mesh_positions.items.len - primf.pos_offset;
 
-                const settings = try zphy.ConvexHullShapeSettings.create(
+                mesh.physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(
                     &(mesh_positions.items[primf.pos_offset]), 
                     @intCast(total_num_verticies_in_all_primitives), 
-                    @sizeOf([3]f32));
-                defer settings.release();
-
-                //settings.setMaxConvexRadius(0.1);
-
-                mesh.physics_shape = try settings.createShape();
+                    @sizeOf([3]f32)));
             }
 
             // Finally append mesh to mesh list
@@ -330,7 +325,7 @@ pub const Model = struct {
 
     pub fn deinit(self: *Self) void {
         for (self.mesh_list) |*m| {
-            m.physics_shape.release();
+            m.physics_shape_settings.release();
         }
 
         self.arena_allocator.deinit();

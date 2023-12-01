@@ -8,45 +8,49 @@ pub const GenerationalIndex = struct {
 pub fn GenerationalList(comptime T: type) type {
     return struct {
         const Self = @This();
+        const ItemType = struct {
+            item_data: ?T = null,
+            generation: u16 = 0,
+        };
+
         allocator: std.mem.Allocator,
-        data: std.ArrayList(?T),
-        generations: std.ArrayList(u16),
+        data: std.ArrayList(ItemType),
+        free_list: std.ArrayList(usize),
 
         pub fn init(allocator: std.mem.Allocator) !Self {
             return Self {
                 .allocator = allocator,
-                .data = std.ArrayList(?T).init(allocator),
-                .generations = std.ArrayList(u16).init(allocator),
+                .data = std.ArrayList(ItemType).init(allocator),
+                .free_list = std.ArrayList(usize).init(allocator),
             };
         }
 
         pub fn deinit(self: *Self) void {
             self.data.deinit();
-            self.generations.deinit();
+            self.free_list.deinit();
         }
 
         fn find_free(self: *Self) ?usize {
-            for (self.data.items, 0..) |d, idx| {
-                if (d == null) {
-                    return idx;
-                }
-            }
-            return null;
+            return self.free_list.popOrNull();
         }
 
         pub fn insert(self: *Self, elem: T) !GenerationalIndex {
+            // find a free index to put item into
             var free_idx = self.find_free();
+            // if there are no free index's, then append to list
             if (free_idx == null) {
-                try self.data.append(null);
-                try self.generations.append(0);
+                try self.data.append(ItemType {});
                 free_idx = self.data.items.len - 1;
             }
-            self.data.items[free_idx.?] = elem;
-            self.generations.items[free_idx.?] = self.generations.items[free_idx.?] + 1;
-            std.debug.assert(self.data.items.len == self.generations.items.len);
+
+            // insert item into free index
+            self.data.items[free_idx.?].item_data = elem;
+            // increment generation so that old references are invalidated
+            self.data.items[free_idx.?].generation += 1;
+
             return GenerationalIndex {
                 .index = free_idx.?,
-                .generation = self.generations.items[free_idx.?],
+                .generation = self.data.items[free_idx.?].generation,
             };
         }
 
@@ -54,26 +58,32 @@ pub fn GenerationalList(comptime T: type) type {
             if (idx.index >= self.data.items.len) {
                 return error.OutOfBoundsIndex;
             }
-            if (self.data.items[idx.index] == null) {
+            const item: *ItemType = &self.data.items[idx.index];
+            if (item.item_data == null) {
                 return error.ItemIsAlreadyNull;
             }
-            if (self.generations.items[idx.index] != idx.generation) {
+            if (item.generation != idx.generation) {
                 return error.InvalidGeneration;
             }
-            self.data.items[idx.index] = null;
+
+            // set data to null indicating item is removed
+            item.item_data = null;
+            // add index to free list to be reused later
+            self.free_list.append(idx.index);
         }
 
         pub fn get(self: *Self, idx: GenerationalIndex) !*T {
             if (idx.index >= self.data.items.len) {
                 return error.OutOfBoundsIndex;
             }
-            if (self.data.items[idx.index] == null) {
+            const item: *ItemType = &self.data.items[idx.index];
+            if (item.item_data == null) {
                 return error.ItemIsNull;
             }
-            if (self.generations.items[idx.index] != idx.generation) {
+            if (item.generation != idx.generation) {
                 return error.InvalidGeneration;
             }
-            return &(self.data.items[idx.index].?);
+            return &(item.item_data.?);
         }
     };
 }

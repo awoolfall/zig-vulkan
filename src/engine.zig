@@ -1,6 +1,7 @@
 const std = @import("std");
 const zwin32 = @import("zwin32");
 const zmesh = @import("zmesh");
+const zm = @import("zmath");
 const hrPanic = zwin32.hrPanicOnFail;
 
 const d3d11 = @import("gfx/d3d11.zig");
@@ -87,8 +88,8 @@ pub fn Engine(comptime App: type) type {
 
             engine.entities = try EntityList.init(alloc);
             defer {
-                for (engine.entities.data.items) |*maybe_en| {
-                    if (maybe_en.*) |*en| {
+                for (engine.entities.data.items) |*it| {
+                    if (it.item_data) |*en| {
                         if (en.physics_body) |body_id| {
                             engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(body_id);
                             en.physics_body = null;
@@ -153,6 +154,32 @@ pub fn Engine(comptime App: type) type {
 
             // delete this entity from engine entity list
             try self.entities.remove(ent_idx);
+        }
+
+        pub fn recursive_get_model_matrix(self: *Self, idx: gen.GenerationalIndex, resolved_transforms_cache: []?zm.Mat) !zm.Mat {
+            // Return cached transform if available
+            if (resolved_transforms_cache[idx.index] != null) {
+                return resolved_transforms_cache[idx.index].?;
+            }
+
+            // Get entity from generational index
+            const entity = try self.entities.get(idx);
+
+            // generate the entity's local model matrix
+            var model_matrix = entity.transform.generate_model_matrix();
+
+            // if the parent also has a parent, recursively get their model matrix and combine
+            if (entity.parent) |parent_idx| {
+                model_matrix = zm.mul(
+                    try self.recursive_get_model_matrix(parent_idx, resolved_transforms_cache),
+                    model_matrix,
+                );
+            }
+
+            // cache the model matrix in case it is needed later on
+            resolved_transforms_cache[idx.index] = model_matrix;
+
+            return model_matrix;
         }
 
         pub fn create_entities_from_model(self: *Self, model: *const ms.Model) !gen.GenerationalIndex {

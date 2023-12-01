@@ -335,8 +335,8 @@ pub const App = struct {
             // After physics update set all entity transforms to match physics bodies
             {
                 const body_interface = self.engine.physics.zphy.getBodyInterface();
-                for (self.engine.entities.data.items) |*maybe_en| {
-                    if (maybe_en.*) |*en| {
+                for (self.engine.entities.data.items) |*it| {
+                    if (it.item_data) |*en| {
                         if (en.physics_body) |body_id| {
                             const pos = body_interface.getPosition(body_id);
                             en.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
@@ -383,15 +383,11 @@ pub const App = struct {
         @memset(resolved_transforms, null);
 
         // Iterate through all entities finding those which contain a mesh to be rendered
-        for (self.engine.entities.data.items, 0..) |maybe_ent, ent_idx| {
-            if (maybe_ent) |entity| {
+        for (self.engine.entities.data.items, 0..) |*it, ent_idx| {
+            if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
-                var model_matrix = entity.transform.generate_model_matrix();
-                if (entity.parent) |parent_idx| {
-                    const parent_model_matrix = recursive_get_model_matrix(parent_idx, &self.engine.entities, resolved_transforms);
-                    model_matrix = zm.mul(parent_model_matrix, model_matrix);
-                }  
-                resolved_transforms[ent_idx] = model_matrix;
+                var model_matrix = self.engine.recursive_get_model_matrix(.{.index=ent_idx, .generation=it.generation}, resolved_transforms)
+                    catch unreachable;
 
                 if (entity.mesh) |m| {
                     const pos_stride: c_uint = @sizeOf(f32) * 3;
@@ -453,44 +449,27 @@ pub const App = struct {
         return;
     }
 
-    fn recursive_get_model_matrix(idx: ent.GenerationalIndex, entities: *Engine.EntityList, resolved_transforms: []?zm.Mat) zm.Mat {
-        // Return cached transform if available
-        if (resolved_transforms[idx.index] != null) {
-            return resolved_transforms[idx.index].?;
-        }
-
-        // Get entity from generational index
-        const entity = entities.get(idx) catch unreachable;
-
-        // generate the parent's local model matrix
-        var model_matrix = entity.transform.generate_model_matrix();
-
-        // if the parent also has a parent, recursively get their model matrix and combine
-        if (entity.parent) |parent_idx| {
-            model_matrix = zm.mul(
-                recursive_get_model_matrix(parent_idx, entities, resolved_transforms),
-                model_matrix,
-            );
-        }
-        
-        // cache the model matrix in case it is needed later on
-        resolved_transforms[idx.index] = model_matrix;
-
-        return model_matrix;
-    }
-
     fn add_physics_bodies_to_entity_chain(eng: *Engine, idx: ent.GenerationalIndex) void {
         var entity = eng.entities.get(idx) catch unreachable;
 
         // Create physics body and attach to idx 
         if (entity.physics_body == null) {
             if (entity.mesh) |mesh| {
+                const sc = entity.transform.scale;
+                const scaled_shape_settings = zphy.DecoratedShapeSettings.createScaled(mesh.physics_shape_settings, [3]zphy.Real{sc[0], sc[1], sc[2]})
+                    catch unreachable;
+                defer scaled_shape_settings.release();
+
+                const shape = zphy.ShapeSettings.createShape(@ptrCast(scaled_shape_settings))
+                    catch unreachable;
+                defer shape.release();
+
                 var body_inderface = eng.physics.zphy.getBodyInterfaceMut();
                 entity.physics_body = body_inderface.createAndAddBody(.{
                     // @TODO: get world transform for entity, not local transform
                     .position = entity.transform.position,
                     .rotation = entity.transform.rotation,
-                    .shape = mesh.physics_shape,
+                    .shape = shape,
                     .motion_type = .static,
                     .object_layer = ph.object_layers.non_moving,
                 }, .activate) catch unreachable;

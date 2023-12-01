@@ -165,14 +165,6 @@ pub const D3D11DebugRenderer = extern struct {
         try zwin32.hrErrorOnFail(gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
         errdefer _ = rasterization_state.Release();
 
-        var compose_rasterization_state: *d3d11.IRasterizerState = undefined;
-        var compose_rasterizer_state_desc = d3d11.RASTERIZER_DESC {
-            .FillMode = d3d11.FILL_MODE.SOLID,
-            .CullMode = d3d11.CULL_MODE.BACK,
-        };
-        try zwin32.hrErrorOnFail(gfx.device.CreateRasterizerState(&compose_rasterizer_state_desc, @ptrCast(&compose_rasterization_state)));
-        errdefer _ = compose_rasterization_state.Release();
-
         // Create model constant buffer
         const model_constant_buffer_desc = d3d11.BUFFER_DESC {
             .ByteWidth = @intCast(@sizeOf(MaterialStruct)),
@@ -231,8 +223,7 @@ pub const D3D11DebugRenderer = extern struct {
         camera: *cm.Camera, 
         view: [16]f32
     ) void {
-        // Update camera buffer
-        {
+        { // Update camera buffer
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
             zwin32.hrPanicOnFail(self.gfx.context.Map(@ptrCast(self.gfx_data.camera_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
             defer self.gfx.context.Unmap(@ptrCast(self.gfx_data.camera_buffer), 0);
