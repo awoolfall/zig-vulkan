@@ -195,23 +195,56 @@ pub const App = struct {
         const tree_model = try ms.Model.init_from_file(eng.general_allocator.allocator(), "../../res/Demonstration.glb", eng.gfx.device);
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
-        var chara_root_idx = try eng.create_entities_from_model(&chara_model);
-        (try eng.entities.get(chara_root_idx)).transform.position = zm.f32x4(-1.0, 4.0, 0.0, 1.0);
+        const chara_root_idx = (try eng.create_entities_from_model(&chara_model, null)).?;
+        (try eng.entities.get(chara_root_idx)).transform.position = zm.f32x4(-0.5, 0.0, 0.5, 1.0);
 
-        const tree_idx = try eng.create_entities_from_model(&tree_model);
-        add_physics_bodies_to_entity_chain(eng, tree_idx);
-        eng.print_entity_chain(tree_idx, 0);
+        var world_entities = std.ArrayList(ent.GenerationalIndex).init(eng.general_allocator.allocator());
+        defer world_entities.deinit();
+        _ = try eng.create_entities_from_model(&tree_model, &world_entities);
 
-        const chara_shape_settings = try zphy.CapsuleShapeSettings.create(1.0, 0.2);
+        // Add physics bodies to static world entities
+        for (world_entities.items) |ent_idx| {
+            const entity = try eng.entities.get(ent_idx);
+            if (entity.physics_body == null) {
+                if (entity.mesh) |mesh| {
+                    const sc = entity.transform.scale;
+                    const scaled_shape_settings = zphy.DecoratedShapeSettings.createScaled(mesh.physics_shape_settings, [3]zphy.Real{sc[0], sc[1], sc[2]})
+                        catch unreachable;
+                    defer scaled_shape_settings.release();
+
+                    const shape = zphy.ShapeSettings.createShape(@ptrCast(scaled_shape_settings))
+                        catch unreachable;
+                    defer shape.release();
+
+                    var body_inderface = eng.physics.zphy.getBodyInterfaceMut();
+                    entity.physics_body = body_inderface.createAndAddBody(.{
+                        .position = entity.transform.position,
+                        .rotation = entity.transform.rotation,
+                        .shape = shape,
+                        .motion_type = .static,
+                        .object_layer = ph.object_layers.non_moving,
+                    }, .activate) catch unreachable;
+                }
+            }
+        }
+
+        const chara_shape_settings = try zphy.CapsuleShapeSettings.create(0.7, 0.2);
         defer chara_shape_settings.release();
 
-        const chara_shape = try chara_shape_settings.createShape();
+        const chara_offset_shape_settings = try zphy.DecoratedShapeSettings.createRotatedTranslated(
+            @ptrCast(chara_shape_settings), 
+            zm.qidentity(), 
+            [3]f32{0.0, chara_shape_settings.getHalfHeight() + chara_shape_settings.getRadius(), 0.0}
+        );
+        defer chara_offset_shape_settings.release();
+
+        const chara_shape = try chara_offset_shape_settings.createShape();
         defer chara_shape.release();
 
-        const chara_transform = (try eng.entities.get(chara_root_idx)).transform;
+        const chara_ent = (try eng.entities.get(chara_root_idx));
         (try eng.entities.get(chara_root_idx)).physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
-            .position = chara_transform.position,
-            .rotation = chara_transform.rotation,
+            .position = chara_ent.transform.position,
+            .rotation = chara_ent.transform.rotation,
             .shape = chara_shape,
             .motion_type = .dynamic,
             .object_layer = ph.object_layers.moving,
@@ -375,20 +408,11 @@ pub const App = struct {
 
         self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
         self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
-        var arena_allocator = std.heap.ArenaAllocator.init(self.engine.general_allocator.allocator());
-        defer arena_allocator.deinit();
-        var arena = arena_allocator.allocator();
-
-        var resolved_transforms = arena.alloc(?zm.Mat, self.engine.entities.data.items.len) catch unreachable;
-        @memset(resolved_transforms, null);
 
         // Iterate through all entities finding those which contain a mesh to be rendered
-        for (self.engine.entities.data.items, 0..) |*it, ent_idx| {
+        for (self.engine.entities.data.items) |*it| {
             if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
-                var model_matrix = self.engine.recursive_get_model_matrix(.{.index=ent_idx, .generation=it.generation}, resolved_transforms)
-                    catch unreachable;
-
                 if (entity.mesh) |m| {
                     const pos_stride: c_uint = @sizeOf(f32) * 3;
                     const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
@@ -404,7 +428,7 @@ pub const App = struct {
                         defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
 
                         var buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
-                        buffer_data.* = model_matrix;
+                        buffer_data.* = entity.transform.generate_model_matrix();
                     }
                     
                     // Set model constant buffer
@@ -449,7 +473,7 @@ pub const App = struct {
         return;
     }
 
-    fn add_physics_bodies_to_entity_chain(eng: *Engine, idx: ent.GenerationalIndex) void {
+    fn add_physics_bodies_to_entity_chain(eng: *Engine, idx: ent.GenerationalIndex, resolved_transforms_cache: []?zm.Mat) void {
         var entity = eng.entities.get(idx) catch unreachable;
 
         // Create physics body and attach to idx 
@@ -464,11 +488,17 @@ pub const App = struct {
                     catch unreachable;
                 defer shape.release();
 
+                var parent_transform = zm.identity();
+                if (entity.parent) |parent_idx| {
+                    parent_transform = eng.recursive_get_model_matrix(parent_idx, resolved_transforms_cache) 
+                        catch unreachable;
+                }
+
                 var body_inderface = eng.physics.zphy.getBodyInterfaceMut();
                 entity.physics_body = body_inderface.createAndAddBody(.{
                     // @TODO: get world transform for entity, not local transform
-                    .position = entity.transform.position,
-                    .rotation = entity.transform.rotation,
+                    .position = zm.mul(entity.transform.position, parent_transform),
+                    .rotation = zm.qmul(entity.transform.rotation, zm.quatFromMat(parent_transform)),
                     .shape = shape,
                     .motion_type = .static,
                     .object_layer = ph.object_layers.non_moving,
@@ -479,7 +509,7 @@ pub const App = struct {
         // do for all idx children
         if (entity.children) |*children| {
             for (children.items) |child_idx| {
-                add_physics_bodies_to_entity_chain(eng, child_idx);
+                add_physics_bodies_to_entity_chain(eng, child_idx, resolved_transforms_cache);
             }
         }
     }

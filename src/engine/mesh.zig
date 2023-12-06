@@ -67,10 +67,20 @@ pub const MeshPrimitive = struct {
     }
 };
 
+pub const BoundingBox = struct {
+    min: zm.F32x4,
+    max: zm.F32x4,
+
+    pub fn center(self: *const BoundingBox) zm.F32x4 {
+        return (self.max + self.min) / zm.f32x4s(2.0);
+    }
+};
+
 pub const Mesh = struct {
     buffers: Buffers,
     primitives: []MeshPrimitive,
     physics_shape_settings: *zphy.ShapeSettings,
+    bounding_box: BoundingBox,
 };
 
 pub const ModelNode = struct {
@@ -131,6 +141,7 @@ pub const Model = struct {
                 // will set this later after the gpu buffers are created
                 .buffers = undefined,
                 .physics_shape_settings = undefined,
+                .bounding_box = undefined,
             };
 
             for (0..m.primitives_count) |pi| {
@@ -171,15 +182,26 @@ pub const Model = struct {
             }
 
             // Construct physics shape for the mesh taking into account all its primitives
-            {
-                const primf = &mesh.primitives[0];
-                const total_num_verticies_in_all_primitives = mesh_positions.items.len - primf.pos_offset;
+            const primf = &mesh.primitives[0];
+            const total_num_verticies_in_all_primitives = mesh_positions.items.len - primf.pos_offset;
 
-                mesh.physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(
+            mesh.physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(
                     &(mesh_positions.items[primf.pos_offset]), 
                     @intCast(total_num_verticies_in_all_primitives), 
                     @sizeOf([3]f32)));
+
+            // Construct the bounding box for the mesh
+            var bb = BoundingBox {.min = zm.f32x4s(0.0), .max = zm.f32x4s(0.0)};
+            for (mesh_positions.items[primf.pos_offset..]) |*p| {
+                if (p[0] < bb.min[0]) { bb.min[0] = p[0]; }
+                if (p[1] < bb.min[1]) { bb.min[1] = p[1]; }
+                if (p[2] < bb.min[2]) { bb.min[2] = p[2]; }
+
+                if (p[0] > bb.max[0]) { bb.max[0] = p[0]; }
+                if (p[1] > bb.max[1]) { bb.max[1] = p[1]; }
+                if (p[2] > bb.max[2]) { bb.max[2] = p[2]; }
             }
+            mesh.bounding_box = bb;
 
             // Finally append mesh to mesh list
             meshes[mi] = mesh;
@@ -336,6 +358,18 @@ pub const Model = struct {
         if (self.buffers.normals) |b| { _ = b.Release(); }
         if (self.buffers.tex_coords) |b| { _ = b.Release(); }
         if (self.buffers.tangents) |b| { _ = b.Release(); }
+    }
+
+    pub fn recursive_get_node_model_matrix(self: *const Self, node_idx: usize, resolved_transforms: []?zm.Mat) zm.Mat {
+        if (resolved_transforms[node_idx] == null) {
+            var parent_matrix = zm.identity();
+            if (self.nodes_list[node_idx].parent) |parent_idx| {
+                parent_matrix = self.recursive_get_node_model_matrix(parent_idx, resolved_transforms);
+            }
+
+            resolved_transforms[node_idx] = zm.mul(self.nodes_list[node_idx].transform.generate_model_matrix(), parent_matrix);
+        }
+        return resolved_transforms[node_idx].?;
     }
 };
 

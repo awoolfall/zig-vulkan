@@ -26,8 +26,6 @@ pub fn Engine(comptime App: type) type {
             transform: tf.Transform = tf.Transform.new(),
             mesh: ?*ms.Mesh = null,
             physics_body: ?ps.BodyId = null,
-            parent: ?gen.GenerationalIndex = null,
-            children: ?std.ArrayList(gen.GenerationalIndex) = null,
             app: App.EntityData = App.EntityData {},
         };
 
@@ -94,9 +92,6 @@ pub fn Engine(comptime App: type) type {
                             engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(body_id);
                             en.physics_body = null;
                         }
-                        if (en.children != null) {
-                            en.children.?.deinit();
-                        }
                     }
                 }
                 engine.entities.deinit();
@@ -131,131 +126,48 @@ pub fn Engine(comptime App: type) type {
             self.input.received_window_event_late(&event);
         }
 
-        pub fn delete_entity_and_children(self: *Self, ent_idx: gen.GenerationalIndex) !void {
-            const ent = try self.entities.get(ent_idx);
+        pub fn create_entities_from_model(self: *Self, model: *const ms.Model, out_entities: ?*std.ArrayList(gen.GenerationalIndex)) !?gen.GenerationalIndex {
+            var new_entities_dat = try std.ArrayList(gen.GenerationalIndex).initCapacity(self.general_allocator.allocator(), model.nodes_list.len);
+            defer new_entities_dat.deinit();
 
-            // recursively delete children
-            if (ent.children) |*children| {
-                for (children.items) |child_idx| {
-                    try self.delete_entity_and_children(child_idx);
+            var new_entities = out_entities;
+            if (new_entities == null) {
+                new_entities = &new_entities_dat;
+            }
+
+            const resolved_transforms = try self.general_allocator.allocator().alloc(?zm.Mat, model.nodes_list.len);
+            defer self.general_allocator.allocator().free(resolved_transforms);
+            for (resolved_transforms) |*r| { r.* = null; }
+
+            var first_entity_with_mesh: ?gen.GenerationalIndex = null;
+            for (model.nodes_list) |*n| {
+                var parent_model_matrix = zm.identity();
+                if (n.parent) |parent_idx| {
+                    parent_model_matrix = model.recursive_get_node_model_matrix(parent_idx, resolved_transforms);
                 }
-            }
 
-            // remove this entity from parent's children list
-            if (ent.parent) |parent_idx| {
-                var parent_ent = try self.entities.get(parent_idx);
-                for (parent_ent.children.?.items, 0..) |child_idx, i| {
-                    if (child_idx.index == ent_idx.index and child_idx.generation == ent_idx.generation) {
-                        _ = parent_ent.children.?.orderedRemove(i);
-                        break;
-                    }
-                }
-            }
-
-            // delete this entity from engine entity list
-            try self.entities.remove(ent_idx);
-        }
-
-        pub fn recursive_get_model_matrix(self: *Self, idx: gen.GenerationalIndex, resolved_transforms_cache: []?zm.Mat) !zm.Mat {
-            // Return cached transform if available
-            if (resolved_transforms_cache[idx.index] != null) {
-                return resolved_transforms_cache[idx.index].?;
-            }
-
-            // Get entity from generational index
-            const entity = try self.entities.get(idx);
-
-            // generate the entity's local model matrix
-            var model_matrix = entity.transform.generate_model_matrix();
-
-            // if the parent also has a parent, recursively get their model matrix and combine
-            if (entity.parent) |parent_idx| {
-                model_matrix = zm.mul(
-                    try self.recursive_get_model_matrix(parent_idx, resolved_transforms_cache),
-                    model_matrix,
-                );
-            }
-
-            // cache the model matrix in case it is needed later on
-            resolved_transforms_cache[idx.index] = model_matrix;
-
-            return model_matrix;
-        }
-
-        pub fn create_entities_from_model(self: *Self, model: *const ms.Model) !gen.GenerationalIndex {
-            const alloc = self.general_allocator.allocator();
-
-            const new_entities = try alloc.alloc(gen.GenerationalIndex, model.nodes_list.len);
-            defer alloc.free(new_entities);
-
-            for (model.nodes_list, 0..) |*n, n_idx| {
                 const ent_idx = try self.entities.insert(EntitySuperStruct {
                     .name = n.name,
-                    .transform = n.transform,
+                    .transform = Transform {
+                        .position = zm.mul(n.transform.position, parent_model_matrix),
+                        .rotation = zm.qmul(n.transform.rotation, zm.quatFromMat(parent_model_matrix)),
+                        .scale = n.transform.scale, // @TODO: multiply this by parent
+                    },
                     .mesh = n.mesh,
                 });
-                new_entities[n_idx] = ent_idx;
-            }
 
-            // Once all the entities have been created we can then assign heirarchy
-            for (model.nodes_list, 0..) |*n, n_idx| {
-                var entity = self.entities.get(new_entities[n_idx]) catch unreachable;
-
-                if (n.parent) |p_idx| {
-                    entity.parent = new_entities[p_idx];
+                if (first_entity_with_mesh == null and n.mesh != null) {
+                    first_entity_with_mesh = ent_idx;
                 }
 
-                if (n.children) |children| {
-                    entity.children = try std.ArrayList(gen.GenerationalIndex).initCapacity(alloc, n.children.?.len);
-                    for (children) |c_node_idx| {
-                        try entity.children.?.append(new_entities[c_node_idx]);
-                    }
-                }
+                try new_entities.?.append(ent_idx);
             }
 
-            // Return the first root node
-            return new_entities[model.root_nodes[0]];
+            if (new_entities.?.items.len == 0) {
+                return error.NoNewEntitiesAdded;
+            }
+            return first_entity_with_mesh;
         }
-
-        pub fn find_child_with_name(self: *Self, ent_idx: gen.GenerationalIndex, name: []const u8) ?gen.GenerationalIndex {
-            // Return null if ent_idx is not a valid entity
-            const entity = self.entities.get(ent_idx) catch return null;
-
-            // Return entity idx if this entity has the required name
-            if (std.mem.eql(u8, name, entity.name)) {
-                return ent_idx;
-            }
-
-            // Otherwise search all entity's children
-            if (entity.children) |*children| {
-                for (children) |child_idx| {
-                    if (find_child_with_name(child_idx, name, self.entities)) |idx| {
-                        return idx;
-                    }
-                }
-            }
-
-            // If no children have the required name, return null
-            return null;
-        }
-
-        pub fn print_entity_chain(self: *Self, ent_idx: gen.GenerationalIndex, indent: usize) void {
-            for (0..indent) |_| {
-                std.debug.print("| ", .{});
-            }
-            const entity = self.entities.get(ent_idx) catch unreachable;
-            if (entity.name) |name| {
-                std.debug.print("{s}\n", .{name});
-            } else {
-                std.debug.print("unnamed\n", .{});
-            }
-            if (entity.children) |*children| {
-                for (children.items) |child_idx| {
-                    self.print_entity_chain(child_idx, indent + 1);
-                }
-            }
-        }
-
     };
 }
 
