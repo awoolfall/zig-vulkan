@@ -242,13 +242,28 @@ pub const App = struct {
         defer chara_shape.release();
 
         const chara_ent = (try eng.entities.get(chara_root_idx));
-        (try eng.entities.get(chara_root_idx)).physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
+        chara_ent.physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
             .position = chara_ent.transform.position,
             .rotation = chara_ent.transform.rotation,
             .shape = chara_shape,
             .motion_type = .dynamic,
+            .motion_quality = .linear_cast,
             .object_layer = ph.object_layers.moving,
         }, .activate);
+
+        {
+            var lock_interface = eng.physics.zphy.getBodyLockInterface();
+
+            var write_lock: zphy.BodyLockWrite = .{};
+            write_lock.lock(lock_interface, chara_ent.physics_body.?);
+            defer write_lock.unlock();
+
+            if (write_lock.body) |locked_body| {
+                locked_body.getMotionPropertiesMut().setInverseMass(1.0 / 70.0);
+                // disables rotation somehow (from jolt 3.0.1 Character.cpp line 45)
+                locked_body.getMotionPropertiesMut().setInverseInertia([3]f32{0.0, 0.0, 0.0}, zm.qidentity());
+            }
+        }
 
         const model_constant_buffer_desc = d3d11.BUFFER_DESC {
             .ByteWidth = @sizeOf(zm.Mat),
@@ -314,20 +329,27 @@ pub const App = struct {
 
         // Input to move the model around
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
+            var movement_direction = [3]f32{0.0,0.0,0.0};
+            if (self.engine.input.get_key(kc.KeyCode.ArrowUp)) {
+                movement_direction[2] += 1.0;
+            }
+            if (self.engine.input.get_key(kc.KeyCode.ArrowDown)) {
+                movement_direction[2] -= 1.0;
+            }
             if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
-                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] + self.engine.time.delta_time_f32(), 1.0, 0.0, 1.0);
-                // model_entity.transform.position[0] += self.engine.time.delta_time_f32();
-                const pos = model_entity.transform.position;
-                var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
-                body_interface.setPosition(model_entity.physics_body.?, [3]f32{pos[0], pos[1], pos[2]}, .activate);
+                movement_direction[0] += 1.0;
             }
             if (self.engine.input.get_key(kc.KeyCode.ArrowLeft)) {
-                model_entity.transform.position = zm.f32x4(model_entity.transform.position[0] - self.engine.time.delta_time_f32(), 1.0, 0.0, 1.0);
-                // model_entity.transform.position[0] -= self.engine.time.delta_time_f32();
-                const pos = model_entity.transform.position;
-                var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
-                body_interface.setPosition(model_entity.physics_body.?, [3]f32{pos[0], pos[1], pos[2]}, .activate);
+                movement_direction[0] -= 1.0;
             }
+
+            var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
+
+            // re-apply gravity velocity
+            const vel = body_interface.getLinearVelocity(model_entity.physics_body.?);
+            movement_direction[1] = vel[1];
+
+            body_interface.setLinearVelocity(model_entity.physics_body.?, movement_direction);
         } else |_| {}
 
         // Camera input and buffer data management
