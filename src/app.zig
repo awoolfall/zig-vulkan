@@ -293,6 +293,9 @@ pub const App = struct {
                 .far_field = 100.0,
                 .move_speed = 2.0,
                 .mouse_sensitivity = 0.001,
+                .max_orbit_distance = 10.0,
+                .min_orbit_distance = 1.0,
+                .orbit_distance = 2.0,
             },
             .camera_idx = camera_transform_idx,
 
@@ -354,7 +357,9 @@ pub const App = struct {
 
         // Camera input and buffer data management
         if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
-            self.camera.fly_camera_update(&camera_entity.transform, self.engine);
+        if (self.engine.entities.get(self.model_idx)) |model_entity| {
+            self.camera.update(&camera_entity.transform, &model_entity.transform, self.engine);
+            //self.camera.fly_camera_update(&camera_entity.transform, self.engine);
 
             { // Update camera buffer
                 var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
@@ -362,21 +367,22 @@ pub const App = struct {
                 defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
 
                 var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-                buffer_data.view = camera_entity.transform.generate_view_matrix();
+                buffer_data.view = self.camera.view_matrix;
                 buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
         } else |_| {}
-
-        // Cast ray from camera
-        if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
-            var raycast_result = self.engine.physics.zphy.getNarrowPhaseQuery().castRay(.{
-                .origin = camera_entity.transform.position,
-                .direction = camera_entity.transform.forward_direction(),
-            }, .{});
-            if (raycast_result.has_hit) {
-                std.log.info("  raycast hit! id:{}", .{raycast_result.hit.body_id});
-            }
         } else |_| {}
+
+        // // Cast ray from camera
+        // if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
+        //     var raycast_result = self.engine.physics.zphy.getNarrowPhaseQuery().castRay(.{
+        //         .origin = camera_entity.transform.position,
+        //         .direction = camera_entity.transform.forward_direction(),
+        //     }, .{});
+        //     if (raycast_result.has_hit) {
+        //         std.log.info("  raycast hit! id:{}", .{raycast_result.hit.body_id});
+        //     }
+        // } else |_| {}
 
         // Update physics. If frame time is greater than 1 second then skip physics for this frame.
         // @TODO: It is most likely we loaded something in and caused a spike... Fix this permanently 
@@ -477,13 +483,14 @@ pub const App = struct {
         // Draw Physics Debug Wireframes
         if (self.engine.input.get_key(kc.KeyCode.C)) {
             if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
+                _ = camera_entity;
                 self.engine.physics._interfaces.debug_renderer.draw_bodies(
                     self.engine.physics.zphy, 
                     rtv, 
                     self.engine.gfx.swapchain_size.width,
                     self.engine.gfx.swapchain_size.height,
                     &self.camera, 
-                    zm.matToArr(camera_entity.transform.generate_view_matrix())
+                    zm.matToArr(self.camera.view_matrix),
                 );
             } else |_| {}
         }
@@ -494,48 +501,7 @@ pub const App = struct {
         };
         return;
     }
-
-    fn add_physics_bodies_to_entity_chain(eng: *Engine, idx: ent.GenerationalIndex, resolved_transforms_cache: []?zm.Mat) void {
-        var entity = eng.entities.get(idx) catch unreachable;
-
-        // Create physics body and attach to idx 
-        if (entity.physics_body == null) {
-            if (entity.mesh) |mesh| {
-                const sc = entity.transform.scale;
-                const scaled_shape_settings = zphy.DecoratedShapeSettings.createScaled(mesh.physics_shape_settings, [3]zphy.Real{sc[0], sc[1], sc[2]})
-                    catch unreachable;
-                defer scaled_shape_settings.release();
-
-                const shape = zphy.ShapeSettings.createShape(@ptrCast(scaled_shape_settings))
-                    catch unreachable;
-                defer shape.release();
-
-                var parent_transform = zm.identity();
-                if (entity.parent) |parent_idx| {
-                    parent_transform = eng.recursive_get_model_matrix(parent_idx, resolved_transforms_cache) 
-                        catch unreachable;
-                }
-
-                var body_inderface = eng.physics.zphy.getBodyInterfaceMut();
-                entity.physics_body = body_inderface.createAndAddBody(.{
-                    // @TODO: get world transform for entity, not local transform
-                    .position = zm.mul(entity.transform.position, parent_transform),
-                    .rotation = zm.qmul(entity.transform.rotation, zm.quatFromMat(parent_transform)),
-                    .shape = shape,
-                    .motion_type = .static,
-                    .object_layer = ph.object_layers.non_moving,
-                }, .activate) catch unreachable;
-            }
-        }
-
-        // do for all idx children
-        if (entity.children) |*children| {
-            for (children.items) |child_idx| {
-                add_physics_bodies_to_entity_chain(eng, child_idx, resolved_transforms_cache);
-            }
-        }
-    }
-
+    
     pub fn window_event_received(self: *Self, event: *const window.WindowEvent) void {
         switch (event.*) {
             .EVENTS_CLEARED => { self.update(); },
