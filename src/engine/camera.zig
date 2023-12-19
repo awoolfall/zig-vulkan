@@ -36,6 +36,10 @@ pub const Camera = struct {
         return zm.perspectiveFovLh(self.field_of_view_y, aspect_ratio, self.near_field, self.far_field);
     }
 
+    pub fn right_direction(self: *Self) zm.F32x4 {
+        return zm.rotate(zm.inverse(zm.quatFromMat(self.view_matrix)), zm.f32x4(1.0, 0.0, 0.0, 0.0));
+    }
+
     pub fn fly_camera_update(
         self: *Self, 
         engine: *app.Engine
@@ -43,11 +47,11 @@ pub const Camera = struct {
         { // Camera Movement
             const move_amount = self.move_speed * engine.time.delta_time_f32();
             const cam_x = 
-                float_from_bool(engine.input.get_key(kc.KeyCode.A)) * -move_amount + 
-                float_from_bool(engine.input.get_key(kc.KeyCode.D)) * move_amount;
+                float_from_bool(engine.input.get_key(kc.KeyCode.ArrowLeft)) * -move_amount + 
+                float_from_bool(engine.input.get_key(kc.KeyCode.ArrowRight)) * move_amount;
             const cam_z = 
-                float_from_bool(engine.input.get_key(kc.KeyCode.S)) * -move_amount + 
-                float_from_bool(engine.input.get_key(kc.KeyCode.W)) * move_amount;
+                float_from_bool(engine.input.get_key(kc.KeyCode.ArrowDown)) * -move_amount + 
+                float_from_bool(engine.input.get_key(kc.KeyCode.ArrowUp)) * move_amount;
 
             self.view_matrix = zm.mul(self.view_matrix, zm.translation(-cam_x, 0.0, -cam_z));
         }
@@ -113,8 +117,8 @@ pub const Camera = struct {
         }
 
         // translate orbit distance by input
-        const orbit_distance_change = float_from_bool(engine.input.get_key(kc.KeyCode.S)) 
-            - float_from_bool(engine.input.get_key(kc.KeyCode.W));
+        const orbit_distance_change = float_from_bool(engine.input.get_key(kc.KeyCode.ArrowDown)) 
+            - float_from_bool(engine.input.get_key(kc.KeyCode.ArrowUp));
         self.orbit_distance = self.orbit_distance + (orbit_distance_change * engine.time.delta_time_f32());
         self.orbit_distance = @max(@min(self.orbit_distance, self.max_orbit_distance), self.min_orbit_distance);
 

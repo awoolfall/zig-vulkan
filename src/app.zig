@@ -332,19 +332,26 @@ pub const App = struct {
 
         // Input to move the model around
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
-            var movement_direction = [3]f32{0.0,0.0,0.0};
-            if (self.engine.input.get_key(kc.KeyCode.ArrowUp)) {
+            var movement_direction = zm.f32x4s(0.0);
+            if (self.engine.input.get_key(kc.KeyCode.W)) {
                 movement_direction[2] += 1.0;
             }
-            if (self.engine.input.get_key(kc.KeyCode.ArrowDown)) {
+            if (self.engine.input.get_key(kc.KeyCode.S)) {
                 movement_direction[2] -= 1.0;
             }
-            if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
+            if (self.engine.input.get_key(kc.KeyCode.D)) {
                 movement_direction[0] += 1.0;
             }
-            if (self.engine.input.get_key(kc.KeyCode.ArrowLeft)) {
+            if (self.engine.input.get_key(kc.KeyCode.A)) {
                 movement_direction[0] -= 1.0;
             }
+
+            const camera_right = self.camera.right_direction();
+            const camera_forward_no_pitch = zm.cross3(camera_right, zm.f32x4(0.0, 1.0, 0.0, 0.0));
+
+            movement_direction = 
+                camera_forward_no_pitch * zm.f32x4s(movement_direction[2])
+                + camera_right * zm.f32x4s(movement_direction[0]);
 
             var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
 
@@ -352,14 +359,13 @@ pub const App = struct {
             const vel = body_interface.getLinearVelocity(model_entity.physics_body.?);
             movement_direction[1] = vel[1];
 
-            body_interface.setLinearVelocity(model_entity.physics_body.?, movement_direction);
+            body_interface.setLinearVelocity(model_entity.physics_body.?, zm.vecToArr3(movement_direction));
         } else |_| {}
 
         // Camera input and buffer data management
         if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
             self.camera.update(&camera_entity.transform, &model_entity.transform, self.engine);
-            //self.camera.fly_camera_update(&camera_entity.transform, self.engine);
 
             { // Update camera buffer
                 var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
