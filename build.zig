@@ -1,8 +1,10 @@
 const std = @import("std");
+
 const zwin32 = @import("libs/zig-gamedev/libs/zwin32/build.zig");
 const zmath = @import("libs/zig-gamedev/libs/zmath/build.zig");
 const zmesh = @import("libs/zig-gamedev/libs/zmesh/build.zig");
 const zphysics = @import("libs/zig-gamedev/libs/zphysics/build.zig");
+const zstbi = @import("libs/zig-gamedev/libs/zstbi/build.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -73,6 +75,8 @@ pub fn build(b: *std.Build) void {
     });
     zphysics_pkg.link(exe);
 
+    const zstbi_pkg = zstbi.package(b, target, optimize, .{});
+    zstbi_pkg.link(exe);
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`

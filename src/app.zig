@@ -14,6 +14,8 @@ const ms = @import("engine/mesh.zig");
 const ent = @import("engine/entity.zig");
 const ph = @import("engine/physics.zig");
 
+const font = @import("engine/font.zig");
+
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
     view: [4]zm.F32x4,
@@ -57,8 +59,13 @@ pub const App = struct {
     chara_model: ms.Model,
     tree_model: ms.Model,
 
+    geist_font: font.Font,
+
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
+
+        const geist_font = try font.Font.init(eng.general_allocator.allocator(), "../../res/geist.json", "../../res/geist.png", &eng.gfx);
+        errdefer geist_font.deinit();
 
         const depth_texture_desc = d3d11.TEXTURE2D_DESC {
             .Width = @intCast(eng.gfx.swapchain_size.width),
@@ -304,11 +311,15 @@ pub const App = struct {
 
             .chara_model = chara_model,
             .tree_model = tree_model,
+
+            .geist_font = geist_font,
         };
     }
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
+        self.geist_font.deinit();
+
         self.chara_model.deinit();
         self.tree_model.deinit();
 
@@ -500,6 +511,15 @@ pub const App = struct {
                 );
             } else |_| {}
         }
+
+        // const fps_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "fps is {d}", .{self.engine.time.get_fps()})
+        //     catch unreachable;
+        // defer self.engine.general_allocator.allocator().free(fps_text);
+
+        // self.geist_font.render_text_2d("abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ", 100, 100, rtv, self.engine.gfx.swapchain_size.width, self.engine.gfx.swapchain_size.height, &self.engine.gfx)
+        //     catch unreachable;
+        self.geist_font.render_text_2d("Hello World.", 100, 100, rtv, self.engine.gfx.swapchain_size.width, self.engine.gfx.swapchain_size.height, &self.engine.gfx)
+            catch unreachable;
 
         self.engine.gfx.end_frame(rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});
