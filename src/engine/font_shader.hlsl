@@ -12,12 +12,6 @@ cbuffer font_text_data : register(b0)
     float4 bg_colour;
 }
 
-cbuffer character_data : register(b1)
-{
-    Bounds quad_bounds;
-    Bounds atlas_bounds;
-}
-
 Texture2D msdf_font_texture;
 
 struct vs_out
@@ -28,32 +22,27 @@ struct vs_out
 
 // generate quad in shader 
 // from https://stackoverflow.com/questions/2588875/whats-the-best-way-to-draw-a-fullscreen-quad-in-opengl-3-2/51625078#51625078
-vs_out vs_main(uint vertId : SV_VertexID)
+vs_out vs_main(uint vertId : SV_VertexID, float4 quad_bounds : TEXCOORD0, float4 atlas_bounds : TEXCOORD1)
 {
     vs_out output = (vs_out) 0;
 
     float x = float(((uint(vertId) + 2u) / 3u)%2u); 
     float y = float(((uint(vertId) + 1u) / 3u)%2u);
 
-    float px = quad_bounds.left + (x * (quad_bounds.right - quad_bounds.left));
-    float py = quad_bounds.bottom + (y * (quad_bounds.top - quad_bounds.bottom));
+    float px = quad_bounds.x + (x * (quad_bounds.z - quad_bounds.x));
+    float py = quad_bounds.y + (y * (quad_bounds.w - quad_bounds.y));
 
     output.position = float4(px, py, 0.0, 1.0);
 
-    float uvx = atlas_bounds.left + (x * (atlas_bounds.right - atlas_bounds.left));
-    float uvy = atlas_bounds.bottom + (y * (atlas_bounds.top - atlas_bounds.bottom));
+    float uvx = atlas_bounds.x + (x * (atlas_bounds.z - atlas_bounds.x));
+    float uvy = atlas_bounds.y + (y * (atlas_bounds.w - atlas_bounds.y));
 
     output.tex_coord = float4(uvx, uvy, 0.0, 0.0);
 
     return output;
 }
 
-SamplerState MsdfSampler
-{
-    Filter = MIN_MAG_MIP_LINEAR;
-    AddressU = Wrap;
-    AddressV = Wrap;
-};
+SamplerState MsdfSampler;
 
 float median(float r, float g, float b) {
     return max(min(r, g), min(max(r, g), b));

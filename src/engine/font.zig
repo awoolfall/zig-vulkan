@@ -53,12 +53,16 @@ const CharacterInfoConstantBuffer = extern struct {
 const MSDF_FONT_SHADER_HLSL = @embedFile("font_shader.hlsl");
 
 pub const Font = struct {
+    const RENDER_INSTANCE_COUNT: u32 = 1024;
+
     atlas_details: AtlasDetails,
     font_metrics: FontMetrics,
     ascii_character_map: [256]CharacterInfo,
     msdf_texture_view: *d3d11.IShaderResourceView,
     font_vso: *d3d11.IVertexShader,
+    vso_input_layout: *d3d11.IInputLayout,
     font_pso: *d3d11.IPixelShader,
+    sampler: *d3d11.ISamplerState,
     rasterizer_state: *d3d11.IRasterizerState,
     blend_state: *d3d11.IBlendState,
     character_buffer: *d3d11.IBuffer,
@@ -116,6 +120,8 @@ pub const Font = struct {
             .msdf_texture_view = undefined,
             .font_vso = undefined,
             .font_pso = undefined,
+            .vso_input_layout = undefined,
+            .sampler = undefined,
             .rasterizer_state = undefined,
             .blend_state = undefined,
             .font_text_buffer = undefined,
@@ -134,7 +140,11 @@ pub const Font = struct {
                 .underline_y = font_data.value.metrics.underlineY,
                 .underline_thickness = font_data.value.metrics.underlineThickness,
             },
-            .ascii_character_map = [_]CharacterInfo{undefined} ** 256,
+            .ascii_character_map = [_]CharacterInfo{.{
+                .advance=0.0, 
+                .plane_bounds=.{}, 
+                .atlas_bounds=.{}
+            }} ** 256,
         };
 
         const msdf_width: f32 = @floatFromInt(font.atlas_details.width);
@@ -221,6 +231,46 @@ pub const Font = struct {
         try win32.hrErrorOnFail(gfx.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&font.font_pso)));
         errdefer _ = font.font_pso.Release();
 
+        // create vertex input layout
+        const vso_input_layout_desc = [_]d3d11.INPUT_ELEMENT_DESC {
+            d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = "TEXCOORD",
+                .SemanticIndex = 0,
+                .Format = win32.dxgi.FORMAT.R32G32B32A32_FLOAT,
+                .InputSlot = 0,
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_INSTANCE_DATA,
+                .InstanceDataStepRate = 1,
+            },
+            d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = "TEXCOORD",
+                .SemanticIndex = 1,
+                .Format = win32.dxgi.FORMAT.R32G32B32A32_FLOAT,
+                .InputSlot = 0,
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_INSTANCE_DATA,
+                .InstanceDataStepRate = 1,
+            },
+        };
+        try win32.hrErrorOnFail(gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&font.vso_input_layout)));
+        errdefer _ = font.vso_input_layout.Release();
+
+        // create sampler
+        const sampler_desc = d3d11.SAMPLER_DESC {
+            .Filter = d3d11.FILTER.MIN_MAG_LINEAR_MIP_POINT,
+            .AddressU = d3d11.TEXTURE_ADDRESS_MODE.WRAP,
+            .AddressV = d3d11.TEXTURE_ADDRESS_MODE.WRAP,
+            .AddressW = d3d11.TEXTURE_ADDRESS_MODE.WRAP,
+            .MipLODBias = 0.0,
+            .MaxAnisotropy = 1,
+            .ComparisonFunc = d3d11.COMPARISON_FUNC.NEVER,
+            .BorderColor = [4]win32.w32.FLOAT{0.0, 0.0, 0.0, 1.0},
+            .MinLOD = 0.0,
+            .MaxLOD = 0.0,
+        };
+        try win32.hrErrorOnFail(gfx.device.CreateSamplerState(&sampler_desc, @ptrCast(&font.sampler)));
+        errdefer _ = font.sampler.Release();
+
         // create rasterizer state
         var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
             .FillMode = d3d11.FILL_MODE.SOLID,
@@ -259,13 +309,13 @@ pub const Font = struct {
         try win32.hrErrorOnFail(gfx.device.CreateBuffer(&font_constant_buffer_desc, null, @ptrCast(&font.font_text_buffer)));
         errdefer _ = font.font_text_buffer.Release();
 
-        const character_info_constant_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(CharacterInfoConstantBuffer),
+        const character_info_buffer_desc = d3d11.BUFFER_DESC {
+            .ByteWidth = @sizeOf(CharacterInfoConstantBuffer) * RENDER_INSTANCE_COUNT,
             .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
+            .BindFlags = d3d11.BIND_FLAG { .VERTEX_BUFFER = true, },
             .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
         };
-        try win32.hrErrorOnFail(gfx.device.CreateBuffer(&character_info_constant_buffer_desc, null, @ptrCast(&font.character_buffer)));
+        try win32.hrErrorOnFail(gfx.device.CreateBuffer(&character_info_buffer_desc, null, @ptrCast(&font.character_buffer)));
         errdefer _ = font.character_buffer.Release();
 
         // finally return the font structure
@@ -278,6 +328,8 @@ pub const Font = struct {
         _ = self.rasterizer_state.Release();
         _ = self.font_text_buffer.Release();
         _ = self.character_buffer.Release();
+        _ = self.sampler.Release();
+        _ = self.vso_input_layout.Release();
         _ = self.font_vso.Release();
         _ = self.font_pso.Release();
     }
@@ -298,10 +350,13 @@ pub const Font = struct {
         rtv_width: i32,
         rtv_height: i32,
         gfx: *gfx_d3d11.D3D11State,
-    ) !void {
+    ) void {
+        if (text.len == 0) { return; }
+        
         const aspect = (@as(f32, @floatFromInt(rtv_width)) / @as(f32, @floatFromInt(rtv_height)));
         var y_loc = ((@as(f32, @floatFromInt(y_pos)) / @as(f32, @floatFromInt(rtv_height))) * 2.0) - 1.0;
         var x_loc = ((@as(f32, @floatFromInt(x_pos)) / @as(f32, @floatFromInt(rtv_width))) * 2.0) - 1.0;
+        const x_start_loc = x_loc;
 
         const screen_size = switch (props.size) {
             .Screen => |v| blk: { break :blk (v * 2.0); },
@@ -345,39 +400,62 @@ pub const Font = struct {
                 .fg_colour = props.foreground_colour,
                 .bg_colour = props.background_colour,
             };
-            std.log.info("px height is {d}", .{text_pixel_height});
         }
 
         gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.font_text_buffer));
-        gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.character_buffer));
+        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler));
 
-        for (text) |c| {
-            if (c >= 256) {
-                std.log.warn("Unable to draw character as it is outside of ascii bounds: {} ({})", .{c, @as(i32, @intCast(c))});
-                continue;
-            }
+        gfx.context.IASetInputLayout(self.vso_input_layout);
+        const stride: c_uint = @sizeOf(CharacterInfoConstantBuffer);
+        var offset: c_uint = 0;
+        gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.character_buffer), @ptrCast(&stride), @ptrCast(&offset));
 
-            const char_info = &self.ascii_character_map[@intCast(c)];
-
-            const quad_bounds = Bounds {
-                .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
-                .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
-                .top = y_loc + char_info.plane_bounds.top * screen_size,
-                .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
-            };
-
-            { // Setup character info buffer
+        var text_offset: usize = 0;
+        while (text_offset < text.len) {
+            var instance_count: u32 = 0;
+            {
                 var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
                 win32.hrPanicOnFail(gfx.context.Map(@ptrCast(self.character_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
                 defer gfx.context.Unmap(@ptrCast(self.character_buffer), 0);
 
-                var buffer_data: *CharacterInfoConstantBuffer = @ptrCast(@alignCast(mapped_subresource.pData));
-                buffer_data.quad_bounds = quad_bounds;
-                buffer_data.atlas_bounds = char_info.atlas_bounds;
+                var buffer_data: *([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer) = @ptrCast(@alignCast(mapped_subresource.pData));
+                while (instance_count < RENDER_INSTANCE_COUNT and (text_offset + instance_count) < text.len) {
+                    const c = text[text_offset + instance_count];
+
+                    // reset data in this instance
+                    buffer_data[instance_count].quad_bounds = .{};
+                    buffer_data[instance_count].atlas_bounds = .{};
+
+                    // handle newline character
+                    switch (c) {
+                        '\n' => {
+                            x_loc = x_start_loc;
+                            y_loc -= self.font_metrics.line_height * screen_size;
+                        },
+                        else => {
+                            const char_info = &self.ascii_character_map[@intCast(c)];
+
+                            const quad_bounds = Bounds {
+                                .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
+                                .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
+                                .top = y_loc + char_info.plane_bounds.top * screen_size,
+                                .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
+                            };
+
+                            // Setup character info buffer
+                            buffer_data[instance_count].quad_bounds = quad_bounds;
+                            buffer_data[instance_count].atlas_bounds = char_info.atlas_bounds;
+
+                            x_loc += (char_info.advance / aspect) * screen_size;
+                        },
+                    }
+
+                    instance_count += 1;
+                }
             }
 
-            gfx.context.Draw(6, @intCast(0));
-            x_loc += (char_info.advance / aspect) * screen_size;
+            gfx.context.DrawInstanced(6, instance_count, 0, 0);
+            text_offset += instance_count;
         }
     }
 };

@@ -515,11 +515,28 @@ pub const App = struct {
         // const fps_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "fps is {d}", .{self.engine.time.get_fps()})
         //     catch unreachable;
         // defer self.engine.general_allocator.allocator().free(fps_text);
+        //
+        // self.geist_font.render_text_2d(
+        //     fps_text, 
+        //     100, 
+        //     400, 
+        //     .{.size = .{.Pixels = 20},}, 
+        //     rtv, 
+        //     self.engine.gfx.swapchain_size.width, 
+        //     self.engine.gfx.swapchain_size.height, 
+        //     &self.engine.gfx
+        // );
 
-        // self.geist_font.render_text_2d("abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ", 100, 100, rtv, self.engine.gfx.swapchain_size.width, self.engine.gfx.swapchain_size.height, &self.engine.gfx)
-        //     catch unreachable;
-        self.geist_font.render_text_2d("Hello World.", 100, 100, .{.size = .{.Pixels = 100}}, rtv, self.engine.gfx.swapchain_size.width, self.engine.gfx.swapchain_size.height, &self.engine.gfx)
-            catch unreachable;
+        self.geist_font.render_text_2d(
+            "Hello World.\nThis is the next line.", 
+            100, 
+            100, 
+            .{.size = .{.Pixels = 20},}, 
+            rtv, 
+            self.engine.gfx.swapchain_size.width, 
+            self.engine.gfx.swapchain_size.height, 
+            &self.engine.gfx
+        );
 
         self.engine.gfx.end_frame(rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});
