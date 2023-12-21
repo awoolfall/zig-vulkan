@@ -531,7 +531,9 @@ pub const App = struct {
             "Hello World.\nThis is the next line.", 
             100, 
             100, 
-            .{.size = .{.Pixels = 20},}, 
+            .{
+                .size = .{.Pixels = 15},
+            }, 
             rtv, 
             self.engine.gfx.swapchain_size.width, 
             self.engine.gfx.swapchain_size.height, 

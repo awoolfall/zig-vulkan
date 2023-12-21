@@ -7,7 +7,7 @@ struct Bounds {
 
 cbuffer font_text_data : register(b0)
 {
-    float msdf_screen_px_range;
+    float2 msdf_unit_range;
     float4 fg_colour;
     float4 bg_colour;
 }
@@ -48,12 +48,17 @@ float median(float r, float g, float b) {
     return max(min(r, g), min(max(r, g), b));
 }
 
+float screenPxRange(float2 uvCoord) {
+    float2 screenTexSize = float2(1.0, 1.0)/fwidth(uvCoord);
+    return max(0.5*dot(msdf_unit_range, screenTexSize), 1.0);
+}
+
 // converted from https://github.com/Chlumsky/msdfgen
 float4 ps_main(vs_out input) : SV_TARGET
 {
     float4 msd = msdf_font_texture.Sample(MsdfSampler, input.tex_coord.xy);
     float sd = median(msd.r, msd.g, msd.b);
-    float screenPxDistance = msdf_screen_px_range * (sd - 0.5);
+    float screenPxDistance = screenPxRange(input.tex_coord.xy) * (sd - 0.5);
     float opacity = clamp(screenPxDistance + 0.5, 0.0, 1.0);
     //return msd;
     return lerp(bg_colour, fg_colour, opacity);

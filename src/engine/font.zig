@@ -40,7 +40,7 @@ pub const CharacterInfo = struct {
 };
 
 const FontConstantBuffer = extern struct {
-    msdf_screen_px_range: f32,
+    msdf_unit_range: zm.F32x4,
     fg_colour: zm.F32x4,
     bg_colour: zm.F32x4,
 };
@@ -336,8 +336,7 @@ pub const Font = struct {
 
     pub const FontRenderProperties2D = struct {
         size: Size = Size {.Pixels = 20},
-        foreground_colour: zm.F32x4 = zm.f32x4s(1.0),
-        background_colour: zm.F32x4 = zm.f32x4s(0.0),
+        colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
     };
 
     pub fn render_text_2d(
@@ -365,7 +364,6 @@ pub const Font = struct {
                 break :blk (percpx * 2.0);
             },
         };
-        const text_pixel_height = ((screen_size/2.0) * @as(f32, @floatFromInt(rtv_height)));
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(rtv_width),
@@ -396,9 +394,10 @@ pub const Font = struct {
 
             var buffer_data: *FontConstantBuffer = @ptrCast(@alignCast(mapped_subresource.pData));
             buffer_data.* = FontConstantBuffer {
-                .msdf_screen_px_range = (text_pixel_height / self.atlas_details.size) * self.atlas_details.distance_range,
-                .fg_colour = props.foreground_colour,
-                .bg_colour = props.background_colour,
+                .msdf_unit_range = zm.f32x4s(self.atlas_details.distance_range) 
+                    / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),
+                .fg_colour = props.colour,
+                .bg_colour = props.colour * zm.f32x4(1.0, 1.0, 1.0, 0.0),
             };
         }
 
