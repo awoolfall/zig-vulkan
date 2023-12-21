@@ -518,7 +518,7 @@ pub const App = struct {
 
         // self.geist_font.render_text_2d("abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ", 100, 100, rtv, self.engine.gfx.swapchain_size.width, self.engine.gfx.swapchain_size.height, &self.engine.gfx)
         //     catch unreachable;
-        self.geist_font.render_text_2d("Hello World.", 100, 100, rtv, self.engine.gfx.swapchain_size.width, self.engine.gfx.swapchain_size.height, &self.engine.gfx)
+        self.geist_font.render_text_2d("Hello World.", 100, 100, .{.size = .{.Pixels = 100}}, rtv, self.engine.gfx.swapchain_size.width, self.engine.gfx.swapchain_size.height, &self.engine.gfx)
             catch unreachable;
 
         self.engine.gfx.end_frame(rtv) catch |err| {

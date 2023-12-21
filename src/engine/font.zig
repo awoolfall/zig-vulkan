@@ -5,6 +5,11 @@ const zstbi = @import("zstbi");
 const gfx_d3d11 = @import("../gfx/d3d11.zig");
 const zm = @import("zmath");
 
+pub const Size = union(enum) {
+    Pixels: i32,
+    Screen: f32,
+};
+
 pub const AtlasDetails = struct {
     distance_range: f32,
     size: f32,
@@ -225,6 +230,7 @@ pub const Font = struct {
         try win32.hrErrorOnFail(gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&font.rasterizer_state)));
         errdefer _ = font.rasterizer_state.Release();
 
+        // create blend state
         var blend_state_desc = d3d11.BLEND_DESC {
             .AlphaToCoverageEnable = 0,
             .IndependentBlendEnable = 0,
@@ -276,11 +282,18 @@ pub const Font = struct {
         _ = self.font_pso.Release();
     }
 
+    pub const FontRenderProperties2D = struct {
+        size: Size = Size {.Pixels = 20},
+        foreground_colour: zm.F32x4 = zm.f32x4s(1.0),
+        background_colour: zm.F32x4 = zm.f32x4s(0.0),
+    };
+
     pub fn render_text_2d(
         self: *Font,
         text: []const u8,
         x_pos: i32,
         y_pos: i32,
+        props: FontRenderProperties2D,
         rtv: *d3d11.IRenderTargetView, 
         rtv_width: i32,
         rtv_height: i32,
@@ -289,6 +302,15 @@ pub const Font = struct {
         const aspect = (@as(f32, @floatFromInt(rtv_width)) / @as(f32, @floatFromInt(rtv_height)));
         var y_loc = ((@as(f32, @floatFromInt(y_pos)) / @as(f32, @floatFromInt(rtv_height))) * 2.0) - 1.0;
         var x_loc = ((@as(f32, @floatFromInt(x_pos)) / @as(f32, @floatFromInt(rtv_width))) * 2.0) - 1.0;
+
+        const screen_size = switch (props.size) {
+            .Screen => |v| blk: { break :blk (v * 2.0); },
+            .Pixels => |px| blk: {
+                const percpx = @as(f32, @floatFromInt(px)) / @as(f32, @floatFromInt(rtv_height));
+                break :blk (percpx * 2.0);
+            },
+        };
+        const text_pixel_height = ((screen_size/2.0) * @as(f32, @floatFromInt(rtv_height)));
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(rtv_width),
@@ -319,16 +341,16 @@ pub const Font = struct {
 
             var buffer_data: *FontConstantBuffer = @ptrCast(@alignCast(mapped_subresource.pData));
             buffer_data.* = FontConstantBuffer {
-                .msdf_screen_px_range = 4.5,
-                .fg_colour = zm.f32x4s(1.0),
-                .bg_colour = zm.f32x4s(0.0),
+                .msdf_screen_px_range = (text_pixel_height / self.atlas_details.size) * self.atlas_details.distance_range,
+                .fg_colour = props.foreground_colour,
+                .bg_colour = props.background_colour,
             };
+            std.log.info("px height is {d}", .{text_pixel_height});
         }
 
         gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.font_text_buffer));
         gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.character_buffer));
 
-        const size = 0.1;
         for (text) |c| {
             if (c >= 256) {
                 std.log.warn("Unable to draw character as it is outside of ascii bounds: {} ({})", .{c, @as(i32, @intCast(c))});
@@ -338,10 +360,10 @@ pub const Font = struct {
             const char_info = &self.ascii_character_map[@intCast(c)];
 
             const quad_bounds = Bounds {
-                .left = x_loc + char_info.plane_bounds.left * size,
-                .right = x_loc + char_info.plane_bounds.right * size,
-                .top = y_loc + (char_info.plane_bounds.top * aspect) * size,
-                .bottom = y_loc + (char_info.plane_bounds.bottom * aspect) * size,
+                .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
+                .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
+                .top = y_loc + char_info.plane_bounds.top * screen_size,
+                .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
             };
 
             { // Setup character info buffer
@@ -355,7 +377,7 @@ pub const Font = struct {
             }
 
             gfx.context.Draw(6, @intCast(0));
-            x_loc += char_info.advance * size;
+            x_loc += (char_info.advance / aspect) * screen_size;
         }
     }
 };
