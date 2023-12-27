@@ -5,6 +5,13 @@ const zstbi = @import("zstbi");
 const gfx_d3d11 = @import("../gfx/d3d11.zig");
 const zm = @import("zmath");
 
+pub const Rect = struct {
+    left: f32,
+    bottom: f32,
+    right: f32,
+    top: f32,
+};
+
 pub const Size = union(enum) {
     Pixels: i32,
     Screen: f32,
@@ -387,6 +394,14 @@ pub const Font = struct {
         gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
         gfx.context.RSSetState(self.rasterizer_state);
 
+        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.font_text_buffer));
+        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler));
+
+        gfx.context.IASetInputLayout(self.vso_input_layout);
+        const stride: c_uint = @sizeOf(CharacterInfoConstantBuffer);
+        var offset: c_uint = 0;
+        gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.character_buffer), @ptrCast(&stride), @ptrCast(&offset));
+
         { // Setup font text info buffer
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
             win32.hrPanicOnFail(gfx.context.Map(@ptrCast(self.font_text_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
@@ -400,14 +415,6 @@ pub const Font = struct {
                 .bg_colour = props.colour * zm.f32x4(1.0, 1.0, 1.0, 0.0),
             };
         }
-
-        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.font_text_buffer));
-        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler));
-
-        gfx.context.IASetInputLayout(self.vso_input_layout);
-        const stride: c_uint = @sizeOf(CharacterInfoConstantBuffer);
-        var offset: c_uint = 0;
-        gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.character_buffer), @ptrCast(&stride), @ptrCast(&offset));
 
         var text_offset: usize = 0;
         while (text_offset < text.len) {
@@ -456,6 +463,55 @@ pub const Font = struct {
             gfx.context.DrawInstanced(6, instance_count, 0, 0);
             text_offset += instance_count;
         }
+    }
+
+    pub fn text_bounds_2d(
+        self: *Font,
+        text: []const u8,
+        x_pos: i32,
+        y_pos: i32,
+        props: FontRenderProperties2D,
+        rtv_width: i32,
+        rtv_height: i32,
+    ) ?Rect {
+        if (text.len == 0) { return null; }
+
+        _ = rtv_width;
+        const screen_size = switch (props.size) {
+            .Screen => |v| blk: { break :blk (v * 2.0); },
+            .Pixels => |px| blk: {
+                const percpx = @as(f32, @floatFromInt(px)) / @as(f32, @floatFromInt(rtv_height));
+                break :blk (percpx * 2.0);
+            },
+        };
+        const pixel_height = (screen_size / 2.0) * @as(f32, @floatFromInt(rtv_height));
+        
+        var y_loc = @as(f32, @floatFromInt(y_pos));
+        var x_loc = @as(f32, @floatFromInt(x_pos));
+        const x_start_loc = x_loc;
+
+        var max_x = x_loc;
+        for (text) |c| {
+            switch (c) {
+                '\n' => {
+                    x_loc = x_start_loc;
+                    y_loc -= self.font_metrics.line_height * pixel_height;
+                },
+                else => {
+                    const char_info = &self.ascii_character_map[@intCast(c)];
+
+                    x_loc += char_info.advance * pixel_height;
+                    max_x = @max(max_x, x_loc);
+                },
+            }
+        }
+
+        return Rect {
+            .left = @as(f32, @floatFromInt(x_pos)),
+            .right = max_x,
+            .top = @as(f32, @floatFromInt(y_pos)) + self.font_metrics.ascender * pixel_height,
+            .bottom = y_loc + self.font_metrics.descender * pixel_height,
+        };
     }
 };
 

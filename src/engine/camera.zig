@@ -86,7 +86,7 @@ pub const Camera = struct {
 
     pub fn orbit_camera_update(
         self: *Self, 
-        orbit_target_transform: *const tf.Transform, 
+        orbit_target: zm.F32x4, 
         engine: *app.Engine
     ) void {
         if (engine.input.get_key_down(kc.KeyCode.MouseRight)) {
@@ -124,14 +124,14 @@ pub const Camera = struct {
 
         // Reset view matrix translation then set it to be orbit_distance from target in camera dir
         self.view_matrix[3] = zm.f32x4(0.0, 0.0, 0.0, 1.0);
-        self.view_matrix = zm.mul(self.view_matrix, zm.translationV(zm.rotate(zm.quatFromMat(self.view_matrix), -orbit_target_transform.position)));
+        self.view_matrix = zm.mul(self.view_matrix, zm.translationV(zm.rotate(zm.quatFromMat(self.view_matrix), -orbit_target)));
         self.view_matrix = zm.mul(self.view_matrix, zm.translation(0.0, 0.0, self.orbit_distance));
     }
 
     pub fn update(
         self: *Self, 
         camera_transform: *tf.Transform, 
-        orbit_target_transform: *const tf.Transform, 
+        orbit_target: zm.F32x4,
         engine: *app.Engine
     ) void {
         _ = camera_transform;
@@ -144,7 +144,7 @@ pub const Camera = struct {
         }
         switch (self.camera_type) {
             .FLY => self.fly_camera_update(engine),
-            .ORBIT => self.orbit_camera_update(orbit_target_transform, engine),
+            .ORBIT => self.orbit_camera_update(orbit_target, engine),
         }
     }
 };

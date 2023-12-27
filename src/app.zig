@@ -13,6 +13,7 @@ const cm = @import("engine/camera.zig");
 const ms = @import("engine/mesh.zig");
 const ent = @import("engine/entity.zig");
 const ph = @import("engine/physics.zig");
+const es = @import("easings.zig");
 
 const font = @import("engine/font.zig");
 
@@ -26,6 +27,16 @@ pub const App = struct {
     const Self = @This();
 
     pub const EntityData = struct {
+        chara_data: ?struct {
+            character_physics: *zphy.Character,
+        } = null,
+
+        pub fn deinit(self: *EntityData) void {
+            if (self.chara_data) |*c| {
+                c.character_physics.removeFromPhysicsSystem(.{});
+                c.character_physics.destroy();
+            }
+        }
     };
 
     const triangle_vertices: [3 * 3]zwin32.w32.FLOAT = [_]zwin32.w32.FLOAT{
@@ -56,6 +67,8 @@ pub const App = struct {
     model_buffer: *d3d11.IBuffer,
     model_idx: ent.GenerationalIndex,
 
+    chara_current_velocity: zm.F32x4 = zm.f32x4s(0.0),
+
     chara_model: ms.Model,
     tree_model: ms.Model,
 
@@ -64,40 +77,11 @@ pub const App = struct {
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
 
-        const geist_font = try font.Font.init(eng.general_allocator.allocator(), "../../res/geist.json", "../../res/geist.png", &eng.gfx);
+        const geist_font = try font.Font.init(eng.general_allocator.allocator(), "../../res/GeistMono-Regular.json", "../../res/GeistMono-Regular.png", &eng.gfx);
         errdefer geist_font.deinit();
 
-        const depth_texture_desc = d3d11.TEXTURE2D_DESC {
-            .Width = @intCast(eng.gfx.swapchain_size.width),
-            .Height = @intCast(eng.gfx.swapchain_size.height),
-            .MipLevels = 1,
-            .ArraySize = 1,
-            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
-            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
-                .Count = 1,
-                .Quality = 0,
-            },
-            .Usage = d3d11.USAGE.DEFAULT,
-            .BindFlags = d3d11.BIND_FLAG {.DEPTH_STENCIL = true,},
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG {},
-            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
-        };
-        var depth_texture: *d3d11.ITexture2D = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateTexture2D(&depth_texture_desc, null, @ptrCast(&depth_texture)));
-        defer _ = depth_texture.Release();
-
-        const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
-            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
-            .ViewDimension = d3d11.DSV_DIMENSION.TEXTURE2D,
-            .u = .{
-                .Texture2D = d3d11.TEX2D_DSV {
-                    .MipSlice = 0,
-                },
-            },
-            .Flags = d3d11.DSV_FLAGS {},
-        };
-        var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateDepthStencilView(@ptrCast(depth_texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
+        var depth_stencil_view: *d3d11.IDepthStencilView = try create_depth_stencil_view(eng);
+        errdefer _ = depth_stencil_view.Release();
 
         // Load Shader file
         var shader_file = try std.fs.cwd().openFile("../../src/shader.hlsl", std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
@@ -119,6 +103,7 @@ pub const App = struct {
 
         var vso: *d3d11.IVertexShader = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
+        errdefer _ = vso.Release();
 
         var ps_blob: *zwin32.d3d.IBlob = undefined;
         try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&shader_buffer[0], shader_file_size, null, null, null, "ps_main", "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
@@ -127,6 +112,7 @@ pub const App = struct {
         // Create vertex and pixel shaders
         var pso: *d3d11.IPixelShader = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
+        errdefer _ = pso.Release();
 
         const vso_input_layout_desc = [_]d3d11.INPUT_ELEMENT_DESC {
             d3d11.INPUT_ELEMENT_DESC {
@@ -159,6 +145,7 @@ pub const App = struct {
         };
         var vso_input_layout: *d3d11.IInputLayout = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
+        errdefer _ = vso_input_layout.Release();
 
         // Define vertex buffer input
         const vertex_buffer_desc = d3d11.BUFFER_DESC {
@@ -168,6 +155,7 @@ pub const App = struct {
         };
         var vertex_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&vertex_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &triangle_vertices, }, @ptrCast(&vertex_buffer)));
+        errdefer _ = vertex_buffer.Release();
 
         // Define rasterizer state
         var rasterization_states = RasterizationStates {
@@ -179,9 +167,11 @@ pub const App = struct {
             .CullMode = d3d11.CULL_MODE.BACK,
         };
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_states.cull_back_face)));
+        errdefer _ = rasterization_states.cull_back_face.Release();
 
         rasterizer_state_desc.CullMode = d3d11.CULL_MODE.NONE;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_states.double_sided)));
+        errdefer _ = rasterization_states.double_sided.Release();
 
         // Create camera constant buffer
         const camera_constant_buffer_desc = d3d11.BUFFER_DESC {
@@ -192,6 +182,7 @@ pub const App = struct {
         };
         var camera_data_buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
+        errdefer _ = camera_data_buffer.Release();
 
         // Create the camera entity
         var camera_transform_idx = try eng.entities.insert(.{});
@@ -249,28 +240,49 @@ pub const App = struct {
         defer chara_shape.release();
 
         const chara_ent = (try eng.entities.get(chara_root_idx));
-        chara_ent.physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
-            .position = chara_ent.transform.position,
-            .rotation = chara_ent.transform.rotation,
-            .shape = chara_shape,
-            .motion_type = .dynamic,
-            .motion_quality = .linear_cast,
-            .object_layer = ph.object_layers.moving,
-        }, .activate);
+        // chara_ent.physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
+        //     .position = chara_ent.transform.position,
+        //     .rotation = chara_ent.transform.rotation,
+        //     .shape = chara_shape,
+        //     .motion_type = .dynamic,
+        //     .motion_quality = .linear_cast,
+        //     .object_layer = ph.object_layers.moving,
+        // }, .activate);
 
-        {
-            var lock_interface = eng.physics.zphy.getBodyLockInterface();
+        // {
+        //     var lock_interface = eng.physics.zphy.getBodyLockInterface();
+        //
+        //     var write_lock: zphy.BodyLockWrite = .{};
+        //     write_lock.lock(lock_interface, chara_ent.physics_body.?);
+        //     defer write_lock.unlock();
+        //
+        //     if (write_lock.body) |locked_body| {
+        //         locked_body.getMotionPropertiesMut().setInverseMass(1.0 / 70.0);
+        //         // disables rotation somehow (from jolt 3.0.1 Character.cpp line 45)
+        //         locked_body.getMotionPropertiesMut().setInverseInertia([3]f32{0.0, 0.0, 0.0}, zm.qidentity());
+        //         locked_body.setFriction(0.0);
+        //     }
+        // }
 
-            var write_lock: zphy.BodyLockWrite = .{};
-            write_lock.lock(lock_interface, chara_ent.physics_body.?);
-            defer write_lock.unlock();
+        var zphy_character_settings = try zphy.CharacterSettings.create(); 
+        defer zphy_character_settings.release();
 
-            if (write_lock.body) |locked_body| {
-                locked_body.getMotionPropertiesMut().setInverseMass(1.0 / 70.0);
-                // disables rotation somehow (from jolt 3.0.1 Character.cpp line 45)
-                locked_body.getMotionPropertiesMut().setInverseInertia([3]f32{0.0, 0.0, 0.0}, zm.qidentity());
-            }
-        }
+        zphy_character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
+        zphy_character_settings.base.max_slope_angle = 45.0;
+        zphy_character_settings.base.shape = chara_shape;
+        zphy_character_settings.layer = ph.object_layers.moving;
+        zphy_character_settings.mass = 70.0;
+
+        chara_ent.app.chara_data = .{
+            .character_physics = try zphy.Character.create(
+                zphy_character_settings,
+                zm.vecToArr3(chara_ent.transform.position),
+                chara_ent.transform.rotation,
+                0,
+                eng.physics.zphy
+            ),
+        };
+        chara_ent.app.chara_data.?.character_physics.addToPhysicsSystem(.{});
 
         const model_constant_buffer_desc = d3d11.BUFFER_DESC {
             .ByteWidth = @sizeOf(zm.Mat),
@@ -318,12 +330,18 @@ pub const App = struct {
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
+        for (self.engine.entities.data.items) |*maybe_ent| {
+            if (maybe_ent.item_data) |*en| {
+                en.app.deinit();
+            }
+        }
+
+        self.engine.gfx.context.Flush();
         self.geist_font.deinit();
 
         self.chara_model.deinit();
         self.tree_model.deinit();
 
-        self.engine.gfx.context.Flush();
         _ = self.camera_data_buffer.Release();
         _ = self.model_buffer.Release();
         _ = self.rasterizer_states.double_sided.Release();
@@ -336,10 +354,6 @@ pub const App = struct {
     }
 
     fn update(self: *Self) void {
-        // std.log.info("frame time is: {d}ms, fps is {d}", .{
-        //     self.engine.time.delta_time_f32() * std.time.ms_per_s,
-        //     self.engine.time.get_fps()
-        // });
 
         // Input to move the model around
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
@@ -364,30 +378,38 @@ pub const App = struct {
                 camera_forward_no_pitch * zm.f32x4s(movement_direction[2])
                 + camera_right * zm.f32x4s(movement_direction[0]);
 
-            var body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
-
-            // re-apply gravity velocity
-            const vel = body_interface.getLinearVelocity(model_entity.physics_body.?);
-            movement_direction[1] = vel[1];
-
-            body_interface.setLinearVelocity(model_entity.physics_body.?, zm.vecToArr3(movement_direction));
-        } else |_| {}
-
-        // Camera input and buffer data management
-        if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
-        if (self.engine.entities.get(self.model_idx)) |model_entity| {
-            self.camera.update(&camera_entity.transform, &model_entity.transform, self.engine);
-
-            { // Update camera buffer
-                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.camera_data_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-                defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
-
-                var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-                buffer_data.view = self.camera.view_matrix;
-                buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
+            if (@reduce(.Add, @abs(movement_direction)) != 0.0) {
+                movement_direction = movement_direction / zm.f32x4s(@reduce(.Add, @abs(movement_direction)));
             }
-        } else |_| {}
+
+            var current_movement_direction = self.chara_current_velocity;
+            current_movement_direction[1] = 0.0;
+
+            const move_diff = movement_direction - current_movement_direction;
+
+            self.chara_current_velocity = self.chara_current_velocity
+                + move_diff * zm.f32x4s(self.engine.time.delta_time_f32());
+                //- current_movement_direction * zm.f32x4s(self.engine.time.delta_time_f32() * 10.0);
+            std.log.info("movd is {d:0.2}", .{move_diff});
+            std.log.info("vel  is {d:0.2}", .{self.chara_current_velocity});
+
+            var interface = self.engine.physics.zphy.getBodyInterfaceMut();
+            _ = interface;
+
+            if (model_entity.app.chara_data.?.character_physics.isSupported()) {
+                model_entity.app.chara_data.?.character_physics.setLinearVelocity(zm.vecToArr3(self.chara_current_velocity));
+            }
+            // const current_velocity = interface.getLinearVelocity(model_entity.physics_body.?);
+            // const cxy = zm.f32x4(current_velocity[0], 0.0, current_velocity[2], 0.0);
+            // _ = cxy;
+
+            //if (@reduce(.Add, @abs(cxy)) < @reduce(.Add, @abs(movement_direction))) {
+                //movement_direction[1] = interface.getLinearVelocity(model_entity.physics_body.?)[1];
+                // interface.setLinearVelocity(
+                //     model_entity.physics_body.?,
+                //     zm.vecToArr3(self.chara_current_velocity)
+                // );
+            //}
         } else |_| {}
 
         // // Cast ray from camera
@@ -409,6 +431,10 @@ pub const App = struct {
         } else {
             self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
                 catch std.log.err("Unable to update physics", .{});
+
+            if (self.engine.entities.get(self.model_idx)) |model_entity| {
+                model_entity.app.chara_data.?.character_physics.postSimulation(0.02, true);
+            } else |_| {}
             
             // After physics update set all entity transforms to match physics bodies
             {
@@ -424,6 +450,23 @@ pub const App = struct {
                 }
             }
         }
+
+        // Camera input and buffer data management
+        if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
+        if (self.engine.entities.get(self.model_idx)) |model_entity| {
+            self.camera.update(&camera_entity.transform, model_entity.transform.position + zm.f32x4(0.0, 1.5, 0.0, 0.0), self.engine);
+
+            { // Update camera buffer
+                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.camera_data_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
+
+                var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+                buffer_data.view = self.camera.view_matrix;
+                buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
+            }
+        } else |_| {}
+        } else |_| {}
 
         // Draw frame
         var rtv = self.engine.gfx.begin_frame() catch |err| {
@@ -540,16 +583,110 @@ pub const App = struct {
             &self.engine.gfx
         );
 
+        const vel_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "velocity is {d:.2}, supported: {}", .{
+            (self.engine.entities.get(self.model_idx) catch unreachable).app.chara_data.?.character_physics.getLinearVelocity(),
+            (self.engine.entities.get(self.model_idx) catch unreachable).app.chara_data.?.character_physics.isSupported(),
+        }) catch unreachable;
+        defer self.engine.general_allocator.allocator().free(vel_text);
+
+        self.geist_font.render_text_2d(
+            vel_text, 
+            100, 
+            500, 
+            .{
+                .size = .{.Pixels = 15},
+            }, 
+            rtv, 
+            self.engine.gfx.swapchain_size.width, 
+            self.engine.gfx.swapchain_size.height, 
+            &self.engine.gfx
+        );
+
+        var fps_buf: [64]u8 = [_]u8{0} ** 64;
+        const fps_text = std.fmt.bufPrint(fps_buf[0..], "frame time: {d:2.3}ms\nfps: {d:0.1}", .{
+            self.engine.time.delta_time_f32() * std.time.ms_per_s,
+            self.engine.time.get_fps(),
+        }) catch unreachable;
+
+        self.geist_font.render_text_2d(
+            fps_text, 
+            10,
+            self.engine.gfx.swapchain_size.height - @as(i32, @intFromFloat(self.geist_font.font_metrics.ascender * 12.0)),
+            .{
+                .size = .{.Pixels = 12},
+            }, 
+            rtv, 
+            self.engine.gfx.swapchain_size.width, 
+            self.engine.gfx.swapchain_size.height, 
+            &self.engine.gfx
+        );
+
+        self.geist_font.render_text_2d(
+            "zig-dx11 - r057", 
+            10, 
+            - @as(i32, @intFromFloat(self.geist_font.font_metrics.descender * 12.0)),
+            .{
+                .size = .{.Pixels = 12},
+            }, 
+            rtv, 
+            self.engine.gfx.swapchain_size.width, 
+            self.engine.gfx.swapchain_size.height, 
+            &self.engine.gfx
+        );
+
         self.engine.gfx.end_frame(rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});
             return;
         };
         return;
     }
+
+    pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !*d3d11.IDepthStencilView {
+        const depth_texture_desc = d3d11.TEXTURE2D_DESC {
+            .Width = @intCast(eng.gfx.swapchain_size.width),
+            .Height = @intCast(eng.gfx.swapchain_size.height),
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
+            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+                .Count = 1,
+                .Quality = 0,
+            },
+            .Usage = d3d11.USAGE.DEFAULT,
+            .BindFlags = d3d11.BIND_FLAG {.DEPTH_STENCIL = true,},
+            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG {},
+            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
+        };
+        var depth_texture: *d3d11.ITexture2D = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateTexture2D(&depth_texture_desc, null, @ptrCast(&depth_texture)));
+        defer _ = depth_texture.Release();
+
+        const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
+            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
+            .ViewDimension = d3d11.DSV_DIMENSION.TEXTURE2D,
+            .u = .{
+                .Texture2D = d3d11.TEX2D_DSV {
+                    .MipSlice = 0,
+                },
+            },
+            .Flags = d3d11.DSV_FLAGS {},
+        };
+        var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateDepthStencilView(@ptrCast(depth_texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
+        errdefer _ = depth_stencil_view.Release();
+
+        return depth_stencil_view;
+    }
     
     pub fn window_event_received(self: *Self, event: *const window.WindowEvent) void {
         switch (event.*) {
             .EVENTS_CLEARED => { self.update(); },
+            .RESIZED => |new_size| {
+                if (new_size.width > 0 and new_size.height > 0) {
+                    _ = self.depth_stencil_view.Release();
+                    self.depth_stencil_view = create_depth_stencil_view(self.engine) catch unreachable;
+                }
+            },
             else => {},
         }
     }
