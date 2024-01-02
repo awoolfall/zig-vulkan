@@ -35,7 +35,7 @@ pub const Win32Window = struct {
         _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
         errdefer w32.CoUninitialize();
 
-        var hInstance: w32.HINSTANCE = @ptrCast(w32.GetModuleHandleA(null));
+        const hInstance: w32.HINSTANCE = @ptrCast(w32.GetModuleHandleA(null));
         var wc = w32.WNDCLASSEXA{
             .lpfnWndProc = Win32Window.window_proc,
             .hInstance = hInstance,
@@ -50,7 +50,7 @@ pub const Win32Window = struct {
         _ = w32.RegisterClassExA(&wc);
         const width = 1920;
         const height = 1080;
-        var hwnd = w32.CreateWindowExA(
+        const hwnd = w32.CreateWindowExA(
             0, 
             "Window Class", 
             "Window Made using Zig",
@@ -171,13 +171,12 @@ pub const Win32Window = struct {
 
     fn construct_char_event(w_param: w32.WPARAM, l_param: w32.LPARAM) wb.CharEvent {
         const utf8_seq = [2:0]u8{@intCast(w_param), @intCast(w_param >> 8)};
-        var ce = wb.CharEvent {
+        return wb.CharEvent {
             .utf8_char_seq = utf8_seq,
             .utf8_char_len = if (utf8_seq[1] == 0) 1 else 2,
             .scan_code = @intCast((l_param >> 16) & 0xff),
             .repeat_count = @intCast(l_param & 0xffff),
         };
-        return ce;
     }
 
     fn construct_cursor_move_event(w_param: w32.WPARAM, l_param: w32.LPARAM) wb.CursorMoveEvent {

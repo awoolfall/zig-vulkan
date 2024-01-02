@@ -407,7 +407,7 @@ pub const Font = struct {
             win32.hrPanicOnFail(gfx.context.Map(@ptrCast(self.font_text_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
             defer gfx.context.Unmap(@ptrCast(self.font_text_buffer), 0);
 
-            var buffer_data: *FontConstantBuffer = @ptrCast(@alignCast(mapped_subresource.pData));
+            const buffer_data: *FontConstantBuffer = @ptrCast(@alignCast(mapped_subresource.pData));
             buffer_data.* = FontConstantBuffer {
                 .msdf_unit_range = zm.f32x4s(self.atlas_details.distance_range) 
                     / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),

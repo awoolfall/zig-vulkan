@@ -185,7 +185,7 @@ pub const App = struct {
         errdefer _ = camera_data_buffer.Release();
 
         // Create the camera entity
-        var camera_transform_idx = try eng.entities.insert(.{});
+        const camera_transform_idx = try eng.entities.insert(.{});
         (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
         // Load model
@@ -393,7 +393,7 @@ pub const App = struct {
             std.log.info("movd is {d:0.2}", .{move_diff});
             std.log.info("vel  is {d:0.2}", .{self.chara_current_velocity});
 
-            var interface = self.engine.physics.zphy.getBodyInterfaceMut();
+            const interface = self.engine.physics.zphy.getBodyInterfaceMut();
             _ = interface;
 
             if (model_entity.app.chara_data.?.character_physics.isSupported()) {
@@ -515,7 +515,7 @@ pub const App = struct {
                         zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.model_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
                         defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
 
-                        var buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
+                        const buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
                         buffer_data.* = entity.transform.generate_model_matrix();
                     }
                     

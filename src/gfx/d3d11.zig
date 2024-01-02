@@ -58,7 +58,7 @@ pub const D3D11State = struct {
             .@"10_1" 
         };
 
-        var window_size = try window.get_client_size();
+        const window_size = try window.get_client_size();
 
         const swapchain_flags = zwin32.dxgi.SWAP_CHAIN_FLAG {
             .ALLOW_MODE_SWITCH = true,
