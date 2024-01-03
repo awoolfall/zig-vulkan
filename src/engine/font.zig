@@ -4,18 +4,7 @@ const d3d11 = win32.d3d11;
 const zstbi = @import("zstbi");
 const gfx_d3d11 = @import("../gfx/d3d11.zig");
 const zm = @import("zmath");
-
-pub const Rect = struct {
-    left: f32,
-    bottom: f32,
-    right: f32,
-    top: f32,
-};
-
-pub const Size = union(enum) {
-    Pixels: i32,
-    Screen: f32,
-};
+const ui = @import("ui.zig");
 
 pub const AtlasDetails = struct {
     distance_range: f32,
@@ -342,7 +331,7 @@ pub const Font = struct {
     }
 
     pub const FontRenderProperties2D = struct {
-        size: Size = Size {.Pixels = 20},
+        size: ui.Size = ui.Size {.Pixels = 20},
         colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
     };
 
@@ -473,10 +462,19 @@ pub const Font = struct {
         props: FontRenderProperties2D,
         rtv_width: i32,
         rtv_height: i32,
-    ) ?Rect {
-        if (text.len == 0) { return null; }
-
+    ) ui.RectPixels {
         _ = rtv_width;
+
+        if (text.len == 0) { return ui.RectPixels {
+            .left = x_pos,
+            .bottom = y_pos,
+            .width = 0,
+            .height = 0,
+        }; }
+        
+        var y_loc = @as(f32, @floatFromInt(y_pos));
+        var x_loc = @as(f32, @floatFromInt(x_pos));
+
         const screen_size = switch (props.size) {
             .Screen => |v| blk: { break :blk (v * 2.0); },
             .Pixels => |px| blk: {
@@ -485,9 +483,7 @@ pub const Font = struct {
             },
         };
         const pixel_height = (screen_size / 2.0) * @as(f32, @floatFromInt(rtv_height));
-        
-        var y_loc = @as(f32, @floatFromInt(y_pos));
-        var x_loc = @as(f32, @floatFromInt(x_pos));
+
         const x_start_loc = x_loc;
 
         var max_x = x_loc;
@@ -506,11 +502,14 @@ pub const Font = struct {
             }
         }
 
-        return Rect {
-            .left = @as(f32, @floatFromInt(x_pos)),
-            .right = max_x,
-            .top = @as(f32, @floatFromInt(y_pos)) + self.font_metrics.ascender * pixel_height,
-            .bottom = y_loc + self.font_metrics.descender * pixel_height,
+        const left = x_pos;
+        const bottom: i32 = @intFromFloat(y_loc + self.font_metrics.descender * pixel_height);
+
+        return ui.RectPixels {
+            .left = left,
+            .bottom = bottom,
+            .width = @as(i32, @intFromFloat(max_x)) - left,
+            .height = @as(i32, @intFromFloat((@as(f32, @floatFromInt(y_pos)) + self.font_metrics.ascender * pixel_height))) - bottom,
         };
     }
 };

@@ -16,6 +16,7 @@ const ph = @import("engine/physics.zig");
 const es = @import("easings.zig");
 
 const font = @import("engine/font.zig");
+const ui = @import("engine/ui.zig");
 
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
@@ -73,12 +74,10 @@ pub const App = struct {
     tree_model: ms.Model,
 
     geist_font: font.Font,
+    ui_renderer: ui.UiRenderer,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
-
-        const geist_font = try font.Font.init(eng.general_allocator.allocator(), "../../res/GeistMono-Regular.json", "../../res/GeistMono-Regular.png", &eng.gfx);
-        errdefer geist_font.deinit();
 
         var depth_stencil_view: *d3d11.IDepthStencilView = try create_depth_stencil_view(eng);
         errdefer _ = depth_stencil_view.Release();
@@ -296,6 +295,12 @@ pub const App = struct {
 
         eng.physics.zphy.optimizeBroadPhase();
 
+        const geist_font = try font.Font.init(eng.general_allocator.allocator(), "../../res/GeistMono-Regular.json", "../../res/GeistMono-Regular.png", &eng.gfx);
+        errdefer geist_font.deinit();
+
+        const ui_renderer = try ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
+        errdefer ui_renderer.deinit();
+
         return Self {
             .engine = eng,
             .depth_stencil_view = depth_stencil_view,
@@ -325,6 +330,7 @@ pub const App = struct {
             .tree_model = tree_model,
 
             .geist_font = geist_font,
+            .ui_renderer = ui_renderer,
         };
     }
 
@@ -338,6 +344,7 @@ pub const App = struct {
 
         self.engine.gfx.context.Flush();
         self.geist_font.deinit();
+        self.ui_renderer.deinit();
 
         self.chara_model.deinit();
         self.tree_model.deinit();
@@ -570,17 +577,20 @@ pub const App = struct {
         //     &self.engine.gfx
         // );
 
-        self.geist_font.render_text_2d(
-            "Hello World.\nThis is the next line.", 
-            100, 
-            100, 
+        self.render_text_over_quad(
+            &self.geist_font,
+            "Hello World.\nThis is the next line.",
+            100,
+            100,
             .{
                 .size = .{.Pixels = 15},
             }, 
-            rtv, 
+            .{
+                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+            },
+            rtv,
             self.engine.gfx.swapchain_size.width, 
             self.engine.gfx.swapchain_size.height, 
-            &self.engine.gfx
         );
 
         const vel_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "velocity is {d:.2}, supported: {}", .{
@@ -689,5 +699,37 @@ pub const App = struct {
             },
             else => {},
         }
+    }
+
+    fn render_text_over_quad(
+        self: *Self,
+        font_: *font.Font,
+        text: []const u8,
+        x_pos: i32,
+        y_pos: i32,
+        text_props: font.Font.FontRenderProperties2D,
+        quad_props: ui.UiRenderer.QuadProperties,
+        rtv: *d3d11.IRenderTargetView,
+        rtv_width: i32,
+        rtv_height: i32,
+    ) void {
+        self.ui_renderer.render_quad(
+            font_.text_bounds_2d(text, x_pos, y_pos, text_props, rtv_width, rtv_height),
+            quad_props,
+            rtv,
+            rtv_width,
+            rtv_height,
+            &self.engine.gfx
+        );
+        font_.render_text_2d(
+            text,
+            x_pos,
+            y_pos,
+            text_props,
+            rtv,
+            rtv_width,
+            rtv_height,
+            &self.engine.gfx
+        );
     }
 };
