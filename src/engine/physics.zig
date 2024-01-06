@@ -1,5 +1,6 @@
 const std = @import("std");
 const zphy = @import("zphysics");
+const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
 const en = @import("../engine.zig");
 const graphics = @import("../gfx/d3d11.zig");
@@ -74,6 +75,23 @@ pub const PhysicsSystem = struct {
         self._allocator.destroy(self._interfaces.object_layer_pair_filter);
         self._allocator.destroy(self._interfaces.debug_renderer);
         zphy.deinit();
+    }
+
+    pub fn get_raycast_normal(self: *Self, raycast: zphy.RRayCast, raycast_result: zphy.RayCastResult) ?zm.F32x4 {
+        if (raycast_result.has_hit) {
+            const lock_interface = self.zphy.getBodyLockInterface();
+            var lock: zphy.BodyLockRead = .{};
+            lock.lock(lock_interface, raycast_result.hit.body_id);
+            defer lock.unlock();
+
+            if (lock.body) |body| {
+                const hit_position = zm.loadArr4(raycast.origin) + zm.loadArr4(raycast.direction) * zm.f32x4s(raycast_result.hit.fraction);
+                const hit_normal = body.getWorldSpaceSurfaceNormal(raycast_result.hit.sub_shape_id, zm.vecToArr3(hit_position));
+                return zm.loadArr3(hit_normal);
+            }
+        }
+
+        return null;
     }
 };
 
