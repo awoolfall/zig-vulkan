@@ -35,6 +35,11 @@ pub fn build(b: *std.Build) void {
     // step when running `zig build`).
     b.installArtifact(exe);
 
+    const options = b.addOptions();
+    options.addOption(u32, "gitrev", find_git_revision());
+
+    exe.addOptions("build_options", options);
+
     // This *creates* a RunStep in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
@@ -51,7 +56,6 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
-
 
     const zwin32_pkg = zwin32.package(b, target, optimize, .{});
     zwin32_pkg.link(exe, .{ 
@@ -99,4 +103,27 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+}
+
+fn find_git_revision() u32 {
+    const gitrev_s = blk: {
+        const argv = [_][]const u8{ "git", "rev-parse", "--short", "HEAD" };
+
+        if (std.ChildProcess.run(.{
+            .allocator = std.heap.page_allocator,
+            .argv = argv[0..],
+        })) |res| {
+            break :blk res.stdout;
+        } else |_| {
+            std.log.warn("unable to read git revision", .{});
+            break :blk "0";
+        }
+    };
+
+    var gitrev: u32 = 0;
+    if (std.fmt.parseUnsigned(u32, gitrev_s[0..7], 16)) |g| {
+        gitrev = g;
+    } else |e| {std.log.err("e {}", .{e});}
+
+    return gitrev;
 }

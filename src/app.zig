@@ -18,6 +18,8 @@ const es = @import("easings.zig");
 const font = @import("engine/font.zig");
 const ui = @import("engine/ui.zig");
 
+const gitrev = @import("build_options").gitrev;
+
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
     view: [4]zm.F32x4,
@@ -584,21 +586,6 @@ pub const App = struct {
             } else |_| {}
         }
 
-        // const fps_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "fps is {d}", .{self.engine.time.get_fps()})
-        //     catch unreachable;
-        // defer self.engine.general_allocator.allocator().free(fps_text);
-        //
-        // self.geist_font.render_text_2d(
-        //     fps_text, 
-        //     100, 
-        //     400, 
-        //     .{.size = .{.Pixels = 20},}, 
-        //     rtv, 
-        //     self.engine.gfx.swapchain_size.width, 
-        //     self.engine.gfx.swapchain_size.height, 
-        //     &self.engine.gfx
-        // );
-
         self.render_text_over_quad(
             &self.geist_font,
             "Hello World.\nThis is the next line.",
@@ -654,8 +641,12 @@ pub const App = struct {
             &self.engine.gfx
         );
 
+        var rev_buf: [64]u8 = [_]u8{0} ** 64;
+        const rev_text = std.fmt.bufPrint(rev_buf[0..], "zig-dx11 - {x}", .{
+            gitrev
+        }) catch unreachable;
         self.geist_font.render_text_2d(
-            "zig-dx11 - r057", 
+            rev_text, 
             10, 
             - @as(i32, @intFromFloat(self.geist_font.font_metrics.descender * 12.0)),
             .{
