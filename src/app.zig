@@ -13,12 +13,14 @@ const cm = @import("engine/camera.zig");
 const ms = @import("engine/mesh.zig");
 const ent = @import("engine/entity.zig");
 const ph = @import("engine/physics.zig");
+const path = @import("engine/path.zig");
 const es = @import("easings.zig");
 
 const font = @import("engine/font.zig");
 const ui = @import("engine/ui.zig");
 
 const gitrev = @import("build_options").gitrev;
+const gitchanged = @import("build_options").gitchanged;
 
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,
@@ -37,7 +39,6 @@ pub const App = struct {
 
         pub fn deinit(self: *EntityData) void {
             if (self.chara_data) |*c| {
-                //c.character_physics.removeFromPhysicsSystem(.{});
                 c.character_physics.destroy();
                 c.character_shape.release();
             }
@@ -85,7 +86,11 @@ pub const App = struct {
         errdefer _ = depth_stencil_view.Release();
 
         // Load Shader file
-        var shader_file = try std.fs.cwd().openFile("../../src/shader.hlsl", std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
+        const shader_file_path = try (path.Path{.ExeRelative = "../../src/shader.hlsl"})
+            .resolve_path(eng.general_allocator.allocator());
+        defer eng.general_allocator.allocator().free(shader_file_path);
+
+        var shader_file = try std.fs.cwd().openFile(shader_file_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
         defer shader_file.close();
 
         const shader_file_size = try shader_file.getEndPos();
@@ -190,8 +195,16 @@ pub const App = struct {
         (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
         // Load model
-        const chara_model = try ms.Model.init_from_file(eng.general_allocator.allocator(), "../../res/SK_Character_Dummy_Male_01.glb", eng.gfx.device);
-        const tree_model = try ms.Model.init_from_file(eng.general_allocator.allocator(), "../../res/Demonstration.glb", eng.gfx.device);
+        const chara_model = try ms.Model.init_from_file(
+            eng.general_allocator.allocator(), 
+            path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01.glb"}, 
+            eng.gfx.device
+        );
+        const tree_model = try ms.Model.init_from_file(
+            eng.general_allocator.allocator(), 
+            path.Path{.ExeRelative = "../../res/Demonstration.glb"}, 
+            eng.gfx.device
+        );
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
         const chara_root_idx = (try eng.create_entities_from_model(&chara_model, null)).?;
@@ -286,7 +299,6 @@ pub const App = struct {
             ),
             .character_shape = chara_shape,
         };
-        //chara_ent.app.chara_data.?.character_physics.addToPhysicsSystem(.{});
 
         const model_constant_buffer_desc = d3d11.BUFFER_DESC {
             .ByteWidth = @sizeOf(zm.Mat),
@@ -300,7 +312,12 @@ pub const App = struct {
 
         eng.physics.zphy.optimizeBroadPhase();
 
-        const geist_font = try font.Font.init(eng.general_allocator.allocator(), "../../res/GeistMono-Regular.json", "../../res/GeistMono-Regular.png", &eng.gfx);
+        const geist_font = try font.Font.init(
+            eng.general_allocator.allocator(), 
+            path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
+            path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
+            &eng.gfx
+        );
         errdefer geist_font.deinit();
 
         const ui_renderer = try ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
@@ -404,14 +421,15 @@ pub const App = struct {
 
             movement_direction = normalize(&movement_direction);
 
-            const current_movement_v = model_entity.app.chara_data.?.character_physics.getLinearVelocity();
-            var current_movement = zm.f32x4(current_movement_v[0], current_movement_v[1], current_movement_v[2], 0.0);
+            const character = model_entity.app.chara_data.?.character_physics;
+            var current_movement = zm.loadArr3(character.getLinearVelocity());
+
             var current_movement_direction = current_movement;
             current_movement_direction[1] = 0.0;
 
             const move_diff = movement_direction - current_movement_direction;
 
-            if (character_is_supported(model_entity.app.chara_data.?.character_physics)) {
+            if (character_is_supported(character)) {
                 // remove any gravity
                 current_movement[1] = 0.0;
 
@@ -421,7 +439,6 @@ pub const App = struct {
                         - current_movement_direction * zm.f32x4s(self.engine.time.delta_time_f32() * 10.0);
                 } else {
                     // apply supported movement
-                    // @TODO relative to the ground normal direction
                     current_movement = current_movement
                         + normalize(&move_diff) * zm.f32x4s(self.engine.time.delta_time_f32() * 10.0);
                 }
@@ -465,6 +482,11 @@ pub const App = struct {
             if (self.engine.entities.get(self.model_idx)) |model_entity| {
                 const pos = model_entity.app.chara_data.?.character_physics.getPosition();
                 model_entity.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                var vel = model_entity.app.chara_data.?.character_physics.getLinearVelocity();
+                vel[1] = 0.0;
+                const dir = normalize(&zm.loadArr3(vel));
+                const rot = zm.lookAtRh(zm.f32x4s(0.0), -dir, zm.f32x4(0.0, 1.0, 0.0, 0.0));
+                model_entity.transform.rotation = zm.matToQuat(rot);
             } else |_| {}
             
             // After physics update set all entity transforms to match physics bodies
@@ -642,8 +664,9 @@ pub const App = struct {
         );
 
         var rev_buf: [64]u8 = [_]u8{0} ** 64;
-        const rev_text = std.fmt.bufPrint(rev_buf[0..], "zig-dx11 - {x}", .{
-            gitrev
+        const rev_text = std.fmt.bufPrint(rev_buf[0..], "zig-dx11 - {x}{s}", .{
+            gitrev,
+            blk: { if (gitchanged) { break :blk "*"; } else { break :blk ""; } },
         }) catch unreachable;
         self.geist_font.render_text_2d(
             rev_text, 

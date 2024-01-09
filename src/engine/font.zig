@@ -5,6 +5,7 @@ const zstbi = @import("zstbi");
 const gfx_d3d11 = @import("../gfx/d3d11.zig");
 const zm = @import("zmath");
 const ui = @import("ui.zig");
+const path = @import("../engine/path.zig");
 
 pub const AtlasDetails = struct {
     distance_range: f32,
@@ -65,18 +66,21 @@ pub const Font = struct {
     font_text_buffer: *d3d11.IBuffer,
     _allocator: std.mem.Allocator,
 
-    pub fn init(alloc: std.mem.Allocator, font_json: [:0]const u8, font_msdf_png: [:0]const u8, gfx: *gfx_d3d11.D3D11State) !Font {
+    pub fn init(alloc: std.mem.Allocator, font_json: path.Path, font_msdf_png: path.Path, gfx: *gfx_d3d11.D3D11State) !Font {
+        const font_json_path = try font_json.resolve_path(alloc);
+        defer alloc.free(font_json_path);
+
         // find font json file size
         var font_json_file_size: u64 = undefined;
         {
-            const font_json_file = try std.fs.cwd().openFile(font_json, .{});
+            const font_json_file = try std.fs.cwd().openFile(font_json_path, .{});
             defer font_json_file.close();
 
             font_json_file_size = try font_json_file.getEndPos();
         }
 
         // read json file into memory
-        const font_json_data = try std.fs.cwd().readFileAlloc(alloc, font_json, font_json_file_size);
+        const font_json_data = try std.fs.cwd().readFileAlloc(alloc, font_json_path, font_json_file_size);
         defer alloc.free(font_json_data);
 
         const FontJson = struct {
@@ -173,7 +177,10 @@ pub const Font = struct {
         defer zstbi.deinit();
 
         // load msdf font png file
-        var font_image = try zstbi.Image.loadFromFile(font_msdf_png, 4);
+        const font_png_path = try font_msdf_png.resolve_path_c_str(alloc);
+        defer alloc.free(font_png_path);
+
+        var font_image = try zstbi.Image.loadFromFile(font_png_path, 4);
         defer font_image.deinit();
 
         // create a d3d11 texture from the font png file

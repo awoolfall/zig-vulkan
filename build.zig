@@ -37,6 +37,7 @@ pub fn build(b: *std.Build) void {
 
     const options = b.addOptions();
     options.addOption(u32, "gitrev", find_git_revision());
+    options.addOption(bool, "gitchanged", find_git_changed());
 
     exe.addOptions("build_options", options);
 
@@ -126,4 +127,21 @@ fn find_git_revision() u32 {
     } else |e| {std.log.err("e {}", .{e});}
 
     return gitrev;
+}
+
+fn find_git_changed() bool {
+    const argv = [_][]const u8{ "git", "diff", "--exit-code", "--quiet" };
+
+    if (std.ChildProcess.run(.{
+        .allocator = std.heap.page_allocator,
+        .argv = argv[0..],
+    })) |res| {
+        switch (res.term) {
+            .Exited => |v| { return v == 1; },
+            else => { return true; },
+        }
+    } else |_| {
+        std.log.warn("unable to read git changed", .{});
+        return true;
+    }
 }

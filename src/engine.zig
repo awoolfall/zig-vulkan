@@ -38,6 +38,7 @@ pub fn Engine(comptime App: type) type {
         time: time.TimeState,
         app: App,
         entities: EntityList,
+        exe_path: []u8,
         general_allocator: std.heap.GeneralPurposeAllocator(.{}),
 
         pub fn run() !void {
@@ -52,6 +53,7 @@ pub fn Engine(comptime App: type) type {
                 .time = undefined,
                 .app = undefined,
                 .entities = undefined,
+                .exe_path = undefined,
                 .general_allocator = undefined,
             };
 
@@ -61,6 +63,11 @@ pub fn Engine(comptime App: type) type {
                 std.debug.assert(check == std.heap.Check.ok);
             }
             const alloc = engine.general_allocator.allocator();
+
+            engine.exe_path = try std.fs.selfExeDirPathAlloc(alloc);
+            engine.exe_path = try alloc.realloc(engine.exe_path, engine.exe_path.len + 1);
+            engine.exe_path[engine.exe_path.len - 1] = '\\';
+            defer alloc.free(engine.exe_path);
 
             zmesh.init(alloc);
             defer zmesh.deinit();

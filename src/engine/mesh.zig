@@ -6,6 +6,7 @@ const zphy = @import("zphysics");
 const d3d11 = zwin32.d3d11;
 const assert = std.debug.assert;
 const tm = @import("../engine/transform.zig");
+const path = @import("../engine/path.zig");
 
 pub const AlphaMode = enum {
     Opaque,
@@ -107,8 +108,11 @@ pub const Model = struct {
     root_nodes: []usize,
     arena_allocator: *std.heap.ArenaAllocator,
 
-    pub fn init_from_file(alloc: std.mem.Allocator, file: [:0]const u8, gfx_device: *d3d11.IDevice) !Self {
-        const data = try zmesh.io.parseAndLoadFile(file);
+    pub fn init_from_file(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
+        const file_path = try file.resolve_path_c_str(alloc);
+        defer alloc.free(file_path);
+
+        const data = try zmesh.io.parseAndLoadFile(file_path);
         defer zmesh.io.freeData(data);
 
         var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
