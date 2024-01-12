@@ -1,5 +1,5 @@
 const std = @import("std");
-const zphy = @import("zphysics");
+pub const zphy = @import("zphysics");
 const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
 const en = @import("../engine.zig");

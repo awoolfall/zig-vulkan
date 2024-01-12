@@ -14,7 +14,7 @@ pub const Path = union(enum) {
                 return try std.fs.path.resolve(alloc, &.{ exe_path, v }); 
             },
             .CwdRelative => |v| { return try alloc.dupe(u8, v); },
-            .Absolute => |v| { return try alloc.dupe(u8, v); },
+            .Absolute => |v| { return try alloc.dupe(u8, v); }, 
         }
     }
 

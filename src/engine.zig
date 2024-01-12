@@ -4,14 +4,14 @@ const zmesh = @import("zmesh");
 const zm = @import("zmath");
 const hrPanic = zwin32.hrPanicOnFail;
 
-const d3d11 = @import("gfx/d3d11.zig");
-const w32 = @import("platform/windows.zig");
-const input = @import("input/input.zig");
-const time = @import("engine/time.zig");
-const tf = @import("engine/transform.zig");
-const gen = @import("engine/entity.zig");
-const ms = @import("engine/mesh.zig");
-const ps = @import("engine/physics.zig");
+pub const d3d11 = @import("gfx/d3d11.zig");
+pub const w32 = @import("platform/windows.zig");
+pub const input = @import("input/input.zig");
+pub const time = @import("engine/time.zig");
+pub const tf = @import("engine/transform.zig");
+pub const gen = @import("engine/entity.zig");
+pub const mesh = @import("engine/mesh.zig");
+pub const physics = @import("engine/physics.zig");
 pub const Transform = tf.Transform;
 
 const wb = @import("window.zig");
@@ -24,8 +24,8 @@ pub fn Engine(comptime App: type) type {
         pub const EntitySuperStruct = struct {
             name: ?[]u8 = null,
             transform: tf.Transform = tf.Transform.new(),
-            mesh: ?*ms.Mesh = null,
-            physics_body: ?ps.BodyId = null,
+            mesh: ?*mesh.Mesh = null,
+            physics_body: ?physics.zphy.BodyId = null,
             app: App.EntityData = App.EntityData {},
         };
 
@@ -33,7 +33,7 @@ pub fn Engine(comptime App: type) type {
 
         window: w32.Win32Window,
         gfx: d3d11.D3D11State,
-        physics: ps.PhysicsSystem,
+        physics: physics.PhysicsSystem,
         input: input.InputState,
         time: time.TimeState,
         app: App,
@@ -88,7 +88,7 @@ pub fn Engine(comptime App: type) type {
             defer engine.gfx.deinit();
 
             Log.debug("Calling physics init", .{});
-            engine.physics = try ps.PhysicsSystem.init(alloc, &engine.gfx);
+            engine.physics = try physics.PhysicsSystem.init(alloc, &engine.gfx);
             defer engine.physics.deinit();
 
             engine.entities = try EntityList.init(alloc);
@@ -133,7 +133,7 @@ pub fn Engine(comptime App: type) type {
             self.input.received_window_event_late(&event);
         }
 
-        pub fn create_entities_from_model(self: *Self, model: *const ms.Model, out_entities: ?*std.ArrayList(gen.GenerationalIndex)) !?gen.GenerationalIndex {
+        pub fn create_entities_from_model(self: *Self, model: *const mesh.Model, out_entities: ?*std.ArrayList(gen.GenerationalIndex)) !?gen.GenerationalIndex {
             var new_entities_dat = try std.ArrayList(gen.GenerationalIndex).initCapacity(self.general_allocator.allocator(), model.nodes_list.len);
             defer new_entities_dat.deinit();
 
