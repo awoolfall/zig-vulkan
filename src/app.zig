@@ -382,13 +382,6 @@ pub const App = struct {
         _ = self.depth_stencil_view.Release();
     }
 
-    fn movement_curve(x: f32) f32 {
-        return x;
-    }
-    fn inv_movement_curve(y: f32) f32 {
-        return y;
-    }
-
     fn vecAngle(v0: zm.F32x4, v1: zm.F32x4) f32 {
         const angle = std.math.acos(zm.dot3(v0, v1)[0] / (zm.length3(v0)[0] * zm.length3(v1)[0]));
         if (std.math.isNan(angle)) {
@@ -440,31 +433,20 @@ pub const App = struct {
                 // remove any gravity
                 current_movement[1] = 0.0;
 
+                const character_movement_speed = 3.0;
+                const ramp_speed = 10.0;
+
+                // apply supported movement
+                current_movement += movement_direction * 
+                    zm.f32x4s(character_movement_speed * ramp_speed * self.engine.time.delta_time_f32());
+
                 // apply friction
-                if (@reduce(.Add, @abs(movement_direction)) < 0.001) {
-                    current_movement = current_movement
-                        - current_movement_direction * zm.f32x4s(self.engine.time.delta_time_f32() * 10.0);
-                } else {
-                    // apply supported movement
-                    std.log.info("cur: {d:0.2}, mov: {d:0.2}", .{current_movement, movement_direction});
-                    const current_speed_in_desired_direction = vecProject(current_movement, movement_direction);
-                    //if (current_speed_in_desired_direction < 0.0) { current_speed_in_desired_direction = 0.0; }
-                    std.log.info("spd {d}", .{current_speed_in_desired_direction / 4.5});
-
-                    const x = inv_movement_curve(current_speed_in_desired_direction / 4.5);
-                    std.log.info("x is {d}", .{x});
-
-                    if (x <= 1.0) {
-                        const y = movement_curve(x + self.engine.time.delta_time_f32());
-                        std.log.info("y is {d}", .{y});
-
-                        current_movement = movement_direction * zm.f32x4s(4.5 * y);
-                    }
-                }
+                current_movement -=
+                    current_movement_direction * zm.f32x4s(ramp_speed * self.engine.time.delta_time_f32());
             } else {
                 // if not supported then apply gravity
                 current_movement = current_movement
-                    - zm.f32x4(0.0, self.engine.time.delta_time_f32() * 9.8, 0.0, 0.0);
+                    + zm.loadArr3(self.engine.physics.zphy.getGravity()) * zm.f32x4s(self.engine.time.delta_time_f32());
             }
 
             model_entity.app.chara_data.?.character_physics.setLinearVelocity(zm.vecToArr3(current_movement));
@@ -493,9 +475,19 @@ pub const App = struct {
 
             if (self.engine.entities.get(self.model_idx)) |model_entity| {
                 const p0 = zm.loadArr3(model_entity.app.chara_data.?.character_physics.getPosition());
-                model_entity.app.chara_data.?.character_physics.update(self.engine.time.delta_time_f32(), [3]f32{0.0, -9.8, 0.0}, .{});
+                //model_entity.app.chara_data.?.character_physics.update(self.engine.time.delta_time_f32(), [3]f32{0.0, -9.8, 0.0}, .{});
+                model_entity.app.chara_data.?.character_physics.extendedUpdate(
+                    self.engine.time.delta_time_f32(), 
+                    [3]f32{0.0, -9.8, 0.0}, 
+                    .{},
+                    .{}
+                );
                 const p1 = zm.loadArr3(model_entity.app.chara_data.?.character_physics.getPosition());
                 character_velocity = (p1 - p0) / zm.f32x4s(self.engine.time.delta_time_f32());
+
+                // Update character virtual linear velocity based on physics interactions from update
+                // because apparently this doesn't happen automatically???
+                //model_entity.app.chara_data.?.character_physics.setLinearVelocity(zm.vecToArr3(character_velocity));
             } else |_| {}
 
             if (self.engine.entities.get(self.model_idx)) |model_entity| {
@@ -505,10 +497,12 @@ pub const App = struct {
                 var vel = model_entity.app.chara_data.?.character_physics.getLinearVelocity();
                 vel[1] = 0.0;
                 const dir = zm.normalize3(zm.loadArr3(vel));
-                const rot = zm.lookAtRh(zm.f32x4s(0.0), dir * zm.f32x4(1.0, 1.0, -1.0, 0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0));
-                model_entity.transform.rotation = zm.matToQuat(rot);
+                if (!std.math.isNan(dir[0])) {
+                    const rot = zm.lookAtRh(zm.f32x4s(0.0), dir * zm.f32x4(1.0, 1.0, -1.0, 0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0));
+                    model_entity.transform.rotation = zm.matToQuat(rot);
+                }
             } else |_| {}
-            
+
             // After physics update set all entity transforms to match physics bodies
             {
                 const body_interface = self.engine.physics.zphy.getBodyInterface();
@@ -794,3 +788,4 @@ pub const App = struct {
         return chr.getGroundState() == zphy.CharacterGroundState.on_ground;
     }
 };
+
