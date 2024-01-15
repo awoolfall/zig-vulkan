@@ -4,6 +4,8 @@ const d3d11 = win32.d3d11;
 const zstbi = @import("zstbi");
 const gfx_d3d11 = @import("../gfx/d3d11.zig");
 const zm = @import("zmath");
+const _font = @import("font.zig");
+const path = @import("path.zig");
 
 pub const RectPixels = struct {
     left: i32,
@@ -32,8 +34,72 @@ pub const QuadBufferPixelBuffer = packed struct {
     colour: zm.F32x4 = zm.f32x4s(1.0),
 };
 
+pub const FontEnum = enum(usize) {
+    GeistMono = 0,
+    Count
+};
+
 pub const UiRenderer = struct {
     _allocator: std.mem.Allocator,
+    quad_renderer: QuadRenderer,
+    fonts: [@intFromEnum(FontEnum.Count)]_font.Font,
+
+    pub fn deinit(self: *UiRenderer) void {
+        self.quad_renderer.deinit();
+        for (&self.fonts) |*f| {
+            f.deinit();
+        }
+    }
+
+    pub fn init(alloc: std.mem.Allocator, gfx: *gfx_d3d11.D3D11State) !UiRenderer {
+        // construct ui object
+        return UiRenderer {
+            ._allocator = alloc,
+            .quad_renderer = try QuadRenderer.init(gfx),
+            .fonts = [_]_font.Font {
+                try _font.Font.init(
+                    alloc,
+                    path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
+                    path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
+                    gfx
+                ),
+            },
+        };
+    }
+
+    pub fn render_text_2d(
+        self: *UiRenderer, 
+        font: FontEnum,
+        text: []const u8,
+        x_pos: i32,
+        y_pos: i32,
+        props: _font.Font.FontRenderProperties2D,
+        rtv: *d3d11.IRenderTargetView, 
+        rtv_width: i32,
+        rtv_height: i32,
+        gfx: *gfx_d3d11.D3D11State,
+    ) void {
+        self.fonts[@intFromEnum(font)].render_text_2d(
+            text, x_pos, y_pos, props, rtv, rtv_width, rtv_height, gfx
+        );
+    }
+
+    pub fn render_quad(
+        self: *UiRenderer,
+        rect_pixels: RectPixels,
+        props: QuadRenderer.QuadProperties,
+        rtv: *d3d11.IRenderTargetView, 
+        rtv_width: i32,
+        rtv_height: i32,
+        gfx: *gfx_d3d11.D3D11State,
+    ) void {
+        self.quad_renderer.render_quad(
+            rect_pixels, props, rtv, rtv_width, rtv_height, gfx
+        );
+    }
+};
+
+pub const QuadRenderer = struct {
     sampler: *d3d11.ISamplerState,
     rasterizer_state: *d3d11.IRasterizerState,
     blend_state: *d3d11.IBlendState,
@@ -46,7 +112,7 @@ pub const UiRenderer = struct {
 
     const QUAD_SHADER_HLSL = @embedFile("quad_shader.hlsl");
 
-    pub fn deinit(self: *const UiRenderer) void {
+    pub fn deinit(self: *QuadRenderer) void {
         _ = self.blend_state.Release();
         _ = self.rasterizer_state.Release();
         _ = self.sampler.Release();
@@ -58,10 +124,9 @@ pub const UiRenderer = struct {
         _ = self.quad_pso.Release();
     }
 
-    pub fn init(alloc: std.mem.Allocator, gfx: *gfx_d3d11.D3D11State) !UiRenderer {
+    pub fn init(gfx: *gfx_d3d11.D3D11State) !QuadRenderer {
         // construct ui object
-        var ui = UiRenderer {
-            ._allocator = alloc,
+        var ui = QuadRenderer {
             .sampler = undefined,
             .rasterizer_state = undefined,
             .blend_state = undefined,
@@ -166,7 +231,7 @@ pub const UiRenderer = struct {
     };
 
     pub fn render_quad(
-        self: *UiRenderer,
+        self: *QuadRenderer,
         rect_pixels: RectPixels,
         props: QuadProperties,
         rtv: *d3d11.IRenderTargetView, 

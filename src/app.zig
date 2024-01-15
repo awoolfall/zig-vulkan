@@ -17,7 +17,8 @@ const path = @import("engine/path.zig");
 const es = @import("easings.zig");
 
 const font = @import("engine/font.zig");
-const ui = @import("engine/ui.zig");
+const _ui = @import("engine/ui.zig");
+const FontEnum = _ui.FontEnum;
 
 const gitrev = @import("build_options").gitrev;
 const gitchanged = @import("build_options").gitchanged;
@@ -76,8 +77,7 @@ pub const App = struct {
     chara_model: ms.Model,
     tree_model: ms.Model,
 
-    geist_font: font.Font,
-    ui_renderer: ui.UiRenderer,
+    ui: _ui.UiRenderer,
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
@@ -312,16 +312,8 @@ pub const App = struct {
 
         eng.physics.zphy.optimizeBroadPhase();
 
-        const geist_font = try font.Font.init(
-            eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
-            path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
-            &eng.gfx
-        );
-        errdefer geist_font.deinit();
-
-        const ui_renderer = try ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
-        errdefer ui_renderer.deinit();
+        const ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
+        errdefer ui.deinit();
 
         return Self {
             .engine = eng,
@@ -351,8 +343,7 @@ pub const App = struct {
             .chara_model = chara_model,
             .tree_model = tree_model,
 
-            .geist_font = geist_font,
-            .ui_renderer = ui_renderer,
+            .ui = ui,
         };
     }
 
@@ -365,8 +356,7 @@ pub const App = struct {
         }
 
         self.engine.gfx.context.Flush();
-        self.geist_font.deinit();
-        self.ui_renderer.deinit();
+        self.ui.deinit();
 
         self.chara_model.deinit();
         self.tree_model.deinit();
@@ -450,6 +440,15 @@ pub const App = struct {
             }
 
             model_entity.app.chara_data.?.character_physics.setLinearVelocity(zm.vecToArr3(current_movement));
+
+            // Rotate character model to match the input desired direction
+            // If no input desired direction (normalized to nan) then remain in last rotation
+            const dir = zm.normalize3(movement_direction);
+            if (!std.math.isNan(dir[0])) {
+                const rot = zm.lookAtRh(zm.f32x4s(0.0), dir * zm.f32x4(1.0, 1.0, -1.0, 0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0));
+                model_entity.transform.rotation =
+                    zm.slerp(model_entity.transform.rotation, zm.matToQuat(rot), self.engine.time.delta_time_f32() * 10.0);
+            }
         } else |_| {}
 
         // // Cast ray from camera
@@ -493,14 +492,6 @@ pub const App = struct {
             if (self.engine.entities.get(self.model_idx)) |model_entity| {
                 const pos = model_entity.app.chara_data.?.character_physics.getPosition();
                 model_entity.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-
-                var vel = model_entity.app.chara_data.?.character_physics.getLinearVelocity();
-                vel[1] = 0.0;
-                const dir = zm.normalize3(zm.loadArr3(vel));
-                if (!std.math.isNan(dir[0])) {
-                    const rot = zm.lookAtRh(zm.f32x4s(0.0), dir * zm.f32x4(1.0, 1.0, -1.0, 0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0));
-                    model_entity.transform.rotation = zm.matToQuat(rot);
-                }
             } else |_| {}
 
             // After physics update set all entity transforms to match physics bodies
@@ -623,7 +614,7 @@ pub const App = struct {
         }
 
         self.render_text_over_quad(
-            &self.geist_font,
+            &self.ui.fonts[@intFromEnum(FontEnum.GeistMono)],
             "Hello World.\nThis is the next line.",
             100,
             100,
@@ -645,7 +636,8 @@ pub const App = struct {
         }) catch unreachable;
         defer self.engine.general_allocator.allocator().free(vel_text);
 
-        self.geist_font.render_text_2d(
+        self.ui.render_text_2d(
+            FontEnum.GeistMono,
             vel_text, 
             100, 
             500, 
@@ -664,10 +656,11 @@ pub const App = struct {
             self.engine.time.get_fps(),
         }) catch unreachable;
 
-        self.geist_font.render_text_2d(
+        self.ui.render_text_2d(
+            FontEnum.GeistMono,
             fps_text, 
             10,
-            self.engine.gfx.swapchain_size.height - @as(i32, @intFromFloat(self.geist_font.font_metrics.ascender * 12.0)),
+            self.engine.gfx.swapchain_size.height - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.ascender * 12.0)),
             .{
                 .size = .{.Pixels = 12},
             }, 
@@ -682,10 +675,11 @@ pub const App = struct {
             gitrev,
             blk: { if (gitchanged) { break :blk "*"; } else { break :blk ""; } },
         }) catch unreachable;
-        self.geist_font.render_text_2d(
+        self.ui.render_text_2d(
+            FontEnum.GeistMono,
             rev_text, 
             10, 
-            - @as(i32, @intFromFloat(self.geist_font.font_metrics.descender * 12.0)),
+            - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
             .{
                 .size = .{.Pixels = 12},
             }, 
@@ -759,12 +753,12 @@ pub const App = struct {
         x_pos: i32,
         y_pos: i32,
         text_props: font.Font.FontRenderProperties2D,
-        quad_props: ui.UiRenderer.QuadProperties,
+        quad_props: _ui.QuadRenderer.QuadProperties,
         rtv: *d3d11.IRenderTargetView,
         rtv_width: i32,
         rtv_height: i32,
     ) void {
-        self.ui_renderer.render_quad(
+        self.ui.quad_renderer.render_quad(
             font_.text_bounds_2d(text, x_pos, y_pos, text_props, rtv_width, rtv_height),
             quad_props,
             rtv,
