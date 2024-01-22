@@ -1,3 +1,6 @@
 [submodule "libs/zig-gamedev"]
 	path = libs/zig-gamedev
 	url = git@github.com:awoolfall/zig-gamedev.git
+[submodule "libs/assimp/libs/assimp"]
+	path = libs/assimp/libs/assimp
+	url = https://github.com/assimp/assimp.git
