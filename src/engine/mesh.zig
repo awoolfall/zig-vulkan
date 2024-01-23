@@ -7,6 +7,7 @@ const d3d11 = zwin32.d3d11;
 const assert = std.debug.assert;
 const tm = @import("../engine/transform.zig");
 const path = @import("../engine/path.zig");
+const assimp = @import("assimp");
 
 pub const AlphaMode = enum {
     Opaque,
@@ -111,6 +112,15 @@ pub const Model = struct {
     pub fn init_from_file(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
+
+        const assimp_scene = try assimp.aiImportFile(file_path, 0);
+        defer assimp.aiReleaseImport(assimp_scene);
+
+        std.log.info("assimp scene name is {s}", .{assimp_scene.name()});
+        std.log.info("assimp root name is {s}", .{assimp_scene.root_node().?.name()});
+        for (assimp_scene.root_node().?.children()) |child| {
+            std.log.info("root child name is {s}", .{child.?.name()});
+        }
 
         const data = try zmesh.io.parseAndLoadFile(file_path);
         defer zmesh.io.freeData(data);
