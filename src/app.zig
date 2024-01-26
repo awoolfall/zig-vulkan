@@ -220,7 +220,7 @@ pub const App = struct {
             if (entity.physics_body == null) {
                 if (entity.mesh) |mesh| {
                     const sc = entity.transform.scale;
-                    const scaled_shape_settings = zphy.DecoratedShapeSettings.createScaled(mesh.physics_shape_settings, [3]zphy.Real{sc[0], sc[1], sc[2]})
+                    const scaled_shape_settings = zphy.DecoratedShapeSettings.createScaled(mesh.mesh_set.physics_shape_settings, [3]zphy.Real{sc[0], sc[1], sc[2]})
                         catch unreachable;
                     defer scaled_shape_settings.release();
 
@@ -563,10 +563,10 @@ pub const App = struct {
                     const pos_stride: c_uint = @sizeOf(f32) * 3;
                     const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
                     const offset: c_uint = 0;
-                    self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
+                    self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.model.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.model.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.model.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetIndexBuffer(m.model.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
 
                     { // Setup model buffer from transform
                         var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
@@ -581,17 +581,21 @@ pub const App = struct {
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
 
                     // Finally, render the mesh
-                    for (m.primitives) |*p| {
-                        if (p.material_descriptor.double_sided) {
-                            self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
-                        } else {
-                            self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
-                        }
+                    for (m.mesh_set.primitives) |maybe_prim_idx| {
+                        if (maybe_prim_idx) |prim_idx| {
+                            const p = &m.model.mesh_list[prim_idx];
 
-                        if (p.has_indices()) {
-                            self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
-                        } else {
-                            self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+                            if (p.material_descriptor.double_sided) {
+                                self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+                            } else {
+                                self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
+                            }
+
+                            if (p.has_indices()) {
+                                self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
+                            } else {
+                                self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+                            }
                         }
                     }
                 }

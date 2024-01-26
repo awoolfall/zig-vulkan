@@ -16,6 +16,11 @@ pub const Transform = tf.Transform;
 
 const wb = @import("window.zig");
 
+pub const MeshSet = struct {
+    model: *const mesh.Model,
+    mesh_set: *const mesh.MeshSet,
+};
+
 pub fn Engine(comptime App: type) type {
     return struct {
         const Self = @This();
@@ -24,7 +29,7 @@ pub fn Engine(comptime App: type) type {
         pub const EntitySuperStruct = struct {
             name: ?[]u8 = null,
             transform: tf.Transform = tf.Transform.new(),
-            mesh: ?*mesh.Mesh = null,
+            mesh: ?MeshSet = null,
             physics_body: ?physics.zphy.BodyId = null,
             app: App.EntityData = App.EntityData {},
         };
@@ -153,6 +158,14 @@ pub fn Engine(comptime App: type) type {
                     parent_model_matrix = model.recursive_get_node_model_matrix(parent_idx, resolved_transforms);
                 }
 
+                var mesh_set: ?MeshSet = null;
+                if (n.mesh != null) {
+                    mesh_set = MeshSet {
+                        .model = model,
+                        .mesh_set = &(n.mesh.?)
+                    };
+                }
+
                 const ent_idx = try self.entities.insert(EntitySuperStruct {
                     .name = n.name,
                     .transform = Transform {
@@ -160,7 +173,7 @@ pub fn Engine(comptime App: type) type {
                         .rotation = zm.qmul(n.transform.rotation, zm.quatFromMat(parent_model_matrix)),
                         .scale = n.transform.scale, // @TODO: multiply this by parent
                     },
-                    .mesh = n.mesh,
+                    .mesh = mesh_set,
                 });
 
                 if (first_entity_with_mesh == null and n.mesh != null) {
