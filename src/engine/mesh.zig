@@ -87,6 +87,24 @@ pub const MeshSet = struct {
     pub fn deinit(self: *MeshSet) void {
         self.physics_shape_settings.release();
     }
+
+    fn generate_physics_shape(self: *MeshSet, alloc: std.mem.Allocator, prims: []MeshPrimitive) !void {
+        var mesh_set_positions = std.ArrayList([3]f32).init(alloc);
+        defer mesh_set_positions.deinit();
+
+        for (self.primitives) |maybe_prim| {
+            if (maybe_prim) |prim_idx| {
+                const prim = &prims[prim_idx];
+                try mesh_set_positions.appendSlice(prim.positions);
+            }
+        }
+
+        // Construct physics shape for the mesh taking into account all its primitives
+        self.physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(
+                @ptrCast(mesh_set_positions.items.ptr), 
+                @intCast(mesh_set_positions.items.len), 
+                @sizeOf([3]f32)));
+    }
 };
 
 pub const ModelNode = struct {
@@ -119,6 +137,21 @@ pub const Model = struct {
     nodes_list: []ModelNode,
     root_nodes: []usize,
     arena_allocator: *std.heap.ArenaAllocator,
+
+    pub fn deinit(self: *Self) void {
+        for (self.nodes_list) |*node| {
+            node.deinit();
+        }
+
+        self.arena_allocator.deinit();
+        self.arena_allocator.child_allocator.destroy(self.arena_allocator);
+
+        _ = self.buffers.indices.Release();
+        _ = self.buffers.positions.Release();
+        if (self.buffers.normals) |b| { _ = b.Release(); }
+        if (self.buffers.tex_coords) |b| { _ = b.Release(); }
+        if (self.buffers.tangents) |b| { _ = b.Release(); }
+    }
 
     pub fn init_from_file(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
@@ -211,34 +244,7 @@ pub const Model = struct {
                 mesh_sets[mi].primitives[pi] = mesh_primatives_list.items.len - 1;
             }
 
-            var mesh_set_positions = std.ArrayList([3]f32).init(alloc);
-            defer mesh_set_positions.deinit();
-
-            for (mesh_sets[mi].primitives) |maybe_prim| {
-                if (maybe_prim) |prim_idx| {
-                    const prim = &mesh_primatives_list.items[prim_idx];
-                    try mesh_set_positions.appendSlice(prim.positions);
-                }
-            }
-            //
-            // // Construct the bounding box for the mesh
-            // var bb = BoundingBox {.min = zm.f32x4s(0.0), .max = zm.f32x4s(0.0)};
-            // for (mesh_set_positions.items) |*p| {
-            //     if (p[0] < bb.min[0]) { bb.min[0] = p[0]; }
-            //     if (p[1] < bb.min[1]) { bb.min[1] = p[1]; }
-            //     if (p[2] < bb.min[2]) { bb.min[2] = p[2]; }
-            //
-            //     if (p[0] > bb.max[0]) { bb.max[0] = p[0]; }
-            //     if (p[1] > bb.max[1]) { bb.max[1] = p[1]; }
-            //     if (p[2] > bb.max[2]) { bb.max[2] = p[2]; }
-            // }
-            // mesh_sets[mi].bounding_box = bb;
-
-            // Construct physics shape for the mesh taking into account all its primitives
-            mesh_sets[mi].physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(
-                    @ptrCast(mesh_set_positions.items.ptr), 
-                    @intCast(mesh_set_positions.items.len), 
-                    @sizeOf([3]f32)));
+            try mesh_sets[mi].generate_physics_shape(alloc, mesh_primatives_list.items);
         }
 
         const buffers = try create_gfx_buffers_from_data(
@@ -401,150 +407,184 @@ pub const Model = struct {
         return buffers;
     }
 
-    // pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
-    //     const file_path = try file.resolve_path_c_str(alloc);
-    //     defer alloc.free(file_path);
-    //
-    //     const scene = try assimp.aiImportFile("../../res/Character_Dummy.fbx", 0);
-    //     defer assimp.aiReleaseImport(scene);
-    //
-    //     std.log.info("assimp scene name is {s}", .{scene.name()});
-    //     std.log.info("assimp root name is {s}", .{scene.root_node().?.name()});
-    //     for (scene.root_node().?.children()) |child| {
-    //         std.log.info("root child name is {s}\n\tt is {d}\n\tm are", .{child.?.name(), child.?.transformation()});
-    //             for (child.?.meshes()) |mid| {
-    //                 std.log.info("{d}", .{mid});
-    //             }
-    //     }
-    //
-    //     var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
-    //     errdefer alloc.destroy(model_arena_allocator);
-    //
-    //     model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
-    //     errdefer model_arena_allocator.deinit();
-    //     var model_arena = model_arena_allocator.allocator();
-    //
-    //     var local_arena = std.heap.ArenaAllocator.init(alloc);
-    //     defer local_arena.deinit();
-    //
-    //     // Create a number of array lists to store attribute data of various types.
-    //     // This will later be used to construct model-wide gfx buffers.
-    //     var mesh_indices = std.ArrayList(u32).init(local_arena.allocator());
-    //     var mesh_positions = std.ArrayList([3]f32).init(local_arena.allocator());
-    //     var mesh_normals = std.ArrayList([3]f32).init(local_arena.allocator());
-    //     var mesh_tex_coords = std.ArrayList([2]f32).init(local_arena.allocator());
-    //     var mesh_tangents = std.ArrayList([4]f32).init(local_arena.allocator());
-    //
-    //     // Create an arraylist ready to store upcoming meshes
-    //     var meshes = try model_arena.alloc(Mesh, scene.meshes().len);
-    //
-    //     // Iterate through meshes and their primitives adding all data to 
-    //     // the above arraylists and appending mesh data to a arraylist
-    //     for (scene.meshes()) |*maybe_mesh| {
-    //         if (maybe_mesh == null) { continue; }
-    //         const m = maybe_mesh.?;
-    //
-    //         var mesh = Mesh{
-    //             .primitives = try model_arena.alloc(MeshPrimitive, m.),
-    //             // will set this later after the gpu buffers are created
-    //             .buffers = undefined,
-    //             .physics_shape_settings = undefined,
-    //             .bounding_box = undefined,
-    //         };
-    //
-    //         for (0..m.primitives_count) |pi| {
-    //             var prim_mat = MaterialDescriptor {};
-    //             if (m.primitives[pi].material) |material| {
-    //                 prim_mat.double_sided = material.double_sided > 0;
-    //                 prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
-    //                 prim_mat.alpha_cutoff = material.alpha_cutoff;
-    //                 prim_mat.unlit = material.unlit > 0;
-    //             }
-    //
-    //             var prim = MeshPrimitive {
-    //                 .num_indices = undefined,
-    //                 .num_vertices = undefined,
-    //                 .indices_offset = mesh_indices.items.len,
-    //                 .pos_offset = mesh_positions.items.len,
-    //                 .nor_offset = mesh_normals.items.len,
-    //                 .tex_coord_offset = mesh_tex_coords.items.len,
-    //                 .tangents_offset = mesh_tangents.items.len,
-    //                 .material_descriptor = prim_mat,
-    //                 .topology = primitive_topology_from_zcgltf(m.primitives[pi].type),
-    //             };
-    //
-    //             try appendMeshPrimitive(
-    //                 data,
-    //                 @intCast(mi),
-    //                 @intCast(pi),
-    //                 &mesh_indices,
-    //                 &mesh_positions,
-    //                 &mesh_normals,
-    //                 [_]?*std.ArrayList([2]f32){&mesh_tex_coords, null, null, null},
-    //                 &mesh_tangents
-    //             );
-    //
-    //             prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
-    //             prim.num_indices = mesh_indices.items.len - prim.indices_offset;
-    //             mesh.primitives[pi] = prim;
-    //         }
-    //
-    //         // Construct physics shape for the mesh taking into account all its primitives
-    //         const primf = &mesh.primitives[0];
-    //         const total_num_verticies_in_all_primitives = mesh_positions.items.len - primf.pos_offset;
-    //
-    //         mesh.physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(
-    //                 &(mesh_positions.items[primf.pos_offset]), 
-    //                 @intCast(total_num_verticies_in_all_primitives), 
-    //                 @sizeOf([3]f32)));
-    //
-    //         // Construct the bounding box for the mesh
-    //         var bb = BoundingBox {.min = zm.f32x4s(0.0), .max = zm.f32x4s(0.0)};
-    //         for (mesh_positions.items[primf.pos_offset..]) |*p| {
-    //             if (p[0] < bb.min[0]) { bb.min[0] = p[0]; }
-    //             if (p[1] < bb.min[1]) { bb.min[1] = p[1]; }
-    //             if (p[2] < bb.min[2]) { bb.min[2] = p[2]; }
-    //
-    //             if (p[0] > bb.max[0]) { bb.max[0] = p[0]; }
-    //             if (p[1] > bb.max[1]) { bb.max[1] = p[1]; }
-    //             if (p[2] > bb.max[2]) { bb.max[2] = p[2]; }
-    //         }
-    //         mesh.bounding_box = bb;
-    //
-    //         // Finally append mesh to mesh list
-    //         meshes[mi] = mesh;
-    //     }
-    //
-    //
-    //     const buffers = Buffers {
-    //         .positions = undefined,
-    //         .indices = undefined,
-    //         .normals = undefined,
-    //         .tangents = undefined,
-    //         .tex_coords = undefined,
-    //     };
-    //
-    //     return Self {
-    //         .buffers = buffers,
-    //         .mesh_list = undefined,
-    //         .root_nodes = undefined,
-    //         .arena_allocator = model_arena_allocator,
-    //     };
-    // }
+    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
+        const file_path = try file.resolve_path_c_str(alloc);
+        defer alloc.free(file_path);
 
-    pub fn deinit(self: *Self) void {
-        for (self.nodes_list) |*node| {
-            node.deinit();
+        const triangulate_flag: u32 = 0x8;
+        const global_scale_flag: u32 = 0x8000000;
+        const optimize_mesh_flag: u32 = 0x200000;
+        const scene = try assimp.aiImportFile(file_path, triangulate_flag | global_scale_flag | optimize_mesh_flag);
+        defer assimp.aiReleaseImport(scene);
+
+        var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
+        errdefer alloc.destroy(model_arena_allocator);
+
+        model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
+        errdefer model_arena_allocator.deinit();
+        var model_arena = model_arena_allocator.allocator();
+
+        var local_arena = std.heap.ArenaAllocator.init(alloc);
+        defer local_arena.deinit();
+
+        // Create a number of array lists to store attribute data of various types.
+        // This will later be used to construct model-wide gfx buffers.
+        var mesh_indices = std.ArrayList(u32).init(local_arena.allocator());
+        var mesh_positions = std.ArrayList([3]f32).init(local_arena.allocator());
+        var mesh_normals = std.ArrayList([3]f32).init(local_arena.allocator());
+        var mesh_tex_coords = std.ArrayList([2]f32).init(local_arena.allocator());
+        var mesh_tangents = std.ArrayList([4]f32).init(local_arena.allocator());
+
+        // Create an array ready to store upcoming mesh primitives
+        const mesh_primatives = try model_arena.alloc(MeshPrimitive, scene.meshes().len);
+        errdefer model_arena.free(mesh_primatives);
+
+        for (scene.meshes(), 0..) |maybe_mesh, idx| {
+            const mesh = maybe_mesh.?;
+
+            var prim_mat = MaterialDescriptor {}; // @TODO
+            prim_mat.double_sided = true;
+            // if (m.primitives[pi].material) |material| {
+            //     prim_mat.double_sided = material.double_sided > 0;
+            //     prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
+            //     prim_mat.alpha_cutoff = material.alpha_cutoff;
+            //     prim_mat.unlit = material.unlit > 0;
+            // }
+
+            var prim = MeshPrimitive {
+                .num_indices = undefined,
+                .num_vertices = undefined,
+                .positions = undefined,
+                .indices_offset = mesh_indices.items.len,
+                .pos_offset = mesh_positions.items.len,
+                .nor_offset = mesh_normals.items.len,
+                .tex_coord_offset = mesh_tex_coords.items.len,
+                .tangents_offset = mesh_tangents.items.len,
+                .material_descriptor = prim_mat,
+                .topology = .Triangles, // @TODO
+            };
+
+            std.debug.assert(@sizeOf(assimp.Vector3D) == @sizeOf([3]f32));
+            std.debug.assert(@sizeOf(assimp.Vector4D) == @sizeOf([4]f32));
+            std.debug.assert(@sizeOf(c_uint) == @sizeOf(u32));
+
+            try mesh_positions.appendSlice(@as(*const [][3]f32, @ptrCast(&(mesh.vertices().?))).*);
+            if (mesh.faces()) |faces| {
+                for (faces) |*face| {
+                    try mesh_indices.appendSlice(@as(*const []u32, @ptrCast(&(face.indices().?))).*);
+                }
+            }
+            if (mesh.normals()) |normals| {
+                try mesh_normals.appendSlice(@as(*const [][3]f32, @ptrCast(&normals)).*);
+            }
+            if (mesh.texcoords(0)) |texcoords| {
+                const texcoords_v2 = try alloc.alloc([2]f32, texcoords.len);
+                defer alloc.free(texcoords_v2);
+
+                for (texcoords, 0..) |t, i| {
+                    texcoords_v2[i] = [2]f32{t.x, t.y};
+                }
+
+                try mesh_tex_coords.appendSlice(texcoords_v2);
+            }
+            if (mesh.tangents()) |tangents| {
+                const tangents_v4 = try alloc.alloc([4]f32, tangents.len);
+                defer alloc.free(tangents_v4);
+
+                for (tangents, 0..) |t, i| {
+                    tangents_v4[i] = [4]f32{t.x, t.y, t.z, 0.0};
+                }
+
+                try mesh_tangents.appendSlice(tangents_v4);
+            }
+
+            prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
+            prim.num_indices = mesh_indices.items.len - prim.indices_offset;
+
+            prim.positions = try model_arena.alloc([3]f32, prim.num_vertices);
+            @memcpy(prim.positions, mesh_positions.items[prim.pos_offset..]);
+
+            mesh_primatives[idx] = prim;
         }
 
-        self.arena_allocator.deinit();
-        self.arena_allocator.child_allocator.destroy(self.arena_allocator);
+        const buffers = try create_gfx_buffers_from_data(
+            mesh_indices,
+            mesh_positions,
+            mesh_normals,
+            mesh_tex_coords,
+            mesh_tangents,
+            gfx_device
+        );
+        std.log.info("done building buffers", .{});
 
-        _ = self.buffers.indices.Release();
-        _ = self.buffers.positions.Release();
-        if (self.buffers.normals) |b| { _ = b.Release(); }
-        if (self.buffers.tex_coords) |b| { _ = b.Release(); }
-        if (self.buffers.tangents) |b| { _ = b.Release(); }
+        var model_nodes_list = std.ArrayList(ModelNode).init(local_arena.allocator());
+        defer model_nodes_list.deinit();
+
+        const root_node = try model_arena.alloc(usize, 1);
+        errdefer model_arena.free(root_node);
+
+        std.log.info("start recurse", .{});
+        root_node[0] = try assimp_recursively_load_node(
+            model_arena,
+            scene.root_node().?,
+            null,
+            mesh_primatives,
+            &model_nodes_list
+        );
+        std.log.info("end recurse", .{});
+
+        const model_nodes = try model_arena.alloc(ModelNode, model_nodes_list.items.len);
+        @memcpy(model_nodes, model_nodes_list.items);
+
+        return Self {
+            .buffers = buffers,
+            .mesh_list = mesh_primatives,
+            .nodes_list = model_nodes,
+            .root_nodes = root_node,
+            .arena_allocator = model_arena_allocator,
+        };
+    }
+
+    fn assimp_recursively_load_node(
+        alloc: std.mem.Allocator, 
+        node: assimp.Node.Ptr, 
+        parent: ?usize, 
+        prims: []MeshPrimitive, 
+        model_nodes_list: *std.ArrayList(ModelNode)
+    ) !usize {
+        try model_nodes_list.append(ModelNode{});
+        const this_idx = model_nodes_list.items.len - 1;
+        
+        if (node.name().len > 0) {
+            model_nodes_list.items[this_idx].name = try std.fmt.allocPrint(alloc, "{s}", .{node.name()});
+        }
+        if (node.meshes().len > 0) {
+            model_nodes_list.items[this_idx].mesh = MeshSet{
+                .primitives = [_]?usize{null} ** MAX_PRIMITIVES_PER_SET,
+                .physics_shape_settings = undefined,
+            };
+            for (node.meshes(), 0..) |mesh_idx, idx| {
+                model_nodes_list.items[this_idx].mesh.?.primitives[idx] = mesh_idx;
+            }
+            try model_nodes_list.items[this_idx].mesh.?.generate_physics_shape(alloc, prims); // @TODO this may need optimizing. maybe
+        }
+        const dec = node.transformation_decompose();
+        model_nodes_list.items[this_idx].transform = tm.Transform {
+            .position = dec.pos,
+            .rotation = dec.rot,
+            .scale = dec.sca,
+        };
+        model_nodes_list.items[this_idx].parent = parent;
+
+        if (node.children() != null) {
+            const children_array = try alloc.alloc(usize, node.children().?.len);
+            for (node.children().?, 0..) |child, idx| {
+                children_array[idx] = try assimp_recursively_load_node(alloc, child, this_idx, prims, model_nodes_list);
+            }
+            model_nodes_list.items[this_idx].children = children_array;
+        }
+
+        return this_idx;
     }
 
     pub fn recursive_get_node_model_matrix(self: *const Self, node_idx: usize, resolved_transforms: []?zm.Mat) zm.Mat {

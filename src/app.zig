@@ -195,12 +195,12 @@ pub const App = struct {
         (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
         // Load model
-        const chara_model = try ms.Model.init_from_file(
+        const chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01.glb"}, 
+            path.Path{.ExeRelative = "../../res/Character_Dummy.fbx"}, 
             eng.gfx.device
         );
-        const tree_model = try ms.Model.init_from_file(
+        const tree_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../res/Demonstration.glb"}, 
             eng.gfx.device
@@ -327,8 +327,8 @@ pub const App = struct {
             .camera_data_buffer = camera_data_buffer,
             .camera = cm.Camera {
                 .field_of_view_y = 20.0,
-                .near_field = 0.1,
-                .far_field = 100.0,
+                .near_field = 0.3,
+                .far_field = 1000.0,
                 .move_speed = 2.0,
                 .mouse_sensitivity = 0.001,
                 .max_orbit_distance = 10.0,
@@ -701,12 +701,13 @@ pub const App = struct {
     }
 
     pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !*d3d11.IDepthStencilView {
+        const depth_format = zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT;
         const depth_texture_desc = d3d11.TEXTURE2D_DESC {
             .Width = @intCast(eng.gfx.swapchain_size.width),
             .Height = @intCast(eng.gfx.swapchain_size.height),
             .MipLevels = 1,
             .ArraySize = 1,
-            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
+            .Format = depth_format,
             .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
                 .Count = 1,
                 .Quality = 0,
@@ -721,7 +722,7 @@ pub const App = struct {
         defer _ = depth_texture.Release();
 
         const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
-            .Format = zwin32.dxgi.FORMAT.D16_UNORM,
+            .Format = depth_format,
             .ViewDimension = d3d11.DSV_DIMENSION.TEXTURE2D,
             .u = .{
                 .Texture2D = d3d11.TEX2D_DSV {

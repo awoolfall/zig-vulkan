@@ -32,13 +32,28 @@ pub const Node = opaque {
         return util.matFromAiTransform(&self.mTransformation);
     }
 
+    pub fn transformation_decompose(pself: Ptr) struct {pos: @Vector(4, f32), rot: @Vector(4, f32), sca: @Vector(4, f32)} {
+        const self = pself.cast();
+        var position: c.aiVector3D = undefined;
+        var scaling: c.aiVector3D = undefined;
+        var rotation: c.aiQuaternion = undefined;
+        c.aiDecomposeMatrix(&self.mTransformation, &scaling, &rotation, &position);
+        return .{
+            .pos = @Vector(4, f32){position.x, position.y, position.z, 0.0},
+            .rot = @Vector(4, f32){rotation.x, rotation.y, rotation.z, rotation.w},
+            .sca = @Vector(4, f32){scaling.x, scaling.y, scaling.z, 1.0},
+        };
+    }
+
     pub fn parent(pself: Ptr) ?Ptr {
         const self = pself.cast();
         return @ptrCast(self.mParent);
     }
 
-    pub fn children(pself: Ptr) []const ?Ptr {
+    pub fn children(pself: Ptr) ?[]const Ptr {
         const self = pself.cast();
+        if (self.mChildren == null) { return null; }
+
         return util.double_cast_array(Node, self.mChildren, self.mNumChildren);
     }
 
@@ -144,6 +159,13 @@ pub const Mesh = opaque {
         return @as([*c]Vector3D, @ptrCast(self.mVertices))[0..self.mNumVertices];
     }
 
+    pub fn faces(pself: Ptr) ?[]const Face {
+        const self = pself.cast();
+        if (self.mFaces == null) { return null; }
+
+        return @as([*c]Face, @ptrCast(self.mFaces))[0..self.mNumFaces];
+    }
+
     pub fn normals(pself: Ptr) ?[]const Vector3D {
         const self = pself.cast();
         if (self.mNormals == null) { return null; }
@@ -202,6 +224,16 @@ pub const Mesh = opaque {
 
     pub fn bounding_box(pself: Ptr) BoundingBox {
         return pself.cast().mAABB;
+    }
+};
+
+pub const Face = extern struct {
+    aiFace: c.aiFace,
+
+    pub fn indices(self: *const Face) ?[]const c_uint {
+        if (self.aiFace.mIndices == null) { return null; }
+
+        return self.aiFace.mIndices[0..self.aiFace.mNumIndices];
     }
 };
 
