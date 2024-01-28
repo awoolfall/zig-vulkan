@@ -247,7 +247,7 @@ pub const Model = struct {
             try mesh_sets[mi].generate_physics_shape(alloc, mesh_primatives_list.items);
         }
 
-        const buffers = try create_gfx_buffers_from_data(
+        const buffers = try create_gfx_buffers_with_data(
             mesh_indices,
             mesh_positions,
             mesh_normals,
@@ -335,7 +335,7 @@ pub const Model = struct {
         };
     }
 
-    fn create_gfx_buffers_from_data(
+    fn create_gfx_buffers_with_data(
         mesh_indices: std.ArrayList(u32),
         mesh_positions: std.ArrayList([3]f32),
         mesh_normals: std.ArrayList([3]f32),
@@ -439,6 +439,10 @@ pub const Model = struct {
         const mesh_primatives = try model_arena.alloc(MeshPrimitive, scene.meshes().len);
         errdefer model_arena.free(mesh_primatives);
 
+        // Assimp meshes are equivilent to MeshPrimitive,
+        // Assimp nodes contain a list of meshes. These are equivilent to MeshSet.
+        // Iterate through all assimp meshes and create MeshPrimitive for each, store These
+        // in an array for use later.
         for (scene.meshes(), 0..) |maybe_mesh, idx| {
             const mesh = maybe_mesh.?;
 
@@ -464,19 +468,23 @@ pub const Model = struct {
                 .topology = .Triangles, // @TODO
             };
 
+            // assert assimp sizes match what we expect
             std.debug.assert(@sizeOf(assimp.Vector3D) == @sizeOf([3]f32));
             std.debug.assert(@sizeOf(assimp.Vector4D) == @sizeOf([4]f32));
             std.debug.assert(@sizeOf(c_uint) == @sizeOf(u32));
 
+            // copy positions
             try mesh_positions.appendSlice(@as(*const [][3]f32, @ptrCast(&(mesh.vertices().?))).*);
             if (mesh.faces()) |faces| {
                 for (faces) |*face| {
                     try mesh_indices.appendSlice(@as(*const []u32, @ptrCast(&(face.indices().?))).*);
                 }
             }
+            // copy normals
             if (mesh.normals()) |normals| {
                 try mesh_normals.appendSlice(@as(*const [][3]f32, @ptrCast(&normals)).*);
             }
+            // copy texcoords, converting to vec2
             if (mesh.texcoords(0)) |texcoords| {
                 const texcoords_v2 = try alloc.alloc([2]f32, texcoords.len);
                 defer alloc.free(texcoords_v2);
@@ -487,6 +495,7 @@ pub const Model = struct {
 
                 try mesh_tex_coords.appendSlice(texcoords_v2);
             }
+            // copy tangents, converting to vec4
             if (mesh.tangents()) |tangents| {
                 const tangents_v4 = try alloc.alloc([4]f32, tangents.len);
                 defer alloc.free(tangents_v4);
@@ -507,7 +516,8 @@ pub const Model = struct {
             mesh_primatives[idx] = prim;
         }
 
-        const buffers = try create_gfx_buffers_from_data(
+        // create gfx buffers from vertex data
+        const buffers = try create_gfx_buffers_with_data(
             mesh_indices,
             mesh_positions,
             mesh_normals,
@@ -515,24 +525,31 @@ pub const Model = struct {
             mesh_tangents,
             gfx_device
         );
-        std.log.info("done building buffers", .{});
 
+        // create a flat list to store upcoming nodes in
         var model_nodes_list = std.ArrayList(ModelNode).init(local_arena.allocator());
         defer model_nodes_list.deinit();
 
+        // allocate space to store the root node, assimp only has 1
         const root_node = try model_arena.alloc(usize, 1);
         errdefer model_arena.free(root_node);
 
-        std.log.info("start recurse", .{});
+        // create a map to cache physics shape data. For performance reasons we want
+        // to generate these as few times as possible.
+        var physics_shape_map = std.AutoHashMap([MAX_PRIMITIVES_PER_SET]?usize, *zphy.ShapeSettings).init(local_arena.allocator());
+        defer physics_shape_map.deinit();
+
+        // Recursively load assimp nodes into ModelNodes.
         root_node[0] = try assimp_recursively_load_node(
             model_arena,
             scene.root_node().?,
             null,
             mesh_primatives,
-            &model_nodes_list
+            &model_nodes_list,
+            &physics_shape_map
         );
-        std.log.info("end recurse", .{});
 
+        // Solidify arraylist into a dynamically allocated array using model arena.
         const model_nodes = try model_arena.alloc(ModelNode, model_nodes_list.items.len);
         @memcpy(model_nodes, model_nodes_list.items);
 
@@ -545,41 +562,71 @@ pub const Model = struct {
         };
     }
 
+    // Recusively loads an assimp node and all it's children into model_nodes_list,
+    // returns the node's index in the model_nodes_list arraylist.
     fn assimp_recursively_load_node(
         alloc: std.mem.Allocator, 
         node: assimp.Node.Ptr, 
         parent: ?usize, 
         prims: []MeshPrimitive, 
-        model_nodes_list: *std.ArrayList(ModelNode)
+        model_nodes_list: *std.ArrayList(ModelNode),
+        physics_shape_map: *std.AutoHashMap([MAX_PRIMITIVES_PER_SET]?usize, *zphy.ShapeSettings),
     ) !usize {
+        // Append new ModelNode to list and acquire its index
         try model_nodes_list.append(ModelNode{});
         const this_idx = model_nodes_list.items.len - 1;
         
+        // allocate space for nodes name if it exists
         if (node.name().len > 0) {
             model_nodes_list.items[this_idx].name = try std.fmt.allocPrint(alloc, "{s}", .{node.name()});
         }
+        // link node meshes
         if (node.meshes().len > 0) {
+            // for now we only support MAX_PRIMITIVES_PER_SET meshes. extend if necessary
+            std.debug.assert(node.meshes().len < MAX_PRIMITIVES_PER_SET);
+
             model_nodes_list.items[this_idx].mesh = MeshSet{
                 .primitives = [_]?usize{null} ** MAX_PRIMITIVES_PER_SET,
                 .physics_shape_settings = undefined,
             };
+
+            // link mesh ids into meshset
             for (node.meshes(), 0..) |mesh_idx, idx| {
                 model_nodes_list.items[this_idx].mesh.?.primitives[idx] = mesh_idx;
             }
-            try model_nodes_list.items[this_idx].mesh.?.generate_physics_shape(alloc, prims); // @TODO this may need optimizing. maybe
+            // check if we have seen this series of primitives before
+            if (physics_shape_map.contains(model_nodes_list.items[this_idx].mesh.?.primitives)) {
+                // if so, grab already generated physics shape
+                const shape_settings = physics_shape_map.get(model_nodes_list.items[this_idx].mesh.?.primitives).?;
+                shape_settings.addRef();
+                model_nodes_list.items[this_idx].mesh.?.physics_shape_settings = shape_settings;
+            } else {
+                // otherwise we need to generate a new shape to use
+                try model_nodes_list.items[this_idx].mesh.?.generate_physics_shape(alloc, prims);
+                // and store this shape in the hashmap
+                try physics_shape_map.put(
+                    model_nodes_list.items[this_idx].mesh.?.primitives, 
+                    model_nodes_list.items[this_idx].mesh.?.physics_shape_settings
+                );
+            }
         }
+
+        // create transform struct for this node
         const dec = node.transformation_decompose();
         model_nodes_list.items[this_idx].transform = tm.Transform {
             .position = dec.pos,
             .rotation = dec.rot,
             .scale = dec.sca,
         };
+
+        // link node to its parent
         model_nodes_list.items[this_idx].parent = parent;
 
+        // recursively generate and link the node's children
         if (node.children() != null) {
             const children_array = try alloc.alloc(usize, node.children().?.len);
             for (node.children().?, 0..) |child, idx| {
-                children_array[idx] = try assimp_recursively_load_node(alloc, child, this_idx, prims, model_nodes_list);
+                children_array[idx] = try assimp_recursively_load_node(alloc, child, this_idx, prims, model_nodes_list, physics_shape_map);
             }
             model_nodes_list.items[this_idx].children = children_array;
         }
