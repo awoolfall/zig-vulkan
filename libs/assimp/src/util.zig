@@ -1,6 +1,7 @@
 pub const c = @cImport({
     @cInclude("assimp/cimport.h");
     @cInclude("assimp/scene.h");
+    @cInclude("assimp/material.h");
 });
 
 pub inline fn aiBoolFromBool(b: bool) c.aiBool {

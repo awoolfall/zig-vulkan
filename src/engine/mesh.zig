@@ -417,6 +417,19 @@ pub const Model = struct {
         const scene = try assimp.aiImportFile(file_path, triangulate_flag | global_scale_flag | optimize_mesh_flag);
         defer assimp.aiReleaseImport(scene);
 
+        for (scene.materials(), 0..) |mat, i| {
+            for (mat.properties()) |prop| {
+                std.log.info("material {d} property [{s}] is {}", .{i, prop.key(), prop.property_type()});
+            }
+            std.log.info("material diffuse count is {d}", .{
+                mat.get_texture_count(assimp.TextureType.Diffuse)
+            });
+            const props = mat.get_texture_properties(assimp.TextureType.Diffuse, 0);
+            if (props != null) {
+                std.log.info("material diffuse props are {}", .{props.?});
+            }
+        }
+
         var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
         errdefer alloc.destroy(model_arena_allocator);
 
@@ -443,9 +456,7 @@ pub const Model = struct {
         // Assimp nodes contain a list of meshes. These are equivilent to MeshSet.
         // Iterate through all assimp meshes and create MeshPrimitive for each, store These
         // in an array for use later.
-        for (scene.meshes(), 0..) |maybe_mesh, idx| {
-            const mesh = maybe_mesh.?;
-
+        for (scene.meshes(), 0..) |mesh, idx| {
             var prim_mat = MaterialDescriptor {}; // @TODO
             prim_mat.double_sided = true;
             // if (m.primitives[pi].material) |material| {
