@@ -3,16 +3,12 @@ const zm = @import("zmath");
 pub const Transform = struct {
     const Self = @This();
 
-    position: zm.F32x4,
-    rotation: zm.Quat,
-    scale: zm.F32x4,
+    position: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+    rotation: zm.Quat = zm.qidentity(),
+    scale: zm.F32x4 = zm.f32x4s(1.0),
 
     pub fn new() Self {
-        return Self {
-            .position = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-            .rotation = zm.qidentity(),
-            .scale = zm.f32x4s(1.0),
-        };
+        return Self {};
     }
 
     pub inline fn generate_model_matrix(self: *const Self) zm.Mat {

@@ -128,6 +128,14 @@ pub const Buffers = struct {
     normals: ?*d3d11.IBuffer,
     tex_coords: ?*d3d11.IBuffer,
     tangents: ?*d3d11.IBuffer,
+
+    pub fn deinit(self: *const Buffers) void {
+        _ = self.indices.Release();
+        _ = self.positions.Release();
+        if (self.normals) |b| { _ = b.Release(); }
+        if (self.tex_coords) |b| { _ = b.Release(); }
+        if (self.tangents) |b| { _ = b.Release(); }
+    }
 };
 
 pub const Model = struct {
@@ -146,11 +154,7 @@ pub const Model = struct {
         self.arena_allocator.deinit();
         self.arena_allocator.child_allocator.destroy(self.arena_allocator);
 
-        _ = self.buffers.indices.Release();
-        _ = self.buffers.positions.Release();
-        if (self.buffers.normals) |b| { _ = b.Release(); }
-        if (self.buffers.tex_coords) |b| { _ = b.Release(); }
-        if (self.buffers.tangents) |b| { _ = b.Release(); }
+        self.buffers.deinit();
     }
 
     pub fn init_from_file(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
@@ -248,13 +252,14 @@ pub const Model = struct {
         }
 
         const buffers = try create_gfx_buffers_with_data(
-            mesh_indices,
-            mesh_positions,
-            mesh_normals,
-            mesh_tex_coords,
-            mesh_tangents,
+            mesh_indices.items,
+            mesh_positions.items,
+            mesh_normals.items,
+            mesh_tex_coords.items,
+            mesh_tangents.items,
             gfx_device
         );
+        errdefer buffers.deinit();
 
         // Solidify mesh primitives list into a constant size array, this will be used in the model
         const mesh_primitives = try model_arena.alloc(MeshPrimitive, mesh_primatives_list.items.len);
@@ -336,11 +341,11 @@ pub const Model = struct {
     }
 
     fn create_gfx_buffers_with_data(
-        mesh_indices: std.ArrayList(u32),
-        mesh_positions: std.ArrayList([3]f32),
-        mesh_normals: std.ArrayList([3]f32),
-        mesh_tex_coords: std.ArrayList([2]f32),
-        mesh_tangents: std.ArrayList([4]f32),
+        mesh_indices: []const u32,
+        mesh_positions: []const ([3]f32),
+        mesh_normals: []const ([3]f32),
+        mesh_tex_coords: []const ([2]f32),
+        mesh_tangents: []const ([4]f32),
         gfx_device: *d3d11.IDevice,
     ) !Buffers {
         // Create buffers on GPU
@@ -355,52 +360,52 @@ pub const Model = struct {
         // Positions
         const vert_pos_buffer_desc = d3d11.BUFFER_DESC {
             .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_positions.items.len)),
+            .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_positions.len)),
             .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
         };
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_pos_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_positions.items.ptr), }, @ptrCast(&buffers.positions)));
+        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_pos_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_positions.ptr), }, @ptrCast(&buffers.positions)));
         errdefer _ = buffers.positions.Release();
 
         // Normals
-        if (mesh_normals.items.len != 0) {
+        if (mesh_normals.len != 0) {
             const vert_norm_buffer_desc = d3d11.BUFFER_DESC {
                 .Usage = d3d11.USAGE.IMMUTABLE,
-                .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_normals.items.len)),
+                .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_normals.len)),
                 .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
             };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_norm_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_normals.items.ptr), }, @ptrCast(&buffers.normals)));
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_norm_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_normals.ptr), }, @ptrCast(&buffers.normals)));
         }
         errdefer { if (buffers.normals) |n| { _ = n.Release(); } }
 
         // Tex Coords
-        if (mesh_tex_coords.items.len != 0) {
+        if (mesh_tex_coords.len != 0) {
             const vert_tex_coord_buffer_desc = d3d11.BUFFER_DESC {
                 .Usage = d3d11.USAGE.IMMUTABLE,
-                .ByteWidth = @sizeOf(f32) * 2 * @as(c_uint, @intCast(mesh_tex_coords.items.len)),
+                .ByteWidth = @sizeOf(f32) * 2 * @as(c_uint, @intCast(mesh_tex_coords.len)),
                 .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
             };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tex_coord_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tex_coords.items.ptr), }, @ptrCast(&buffers.tex_coords)));
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tex_coord_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tex_coords.ptr), }, @ptrCast(&buffers.tex_coords)));
         }
         errdefer { if (buffers.tex_coords) |b| { _ = b.Release(); } }
 
         // Tangents
-        if (mesh_tangents.items.len != 0) {
+        if (mesh_tangents.len != 0) {
             const vert_tangents_buffer_desc = d3d11.BUFFER_DESC {
                 .Usage = d3d11.USAGE.IMMUTABLE,
-                .ByteWidth = @sizeOf(f32) * 4 * @as(c_uint, @intCast(mesh_tangents.items.len)),
+                .ByteWidth = @sizeOf(f32) * 4 * @as(c_uint, @intCast(mesh_tangents.len)),
                 .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
             };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tangents_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tangents.items.ptr), }, @ptrCast(&buffers.tangents)));
+            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tangents_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tangents.ptr), }, @ptrCast(&buffers.tangents)));
         }
         errdefer { if (buffers.tangents) |b| { _ = b.Release(); } }
 
         // Indices
         const indices_buffer_desc = d3d11.BUFFER_DESC {
             .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(u32) * @as(c_uint, @intCast(mesh_indices.items.len)),
+            .ByteWidth = @sizeOf(u32) * @as(c_uint, @intCast(mesh_indices.len)),
             .BindFlags = d3d11.BIND_FLAG{ .INDEX_BUFFER = true, },
         };
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.items.ptr), }, @ptrCast(&buffers.indices)));
+        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.ptr), }, @ptrCast(&buffers.indices)));
         errdefer _ = buffers.indices.Release();
 
         // Return constructed buffers
@@ -529,13 +534,14 @@ pub const Model = struct {
 
         // create gfx buffers from vertex data
         const buffers = try create_gfx_buffers_with_data(
-            mesh_indices,
-            mesh_positions,
-            mesh_normals,
-            mesh_tex_coords,
-            mesh_tangents,
+            mesh_indices.items,
+            mesh_positions.items,
+            mesh_normals.items,
+            mesh_tex_coords.items,
+            mesh_tangents.items,
             gfx_device
         );
+        errdefer buffers.deinit();
 
         // create a flat list to store upcoming nodes in
         var model_nodes_list = std.ArrayList(ModelNode).init(local_arena.allocator());
@@ -655,6 +661,79 @@ pub const Model = struct {
             resolved_transforms[node_idx] = zm.mul(self.nodes_list[node_idx].transform.generate_model_matrix(), parent_matrix);
         }
         return resolved_transforms[node_idx].?;
+    }
+
+    pub fn cone(alloc: std.mem.Allocator, slices: i32, gfx: *d3d11.IDevice) !Model {
+        var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
+        errdefer alloc.destroy(model_arena_allocator);
+
+        model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
+        errdefer model_arena_allocator.deinit();
+        var model_arena = model_arena_allocator.allocator();
+
+        // Generate cone shape
+        var cone_shape = zmesh.Shape.initCone(slices, 6);
+        defer cone_shape.deinit();
+
+        // rotate to point upwards
+        cone_shape.rotate(std.math.degreesToRadians(f32, -90.0), 1.0, 0.0, 0.0);
+
+        // flat shaded
+        cone_shape.unweld();
+        
+        cone_shape.computeNormals();
+
+        // Construct gfx buffers
+        const buffers = try create_gfx_buffers_with_data(
+            cone_shape.indices,
+            cone_shape.positions,
+            cone_shape.normals.?,
+            ([_]([2]f32){[_]f32{0.0}**2} ** 1)[0..0],
+            ([_]([4]f32){[_]f32{0.0}**4} ** 1)[0..0],
+            gfx
+        );
+        errdefer buffers.deinit();
+
+        // Generate a Model with 1 node and 1 mesh
+        const mp = try model_arena.alloc(MeshPrimitive, 1);
+        errdefer model_arena.free(mp);
+
+        mp[0] = MeshPrimitive {
+            .positions = cone_shape.positions,
+            .topology = .Triangles,
+            .indices_offset = 0,
+            .pos_offset = 0,
+            .nor_offset = 0,
+            .num_indices = cone_shape.indices.len,
+            .num_vertices = cone_shape.positions.len,
+            .tangents_offset = 0,
+            .tex_coord_offset = 0,
+            .material_descriptor = MaterialDescriptor{},
+        };
+
+        const mn = try model_arena.alloc(ModelNode, 1);
+        errdefer model_arena.free(mn);
+
+        mn[0] = ModelNode {
+            .mesh = MeshSet {
+                .primitives = .{null} ** MAX_PRIMITIVES_PER_SET,
+                .physics_shape_settings = @ptrCast(try zphy.CylinderShapeSettings.create(0.5, 0.5)),
+            },
+        };
+        mn[0].mesh.?.primitives[0] = 0;
+
+        const rn = try model_arena.alloc(usize, 1);
+        errdefer model_arena.free(rn);
+
+        rn[0] = 0;
+
+        return Model {
+            .buffers = buffers,
+            .mesh_list = mp,
+            .nodes_list = mn,
+            .root_nodes = rn,
+            .arena_allocator = model_arena_allocator,
+        };
     }
 };
 

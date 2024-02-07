@@ -76,6 +76,7 @@ pub const App = struct {
 
     chara_model: ms.Model,
     tree_model: ms.Model,
+    cone_model: ms.Model,
 
     ui: _ui.UiRenderer,
 
@@ -203,6 +204,12 @@ pub const App = struct {
         const tree_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../res/Demonstration.glb"}, 
+            eng.gfx.device
+        );
+
+        const cone_model = try ms.Model.cone(
+            eng.general_allocator.allocator(), 
+            8, 
             eng.gfx.device
         );
 
@@ -342,6 +349,7 @@ pub const App = struct {
 
             .chara_model = chara_model,
             .tree_model = tree_model,
+            .cone_model = cone_model,
 
             .ui = ui,
         };
@@ -358,6 +366,7 @@ pub const App = struct {
         self.engine.gfx.context.Flush();
         self.ui.deinit();
 
+        self.cone_model.deinit();
         self.chara_model.deinit();
         self.tree_model.deinit();
 
@@ -601,6 +610,45 @@ pub const App = struct {
                 }
             }
         }
+
+        // find bone transforms for chara
+        if (self.engine.entities.get(self.model_idx)) |chara| {
+            _ = chara;
+            const pos_stride: c_uint = @sizeOf(f32) * 3;
+            const offset: c_uint = 0;
+            self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.cone_model.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
+            self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.cone_model.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
+            self.engine.gfx.context.IASetIndexBuffer(self.cone_model.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
+
+            { // Setup model buffer from transform
+                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.model_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
+
+                const buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
+                buffer_data.* = (Transform {
+                    .scale = zm.f32x4(0.2, 1.0, 0.2, 0.0),
+                }).generate_model_matrix();
+            }
+
+            // Set model constant buffer
+            self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
+
+            // Finally, render the mesh
+            for (self.cone_model.mesh_list) |p| {
+                if (p.material_descriptor.double_sided) {
+                    self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+                } else {
+                    self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
+                }
+
+                if (p.has_indices()) {
+                    self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
+                } else {
+                    self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+                }
+            }
+        } else |_| {}
 
         // Draw Physics Debug Wireframes
         if (self.engine.input.get_key(kc.KeyCode.C)) {
