@@ -4,6 +4,7 @@ const std = @import("std");
 
 pub const Vector3D = c.aiVector3D;
 pub const Vector4D = c.aiColor4D;
+pub const Texel4D = c.aiTexel;
 pub const VertexWeight = c.aiVertexWeight;
 pub const BoundingBox = c.aiAABB;
 
@@ -114,6 +115,21 @@ pub const Scene = opaque {
     pub fn materials(pself: Ptr) []const Material.Ptr {
         const self = pself.cast();
         return util.double_cast_array(Material, self.mMaterials, self.mNumMaterials);
+    }
+
+    pub fn animations(pself: Ptr) []const Animation.Ptr {
+        const self = pself.cast();
+        return util.double_cast_array(Animation, self.mAnimations, self.mNumAnimations);
+    }
+
+    pub fn textures(pself: Ptr) []const Texture.Ptr {
+        const self = pself.cast();
+        return util.double_cast_array(Texture, self.mTextures, self.mNumTextures);
+    }
+
+    pub fn skeletons(pself: Ptr) []const Skeleton.Ptr {
+        const self = pself.cast();
+        return util.double_cast_array(Skeleton, self.mSkeletons, self.mNumSkeletons);
     }
 
     pub fn metadata(pself: Ptr) ?Metadata.Ptr {
@@ -445,6 +461,195 @@ pub const Bone = opaque {
 
     pub fn offset_matrix(pself: Ptr) util.Mat4x4 {
         return util.matFromAiTransform(pself.cast().mOffsetMatrix);
+    }
+};
+
+pub const Animation = opaque {
+    pub const AssimpType = c.aiAnimation;
+
+    pub const Ptr = *const align(@alignOf(AssimpType)) @This();
+    inline fn cast(self: Ptr) *const AssimpType { return @ptrCast(self); }
+
+    // mName: struct_aiString = @import("std").mem.zeroes(struct_aiString),
+    // mDuration: f64 = @import("std").mem.zeroes(f64),
+    // mTicksPerSecond: f64 = @import("std").mem.zeroes(f64),
+    // mNumChannels: c_uint = @import("std").mem.zeroes(c_uint),
+    // mChannels: [*c][*c]struct_aiNodeAnim = @import("std").mem.zeroes([*c][*c]struct_aiNodeAnim),
+    // mNumMeshChannels: c_uint = @import("std").mem.zeroes(c_uint),
+    // mMeshChannels: [*c][*c]struct_aiMeshAnim = @import("std").mem.zeroes([*c][*c]struct_aiMeshAnim),
+    // mNumMorphMeshChannels: c_uint = @import("std").mem.zeroes(c_uint),
+    // mMorphMeshChannels: [*c][*c]struct_aiMeshMorphAnim = @import("std").mem.zeroes([*c][*c]struct_aiMeshMorphAnim),
+
+    pub fn name(pself: Ptr) []const u8 {
+        return util.stringFromAiString(pself.cast().mName);
+    }
+
+    pub fn duration(pself: Ptr) f64 {
+        return pself.cast().mDuration;
+    }
+
+    pub fn ticks_per_second(pself: Ptr) f64 {
+        return pself.cast().mTicksPerSecond;
+    }
+
+    pub fn channels(pself: Ptr) []const NodeAnim.Ptr {
+        const self = pself.cast();
+        return util.double_cast_array(NodeAnim, self.mChannels, self.mNumChannels);
+    }
+};
+
+pub const NodeAnim = opaque {
+    pub const AssimpType = c.aiNodeAnim;
+
+    pub const Ptr = *const align(@alignOf(AssimpType)) @This();
+    inline fn cast(self: Ptr) *const AssimpType { return @ptrCast(self); }
+
+    // mNodeName: struct_aiString = @import("std").mem.zeroes(struct_aiString),
+    // mNumPositionKeys: c_uint = @import("std").mem.zeroes(c_uint),
+    // mPositionKeys: [*c]struct_aiVectorKey = @import("std").mem.zeroes([*c]struct_aiVectorKey),
+    // mNumRotationKeys: c_uint = @import("std").mem.zeroes(c_uint),
+    // mRotationKeys: [*c]struct_aiQuatKey = @import("std").mem.zeroes([*c]struct_aiQuatKey),
+    // mNumScalingKeys: c_uint = @import("std").mem.zeroes(c_uint),
+    // mScalingKeys: [*c]struct_aiVectorKey = @import("std").mem.zeroes([*c]struct_aiVectorKey),
+    // mPreState: enum_aiAnimBehaviour = @import("std").mem.zeroes(enum_aiAnimBehaviour),
+    // mPostState: enum_aiAnimBehaviour = @import("std").mem.zeroes(enum_aiAnimBehaviour),
+
+    pub fn node_name(pself: Ptr) []const u8 {
+        return util.stringFromAiString(pself.cast().mNodeName);
+    }
+
+    pub const VectorKey = extern struct {
+        aiVectorKey: c.struct_aiVectorKey,
+
+        pub fn time(self: *const VectorKey) f64 {
+            return self.aiVectorKey.mTime;
+        }
+
+        pub fn value(self: *const VectorKey) @Vector(f32, 4) {
+            return @Vector(f32, 4) {
+                self.aiVectorKey.mValue.x,
+                self.aiVectorKey.mValue.y,
+                self.aiVectorKey.mValue.z,
+                0.0,
+            };
+        }
+    };
+
+    pub const QuatKey = extern struct {
+        aiQuatKey: c.struct_aiQuatKey,
+
+        pub fn time(self: *const QuatKey) f64 {
+            return self.aiQuatKey.mTime;
+        }
+
+        pub fn value(self: *const QuatKey) @Vector(f32, 4) {
+            return @Vector(f32, 4){
+                self.aiQuatKey.mValue.x,
+                self.aiQuatKey.mValue.y,
+                self.aiQuatKey.mValue.z,
+                self.aiQuatKey.mValue.w,
+            };
+        }
+    };
+
+    pub fn position_keys(pself: Ptr) []const VectorKey {
+        const self = pself.cast();
+        return @as([*c]VectorKey, @ptrCast(self.mPositionKeys))[0..self.mNumPositionKeys];
+    }
+
+    pub fn rotation_keys(pself: Ptr) []const QuatKey {
+        const self = pself.cast();
+        return @as([*c]QuatKey, @ptrCast(self.mRotationKeys))[0..self.mNumRotationKeys];
+    }
+
+    pub fn scale_keys(pself: Ptr) []const VectorKey {
+        const self = pself.cast();
+        return @as([*c]VectorKey, @ptrCast(self.mScalingKeys))[0..self.mNumScalingKeys];
+    }
+
+    pub const AnimBehaviour = enum(c_uint) {
+        Default = c.aiAnimBehaviour_DEFAULT,
+        Constant = c.aiAnimBehaviour_CONSTANT,
+        Linear = c.aiAnimBehaviour_LINEAR,
+        Repeat = c.aiAnimBehaviour_REPEAT,
+    };
+
+    pub fn pre_state(pself: Ptr) AnimBehaviour {
+        return @enumFromInt(pself.cast().mPreState);
+    }
+
+    pub fn post_state(pself: Ptr) AnimBehaviour {
+        return @enumFromInt(pself.cast().mPostState);
+    }
+};
+
+pub const Texture = opaque {
+    pub const AssimpType = c.aiTexture;
+
+    pub const Ptr = *const align(@alignOf(AssimpType)) @This();
+    inline fn cast(self: Ptr) *const AssimpType { return @ptrCast(self); }
+
+    // mWidth: c_uint = @import("std").mem.zeroes(c_uint),
+    // mHeight: c_uint = @import("std").mem.zeroes(c_uint),
+    // achFormatHint: [9]u8 = @import("std").mem.zeroes([9]u8),
+    // pcData: [*c]struct_aiTexel = @import("std").mem.zeroes([*c]struct_aiTexel),
+    // mFilename: struct_aiString = @import("std").mem.zeroes(struct_aiString),
+
+    pub fn width(pself: Ptr) u32 {
+        return pself.cast().mWidth;
+    }
+
+    pub fn height(pself: Ptr) u32 {
+        return pself.cast().mHeight;
+    }
+    
+    pub fn is_compressed_data(pself: Ptr) bool {
+        return pself.cast().mHeight == 0;
+    }
+
+    pub fn compressed_data(pself: Ptr) ?[]const u8 {
+        if (!pself.is_compressed_data()) { return null; }
+
+        return pself.cast().pcData[0..(pself.cast().mWidth)];
+    }
+
+    pub fn data(pself: Ptr) ?[]const Texel4D {
+        if (pself.is_compressed_data()) { return null; }
+
+        const self = pself.cast();
+        return self.pcData[0..(self.mWidth * self.mHeight)];
+    }
+
+    pub fn data_u8_bgra(pself: Ptr) ?[]const u8 {
+        std.debug.assert(@sizeOf(c.struct_aiTexel) == (4 * @sizeOf(u8)));
+        if (pself.is_compressed_data()) { return null; }
+
+        const self = pself.cast();
+        return @as([*c]u8, @ptrCast(self.pcData))[0..(4 * self.mWidth * self.mHeight)];
+    }
+
+    pub fn filename(pself: Ptr) []const u8 {
+        return util.stringFromAiString(pself.cast().mFilename);
+    }
+};
+
+pub const Skeleton = opaque {
+    pub const AssimpType = c.aiSkeleton;
+
+    pub const Ptr = *const align(@alignOf(AssimpType)) @This();
+    inline fn cast(self: Ptr) *const AssimpType { return @ptrCast(self); }
+
+    // mName: struct_aiString = @import("std").mem.zeroes(struct_aiString),
+    // mNumBones: c_uint = @import("std").mem.zeroes(c_uint),
+    // mBones: [*c][*c]struct_aiSkeletonBone = @import("std").mem.zeroes([*c][*c]struct_aiSkeletonBone),
+
+    pub fn name(pself: Ptr) []const u8 {
+        return util.stringFromAiString(pself.cast().mName);
+    }
+
+    pub fn bones(pself: Ptr) []const Bone.Ptr {
+        const self = pself.cast();
+        return util.double_cast_array(Bone, self.mBones, self.mNumBones);
     }
 };
 
