@@ -347,7 +347,7 @@ pub const Mesh = opaque {
         return pself.cast().mNumFaces;
     }
 
-    pub fn bones(pself: Ptr) ?[]const Bone.Ptr {
+    pub fn bones(pself: Ptr) []const Bone.Ptr {
         const self = pself.cast();
         return util.double_cast_array(Bone, self.mBones, self.mNumBones);
     }
@@ -443,13 +443,41 @@ pub const Bone = opaque {
     // mOffsetMatrix: struct_aiMatrix4x4 = @import("std").mem.zeroes(struct_aiMatrix4x4),
 
     pub fn name(pself: Ptr) []const u8 {
-        return util.stringFromAiString(pself.cast().mName);
+        return util.stringFromAiString(&(pself.cast().mName));
     }
 
     pub fn weights(pself: Ptr) []const VertexWeight {
         const self = pself.cast();
         return self.mWeights[0..self.mNumWeights];
     }
+
+    pub fn armature(pself: Ptr) ?Node.Ptr {
+        return @ptrCast(pself.cast().mArmature);
+    }
+
+    pub fn node(pself: Ptr) ?Node.Ptr {
+        return @ptrCast(pself.cast().mNode);
+    }
+
+    pub fn offset_matrix(pself: Ptr) util.Mat4x4 {
+        return util.matFromAiTransform(pself.cast().mOffsetMatrix);
+    }
+};
+
+pub const SkeletonBone = opaque {
+    pub const AssimpType = c.aiSkeletonBone;
+
+    pub const Ptr = *const align(@alignOf(AssimpType)) @This();
+    inline fn cast(self: Ptr) *const AssimpType { return @ptrCast(self); }
+
+    // mParent: c_int = @import("std").mem.zeroes(c_int),
+    // mArmature: [*c]struct_aiNode = @import("std").mem.zeroes([*c]struct_aiNode),
+    // mNode: [*c]struct_aiNode = @import("std").mem.zeroes([*c]struct_aiNode),
+    // mNumnWeights: c_uint = @import("std").mem.zeroes(c_uint),
+    // mMeshId: [*c]struct_aiMesh = @import("std").mem.zeroes([*c]struct_aiMesh),
+    // mWeights: [*c]struct_aiVertexWeight = @import("std").mem.zeroes([*c]struct_aiVertexWeight),
+    // mOffsetMatrix: struct_aiMatrix4x4 = @import("std").mem.zeroes(struct_aiMatrix4x4),
+    // mLocalMatrix: struct_aiMatrix4x4 = @import("std").mem.zeroes(struct_aiMatrix4x4),
 
     pub fn armature(pself: Ptr) ?Node.Ptr {
         return pself.cast().mArmature;
@@ -459,8 +487,21 @@ pub const Bone = opaque {
         return pself.cast().mNode;
     }
 
+    pub fn mesh(pself: Ptr) Mesh.Ptr {
+        return @ptrCast(pself.cast().mMeshId);
+    }
+
+    pub fn weights(pself: Ptr) []const VertexWeight {
+        const self = pself.cast();
+        return self.mWeights[0..self.mNumnWeights];
+    }
+
     pub fn offset_matrix(pself: Ptr) util.Mat4x4 {
-        return util.matFromAiTransform(pself.cast().mOffsetMatrix);
+        return util.matFromAiTransform(&(pself.cast().mOffsetMatrix));
+    }
+
+    pub fn local_matrix(pself: Ptr) util.Mat4x4 {
+        return util.matFromAiTransform(&(pself.cast().mLocalMatrix));
     }
 };
 
@@ -644,12 +685,12 @@ pub const Skeleton = opaque {
     // mBones: [*c][*c]struct_aiSkeletonBone = @import("std").mem.zeroes([*c][*c]struct_aiSkeletonBone),
 
     pub fn name(pself: Ptr) []const u8 {
-        return util.stringFromAiString(pself.cast().mName);
+        return util.stringFromAiString(&(pself.cast().mName));
     }
 
-    pub fn bones(pself: Ptr) []const Bone.Ptr {
+    pub fn bones(pself: Ptr) []const SkeletonBone.Ptr {
         const self = pself.cast();
-        return util.double_cast_array(Bone, self.mBones, self.mNumBones);
+        return util.double_cast_array(SkeletonBone, self.mBones, self.mNumBones);
     }
 };
 
