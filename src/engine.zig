@@ -16,11 +16,6 @@ pub const Transform = tf.Transform;
 
 const wb = @import("window.zig");
 
-pub const MeshSet = struct {
-    model: *const mesh.Model,
-    mesh_set: *const mesh.MeshSet,
-};
-
 pub fn Engine(comptime App: type) type {
     return struct {
         const Self = @This();
@@ -29,7 +24,7 @@ pub fn Engine(comptime App: type) type {
         pub const EntitySuperStruct = struct {
             name: ?[]u8 = null,
             transform: tf.Transform = tf.Transform.new(),
-            mesh: ?MeshSet = null,
+            model: ?*const mesh.Model = null,
             physics_body: ?physics.zphy.BodyId = null,
             app: App.EntityData = App.EntityData {},
         };
@@ -136,57 +131,6 @@ pub fn Engine(comptime App: type) type {
 
             // Run update procedure on inputs after everything has finished their update()
             self.input.received_window_event_late(&event);
-        }
-
-        pub fn create_entities_from_model(self: *Self, model: *const mesh.Model, out_entities: ?*std.ArrayList(gen.GenerationalIndex)) !?gen.GenerationalIndex {
-            var new_entities_dat = try std.ArrayList(gen.GenerationalIndex).initCapacity(self.general_allocator.allocator(), model.nodes_list.len);
-            defer new_entities_dat.deinit();
-
-            var new_entities = out_entities;
-            if (new_entities == null) {
-                new_entities = &new_entities_dat;
-            }
-
-            const resolved_transforms = try self.general_allocator.allocator().alloc(?zm.Mat, model.nodes_list.len);
-            defer self.general_allocator.allocator().free(resolved_transforms);
-            for (resolved_transforms) |*r| { r.* = null; }
-
-            var first_entity_with_mesh: ?gen.GenerationalIndex = null;
-            for (model.nodes_list) |*n| {
-                var parent_model_matrix = zm.identity();
-                if (n.parent) |parent_idx| {
-                    parent_model_matrix = model.recursive_get_node_model_matrix(parent_idx, resolved_transforms);
-                }
-
-                var mesh_set: ?MeshSet = null;
-                if (n.mesh != null) {
-                    mesh_set = MeshSet {
-                        .model = model,
-                        .mesh_set = &(n.mesh.?)
-                    };
-                }
-
-                const ent_idx = try self.entities.insert(EntitySuperStruct {
-                    .name = n.name,
-                    .transform = Transform {
-                        .position = zm.mul(n.transform.position, parent_model_matrix),
-                        .rotation = zm.qmul(n.transform.rotation, zm.quatFromMat(parent_model_matrix)),
-                        .scale = n.transform.scale, // @TODO: multiply this by parent
-                    },
-                    .mesh = mesh_set,
-                });
-
-                if (first_entity_with_mesh == null and n.mesh != null) {
-                    first_entity_with_mesh = ent_idx;
-                }
-
-                try new_entities.?.append(ent_idx);
-            }
-
-            if (new_entities.?.items.len == 0) {
-                return error.NoNewEntitiesAdded;
-            }
-            return first_entity_with_mesh;
         }
     };
 }

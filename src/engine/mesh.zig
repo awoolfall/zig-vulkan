@@ -128,6 +128,8 @@ pub const Buffers = struct {
     normals: ?*d3d11.IBuffer,
     tex_coords: ?*d3d11.IBuffer,
     tangents: ?*d3d11.IBuffer,
+    bone_ids: ?*d3d11.IBuffer,
+    bone_weights: ?*d3d11.IBuffer,
 
     pub fn deinit(self: *const Buffers) void {
         _ = self.indices.Release();
@@ -135,7 +137,103 @@ pub const Buffers = struct {
         if (self.normals) |b| { _ = b.Release(); }
         if (self.tex_coords) |b| { _ = b.Release(); }
         if (self.tangents) |b| { _ = b.Release(); }
+        if (self.bone_ids) |b| { _ = b.Release(); }
+        if (self.bone_weights) |b| { _ = b.Release(); }
     }
+
+    fn create_vertex_buffer(
+        comptime T: type,
+        data: []const T,
+        gfx_device: *d3d11.IDevice
+    ) !*d3d11.IBuffer {
+        const buffer_desc = d3d11.BUFFER_DESC {
+            .Usage = d3d11.USAGE.IMMUTABLE,
+            .ByteWidth = @sizeOf(T) * @as(c_uint, @intCast(data.len)),
+            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
+        };
+        var buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(data.ptr), }, @ptrCast(&buffer)));
+        return buffer;
+    }
+
+    fn init_with_data(
+        mesh_indices: []const u32,
+        mesh_positions: []const ([3]f32),
+        mesh_normals: []const ([3]f32),
+        mesh_tex_coords: []const ([2]f32),
+        mesh_tangents: []const ([4]f32),
+        mesh_bone_ids: ?[]const ([4]i32),
+        mesh_weights: ?[]const ([4]f32),
+        gfx_device: *d3d11.IDevice,
+    ) !Buffers {
+        // Create buffers on GPU
+        var buffers = Buffers {
+            .indices = undefined,
+            .positions = undefined,
+            .normals = null,
+            .tex_coords = null,
+            .tangents = null,
+            .bone_ids = null,
+            .bone_weights = null,
+        };
+
+        // Positions
+        buffers.positions = try create_vertex_buffer([3]f32, mesh_positions, gfx_device);
+        errdefer _ = buffers.positions.Release();
+
+        // Indices
+        const indices_buffer_desc = d3d11.BUFFER_DESC {
+            .Usage = d3d11.USAGE.IMMUTABLE,
+            .ByteWidth = @sizeOf(u32) * @as(c_uint, @intCast(mesh_indices.len)),
+            .BindFlags = d3d11.BIND_FLAG{ .INDEX_BUFFER = true, },
+        };
+        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.ptr), }, @ptrCast(&buffers.indices)));
+        errdefer _ = buffers.indices.Release();
+
+        // Normals
+        if (mesh_normals.len != 0) {
+            buffers.normals = try create_vertex_buffer([3]f32, mesh_normals, gfx_device);
+        }
+        errdefer { if (buffers.normals) |n| { _ = n.Release(); } }
+
+        // Tex Coords
+        if (mesh_tex_coords.len != 0) {
+            buffers.tex_coords = try create_vertex_buffer([2]f32, mesh_tex_coords, gfx_device);
+        }
+        errdefer { if (buffers.tex_coords) |b| { _ = b.Release(); } }
+
+        // Tangents
+        if (mesh_tangents.len != 0) {
+            buffers.tangents = try create_vertex_buffer([4]f32, mesh_tangents, gfx_device);
+        }
+        errdefer { if (buffers.tangents) |b| { _ = b.Release(); } }
+
+        // Bone ids
+        if (mesh_bone_ids) |bone_ids| {
+            buffers.bone_ids = try create_vertex_buffer([4]i32, bone_ids, gfx_device);
+        }
+        errdefer { if (buffers.bone_ids) |b| { _ = b.Release(); } }
+
+        // Bone weights
+        if (mesh_weights) |weights| {
+            buffers.bone_weights = try create_vertex_buffer([4]f32, weights, gfx_device);
+        }
+        errdefer { if (buffers.bone_weights) |b| { _ = b.Release(); } }
+
+        // Return constructed buffers
+        return buffers;
+    }
+};
+
+pub const Skeleton = struct {
+    name: []u8,
+    bones: []Bone,
+};
+
+pub const Bone = struct {
+    offset_matrix: zm.Mat,
+    node: usize,
+    armature: ?usize,
 };
 
 pub const Model = struct {
@@ -144,6 +242,7 @@ pub const Model = struct {
     mesh_list: []MeshPrimitive,
     nodes_list: []ModelNode,
     root_nodes: []usize,
+    skeletons: []Skeleton,
     arena_allocator: *std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Self) void {
@@ -157,7 +256,7 @@ pub const Model = struct {
         self.buffers.deinit();
     }
 
-    pub fn init_from_file(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
+    pub fn init_from_file_cgltf(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
 
@@ -251,12 +350,14 @@ pub const Model = struct {
             try mesh_sets[mi].generate_physics_shape(alloc, mesh_primatives_list.items);
         }
 
-        const buffers = try create_gfx_buffers_with_data(
+        const buffers = try Buffers.init_with_data(
             mesh_indices.items,
             mesh_positions.items,
             mesh_normals.items,
             mesh_tex_coords.items,
             mesh_tangents.items,
+            null,
+            null,
             gfx_device
         );
         errdefer buffers.deinit();
@@ -336,105 +437,38 @@ pub const Model = struct {
             .mesh_list = mesh_primitives,
             .nodes_list = nodes_list,
             .root_nodes = root_nodes_list,
+            .skeletons = try model_arena.alloc(Skeleton, 0),
             .arena_allocator = model_arena_allocator,
         };
-    }
-
-    fn create_gfx_buffers_with_data(
-        mesh_indices: []const u32,
-        mesh_positions: []const ([3]f32),
-        mesh_normals: []const ([3]f32),
-        mesh_tex_coords: []const ([2]f32),
-        mesh_tangents: []const ([4]f32),
-        gfx_device: *d3d11.IDevice,
-    ) !Buffers {
-        // Create buffers on GPU
-        var buffers = Buffers {
-            .indices = undefined,
-            .positions = undefined,
-            .normals = null,
-            .tex_coords = null,
-            .tangents = null,
-        };
-
-        // Positions
-        const vert_pos_buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_positions.len)),
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-        };
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_pos_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_positions.ptr), }, @ptrCast(&buffers.positions)));
-        errdefer _ = buffers.positions.Release();
-
-        // Normals
-        if (mesh_normals.len != 0) {
-            const vert_norm_buffer_desc = d3d11.BUFFER_DESC {
-                .Usage = d3d11.USAGE.IMMUTABLE,
-                .ByteWidth = @sizeOf(f32) * 3 * @as(c_uint, @intCast(mesh_normals.len)),
-                .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-            };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_norm_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_normals.ptr), }, @ptrCast(&buffers.normals)));
-        }
-        errdefer { if (buffers.normals) |n| { _ = n.Release(); } }
-
-        // Tex Coords
-        if (mesh_tex_coords.len != 0) {
-            const vert_tex_coord_buffer_desc = d3d11.BUFFER_DESC {
-                .Usage = d3d11.USAGE.IMMUTABLE,
-                .ByteWidth = @sizeOf(f32) * 2 * @as(c_uint, @intCast(mesh_tex_coords.len)),
-                .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-            };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tex_coord_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tex_coords.ptr), }, @ptrCast(&buffers.tex_coords)));
-        }
-        errdefer { if (buffers.tex_coords) |b| { _ = b.Release(); } }
-
-        // Tangents
-        if (mesh_tangents.len != 0) {
-            const vert_tangents_buffer_desc = d3d11.BUFFER_DESC {
-                .Usage = d3d11.USAGE.IMMUTABLE,
-                .ByteWidth = @sizeOf(f32) * 4 * @as(c_uint, @intCast(mesh_tangents.len)),
-                .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-            };
-            try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&vert_tangents_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_tangents.ptr), }, @ptrCast(&buffers.tangents)));
-        }
-        errdefer { if (buffers.tangents) |b| { _ = b.Release(); } }
-
-        // Indices
-        const indices_buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(u32) * @as(c_uint, @intCast(mesh_indices.len)),
-            .BindFlags = d3d11.BIND_FLAG{ .INDEX_BUFFER = true, },
-        };
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.ptr), }, @ptrCast(&buffers.indices)));
-        errdefer _ = buffers.indices.Release();
-
-        // Return constructed buffers
-        return buffers;
     }
 
     pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
 
+        const calc_tangents_flag: u32 = 0x1;
         const triangulate_flag: u32 = 0x8;
         const global_scale_flag: u32 = 0x8000000;
         const optimize_mesh_flag: u32 = 0x200000;
-        const scene = try assimp.aiImportFile(file_path, triangulate_flag | global_scale_flag | optimize_mesh_flag);
+        //const optimize_graph_flag: u32 = 0x400000;
+        const armature_data_flag: u32 = 0x4000;
+        const scene = try assimp.aiImportFile(file_path, 
+            calc_tangents_flag | triangulate_flag | global_scale_flag | optimize_mesh_flag | armature_data_flag);
         defer assimp.aiReleaseImport(scene);
 
-        for (scene.materials(), 0..) |mat, i| {
-            for (mat.properties()) |prop| {
-                std.log.info("material {d} property [{s}] is {}", .{i, prop.key(), prop.property_type()});
-            }
-            std.log.info("material diffuse count is {d}", .{
-                mat.get_texture_count(assimp.TextureType.Diffuse)
-            });
-            const props = mat.get_texture_properties(assimp.TextureType.Diffuse, 0);
-            if (props != null) {
-                std.log.info("material diffuse props are {}", .{props.?});
-            }
-        }
-
+        // for (scene.materials(), 0..) |mat, i| {
+        //     for (mat.properties()) |prop| {
+        //         std.log.info("material {d} property [{s}] is {}", .{i, prop.key(), prop.property_type()});
+        //     }
+        //     std.log.info("material diffuse count is {d}", .{
+        //         mat.get_texture_count(assimp.TextureType.Diffuse)
+        //     });
+        //     const props = mat.get_texture_properties(assimp.TextureType.Diffuse, 0);
+        //     if (props != null) {
+        //         std.log.info("material diffuse props are {}", .{props.?});
+        //     }
+        // }
+        //
         var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
         errdefer alloc.destroy(model_arena_allocator);
 
@@ -457,6 +491,9 @@ pub const Model = struct {
         const mesh_primatives = try model_arena.alloc(MeshPrimitive, scene.meshes().len);
         errdefer model_arena.free(mesh_primatives);
 
+        var mesh_bone_ids = std.ArrayList([4]i32).init(local_arena.allocator());
+        var mesh_weights = std.ArrayList([4]f32).init(local_arena.allocator());
+
         // Assimp meshes are equivilent to MeshPrimitive,
         // Assimp nodes contain a list of meshes. These are equivilent to MeshSet.
         // Iterate through all assimp meshes and create MeshPrimitive for each, store These
@@ -470,6 +507,7 @@ pub const Model = struct {
             //     prim_mat.alpha_cutoff = material.alpha_cutoff;
             //     prim_mat.unlit = material.unlit > 0;
             // }
+            //
 
             var prim = MeshPrimitive {
                 .num_indices = undefined,
@@ -530,15 +568,90 @@ pub const Model = struct {
             @memcpy(prim.positions, mesh_positions.items[prim.pos_offset..]);
 
             mesh_primatives[idx] = prim;
+
+            // Fill bones data
+            try mesh_bone_ids.appendNTimes([4]i32{-1, -1, -1, -1}, prim.num_vertices);
+            try mesh_weights.appendNTimes([4]f32{0.0, 0.0, 0.0, 0.0}, prim.num_vertices);
+
+            for (mesh.bones(), 0..) |bn, bi| {
+                std.log.info("bone name {s} - node name {s} - arm name {s}", .{bn.name(), bn.node().?.name(), bn.armature().?.name()});
+                for (bn.weights()) |*wg| {
+                    // insert bone id and weights into relevant vertex
+                    // sorting values from highest to lowest weight.
+                    // That way if we go over 4 bones per vertex it is the
+                    // least affecting values which are dropped.
+                    const vertId = prim.pos_offset + wg.mVertexId;
+                    for (mesh_weights.items[vertId], 0..) |w, wi| {
+                        if (wg.mWeight > w) {
+                            for (0..4) |wj| {
+                                if (wj == wi) {break;}
+                                mesh_weights.items[vertId][3-wj] = mesh_weights.items[vertId][3-wj - 1];
+                                mesh_bone_ids.items[vertId][3-wj] = mesh_bone_ids.items[vertId][3-wj - 1];
+                            }
+                            mesh_weights.items[vertId][wi] = wg.mWeight;
+                            mesh_bone_ids.items[vertId][wi] = @intCast(bi);
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
+        var skele_len: usize = 0;
+        if (scene.skeletons().len > 0) { skele_len = 1; }
+
+        const skeletons = try model_arena.alloc(Skeleton, skele_len);
+        errdefer model_arena.free(skeletons);
+
+        // std.log.info("num skeles is {}", .{scene.skeletons().len});
+        // for (scene.skeletons()) |sk| {
+        //     skeletons[0] = Skeleton {
+        //         .name = try model_arena.alloc(u8, sk.name().len),
+        //         .bones = try model_arena.alloc(Bone, sk.bones().len),
+        //     };
+        //     @memcpy(skeletons[0].name[0..], sk.name()[0..]);
+        //     const skeleton = &skeletons[0];
+        //
+        //     std.log.info("num bones is {}", .{sk.bones().len});
+        //     for (sk.bones(), 0..) |bn, bi| {
+        //         skeleton.bones[bi] = Bone {
+        //             .offset_matrix = bn.offset_matrix(),
+        //             .node = undefined,
+        //             .armature = null,
+        //         };
+        //
+        //         std.log.info("num weights is {}", .{bn.weights().len});
+        //         for (bn.weights()) |*wg| {
+        //             for (mesh_weights[vertId], 0..) |w, wi| {
+        //                 _ = w;
+        //                 //if (wg.mWeight > w) {
+        //                     for (3..wi) |wj| {
+        //                         mesh_weights[vertId][wj] = mesh_weights[vertId][wj - 1];
+        //                         mesh_bone_ids[vertId][wj] = mesh_bone_ids[vertId][wj - 1];
+        //                     }
+        //                     mesh_weights[vertId][wi] = wg.mWeight;
+        //                     mesh_bone_ids[vertId][wi] = @intCast(bi);
+        //                     break;
+        //                 //}
+        //             }
+        //         }
+        //     }
+        //
+        //     // only 1 skeleton
+        //     break;
+        // }
+        std.log.info("bone_ids:\n{any}\n", .{mesh_bone_ids.items[0..100]});
+        std.log.info("weights:\n{any}\n", .{mesh_weights.items[0..100]});
+
         // create gfx buffers from vertex data
-        const buffers = try create_gfx_buffers_with_data(
+        const buffers = try Buffers.init_with_data(
             mesh_indices.items,
             mesh_positions.items,
             mesh_normals.items,
             mesh_tex_coords.items,
             mesh_tangents.items,
+            mesh_bone_ids.items,
+            mesh_weights.items,
             gfx_device
         );
         errdefer buffers.deinit();
@@ -570,11 +683,30 @@ pub const Model = struct {
         const model_nodes = try model_arena.alloc(ModelNode, model_nodes_list.items.len);
         @memcpy(model_nodes, model_nodes_list.items);
 
+        // Nodes name map
+        var nodes_name_map = std.StringHashMap(usize).init(local_arena.allocator());
+        defer nodes_name_map.deinit();
+
+        for (model_nodes, 0..) |*nd, id| {
+            if (nd.name) |nm| {
+                try nodes_name_map.put(nm, id);
+                if (nd.parent) |p| {
+                    std.log.info("node name {s} - {s}", .{nm, model_nodes[p].name.?});
+                } else {
+                    std.log.info("node name {s}", .{nm});
+                }
+            }
+        }
+
+        var bone_node_map = std.AutoHashMap(assimp.Node.Ptr, usize).init(local_arena.allocator());
+        defer bone_node_map.deinit();
+
         return Self {
             .buffers = buffers,
             .mesh_list = mesh_primatives,
             .nodes_list = model_nodes,
             .root_nodes = root_node,
+            .skeletons = skeletons,
             .arena_allocator = model_arena_allocator,
         };
     }
@@ -684,12 +816,14 @@ pub const Model = struct {
         cone_shape.computeNormals();
 
         // Construct gfx buffers
-        const buffers = try create_gfx_buffers_with_data(
+        const buffers = try Buffers.init_with_data(
             cone_shape.indices,
             cone_shape.positions,
             cone_shape.normals.?,
             ([_]([2]f32){[_]f32{0.0}**2} ** 1)[0..0],
             ([_]([4]f32){[_]f32{0.0}**4} ** 1)[0..0],
+            null,
+            null,
             gfx
         );
         errdefer buffers.deinit();
@@ -732,8 +866,30 @@ pub const Model = struct {
             .mesh_list = mp,
             .nodes_list = mn,
             .root_nodes = rn,
+            .skeletons = try model_arena.alloc(Skeleton, 0),
             .arena_allocator = model_arena_allocator,
         };
+    }
+
+    pub fn gen_static_compound_physics_shape(self: *const Model) !*zphy.CompoundShapeSettings {
+        var shape_settings = try zphy.CompoundShapeSettings.createStatic();
+        for (self.nodes_list) |*node| {
+            if (node.mesh) |mid| {
+                var scaled_shape_settings = try zphy.DecoratedShapeSettings.createScaled(
+                    mid.physics_shape_settings,
+                    .{node.transform.scale[0], node.transform.scale[1], node.transform.scale[2]}
+                );
+                defer scaled_shape_settings.release();
+
+                shape_settings.addShape(
+                    .{node.transform.position[0], node.transform.position[1], node.transform.position[2]},
+                    .{node.transform.rotation[0], node.transform.rotation[1], node.transform.rotation[2], node.transform.rotation[3]},
+                    scaled_shape_settings.asShapeSettings(),
+                    0
+                );
+            }
+        }
+        return shape_settings;
     }
 };
 

@@ -214,38 +214,27 @@ pub const App = struct {
         );
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
-        const chara_root_idx = (try eng.create_entities_from_model(&chara_model, null)).?;
+        const demo_compound_shape_settings = try tree_model.gen_static_compound_physics_shape();
+        defer demo_compound_shape_settings.release();
+
+        const demo_compound_shape = try demo_compound_shape_settings.createShape();
+        defer demo_compound_shape.release();
+
+        _ = try eng.entities.insert(Engine.EntitySuperStruct {
+            .model = &tree_model,
+            .physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = zm.f32x4s(0.0),
+                .rotation = zm.qidentity(),
+                .shape = demo_compound_shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+            }, .activate),
+        });
+
+        const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
+            .model = &chara_model,
+        });
         (try eng.entities.get(chara_root_idx)).transform.position = zm.f32x4(-0.5, 0.0, 0.5, 1.0);
-
-        var world_entities = std.ArrayList(ent.GenerationalIndex).init(eng.general_allocator.allocator());
-        defer world_entities.deinit();
-        _ = try eng.create_entities_from_model(&tree_model, &world_entities);
-
-        // Add physics bodies to static world entities
-        for (world_entities.items) |ent_idx| {
-            const entity = try eng.entities.get(ent_idx);
-            if (entity.physics_body == null) {
-                if (entity.mesh) |mesh| {
-                    const sc = entity.transform.scale;
-                    const scaled_shape_settings = zphy.DecoratedShapeSettings.createScaled(mesh.mesh_set.physics_shape_settings, [3]zphy.Real{sc[0], sc[1], sc[2]})
-                        catch unreachable;
-                    defer scaled_shape_settings.release();
-
-                    const shape = zphy.ShapeSettings.createShape(@ptrCast(scaled_shape_settings))
-                        catch unreachable;
-                    defer shape.release();
-
-                    var body_inderface = eng.physics.zphy.getBodyInterfaceMut();
-                    entity.physics_body = body_inderface.createAndAddBody(.{
-                        .position = entity.transform.position,
-                        .rotation = entity.transform.rotation,
-                        .shape = shape,
-                        .motion_type = .static,
-                        .object_layer = ph.object_layers.non_moving,
-                    }, .activate) catch unreachable;
-                }
-            }
-        }
 
         const chara_shape_settings = try zphy.CapsuleShapeSettings.create(0.7, 0.2);
         defer chara_shape_settings.release();
@@ -568,52 +557,27 @@ pub const App = struct {
         for (self.engine.entities.data.items) |*it| {
             if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
-                if (entity.mesh) |m| {
+                if (entity.model) |m| {
                     const pos_stride: c_uint = @sizeOf(f32) * 3;
                     const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
                     const offset: c_uint = 0;
-                    self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.model.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.model.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.model.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetIndexBuffer(m.model.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
-
-                    { // Setup model buffer from transform
-                        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-                        zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.model_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-                        defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
-
-                        const buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
-                        buffer_data.* = entity.transform.generate_model_matrix();
-                    }
-                    
+                    self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
                     // Set model constant buffer
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
 
-                    // Finally, render the mesh
-                    for (m.mesh_set.primitives) |maybe_prim_idx| {
-                        if (maybe_prim_idx) |prim_idx| {
-                            const p = &m.model.mesh_list[prim_idx];
-
-                            if (p.material_descriptor.double_sided) {
-                                self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
-                            } else {
-                                self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
-                            }
-
-                            if (p.has_indices()) {
-                                self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
-                            } else {
-                                self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
-                            }
-                        }
-                    }
+                    // Finally, render the model
+                    self.recursive_render_model(m, &m.nodes_list[m.root_nodes[0]], entity.transform.generate_model_matrix());
                 }
             }
         }
 
         // find bone transforms for chara
         if (self.engine.entities.get(self.model_idx)) |chara| {
-            _ = chara;
+            self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
+
             const pos_stride: c_uint = @sizeOf(f32) * 3;
             const offset: c_uint = 0;
             self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.cone_model.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
@@ -634,20 +598,29 @@ pub const App = struct {
             // Set model constant buffer
             self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
 
-            // Finally, render the mesh
-            for (self.cone_model.mesh_list) |p| {
-                if (p.material_descriptor.double_sided) {
-                    self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
-                } else {
-                    self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
-                }
-
-                if (p.has_indices()) {
-                    self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
-                } else {
-                    self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
-                }
-            }
+            self.recursive_render_model_bones(
+                &self.cone_model, 
+                &(Transform {
+                    .scale = zm.f32x4(0.05, 0.2, 0.05, 0.0),
+                }).generate_model_matrix(),
+                chara.model.?, 
+                &chara.model.?.nodes_list[chara.model.?.root_nodes[0]], 
+                chara.transform.generate_model_matrix()
+            );
+            // // Finally, render the mesh
+            // for (self.cone_model.mesh_list) |p| {
+            //     if (p.material_descriptor.double_sided) {
+            //         self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+            //     } else {
+            //         self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
+            //     }
+            //
+            //     if (p.has_indices()) {
+            //         self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
+            //     } else {
+            //         self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+            //     }
+            // }
         } else |_| {}
 
         // Draw Physics Debug Wireframes
@@ -746,6 +719,66 @@ pub const App = struct {
             return;
         };
         return;
+    }
+
+    pub fn recursive_render_model(self: *Self, model: *const ms.Model, model_node: *const ms.ModelNode, mat: zm.Mat) void {
+        const node_model_matrix = zm.mul(model_node.transform.generate_model_matrix(), mat);
+
+        if (model_node.mesh) |*mesh_set| {
+            { // Setup model buffer from transform
+                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.model_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
+
+                const buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
+                buffer_data.* = node_model_matrix;
+            }
+
+            for (mesh_set.primitives) |maybe_prim| {
+                if (maybe_prim) |prim_idx| {
+                    const p = &model.mesh_list[prim_idx];
+
+                    if (p.material_descriptor.double_sided) {
+                        self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+                    } else {
+                        self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
+                    }
+
+                    if (p.has_indices()) {
+                        self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
+                    } else {
+                        self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
+                    }
+                }
+            }
+        }
+
+        if (model_node.children) |children| {
+            for (children) |c| {
+                self.recursive_render_model(model, &model.nodes_list[c], node_model_matrix);
+            }
+        }
+    }
+
+    pub fn recursive_render_model_bones(
+        self: *Self, 
+        render_model: *const ms.Model, 
+        render_model_transform: *const zm.Mat, 
+        model: *const ms.Model, 
+        model_node: *const ms.ModelNode, 
+        mat: zm.Mat
+    ) void {
+        const node_model_matrix = zm.mul(model_node.transform.generate_model_matrix(), mat);
+
+        if (model_node.mesh == null) {
+            self.recursive_render_model(render_model, &render_model.nodes_list[render_model.root_nodes[0]], zm.mul(render_model_transform.*, node_model_matrix));
+        }
+
+        if (model_node.children) |children| {
+            for (children) |c| {
+                self.recursive_render_model_bones(render_model, render_model_transform, model, &model.nodes_list[c], node_model_matrix);
+            }
+        }
     }
 
     pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !*d3d11.IDepthStencilView {
