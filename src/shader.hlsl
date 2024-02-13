@@ -13,7 +13,9 @@ struct vs_in
 {
     float3 pos : POS;
     float3 normals : NORMAL;
-    float2 tex_coord : TEXCOORD;
+    float2 tex_coord : TEXCOORD0;
+    uint4 bone_ids : TEXCOORD1;
+    float4 bone_weights : TEXCOORD2;
 };
 
 struct vs_out

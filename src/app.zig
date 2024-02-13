@@ -149,6 +149,24 @@ pub const App = struct {
                 .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
                 .InstanceDataStepRate = 0,
             },
+            d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = "TEXCOORD", // Bone ids
+                .SemanticIndex = 1,
+                .Format = zwin32.dxgi.FORMAT.R32G32B32A32_UINT,
+                .InputSlot = 3,
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
+                .InstanceDataStepRate = 0,
+            },
+            d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = "TEXCOORD", // Bone weights
+                .SemanticIndex = 2,
+                .Format = zwin32.dxgi.FORMAT.R32G32B32A32_FLOAT,
+                .InputSlot = 4,
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
+                .InstanceDataStepRate = 0,
+            },
         };
         var vso_input_layout: *d3d11.IInputLayout = undefined;
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
@@ -560,10 +578,14 @@ pub const App = struct {
                 if (entity.model) |m| {
                     const pos_stride: c_uint = @sizeOf(f32) * 3;
                     const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
+                    const bone_id_stride: c_uint = @sizeOf([4]i32);
+                    const bone_weight_stride: c_uint = @sizeOf([4]f32);
                     const offset: c_uint = 0;
                     self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
                     self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
                     self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&m.buffers.bone_ids), @ptrCast(&bone_id_stride), @ptrCast(&offset));
+                    self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&m.buffers.bone_weights), @ptrCast(&bone_weight_stride), @ptrCast(&offset));
                     self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
                     // Set model constant buffer
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
@@ -602,6 +624,7 @@ pub const App = struct {
                 &self.cone_model, 
                 &(Transform {
                     .scale = zm.f32x4(0.05, 0.2, 0.05, 0.0),
+                    .rotation = zm.quatFromRollPitchYaw(std.math.degreesToRadians(f32, 90.0), 0.0, 0.0),
                 }).generate_model_matrix(),
                 chara.model.?, 
                 &chara.model.?.nodes_list[chara.model.?.root_nodes[0]], 
@@ -770,8 +793,13 @@ pub const App = struct {
     ) void {
         const node_model_matrix = zm.mul(model_node.transform.generate_model_matrix(), mat);
 
-        if (model_node.mesh == null) {
-            self.recursive_render_model(render_model, &render_model.nodes_list[render_model.root_nodes[0]], zm.mul(render_model_transform.*, node_model_matrix));
+        if (model_node.bone_id != null) {
+            const node_model_offset_matrix = zm.mul(zm.inverse(model_node.bone_offset.?), node_model_matrix);
+            self.recursive_render_model(
+                render_model, 
+                &render_model.nodes_list[render_model.root_nodes[0]], 
+                zm.mul(render_model_transform.*, node_model_offset_matrix)
+            );
         }
 
         if (model_node.children) |children| {

@@ -24,7 +24,7 @@ pub inline fn matFromAiTransform(t: *const c.aiMatrix4x4) Mat4x4 {
 
 pub inline fn double_cast_array(comptime OutType: type, array: [*c][*c]OutType.AssimpType, array_length: c_uint) []OutType.Ptr {
     if (array_length == 0) {
-        return ([_]OutType.Ptr{undefined}**1)[0..0];
+        return ([_]OutType.Ptr{undefined})[0..0];
     }
     return @as([*c]OutType.Ptr, @ptrCast(array))[0..array_length];
 }

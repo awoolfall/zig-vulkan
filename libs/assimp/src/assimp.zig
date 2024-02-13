@@ -460,7 +460,7 @@ pub const Bone = opaque {
     }
 
     pub fn offset_matrix(pself: Ptr) util.Mat4x4 {
-        return util.matFromAiTransform(pself.cast().mOffsetMatrix);
+        return util.matFromAiTransform(&(pself.cast().mOffsetMatrix));
     }
 };
 
@@ -522,7 +522,7 @@ pub const Animation = opaque {
     // mMorphMeshChannels: [*c][*c]struct_aiMeshMorphAnim = @import("std").mem.zeroes([*c][*c]struct_aiMeshMorphAnim),
 
     pub fn name(pself: Ptr) []const u8 {
-        return util.stringFromAiString(pself.cast().mName);
+        return util.stringFromAiString(&(pself.cast().mName));
     }
 
     pub fn duration(pself: Ptr) f64 {
@@ -556,7 +556,7 @@ pub const NodeAnim = opaque {
     // mPostState: enum_aiAnimBehaviour = @import("std").mem.zeroes(enum_aiAnimBehaviour),
 
     pub fn node_name(pself: Ptr) []const u8 {
-        return util.stringFromAiString(pself.cast().mNodeName);
+        return util.stringFromAiString(&(pself.cast().mNodeName));
     }
 
     pub const VectorKey = extern struct {
@@ -566,8 +566,8 @@ pub const NodeAnim = opaque {
             return self.aiVectorKey.mTime;
         }
 
-        pub fn value(self: *const VectorKey) @Vector(f32, 4) {
-            return @Vector(f32, 4) {
+        pub fn value(self: *const VectorKey) @Vector(4, f32) {
+            return @Vector(4, f32) {
                 self.aiVectorKey.mValue.x,
                 self.aiVectorKey.mValue.y,
                 self.aiVectorKey.mValue.z,
@@ -583,8 +583,8 @@ pub const NodeAnim = opaque {
             return self.aiQuatKey.mTime;
         }
 
-        pub fn value(self: *const QuatKey) @Vector(f32, 4) {
-            return @Vector(f32, 4){
+        pub fn value(self: *const QuatKey) @Vector(4, f32) {
+            return @Vector(4, f32){
                 self.aiQuatKey.mValue.x,
                 self.aiQuatKey.mValue.y,
                 self.aiQuatKey.mValue.z,

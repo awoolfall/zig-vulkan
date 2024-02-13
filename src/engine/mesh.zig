@@ -111,6 +111,8 @@ pub const ModelNode = struct {
     name: ?[]u8 = null,
     transform: tm.Transform = tm.Transform.new(),
     mesh: ?MeshSet = null,
+    bone_id: ?usize = null,
+    bone_offset: ?zm.Mat = null,
     children: ?[]usize = null,
     parent: ?usize = null,
 
@@ -225,15 +227,23 @@ pub const Buffers = struct {
     }
 };
 
-pub const Skeleton = struct {
-    name: []u8,
-    bones: []Bone,
+pub const AnimationKey = struct {
+    time: f64,
+    value: zm.F32x4,
 };
 
-pub const Bone = struct {
-    offset_matrix: zm.Mat,
+pub const BoneAnimationChannel = struct {
     node: usize,
-    armature: ?usize,
+    position_keys: []AnimationKey,
+    rotation_keys: []AnimationKey,
+    scale_keys: []AnimationKey,
+};
+
+pub const BoneAnimation = struct {
+    name: []u8,
+    duration: f64,
+    ticks_per_second: f64,
+    channels: []BoneAnimationChannel,
 };
 
 pub const Model = struct {
@@ -242,7 +252,7 @@ pub const Model = struct {
     mesh_list: []MeshPrimitive,
     nodes_list: []ModelNode,
     root_nodes: []usize,
-    skeletons: []Skeleton,
+    animations: []BoneAnimation,
     arena_allocator: *std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Self) void {
@@ -437,7 +447,7 @@ pub const Model = struct {
             .mesh_list = mesh_primitives,
             .nodes_list = nodes_list,
             .root_nodes = root_nodes_list,
-            .skeletons = try model_arena.alloc(Skeleton, 0),
+            .animations = ([0]BoneAnimation{})[0..0],
             .arena_allocator = model_arena_allocator,
         };
     }
@@ -597,49 +607,6 @@ pub const Model = struct {
             }
         }
 
-        var skele_len: usize = 0;
-        if (scene.skeletons().len > 0) { skele_len = 1; }
-
-        const skeletons = try model_arena.alloc(Skeleton, skele_len);
-        errdefer model_arena.free(skeletons);
-
-        // std.log.info("num skeles is {}", .{scene.skeletons().len});
-        // for (scene.skeletons()) |sk| {
-        //     skeletons[0] = Skeleton {
-        //         .name = try model_arena.alloc(u8, sk.name().len),
-        //         .bones = try model_arena.alloc(Bone, sk.bones().len),
-        //     };
-        //     @memcpy(skeletons[0].name[0..], sk.name()[0..]);
-        //     const skeleton = &skeletons[0];
-        //
-        //     std.log.info("num bones is {}", .{sk.bones().len});
-        //     for (sk.bones(), 0..) |bn, bi| {
-        //         skeleton.bones[bi] = Bone {
-        //             .offset_matrix = bn.offset_matrix(),
-        //             .node = undefined,
-        //             .armature = null,
-        //         };
-        //
-        //         std.log.info("num weights is {}", .{bn.weights().len});
-        //         for (bn.weights()) |*wg| {
-        //             for (mesh_weights[vertId], 0..) |w, wi| {
-        //                 _ = w;
-        //                 //if (wg.mWeight > w) {
-        //                     for (3..wi) |wj| {
-        //                         mesh_weights[vertId][wj] = mesh_weights[vertId][wj - 1];
-        //                         mesh_bone_ids[vertId][wj] = mesh_bone_ids[vertId][wj - 1];
-        //                     }
-        //                     mesh_weights[vertId][wi] = wg.mWeight;
-        //                     mesh_bone_ids[vertId][wi] = @intCast(bi);
-        //                     break;
-        //                 //}
-        //             }
-        //         }
-        //     }
-        //
-        //     // only 1 skeleton
-        //     break;
-        // }
         std.log.info("bone_ids:\n{any}\n", .{mesh_bone_ids.items[0..100]});
         std.log.info("weights:\n{any}\n", .{mesh_weights.items[0..100]});
 
@@ -698,15 +665,68 @@ pub const Model = struct {
             }
         }
 
-        var bone_node_map = std.AutoHashMap(assimp.Node.Ptr, usize).init(local_arena.allocator());
-        defer bone_node_map.deinit();
+        var bid: usize = 0;
+        for (scene.meshes()) |m| {
+            for (m.bones()) |b| {
+                model_nodes[nodes_name_map.get(b.name()).?].bone_id = bid;
+                model_nodes[nodes_name_map.get(b.name()).?].bone_offset = b.offset_matrix();
+                bid += 1;
+            }
+        }
+
+        // Load animations
+        const animations = try model_arena.alloc(BoneAnimation, scene.animations().len);
+        errdefer model_arena.free(animations);
+
+        for (scene.animations(), 0..) |anim, anim_id| {
+            animations[anim_id] = BoneAnimation {
+                .name = try std.fmt.allocPrint(model_arena, "{s}", .{anim.name()}),
+                .duration = anim.duration(),
+                .ticks_per_second = anim.ticks_per_second(),
+                .channels = try model_arena.alloc(BoneAnimationChannel, anim.channels().len),
+            };
+            for (anim.channels(), 0..) |ch, ch_id| {
+                animations[anim_id].channels[ch_id] = BoneAnimationChannel {
+                    .node = nodes_name_map.get(ch.node_name()).?,
+                    .position_keys = try model_arena.alloc(AnimationKey, ch.position_keys().len),
+                    .rotation_keys = try model_arena.alloc(AnimationKey, ch.rotation_keys().len),
+                    .scale_keys = try model_arena.alloc(AnimationKey, ch.scale_keys().len),
+                };
+
+                for (ch.position_keys(), 0..) |pk, pk_id| {
+                    animations[anim_id].channels[ch_id].position_keys[pk_id] = AnimationKey {
+                        .time = pk.time(),
+                        .value = pk.value(),
+                    };
+                }
+
+                for (ch.rotation_keys(), 0..) |rk, rk_id| {
+                    animations[anim_id].channels[ch_id].rotation_keys[rk_id] = AnimationKey {
+                        .time = rk.time(),
+                        .value = rk.value(),
+                    };
+                }
+
+                for (ch.scale_keys(), 0..) |sk, sk_id| {
+                    animations[anim_id].channels[ch_id].position_keys[sk_id] = AnimationKey {
+                        .time = sk.time(),
+                        .value = sk.value(),
+                    };
+                }
+            }
+        }
+
+        std.log.info("animations are:", .{});
+        for (animations) |*anim| {
+            std.log.info("\t- {s}", .{anim.name});
+        }
 
         return Self {
             .buffers = buffers,
             .mesh_list = mesh_primatives,
             .nodes_list = model_nodes,
             .root_nodes = root_node,
-            .skeletons = skeletons,
+            .animations = animations,
             .arena_allocator = model_arena_allocator,
         };
     }
@@ -820,8 +840,8 @@ pub const Model = struct {
             cone_shape.indices,
             cone_shape.positions,
             cone_shape.normals.?,
-            ([_]([2]f32){[_]f32{0.0}**2} ** 1)[0..0],
-            ([_]([4]f32){[_]f32{0.0}**4} ** 1)[0..0],
+            ([_]([2]f32){})[0..0],
+            ([_]([4]f32){})[0..0],
             null,
             null,
             gfx
@@ -866,7 +886,7 @@ pub const Model = struct {
             .mesh_list = mp,
             .nodes_list = mn,
             .root_nodes = rn,
-            .skeletons = try model_arena.alloc(Skeleton, 0),
+            .animations = ([_]BoneAnimation{})[0..0],
             .arena_allocator = model_arena_allocator,
         };
     }
@@ -893,7 +913,7 @@ pub const Model = struct {
     }
 };
 
-pub fn appendMeshPrimitive(
+fn appendMeshPrimitive(
     data: *zmesh.io.zcgltf.Data,
     mesh_index: u32,
     prim_index: u32,
