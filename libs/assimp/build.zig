@@ -9,19 +9,19 @@ pub const Package = struct {
     assimp_options: *std.Build.Module,
     // assimp_c_cpp: *std.Build.CompileStep,
 
-    pub fn link(pkg: Package, exe: *std.Build.CompileStep) void {
+    pub fn link(pkg: Package, exe: *std.Build.Step.Compile) void {
         exe.linkLibC();
         exe.addIncludePath(.{ .path = thisDir() ++ "/libs/assimp/include/" });
         exe.addLibraryPath(.{ .path = thisDir() ++ "/libs/assimp/lib/Debug/" });
         exe.linkSystemLibrary("assimp-vc143-mtd"); // TODO make this more robust
-        exe.addModule("assimp", pkg.assimp);
-        exe.addModule("assimp_options", pkg.assimp_options);
+        exe.root_module.addImport("assimp", pkg.assimp);
+        exe.root_module.addImport("assimp_options", pkg.assimp_options);
     }
 };
 
 pub fn package(
     b: *std.Build,
-    target: std.zig.CrossTarget,
+    target: std.Build.ResolvedTarget,
     optimize: std.builtin.Mode,
     args: struct {
         options: Options = .{},
@@ -39,11 +39,9 @@ pub fn package(
     const assimp_options = step.createModule();
 
     const assimp = b.createModule(.{
-        .source_file = .{ .path = thisDir() ++ "/src/assimp.zig" },
-        .dependencies = &.{
-            .{ .name = "assimp_options", .module = assimp_options },
-        },
+        .root_source_file = .{ .path = thisDir() ++ "/src/assimp.zig" },
     });
+    assimp.addIncludePath(.{ .path = thisDir() ++ "/libs/assimp/include/" });
 
     return .{
         .options = args.options,

@@ -7,6 +7,7 @@ const d3d11 = zwin32.d3d11;
 const assert = std.debug.assert;
 const tm = @import("../engine/transform.zig");
 const path = @import("../engine/path.zig");
+const an = @import("anim3d.zig");
 const assimp = @import("assimp");
 
 pub const AlphaMode = enum {
@@ -107,13 +108,17 @@ pub const MeshSet = struct {
     }
 };
 
+pub const BoneData = struct {
+    id: usize,
+    offset: zm.Mat, // offset matrix transforms from model space to bone space
+};
+
 pub const ModelNode = struct {
     name: ?[]u8 = null,
     transform: tm.Transform = tm.Transform.new(),
     mesh: ?MeshSet = null,
-    bone_id: ?usize = null,
-    bone_offset: ?zm.Mat = null,
-    children: ?[]usize = null,
+    bone_data: ?BoneData = null,
+    children: []usize = ([_]usize{})[0..0],
     parent: ?usize = null,
 
     pub fn deinit(self: *ModelNode) void {
@@ -164,8 +169,8 @@ pub const Buffers = struct {
         mesh_normals: []const ([3]f32),
         mesh_tex_coords: []const ([2]f32),
         mesh_tangents: []const ([4]f32),
-        mesh_bone_ids: ?[]const ([4]i32),
-        mesh_weights: ?[]const ([4]f32),
+        mesh_bone_ids: []const ([4]i32),
+        mesh_weights: []const ([4]f32),
         gfx_device: *d3d11.IDevice,
     ) !Buffers {
         // Create buffers on GPU
@@ -211,16 +216,12 @@ pub const Buffers = struct {
         errdefer { if (buffers.tangents) |b| { _ = b.Release(); } }
 
         // Bone ids
-        if (mesh_bone_ids) |bone_ids| {
-            buffers.bone_ids = try create_vertex_buffer([4]i32, bone_ids, gfx_device);
-        }
-        errdefer { if (buffers.bone_ids) |b| { _ = b.Release(); } }
+        buffers.bone_ids = try create_vertex_buffer([4]i32, mesh_bone_ids, gfx_device);
+        errdefer { _ = buffers.bone_ids.?.Release(); }
 
         // Bone weights
-        if (mesh_weights) |weights| {
-            buffers.bone_weights = try create_vertex_buffer([4]f32, weights, gfx_device);
-        }
-        errdefer { if (buffers.bone_weights) |b| { _ = b.Release(); } }
+        buffers.bone_weights = try create_vertex_buffer([4]f32, mesh_weights, gfx_device);
+        errdefer { _ = buffers.bone_weights.?.Release(); }
 
         // Return constructed buffers
         return buffers;
@@ -233,7 +234,7 @@ pub const AnimationKey = struct {
 };
 
 pub const BoneAnimationChannel = struct {
-    node: usize,
+    bone_id: usize,
     position_keys: []AnimationKey,
     rotation_keys: []AnimationKey,
     scale_keys: []AnimationKey,
@@ -462,8 +463,15 @@ pub const Model = struct {
         const optimize_mesh_flag: u32 = 0x200000;
         //const optimize_graph_flag: u32 = 0x400000;
         const armature_data_flag: u32 = 0x4000;
-        const scene = try assimp.aiImportFile(file_path, 
-            calc_tangents_flag | triangulate_flag | global_scale_flag | optimize_mesh_flag | armature_data_flag);
+
+        var prop_store = assimp.ImportPropertyStore.init();
+        defer prop_store.deinit();
+
+        prop_store.set_fbx_preserve_pivots(false);
+
+        const scene = try assimp.aiImportFileWithProps(file_path, 
+            calc_tangents_flag | triangulate_flag | global_scale_flag | optimize_mesh_flag | armature_data_flag,
+            &prop_store);
         defer assimp.aiReleaseImport(scene);
 
         // for (scene.materials(), 0..) |mat, i| {
@@ -504,111 +512,138 @@ pub const Model = struct {
         var mesh_bone_ids = std.ArrayList([4]i32).init(local_arena.allocator());
         var mesh_weights = std.ArrayList([4]f32).init(local_arena.allocator());
 
+        var node_bone_id_map = std.StringHashMap(BoneIdMapElem).init(local_arena.allocator());
+        defer node_bone_id_map.deinit();
+
         // Assimp meshes are equivilent to MeshPrimitive,
         // Assimp nodes contain a list of meshes. These are equivilent to MeshSet.
         // Iterate through all assimp meshes and create MeshPrimitive for each, store These
         // in an array for use later.
-        for (scene.meshes(), 0..) |mesh, idx| {
-            var prim_mat = MaterialDescriptor {}; // @TODO
-            prim_mat.double_sided = true;
-            // if (m.primitives[pi].material) |material| {
-            //     prim_mat.double_sided = material.double_sided > 0;
-            //     prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
-            //     prim_mat.alpha_cutoff = material.alpha_cutoff;
-            //     prim_mat.unlit = material.unlit > 0;
-            // }
-            //
+        var bid: usize = 0;
+        {
+            for (scene.meshes(), 0..) |mesh, idx| {
+                var prim_mat = MaterialDescriptor {}; // @TODO
+                prim_mat.double_sided = true;
+                // if (m.primitives[pi].material) |material| {
+                //     prim_mat.double_sided = material.double_sided > 0;
+                //     prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
+                //     prim_mat.alpha_cutoff = material.alpha_cutoff;
+                //     prim_mat.unlit = material.unlit > 0;
+                // }
+                //
 
-            var prim = MeshPrimitive {
-                .num_indices = undefined,
-                .num_vertices = undefined,
-                .positions = undefined,
-                .indices_offset = mesh_indices.items.len,
-                .pos_offset = mesh_positions.items.len,
-                .nor_offset = mesh_normals.items.len,
-                .tex_coord_offset = mesh_tex_coords.items.len,
-                .tangents_offset = mesh_tangents.items.len,
-                .material_descriptor = prim_mat,
-                .topology = .Triangles, // @TODO
-            };
+                var prim = MeshPrimitive {
+                    .num_indices = undefined,
+                    .num_vertices = undefined,
+                    .positions = undefined,
+                    .indices_offset = mesh_indices.items.len,
+                    .pos_offset = mesh_positions.items.len,
+                    .nor_offset = mesh_normals.items.len,
+                    .tex_coord_offset = mesh_tex_coords.items.len,
+                    .tangents_offset = mesh_tangents.items.len,
+                    .material_descriptor = prim_mat,
+                    .topology = .Triangles, // @TODO
+                };
 
-            // assert assimp sizes match what we expect
-            std.debug.assert(@sizeOf(assimp.Vector3D) == @sizeOf([3]f32));
-            std.debug.assert(@sizeOf(assimp.Vector4D) == @sizeOf([4]f32));
-            std.debug.assert(@sizeOf(c_uint) == @sizeOf(u32));
+                // assert assimp sizes match what we expect
+                std.debug.assert(@sizeOf(assimp.Vector3D) == @sizeOf([3]f32));
+                std.debug.assert(@sizeOf(assimp.Vector4D) == @sizeOf([4]f32));
+                std.debug.assert(@sizeOf(c_uint) == @sizeOf(u32));
 
-            // copy positions
-            try mesh_positions.appendSlice(@as(*const [][3]f32, @ptrCast(&(mesh.vertices().?))).*);
-            if (mesh.faces()) |faces| {
-                for (faces) |*face| {
-                    try mesh_indices.appendSlice(@as(*const []u32, @ptrCast(&(face.indices().?))).*);
+                // copy positions
+                try mesh_positions.appendSlice(@as(*const [][3]f32, @ptrCast(&(mesh.vertices().?))).*);
+                if (mesh.faces()) |faces| {
+                    for (faces) |*face| {
+                        try mesh_indices.appendSlice(@as(*const []u32, @ptrCast(&(face.indices().?))).*);
+                    }
                 }
-            }
-            // copy normals
-            if (mesh.normals()) |normals| {
-                try mesh_normals.appendSlice(@as(*const [][3]f32, @ptrCast(&normals)).*);
-            }
-            // copy texcoords, converting to vec2
-            if (mesh.texcoords(0)) |texcoords| {
-                const texcoords_v2 = try alloc.alloc([2]f32, texcoords.len);
-                defer alloc.free(texcoords_v2);
+                // copy normals
+                if (mesh.normals()) |normals| {
+                    try mesh_normals.appendSlice(@as(*const [][3]f32, @ptrCast(&normals)).*);
+                }
+                // copy texcoords, converting to vec2
+                if (mesh.texcoords(0)) |texcoords| {
+                    const texcoords_v2 = try alloc.alloc([2]f32, texcoords.len);
+                    defer alloc.free(texcoords_v2);
 
-                for (texcoords, 0..) |t, i| {
-                    texcoords_v2[i] = [2]f32{t.x, t.y};
+                    for (texcoords, 0..) |t, i| {
+                        texcoords_v2[i] = [2]f32{t.x, t.y};
+                    }
+
+                    try mesh_tex_coords.appendSlice(texcoords_v2);
+                }
+                // copy tangents, converting to vec4
+                if (mesh.tangents()) |tangents| {
+                    const tangents_v4 = try alloc.alloc([4]f32, tangents.len);
+                    defer alloc.free(tangents_v4);
+
+                    for (tangents, 0..) |t, i| {
+                        tangents_v4[i] = [4]f32{t.x, t.y, t.z, 0.0};
+                    }
+
+                    try mesh_tangents.appendSlice(tangents_v4);
                 }
 
-                try mesh_tex_coords.appendSlice(texcoords_v2);
-            }
-            // copy tangents, converting to vec4
-            if (mesh.tangents()) |tangents| {
-                const tangents_v4 = try alloc.alloc([4]f32, tangents.len);
-                defer alloc.free(tangents_v4);
+                prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
+                prim.num_indices = mesh_indices.items.len - prim.indices_offset;
 
-                for (tangents, 0..) |t, i| {
-                    tangents_v4[i] = [4]f32{t.x, t.y, t.z, 0.0};
-                }
+                prim.positions = try model_arena.alloc([3]f32, prim.num_vertices);
+                @memcpy(prim.positions, mesh_positions.items[prim.pos_offset..]);
 
-                try mesh_tangents.appendSlice(tangents_v4);
-            }
+                mesh_primatives[idx] = prim;
 
-            prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
-            prim.num_indices = mesh_indices.items.len - prim.indices_offset;
+                // Fill bones data
+                try mesh_bone_ids.appendNTimes([_]i32{an.AnimController3d.MAX_BONES - 1} ** 4, prim.num_vertices);
+                try mesh_weights.appendNTimes([4]f32{1.0, 0.0, 0.0, 0.0}, prim.num_vertices);
 
-            prim.positions = try model_arena.alloc([3]f32, prim.num_vertices);
-            @memcpy(prim.positions, mesh_positions.items[prim.pos_offset..]);
+                for (mesh.bones()) |bn| {
+                    var bone_id: usize = undefined;
+                    if (node_bone_id_map.get(bn.node().?.name())) |elem| {
+                        bone_id = elem.id;
+                    } else {
+                        bone_id = bid;
+                        try node_bone_id_map.put(bn.node().?.name(), BoneIdMapElem { .id = bone_id, .bone = bn, });
+                        bid += 1;
+                    }
 
-            mesh_primatives[idx] = prim;
-
-            // Fill bones data
-            try mesh_bone_ids.appendNTimes([4]i32{-1, -1, -1, -1}, prim.num_vertices);
-            try mesh_weights.appendNTimes([4]f32{0.0, 0.0, 0.0, 0.0}, prim.num_vertices);
-
-            for (mesh.bones(), 0..) |bn, bi| {
-                std.log.info("bone name {s} - node name {s} - arm name {s}", .{bn.name(), bn.node().?.name(), bn.armature().?.name()});
-                for (bn.weights()) |*wg| {
-                    // insert bone id and weights into relevant vertex
-                    // sorting values from highest to lowest weight.
-                    // That way if we go over 4 bones per vertex it is the
-                    // least affecting values which are dropped.
-                    const vertId = prim.pos_offset + wg.mVertexId;
-                    for (mesh_weights.items[vertId], 0..) |w, wi| {
-                        if (wg.mWeight > w) {
-                            for (0..4) |wj| {
-                                if (wj == wi) {break;}
-                                mesh_weights.items[vertId][3-wj] = mesh_weights.items[vertId][3-wj - 1];
-                                mesh_bone_ids.items[vertId][3-wj] = mesh_bone_ids.items[vertId][3-wj - 1];
+                    for (bn.weights()) |*wg| {
+                        // insert bone id and weights into relevant vertex
+                        // sorting values from highest to lowest weight.
+                        // That way if we go over 4 bones per vertex it is the
+                        // least affecting values which are dropped.
+                        const vertId = prim.pos_offset + wg.mVertexId;
+                        // for (mesh_weights.items[vertId], 0..) |w, wi| {
+                        //     if (wg.mWeight > w) {
+                        //         for (0..4) |wj| {
+                        //             if (wj == wi) {break;}
+                        //             mesh_weights.items[vertId][3-wj] = mesh_weights.items[vertId][3-wj - 1];
+                        //             mesh_bone_ids.items[vertId][3-wj] = mesh_bone_ids.items[vertId][3-wj - 1];
+                        //         }
+                        //         mesh_weights.items[vertId][wi] = wg.mWeight;
+                        //         mesh_bone_ids.items[vertId][wi] = @intCast(bone_id);
+                        //         break;
+                        //     }
+                        // }
+                        for (mesh_bone_ids.items[vertId], 0..) |mesh_bone_id, i| {
+                            if (mesh_bone_id == (an.AnimController3d.MAX_BONES - 1)) { 
+                                mesh_bone_ids.items[vertId][i] = @intCast(bone_id);
+                                mesh_weights.items[vertId][i] = wg.mWeight;
+                                break;
                             }
-                            mesh_weights.items[vertId][wi] = wg.mWeight;
-                            mesh_bone_ids.items[vertId][wi] = @intCast(bi);
-                            break;
                         }
                     }
                 }
             }
         }
 
-        std.log.info("bone_ids:\n{any}\n", .{mesh_bone_ids.items[0..100]});
-        std.log.info("weights:\n{any}\n", .{mesh_weights.items[0..100]});
+        // Normalise bone weights
+        for (mesh_weights.items) |*w| {
+            const sum = w[0] + w[1] + w[2] + w[3];
+            w[0] /= sum;
+            w[1] /= sum;
+            w[2] /= sum;
+            w[3] /= sum;
+        }
 
         // create gfx buffers from vertex data
         const buffers = try Buffers.init_with_data(
@@ -657,20 +692,22 @@ pub const Model = struct {
         for (model_nodes, 0..) |*nd, id| {
             if (nd.name) |nm| {
                 try nodes_name_map.put(nm, id);
-                if (nd.parent) |p| {
-                    std.log.info("node name {s} - {s}", .{nm, model_nodes[p].name.?});
-                } else {
-                    std.log.info("node name {s}", .{nm});
-                }
+                // if (nd.parent) |p| {
+                //     std.log.info("node {} name {s} - {s}", .{id, nm, model_nodes[p].name.?});
+                // } else {
+                //     std.log.info("node {} name {s}", .{id, nm});
+                // }
             }
         }
 
-        var bid: usize = 0;
-        for (scene.meshes()) |m| {
-            for (m.bones()) |b| {
-                model_nodes[nodes_name_map.get(b.name()).?].bone_id = bid;
-                model_nodes[nodes_name_map.get(b.name()).?].bone_offset = b.offset_matrix();
-                bid += 1;
+        for (model_nodes) |*node| {
+            if (node.name) |name| {
+                if (node_bone_id_map.get(name)) |elem| {
+                    node.bone_data = BoneData {
+                        .id = elem.id,
+                        .offset = elem.bone.offset_matrix(),
+                    };
+                }
             }
         }
 
@@ -686,12 +723,24 @@ pub const Model = struct {
                 .channels = try model_arena.alloc(BoneAnimationChannel, anim.channels().len),
             };
             for (anim.channels(), 0..) |ch, ch_id| {
+                const node_id = nodes_name_map.get(ch.node_name()).?;
+
+                // Add missing bones
+                if (model_nodes[node_id].bone_data == null) {
+                    model_nodes[node_id].bone_data = BoneData {
+                        .id = bid,
+                        .offset = zm.identity(),
+                    };
+                    bid += 1;
+                }
+
                 animations[anim_id].channels[ch_id] = BoneAnimationChannel {
-                    .node = nodes_name_map.get(ch.node_name()).?,
+                    .bone_id = model_nodes[node_id].bone_data.?.id,
                     .position_keys = try model_arena.alloc(AnimationKey, ch.position_keys().len),
                     .rotation_keys = try model_arena.alloc(AnimationKey, ch.rotation_keys().len),
                     .scale_keys = try model_arena.alloc(AnimationKey, ch.scale_keys().len),
                 };
+                // std.log.info("anim node {} name is {s}", .{node_id, ch.node_name()});
 
                 for (ch.position_keys(), 0..) |pk, pk_id| {
                     animations[anim_id].channels[ch_id].position_keys[pk_id] = AnimationKey {
@@ -708,7 +757,7 @@ pub const Model = struct {
                 }
 
                 for (ch.scale_keys(), 0..) |sk, sk_id| {
-                    animations[anim_id].channels[ch_id].position_keys[sk_id] = AnimationKey {
+                    animations[anim_id].channels[ch_id].scale_keys[sk_id] = AnimationKey {
                         .time = sk.time(),
                         .value = sk.value(),
                     };
@@ -835,6 +884,14 @@ pub const Model = struct {
         
         cone_shape.computeNormals();
 
+        const bone_ids = try alloc.alloc([4]i32, cone_shape.positions.len);
+        defer alloc.free(bone_ids);
+        @memset(bone_ids, [_]i32{an.AnimController3d.MAX_BONES - 1} ** 4);
+
+        const bone_weights = try alloc.alloc([4]f32, cone_shape.positions.len);
+        defer alloc.free(bone_weights);
+        @memset(bone_weights, [4]f32{1.0, 0.0, 0.0, 0.0});
+
         // Construct gfx buffers
         const buffers = try Buffers.init_with_data(
             cone_shape.indices,
@@ -842,8 +899,8 @@ pub const Model = struct {
             cone_shape.normals.?,
             ([_]([2]f32){})[0..0],
             ([_]([4]f32){})[0..0],
-            null,
-            null,
+            bone_ids,
+            bone_weights,
             gfx
         );
         errdefer buffers.deinit();
@@ -910,6 +967,31 @@ pub const Model = struct {
             }
         }
         return shape_settings;
+    }
+
+    fn recurse_resolve_bones_with_offsets(self: *const Model, node: *const ModelNode, parent_mat: zm.Mat, global_inverse: *const zm.Mat, bone_map: *std.AutoHashMap(i32, zm.Mat), bone_offsets: *[an.AnimController3d.MAX_BONES]zm.Mat) void {
+        var global_mat = zm.mul(node.transform.generate_model_matrix(), parent_mat);
+
+        if (node.bone_data) |bone_data| {
+            if (bone_map.get(@intCast(bone_data.id))) |mat| {
+                _ = mat;
+                global_mat = zm.mul(zm.rotationX(0.3), global_mat);
+            }
+        }
+
+        if (node.bone_data) |bone_data| {
+            //const bone_transform_from_base = zm.mul(bone_data.offset, node_mat);
+            bone_offsets[bone_data.id] = zm.mul(global_mat, bone_data.offset);// zm.mul(node.bone_offset.?, node.transform.generate_model_matrix());
+        }
+
+        for (node.children) |child_idx| {
+            self.recurse_resolve_bones_with_offsets(&(self.nodes_list[child_idx]), global_mat, global_inverse, bone_map, bone_offsets);
+        }
+    }
+
+    pub fn resolve_bones_with_offsets(self: *const Model, bone_map: *std.AutoHashMap(i32, zm.Mat), bone_offsets: *[an.AnimController3d.MAX_BONES]zm.Mat) void {
+        const global_inverse_transform = zm.inverse(self.nodes_list[self.root_nodes[0]].transform.generate_model_matrix());
+        self.recurse_resolve_bones_with_offsets(&(self.nodes_list[self.root_nodes[0]]), zm.identity(), &global_inverse_transform, bone_map, bone_offsets);
     }
 };
 
@@ -1032,3 +1114,9 @@ fn appendMeshPrimitive(
         }
     }
 }
+
+const BoneIdMapElem = struct {
+    id: usize,
+    bone: assimp.Bone.Ptr,
+};
+

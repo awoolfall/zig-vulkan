@@ -9,12 +9,17 @@ cbuffer instance_data : register(b1)
     row_major float4x4 model_matrix;
 }
 
+cbuffer bone_data : register(b2)
+{
+    row_major float4x4 bone_matricies[128];
+}
+
 struct vs_in
 {
     float3 pos : POS;
     float3 normals : NORMAL;
     float2 tex_coord : TEXCOORD0;
-    uint4 bone_ids : TEXCOORD1;
+    int4 bone_ids : TEXCOORD1;
     float4 bone_weights : TEXCOORD2;
 };
 
@@ -70,8 +75,14 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
 
     float4x4 vp = mul(view, projection);
     float4x4 mvp = mul(model_matrix, vp);
+    
+    float4x4 bone_mat = mul(bone_matricies[input.bone_ids[0]], input.bone_weights[0]);
+    bone_mat += mul(bone_matricies[input.bone_ids[1]], input.bone_weights[1]);
+    bone_mat += mul(bone_matricies[input.bone_ids[2]], input.bone_weights[2]);
+    bone_mat += mul(bone_matricies[input.bone_ids[3]], input.bone_weights[3]);
 
-    output.position = mul(float4(input.pos, 1.0), mvp);
+    output.position = mul(float4(input.pos, 1.0), bone_mat);
+    output.position = mul(output.position, mvp);
 
     float4 colour = float4(vertId == 0, vertId == 1, vertId == 2, 1.0);
 
@@ -83,7 +94,7 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
     );
     float3x3 normal_matrix = transpose(model_rotation_matrix);
 
-    output.colour = float4(mul(input.normals, normal_matrix), 0.0);
+    output.colour = float4(mul(mul(float4(input.normals, 0.0), bone_mat).xyz, normal_matrix), 0.0);
     output.colour = normalize(output.colour);
 
     return output;

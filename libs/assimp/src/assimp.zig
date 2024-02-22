@@ -571,7 +571,7 @@ pub const NodeAnim = opaque {
                 self.aiVectorKey.mValue.x,
                 self.aiVectorKey.mValue.y,
                 self.aiVectorKey.mValue.z,
-                0.0,
+                1.0,
             };
         }
     };
@@ -702,9 +702,37 @@ pub fn aiImportFile(pFile: [*:0]const u8, pFlags: u32) !Scene.Ptr {
     return scene.?;
 }
 
+pub fn aiImportFileWithProps(pFile: [*:0]const u8, pFlags: u32, props: *const ImportPropertyStore) !Scene.Ptr {
+    const scene: ?Scene.Ptr = @ptrCast(c.aiImportFileExWithProperties(pFile, pFlags, null, @ptrCast(props.prop_store)));
+    if (scene == null) {
+        return error.FailedImport;
+    }
+    return scene.?;
+}
+
 pub fn aiReleaseImport(pScene: Scene.Ptr) void {
     c.aiReleaseImport(@ptrCast(pScene));
 }
+
+pub const ImportPropertyStore = struct {
+    prop_store: *c.aiPropertyStore,
+
+    pub fn init() ImportPropertyStore {
+        var i = ImportPropertyStore {
+            .prop_store = undefined,
+        };
+        i.prop_store = @ptrCast(c.aiCreatePropertyStore());
+        return i;
+    }
+
+    pub fn deinit(self: *ImportPropertyStore) void {
+        c.aiReleasePropertyStore(@ptrCast(self.prop_store));
+    }
+
+    pub fn set_fbx_preserve_pivots(self: *ImportPropertyStore, value: bool) void {
+        c.aiSetImportPropertyInteger(@ptrCast(self.prop_store), c.AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, @intFromBool(value));
+    }
+};
 
 // Material defines
 pub const AI_MATKEY_NAME: []const u8 = "?mat.name";

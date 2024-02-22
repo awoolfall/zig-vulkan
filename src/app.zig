@@ -15,6 +15,7 @@ const ent = @import("engine/entity.zig");
 const ph = @import("engine/physics.zig");
 const path = @import("engine/path.zig");
 const es = @import("easings.zig");
+const an = @import("engine/anim3d.zig");
 
 const font = @import("engine/font.zig");
 const _ui = @import("engine/ui.zig");
@@ -57,6 +58,8 @@ pub const App = struct {
         cull_back_face: *d3d11.IRasterizerState,
     };
 
+    const MAX_BONES: u32 = 128;
+
     engine: *engine.Engine(Self),
 
     depth_stencil_view: *d3d11.IDepthStencilView,
@@ -73,6 +76,8 @@ pub const App = struct {
 
     model_buffer: *d3d11.IBuffer,
     model_idx: ent.GenerationalIndex,
+
+    bone_matrix_buffer: *d3d11.IBuffer,
 
     chara_model: ms.Model,
     tree_model: ms.Model,
@@ -152,7 +157,7 @@ pub const App = struct {
             d3d11.INPUT_ELEMENT_DESC {
                 .SemanticName = "TEXCOORD", // Bone ids
                 .SemanticIndex = 1,
-                .Format = zwin32.dxgi.FORMAT.R32G32B32A32_UINT,
+                .Format = zwin32.dxgi.FORMAT.R32G32B32A32_SINT,
                 .InputSlot = 3,
                 .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
                 .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
@@ -213,10 +218,26 @@ pub const App = struct {
         const camera_transform_idx = try eng.entities.insert(.{});
         (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
+        // Create bone matrix constant buffer
+        const bone_matrix_buffer_desc = d3d11.BUFFER_DESC {
+            .ByteWidth = @sizeOf(zm.Mat) * an.AnimController3d.MAX_BONES,
+            .Usage = d3d11.USAGE.DYNAMIC,
+            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
+            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
+        };
+        var bone_matrix_buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&bone_matrix_buffer_desc, null, @ptrCast(&bone_matrix_buffer)));
+        errdefer _ = bone_matrix_buffer.Release();
+
         // Load model
+        // const chara_model = try ms.Model.init_from_file_assimp(
+        //     eng.general_allocator.allocator(), 
+        //     path.Path{.ExeRelative = "../../res/Character_Dummy.fbx"}, 
+        //     eng.gfx.device
+        // );
         const chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/Character_Dummy.fbx"}, 
+            path.Path{.ExeRelative = "../../res/bendycube.fbx"}, 
             eng.gfx.device
         );
         const tree_model = try ms.Model.init_from_file_assimp(
@@ -354,6 +375,8 @@ pub const App = struct {
             .model_idx = chara_root_idx,
             .model_buffer = model_buffer,
 
+            .bone_matrix_buffer = bone_matrix_buffer,
+
             .chara_model = chara_model,
             .tree_model = tree_model,
             .cone_model = cone_model,
@@ -377,6 +400,7 @@ pub const App = struct {
         self.chara_model.deinit();
         self.tree_model.deinit();
 
+        _ = self.bone_matrix_buffer.Release();
         _ = self.camera_data_buffer.Release();
         _ = self.model_buffer.Release();
         _ = self.rasterizer_states.double_sided.Release();
@@ -525,6 +549,8 @@ pub const App = struct {
             }
         }
 
+        var resolved_bone_offsets = [_]zm.Mat{zm.identity()} ** an.AnimController3d.MAX_BONES;
+
         // Camera input and buffer data management
         if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
@@ -538,6 +564,26 @@ pub const App = struct {
                 var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
                 buffer_data.view = self.camera.view_matrix;
                 buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
+            }
+
+            var bone_map = std.AutoHashMap(i32, zm.Mat).init(std.heap.page_allocator);
+            defer bone_map.deinit();
+
+            var anim_controller = an.AnimController3d {
+                .animation = &(model_entity.model.?.animations[0]),
+            };
+            anim_controller.update(1000000, &bone_map);
+            
+            { // Update bone matrix buffer
+                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.bone_matrix_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                defer self.engine.gfx.context.Unmap(@ptrCast(self.bone_matrix_buffer), 0);
+
+                const buffer_data: *([an.AnimController3d.MAX_BONES]zm.Mat) = @ptrCast(@alignCast(mapped_subresource.pData));
+                @memset(buffer_data.*[0..], zm.identity());
+                //@memcpy(buffer_data.*[0..], anim_controller.node_anim_offsets[0..]);
+                model_entity.model.?.resolve_bones_with_offsets(&bone_map, buffer_data);
+                @memcpy(resolved_bone_offsets[0..], buffer_data.*[0..]);
             }
         } else |_| {}
         } else |_| {}
@@ -567,6 +613,7 @@ pub const App = struct {
 
         self.engine.gfx.context.VSSetShader(self.vso, null, 0);
         self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
+        self.engine.gfx.context.VSSetConstantBuffers(2, 1, @ptrCast(&self.bone_matrix_buffer));
 
         self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
         self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
@@ -601,21 +648,16 @@ pub const App = struct {
             self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
             const pos_stride: c_uint = @sizeOf(f32) * 3;
+            const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
+            const bone_id_stride: c_uint = @sizeOf([4]i32);
+            const bone_weight_stride: c_uint = @sizeOf([4]f32);
             const offset: c_uint = 0;
             self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.cone_model.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
             self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.cone_model.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
+            self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.cone_model.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
+            self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&self.cone_model.buffers.bone_ids), @ptrCast(&bone_id_stride), @ptrCast(&offset));
+            self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&self.cone_model.buffers.bone_weights), @ptrCast(&bone_weight_stride), @ptrCast(&offset));
             self.engine.gfx.context.IASetIndexBuffer(self.cone_model.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
-
-            { // Setup model buffer from transform
-                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.model_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-                defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
-
-                const buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
-                buffer_data.* = (Transform {
-                    .scale = zm.f32x4(0.2, 1.0, 0.2, 0.0),
-                }).generate_model_matrix();
-            }
 
             // Set model constant buffer
             self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
@@ -623,27 +665,14 @@ pub const App = struct {
             self.recursive_render_model_bones(
                 &self.cone_model, 
                 &(Transform {
-                    .scale = zm.f32x4(0.05, 0.2, 0.05, 0.0),
-                    .rotation = zm.quatFromRollPitchYaw(std.math.degreesToRadians(f32, 90.0), 0.0, 0.0),
+                    .scale = zm.f32x4(0.005, 0.02, 0.005, 0.0),
+                    //.rotation = zm.quatFromRollPitchYaw(std.math.degreesToRadians(f32, 90.0), 0.0, 0.0),
                 }).generate_model_matrix(),
                 chara.model.?, 
                 &chara.model.?.nodes_list[chara.model.?.root_nodes[0]], 
-                chara.transform.generate_model_matrix()
+                chara.transform.generate_model_matrix(),
+                resolved_bone_offsets
             );
-            // // Finally, render the mesh
-            // for (self.cone_model.mesh_list) |p| {
-            //     if (p.material_descriptor.double_sided) {
-            //         self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
-            //     } else {
-            //         self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
-            //     }
-            //
-            //     if (p.has_indices()) {
-            //         self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
-            //     } else {
-            //         self.engine.gfx.context.Draw(@intCast(p.num_vertices), @intCast(p.pos_offset));
-            //     }
-            // }
         } else |_| {}
 
         // Draw Physics Debug Wireframes
@@ -776,10 +805,8 @@ pub const App = struct {
             }
         }
 
-        if (model_node.children) |children| {
-            for (children) |c| {
-                self.recursive_render_model(model, &model.nodes_list[c], node_model_matrix);
-            }
+        for (model_node.children) |c| {
+            self.recursive_render_model(model, &model.nodes_list[c], node_model_matrix);
         }
     }
 
@@ -789,23 +816,22 @@ pub const App = struct {
         render_model_transform: *const zm.Mat, 
         model: *const ms.Model, 
         model_node: *const ms.ModelNode, 
-        mat: zm.Mat
+        mat: zm.Mat,
+        resolved_bone_offsets: [an.AnimController3d.MAX_BONES]zm.Mat
     ) void {
         const node_model_matrix = zm.mul(model_node.transform.generate_model_matrix(), mat);
 
-        if (model_node.bone_id != null) {
-            const node_model_offset_matrix = zm.mul(zm.inverse(model_node.bone_offset.?), node_model_matrix);
+        if (model_node.bone_data) |bone_data| {
+            const node_model_matrix_transformed = zm.mul(resolved_bone_offsets[bone_data.id], zm.inverse(bone_data.offset));
             self.recursive_render_model(
                 render_model, 
                 &render_model.nodes_list[render_model.root_nodes[0]], 
-                zm.mul(render_model_transform.*, node_model_offset_matrix)
+                zm.mul(render_model_transform.*, node_model_matrix_transformed)
             );
         }
 
-        if (model_node.children) |children| {
-            for (children) |c| {
-                self.recursive_render_model_bones(render_model, render_model_transform, model, &model.nodes_list[c], node_model_matrix);
-            }
+        for (model_node.children) |c| {
+            self.recursive_render_model_bones(render_model, render_model_transform, model, &model.nodes_list[c], node_model_matrix, resolved_bone_offsets);
         }
     }
 

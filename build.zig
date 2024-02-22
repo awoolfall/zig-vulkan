@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
     options.addOption(u32, "gitrev", find_git_revision());
     options.addOption(bool, "gitchanged", find_git_changed());
 
-    exe.addOptions("build_options", options);
+    exe.root_module.addOptions("build_options", options);
 
     // This *creates* a RunStep in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
