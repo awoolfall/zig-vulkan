@@ -76,10 +76,10 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
     float4x4 vp = mul(view, projection);
     float4x4 mvp = mul(model_matrix, vp);
     
-    float4x4 bone_mat = mul(bone_matricies[input.bone_ids[0]], input.bone_weights[0]);
-    bone_mat += mul(bone_matricies[input.bone_ids[1]], input.bone_weights[1]);
-    bone_mat += mul(bone_matricies[input.bone_ids[2]], input.bone_weights[2]);
-    bone_mat += mul(bone_matricies[input.bone_ids[3]], input.bone_weights[3]);
+    float4x4 bone_mat = bone_matricies[input.bone_ids[0]] * input.bone_weights[0];
+    bone_mat         += bone_matricies[input.bone_ids[1]] * input.bone_weights[1];
+    bone_mat         += bone_matricies[input.bone_ids[2]] * input.bone_weights[2];
+    bone_mat         += bone_matricies[input.bone_ids[3]] * input.bone_weights[3];
 
     output.position = mul(float4(input.pos, 1.0), bone_mat);
     output.position = mul(output.position, mvp);

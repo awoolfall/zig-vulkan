@@ -71,5 +71,9 @@ pub const TimeState = struct {
     pub fn clear_target_frame_rate(self: *Self) void {
         self.target_frame_time_ns = 0;
     }
+
+    pub fn time_since_start_of_app(self: *const Self) f64 {
+        return @as(f64, @floatFromInt((self.frame_start_time_ns - self.start_time_ns))) / std.time.ns_per_s;
+    }
 };
 

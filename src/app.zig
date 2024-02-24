@@ -15,7 +15,6 @@ const ent = @import("engine/entity.zig");
 const ph = @import("engine/physics.zig");
 const path = @import("engine/path.zig");
 const es = @import("easings.zig");
-const an = @import("engine/anim3d.zig");
 
 const font = @import("engine/font.zig");
 const _ui = @import("engine/ui.zig");
@@ -57,8 +56,6 @@ pub const App = struct {
         double_sided: *d3d11.IRasterizerState,
         cull_back_face: *d3d11.IRasterizerState,
     };
-
-    const MAX_BONES: u32 = 128;
 
     engine: *engine.Engine(Self),
 
@@ -220,7 +217,7 @@ pub const App = struct {
 
         // Create bone matrix constant buffer
         const bone_matrix_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(zm.Mat) * an.AnimController3d.MAX_BONES,
+            .ByteWidth = @sizeOf(zm.Mat) * ms.MAX_BONES,
             .Usage = d3d11.USAGE.DYNAMIC,
             .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
             .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
@@ -237,7 +234,7 @@ pub const App = struct {
         // );
         const chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/bendycube.fbx"}, 
+            path.Path{.ExeRelative = "../../res/bendycube.dae"},
             eng.gfx.device
         );
         const tree_model = try ms.Model.init_from_file_assimp(
@@ -549,8 +546,6 @@ pub const App = struct {
             }
         }
 
-        var resolved_bone_offsets = [_]zm.Mat{zm.identity()} ** an.AnimController3d.MAX_BONES;
-
         // Camera input and buffer data management
         if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
         if (self.engine.entities.get(self.model_idx)) |model_entity| {
@@ -566,24 +561,22 @@ pub const App = struct {
                 buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
 
-            var bone_map = std.AutoHashMap(i32, zm.Mat).init(std.heap.page_allocator);
-            defer bone_map.deinit();
 
-            var anim_controller = an.AnimController3d {
-                .animation = &(model_entity.model.?.animations[0]),
-            };
-            anim_controller.update(1000000, &bone_map);
+            const anim_time: f64 = @mod(self.engine.time.time_since_start_of_app(), 10.0);
+
+            var bone_transforms = std.ArrayList(zm.Mat).init(std.heap.page_allocator);
+            defer bone_transforms.deinit();
+
+            model_entity.model.?.bone_transform(anim_time, &bone_transforms);
             
             { // Update bone matrix buffer
                 var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
                 zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.bone_matrix_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
                 defer self.engine.gfx.context.Unmap(@ptrCast(self.bone_matrix_buffer), 0);
 
-                const buffer_data: *([an.AnimController3d.MAX_BONES]zm.Mat) = @ptrCast(@alignCast(mapped_subresource.pData));
+                const buffer_data: *([ms.MAX_BONES]zm.Mat) = @ptrCast(@alignCast(mapped_subresource.pData));
                 @memset(buffer_data.*[0..], zm.identity());
-                //@memcpy(buffer_data.*[0..], anim_controller.node_anim_offsets[0..]);
-                model_entity.model.?.resolve_bones_with_offsets(&bone_map, buffer_data);
-                @memcpy(resolved_bone_offsets[0..], buffer_data.*[0..]);
+                @memcpy(buffer_data.*[0..bone_transforms.items.len], bone_transforms.items[0..]);
             }
         } else |_| {}
         } else |_| {}
@@ -665,13 +658,12 @@ pub const App = struct {
             self.recursive_render_model_bones(
                 &self.cone_model, 
                 &(Transform {
-                    .scale = zm.f32x4(0.005, 0.02, 0.005, 0.0),
+                    .scale = zm.f32x4(0.05, 0.2, 0.05, 0.0),
                     //.rotation = zm.quatFromRollPitchYaw(std.math.degreesToRadians(f32, 90.0), 0.0, 0.0),
                 }).generate_model_matrix(),
                 chara.model.?, 
                 &chara.model.?.nodes_list[chara.model.?.root_nodes[0]], 
                 chara.transform.generate_model_matrix(),
-                resolved_bone_offsets
             );
         } else |_| {}
 
@@ -817,21 +809,25 @@ pub const App = struct {
         model: *const ms.Model, 
         model_node: *const ms.ModelNode, 
         mat: zm.Mat,
-        resolved_bone_offsets: [an.AnimController3d.MAX_BONES]zm.Mat
     ) void {
         const node_model_matrix = zm.mul(model_node.transform.generate_model_matrix(), mat);
 
-        if (model_node.bone_data) |bone_data| {
-            const node_model_matrix_transformed = zm.mul(resolved_bone_offsets[bone_data.id], zm.inverse(bone_data.offset));
-            self.recursive_render_model(
-                render_model, 
-                &render_model.nodes_list[render_model.root_nodes[0]], 
-                zm.mul(render_model_transform.*, node_model_matrix_transformed)
-            );
+        if (model_node.name) |node_name| {
+            if (model.bone_mapping.get(node_name)) |bone_id| {
+                const bone_data = &model.bone_info.items[@intCast(bone_id)];
+
+                const node_model_matrix_transformed = zm.mul(bone_data.final_transform, node_model_matrix);
+
+                self.recursive_render_model(
+                    render_model, 
+                    &render_model.nodes_list[render_model.root_nodes[0]], 
+                    zm.mul(render_model_transform.*, node_model_matrix_transformed)
+                );
+            }
         }
 
         for (model_node.children) |c| {
-            self.recursive_render_model_bones(render_model, render_model_transform, model, &model.nodes_list[c], node_model_matrix, resolved_bone_offsets);
+            self.recursive_render_model_bones(render_model, render_model_transform, model, &model.nodes_list[c], node_model_matrix);
         }
     }
 
