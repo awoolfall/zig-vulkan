@@ -234,7 +234,7 @@ pub const App = struct {
         // );
         const chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/bendycube.dae"},
+            path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim.glb"},
             eng.gfx.device
         );
         const tree_model = try ms.Model.init_from_file_assimp(
@@ -561,13 +561,10 @@ pub const App = struct {
                 buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
 
-
-            const anim_time: f64 = @mod(self.engine.time.time_since_start_of_app(), 10.0);
-
             var bone_transforms = std.ArrayList(zm.Mat).init(std.heap.page_allocator);
             defer bone_transforms.deinit();
 
-            model_entity.model.?.bone_transform(anim_time, &bone_transforms);
+            model_entity.model.?.bone_transform(self.engine.time.time_since_start_of_app() * 0.3, &bone_transforms);
             
             { // Update bone matrix buffer
                 var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
@@ -655,14 +652,13 @@ pub const App = struct {
             // Set model constant buffer
             self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
 
-            self.recursive_render_model_bones(
+            self.render_model_bones(
                 &self.cone_model, 
                 &(Transform {
                     .scale = zm.f32x4(0.05, 0.2, 0.05, 0.0),
                     //.rotation = zm.quatFromRollPitchYaw(std.math.degreesToRadians(f32, 90.0), 0.0, 0.0),
                 }).generate_model_matrix(),
                 chara.model.?, 
-                &chara.model.?.nodes_list[chara.model.?.root_nodes[0]], 
                 chara.transform.generate_model_matrix(),
             );
         } else |_| {}
@@ -802,32 +798,27 @@ pub const App = struct {
         }
     }
 
-    pub fn recursive_render_model_bones(
+    pub fn render_model_bones(
         self: *Self, 
         render_model: *const ms.Model, 
         render_model_transform: *const zm.Mat, 
         model: *const ms.Model, 
-        model_node: *const ms.ModelNode, 
         mat: zm.Mat,
     ) void {
-        const node_model_matrix = zm.mul(model_node.transform.generate_model_matrix(), mat);
+        for (model.nodes_list) |*node| {
+            if (node.name) |node_name| {
+                if (model.bone_mapping.get(node_name)) |bone_id| {
+                    const bone_data = &model.bone_info.items[@intCast(bone_id)];
 
-        if (model_node.name) |node_name| {
-            if (model.bone_mapping.get(node_name)) |bone_id| {
-                const bone_data = &model.bone_info.items[@intCast(bone_id)];
+                    const node_model_matrix_transformed = zm.mul(zm.inverse(bone_data.bone_offset), zm.mul(bone_data.final_transform, mat));
 
-                const node_model_matrix_transformed = zm.mul(bone_data.final_transform, node_model_matrix);
-
-                self.recursive_render_model(
-                    render_model, 
-                    &render_model.nodes_list[render_model.root_nodes[0]], 
-                    zm.mul(render_model_transform.*, node_model_matrix_transformed)
-                );
+                    self.recursive_render_model(
+                        render_model, 
+                        &render_model.nodes_list[render_model.root_nodes[0]], 
+                        zm.mul(render_model_transform.*, node_model_matrix_transformed)
+                    );
+                }
             }
-        }
-
-        for (model_node.children) |c| {
-            self.recursive_render_model_bones(render_model, render_model_transform, model, &model.nodes_list[c], node_model_matrix);
         }
     }
 
