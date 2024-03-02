@@ -963,19 +963,34 @@ pub const Model = struct {
         const maybe_node_anim = self.find_node_anim(animation, node_name);
 
         if (maybe_node_anim) |node_anim| {
-            var scale_idx = self.find_anim_scale(animation_time, node_anim) + 1;
-            scale_idx = @min(scale_idx, node_anim.scale_keys.len - 1);
-            const scale = node_anim.scale_keys[scale_idx].value;
+            const scale_idx = self.find_anim_scale(animation_time, node_anim);
+            const scale_0 = node_anim.scale_keys[scale_idx];
+            var scale = scale_0.value;
+            if ((scale_idx + 1) < node_anim.scale_keys.len) {
+                const scale_1 = node_anim.scale_keys[scale_idx + 1];
+                const scale_t: f32 = @floatCast((animation_time - scale_0.time) / (scale_1.time - scale_0.time));
+                scale = zm.lerp(scale_0.value, scale_1.value, scale_t);
+            }
             const scale_mat = zm.scalingV(scale);
 
-            var rotation_idx = self.find_anim_rotation(animation_time, node_anim) + 1;
-            rotation_idx = @min(rotation_idx, node_anim.rotation_keys.len - 1);
-            const rotation = node_anim.rotation_keys[rotation_idx].value;
+            const rotation_idx = self.find_anim_rotation(animation_time, node_anim);
+            const rotation_0 = node_anim.rotation_keys[rotation_idx];
+            var rotation = rotation_0.value;
+            if ((rotation_idx + 1) < node_anim.rotation_keys.len) {
+                const rotation_1 = node_anim.rotation_keys[rotation_idx + 1];
+                const rotation_t: f32 = @floatCast((animation_time - rotation_0.time) / (rotation_1.time - rotation_0.time));
+                rotation = zm.slerp(rotation_0.value, rotation_1.value, rotation_t);
+            }
             const rotation_mat = zm.matFromQuat(zm.normalize4(rotation));
 
-            var position_idx = self.find_anim_position(animation_time, node_anim) + 1;
-            position_idx = @min(position_idx, node_anim.position_keys.len - 1);
-            const position = node_anim.position_keys[position_idx].value;
+            const position_idx = self.find_anim_position(animation_time, node_anim);
+            const position_0 = node_anim.position_keys[position_idx];
+            var position = position_0.value;
+            if ((position_idx + 1) < node_anim.position_keys.len) {
+                const position_1 = node_anim.position_keys[position_idx + 1];
+                const position_t: f32 = @floatCast((animation_time - position_0.time) / (position_1.time - position_0.time));
+                position = zm.lerp(position_0.value, position_1.value, position_t);
+            }
             const position_mat = zm.translationV(position);
 
             node_transform = zm.mul(scale_mat, zm.mul(rotation_mat, position_mat));
@@ -986,7 +1001,7 @@ pub const Model = struct {
         if (self.bone_mapping.get(node_name)) |bone_id| {
             const bone_info = &self.bone_info.items[@intCast(bone_id)];
             const final_transform = zm.mul(bone_info.bone_offset, zm.mul(global_transform, self.global_inverse_transform));
-            @constCast(self).bone_info.items[@intCast(bone_id)].final_transform = final_transform;
+            self.bone_info.items[@intCast(bone_id)].final_transform = final_transform;
         }
 
         for (node.children) |child_idx| {

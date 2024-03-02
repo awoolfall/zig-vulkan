@@ -227,11 +227,6 @@ pub const App = struct {
         errdefer _ = bone_matrix_buffer.Release();
 
         // Load model
-        // const chara_model = try ms.Model.init_from_file_assimp(
-        //     eng.general_allocator.allocator(), 
-        //     path.Path{.ExeRelative = "../../res/Character_Dummy.fbx"}, 
-        //     eng.gfx.device
-        // );
         const chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim.glb"},
@@ -634,34 +629,35 @@ pub const App = struct {
         }
 
         // find bone transforms for chara
-        if (self.engine.entities.get(self.model_idx)) |chara| {
-            self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
-
-            const pos_stride: c_uint = @sizeOf(f32) * 3;
-            const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
-            const bone_id_stride: c_uint = @sizeOf([4]i32);
-            const bone_weight_stride: c_uint = @sizeOf([4]f32);
-            const offset: c_uint = 0;
-            self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.cone_model.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
-            self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.cone_model.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
-            self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.cone_model.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
-            self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&self.cone_model.buffers.bone_ids), @ptrCast(&bone_id_stride), @ptrCast(&offset));
-            self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&self.cone_model.buffers.bone_weights), @ptrCast(&bone_weight_stride), @ptrCast(&offset));
-            self.engine.gfx.context.IASetIndexBuffer(self.cone_model.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
-
-            // Set model constant buffer
-            self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
-
-            self.render_model_bones(
-                &self.cone_model, 
-                &(Transform {
-                    .scale = zm.f32x4(0.05, 0.2, 0.05, 0.0),
-                    //.rotation = zm.quatFromRollPitchYaw(std.math.degreesToRadians(f32, 90.0), 0.0, 0.0),
-                }).generate_model_matrix(),
-                chara.model.?, 
-                chara.transform.generate_model_matrix(),
-            );
-        } else |_| {}
+        //
+        // if (self.engine.entities.get(self.model_idx)) |chara| {
+        //     self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
+        //
+        //     const pos_stride: c_uint = @sizeOf(f32) * 3;
+        //     const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
+        //     const bone_id_stride: c_uint = @sizeOf([4]i32);
+        //     const bone_weight_stride: c_uint = @sizeOf([4]f32);
+        //     const offset: c_uint = 0;
+        //     self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.cone_model.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
+        //     self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.cone_model.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
+        //     self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.cone_model.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
+        //     self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&self.cone_model.buffers.bone_ids), @ptrCast(&bone_id_stride), @ptrCast(&offset));
+        //     self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&self.cone_model.buffers.bone_weights), @ptrCast(&bone_weight_stride), @ptrCast(&offset));
+        //     self.engine.gfx.context.IASetIndexBuffer(self.cone_model.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
+        //
+        //     // Set model constant buffer
+        //     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
+        //
+        //     self.render_model_bones(
+        //         &self.cone_model, 
+        //         &(Transform {
+        //             .scale = zm.f32x4(0.05, 0.2, 0.05, 0.0),
+        //             //.rotation = zm.quatFromRollPitchYaw(std.math.degreesToRadians(f32, 90.0), 0.0, 0.0),
+        //         }).generate_model_matrix(),
+        //         chara.model.?, 
+        //         chara.transform.generate_model_matrix(),
+        //     );
+        // } else |_| {}
 
         // Draw Physics Debug Wireframes
         if (self.engine.input.get_key(kc.KeyCode.C)) {
@@ -805,12 +801,20 @@ pub const App = struct {
         model: *const ms.Model, 
         mat: zm.Mat,
     ) void {
+        const global_transform = zm.inverse(model.global_inverse_transform);
         for (model.nodes_list) |*node| {
             if (node.name) |node_name| {
                 if (model.bone_mapping.get(node_name)) |bone_id| {
                     const bone_data = &model.bone_info.items[@intCast(bone_id)];
 
-                    const node_model_matrix_transformed = zm.mul(zm.inverse(bone_data.bone_offset), zm.mul(bone_data.final_transform, mat));
+                    const node_model_matrix_transformed = 
+                        zm.mul(
+                            zm.inverse(bone_data.bone_offset), 
+                            zm.mul(
+                                bone_data.final_transform, 
+                                zm.mul(global_transform, mat)
+                            )
+                        );
 
                     self.recursive_render_model(
                         render_model, 
