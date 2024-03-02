@@ -26,21 +26,33 @@ const CameraStruct = extern struct {
     view: [4]zm.F32x4,
 };
 
+const QuadVsBufferStruct = extern struct {
+    quad_bounds: zm.F32x4,
+};
+
+const QuadPsBufferStruct = extern struct {
+    colour: zm.F32x4,
+};
+
 pub const Engine = engine.Engine(AberrationApp);
 pub const AberrationApp = struct {
     const Self = @This();
 
     pub const EntityData = struct {
-        chara_data: ?struct {
-            character_shape: *zphy.Shape,
-            character_physics: *zphy.CharacterVirtual,
+        quad_data: ?struct {
+            colour: zm.F32x4,
+            size: struct { width: f32, height: f32, }
         } = null,
+        phys: ?struct {
+            dynamic: bool = false,
+            velocity: zm.F32x4 = zm.f32x4s(0.0),
+            is_grounded: bool = false,
+            can_doe_drop_through: bool = false,
+        } = null,
+        is_doe: bool = false,
 
         pub fn deinit(self: *EntityData) void {
-            if (self.chara_data) |*c| {
-                c.character_physics.destroy();
-                c.character_shape.release();
-            }
+            _ = self;
         }
     };
 
@@ -69,8 +81,12 @@ pub const AberrationApp = struct {
     camera_data_buffer: *d3d11.IBuffer,
     camera_idx: ent.GenerationalIndex,
     camera_view_matrix: zm.Mat,
+    camera_proj_matrix: zm.Mat,
 
-    model_buffer: *d3d11.IBuffer,
+    quad_vs_buffer: *d3d11.IBuffer,
+    quad_ps_buffer: *d3d11.IBuffer,
+
+    doe_idx: ent.GenerationalIndex,
 
     ui: _ui.UiRenderer,
 
@@ -86,7 +102,8 @@ pub const AberrationApp = struct {
         self.ui.deinit();
 
         _ = self.camera_data_buffer.Release();
-        _ = self.model_buffer.Release();
+        _ = self.quad_vs_buffer.Release();
+        _ = self.quad_ps_buffer.Release();
         _ = self.rasterizer_states.double_sided.Release();
         _ = self.rasterizer_states.cull_back_face.Release();
         _ = self.vso_input_layout.Release();
@@ -155,20 +172,56 @@ pub const AberrationApp = struct {
         // Create the camera entity
         const camera_transform_idx = try eng.entities.insert(.{});
         (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
-        const model_constant_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(zm.Mat),
+
+        const vs_constant_buffer_desc = d3d11.BUFFER_DESC {
+            .ByteWidth = @sizeOf(QuadVsBufferStruct),
             .Usage = d3d11.USAGE.DYNAMIC,
             .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
             .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
         };
-        var model_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&model_constant_buffer_desc, null, @ptrCast(&model_buffer)));
-        errdefer _ = model_buffer.Release();
+        var quad_vs_buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&vs_constant_buffer_desc, null, @ptrCast(&quad_vs_buffer)));
+        errdefer _ = quad_vs_buffer.Release();
+
+        const ps_constant_buffer_desc = d3d11.BUFFER_DESC {
+            .ByteWidth = @sizeOf(QuadPsBufferStruct),
+            .Usage = d3d11.USAGE.DYNAMIC,
+            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
+            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
+        };
+        var quad_ps_buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&ps_constant_buffer_desc, null, @ptrCast(&quad_ps_buffer)));
+        errdefer _ = quad_ps_buffer.Release();
 
         eng.physics.zphy.optimizeBroadPhase();
 
-        const ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
+        var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
+
+        const doe_idx = try eng.entities.insert(.{});
+        if (eng.entities.get(doe_idx)) |doe| {
+            doe.app.is_doe = true;
+            doe.transform.position = zm.f32x4(0.0, 100.0, 0.0, 1.0);
+            doe.app.quad_data = .{
+                .colour = zm.f32x4(1.0,1.0,1.0,1.0),
+                .size = .{ .width = 20.0, .height = 20.0, },
+            };
+            doe.app.phys = .{ .dynamic = true, };
+        } else |_| { unreachable; }
+
+        // ground
+        _ = try eng.entities.insert(.{
+            .transform = Transform {
+                .position = zm.f32x4(0.0, -50.0, 0.0, 1.0),
+            },
+            .app = .{
+                .quad_data = .{
+                    .colour = zm.f32x4(0.3, 0.3, 0.3, 1.0),
+                    .size = .{ .width = 5000.0, .height = 100.0, },
+                },
+                .phys = .{},
+            },
+        });
 
         return Self {
             .engine = eng,
@@ -181,22 +234,67 @@ pub const AberrationApp = struct {
             .camera_data_buffer = camera_data_buffer,
             .camera_idx = camera_transform_idx,
             .camera_view_matrix = zm.inverse(zm.identity()),
+            .camera_proj_matrix = zm.orthographicLh(
+                @floatFromInt(eng.gfx.swapchain_size.width), 
+                @floatFromInt(eng.gfx.swapchain_size.height),
+                0.1, 
+                100.1
+            ),
 
-            .model_buffer = model_buffer,
+            .quad_vs_buffer = quad_vs_buffer,
+            .quad_ps_buffer = quad_ps_buffer,
+
+            .doe_idx = doe_idx,
 
             .ui = ui,
         };
     }
 
     fn update(self: *Self) void {
+        if (self.engine.entities.get(self.doe_idx)) |doe| {
+            if (doe.app.phys) |*phys| {
+                if (self.engine.input.get_key(kc.KeyCode.A)) {
+                    phys.velocity[0] -= 1.0;
+                    phys.velocity[0] = @max(-30.0, phys.velocity[0]);
+                }
+                if (self.engine.input.get_key(kc.KeyCode.D)) {
+                    phys.velocity[0] += 1.0;
+                    phys.velocity[0] = @min(30.0, phys.velocity[0]);
+                }
+                if (self.engine.input.get_key_down(kc.KeyCode.Space)) {
+                    if (phys.is_grounded) {
+                        phys.velocity[1] = 60.0;
+                    }
+                }
+            }
+        } else |_| {}
+
         // Update physics. If frame time is greater than 1 second then skip physics for this frame.
         // @TODO: It is most likely we loaded something in and caused a spike... Fix this permanently 
         // by adding async loads and/or loading screens.
         if (self.engine.time.last_frame_time_s > 1.0) {
             std.log.warn("Skipping physics for this frame since the frame time was too large at {}s", .{self.engine.time.last_frame_time_s});
         } else {
-            self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
-                catch std.log.err("Unable to update physics", .{});
+            // self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
+            //     catch std.log.err("Unable to update physics", .{});
+
+            for (self.engine.entities.data.items) |*enti| {
+                if (enti.item_data) |*item| {
+                    if (item.app.phys) |*phys| {
+                        if (phys.dynamic) {
+                            phys.is_grounded = false;
+                            phys.velocity[1] += (-9.8 * 20.0 * self.engine.time.delta_time_f32());
+                            item.transform.position += (phys.velocity * zm.f32x4s(self.engine.time.delta_time_f32()));
+
+                            if (item.transform.position[1] < 10.0) { 
+                                phys.is_grounded = true;
+                                item.transform.position[1] = 10.0;
+                                phys.velocity[1] = 0.0;
+                            }
+                        }
+                    }
+                }
+            }
 
             // After physics update set all entity transforms to match physics bodies
             {
@@ -225,12 +323,7 @@ pub const AberrationApp = struct {
 
                 var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
                 buffer_data.view = self.camera_view_matrix;
-                buffer_data.projection = zm.orthographicLh(
-                    @floatFromInt(self.engine.gfx.swapchain_size.width), 
-                    @floatFromInt(self.engine.gfx.swapchain_size.height),
-                    0.1, 
-                    100.1
-                );
+                buffer_data.projection = self.camera_proj_matrix;
             }
         } else |_| {}
 
@@ -242,52 +335,96 @@ pub const AberrationApp = struct {
         self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
-        const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(self.engine.gfx.swapchain_size.width),
-            .Height = @floatFromInt(self.engine.gfx.swapchain_size.height),
-            .TopLeftX = 0,
-            .TopLeftY = 0,
+        const window_w: f32 = @floatFromInt(self.engine.gfx.swapchain_size.width);
+        const window_h: f32 = @floatFromInt(self.engine.gfx.swapchain_size.height);
+
+        const editor_viewport = d3d11.VIEWPORT {
+            .Width = window_w,
+            .Height = window_h,
+            .TopLeftX = 0.0,
+            .TopLeftY = 0.0,
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         };
-        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&viewport));
+        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&editor_viewport));
 
-        // self.engine.gfx.context.PSSetShader(self.pso, null, 0);
-        //
-        // self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view);
-        // self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
-        //
-        // self.engine.gfx.context.VSSetShader(self.vso, null, 0);
-        // self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
-        // self.engine.gfx.context.VSSetConstantBuffers(2, 1, @ptrCast(&self.bone_matrix_buffer));
-        //
-        // self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        // self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
-        //
-        // // Iterate through all entities finding those which contain a mesh to be rendered
-        // for (self.engine.entities.data.items) |*it| {
-        //     if (it.item_data) |*entity| {
-        //         // Find the transform of the entity to be rendered taking into account it's parent
-        //         if (entity.model) |m| {
-        //             const pos_stride: c_uint = @sizeOf(f32) * 3;
-        //             const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
-        //             const bone_id_stride: c_uint = @sizeOf([4]i32);
-        //             const bone_weight_stride: c_uint = @sizeOf([4]f32);
-        //             const offset: c_uint = 0;
-        //             self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
-        //             self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
-        //             self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
-        //             self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&m.buffers.bone_ids), @ptrCast(&bone_id_stride), @ptrCast(&offset));
-        //             self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&m.buffers.bone_weights), @ptrCast(&bone_weight_stride), @ptrCast(&offset));
-        //             self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
-        //             // Set model constant buffer
-        //             self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
-        //
-        //             // Finally, render the model
-        //             self.recursive_render_model(m, &m.nodes_list[m.root_nodes[0]], entity.transform.generate_model_matrix());
-        //         }
-        //     }
-        // }
+        const game_viewport = d3d11.VIEWPORT {
+            .Width = window_w / 2.0,
+            .Height = window_h / 2.0,
+            .TopLeftX = window_w / 4.0,
+            .TopLeftY = window_h * 0.1,
+            .MinDepth = 0.0,
+            .MaxDepth = 1.0,
+        };
+
+        self.camera_proj_matrix = zm.orthographicLh(
+            game_viewport.Width, 
+            game_viewport.Height,
+            0.1, 
+            100.1
+        );
+
+        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&game_viewport));
+
+        self.engine.gfx.context.PSSetShader(self.pso, null, 0);
+
+        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view);
+        self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
+
+        self.engine.gfx.context.VSSetShader(self.vso, null, 0);
+        self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
+
+        self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
+
+        self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+
+        const vp_mat = zm.mul(self.camera_proj_matrix, self.camera_view_matrix);
+
+        // Iterate through all entities finding those which contain a mesh to be rendered
+        for (self.engine.entities.data.items) |*it| {
+            if (it.item_data) |*entity| {
+                if (entity.app.quad_data) |*quad_data| {
+                    const ent_model = entity.transform.generate_model_matrix();
+                    const mvp = zm.mul(ent_model, vp_mat);
+                    var ent_bl_pos = zm.f32x4(
+                        -quad_data.size.width / 2.0, 
+                        -quad_data.size.height / 2.0, 
+                        0.0, 
+                        1.0);
+                    var ent_tr_pos = zm.f32x4(
+                        quad_data.size.width / 2.0, 
+                        quad_data.size.height / 2.0, 
+                        0.0, 
+                        1.0);
+                    ent_bl_pos = zm.mul(ent_bl_pos, mvp);
+                    ent_tr_pos = zm.mul(ent_tr_pos, mvp);
+                    const ent_quad_bounds = zm.f32x4(ent_bl_pos[0], ent_bl_pos[1], ent_tr_pos[0], ent_tr_pos[1]);
+
+                    { // Update quad vs buffer
+                        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                        zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.quad_vs_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                        defer self.engine.gfx.context.Unmap(@ptrCast(self.quad_vs_buffer), 0);
+
+                        var buffer_data: *QuadVsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+                        buffer_data.quad_bounds = ent_quad_bounds;
+                    }
+
+                    { // Update quad ps buffer
+                        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                        zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.quad_ps_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                        defer self.engine.gfx.context.Unmap(@ptrCast(self.quad_ps_buffer), 0);
+
+                        var buffer_data: *QuadPsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+                        buffer_data.colour = quad_data.colour;
+                    }
+
+                    self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_vs_buffer));
+                    self.engine.gfx.context.PSSetConstantBuffers(1, 1, @ptrCast(&self.quad_ps_buffer));
+                    self.engine.gfx.context.Draw(6, 0);
+                }
+            }
+        }
 
         // Draw Physics Debug Wireframes
         // if (self.engine.input.get_key(kc.KeyCode.C)) {
