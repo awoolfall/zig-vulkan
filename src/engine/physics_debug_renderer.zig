@@ -8,7 +8,7 @@ const cm = @import("../engine/camera.zig");
 const tm = @import("../engine/transform.zig");
 
 const CameraStruct = extern struct {
-    projection: [4]zm.F32x4,
+    projection: [16]f32,
     view: [16]f32,
 };
 
@@ -220,7 +220,7 @@ pub const D3D11DebugRenderer = extern struct {
         rtv: *d3d11.IRenderTargetView, 
         rtv_width: i32,
         rtv_height: i32,
-        camera: *cm.Camera, 
+        proj: [16]f32,
         view: [16]f32
     ) void {
         { // Update camera buffer
@@ -230,8 +230,7 @@ pub const D3D11DebugRenderer = extern struct {
 
             var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
             buffer_data.view = view;
-            const aspect = @as(f32,@floatFromInt(rtv_width)) / @as(f32,@floatFromInt(rtv_height));
-            buffer_data.projection = camera.generate_perspective_matrix(aspect);
+            buffer_data.projection = proj;
         }
 
         const viewport = d3d11.VIEWPORT {

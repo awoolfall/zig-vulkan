@@ -43,16 +43,23 @@ pub const AberrationApp = struct {
             colour: zm.F32x4,
             size: struct { width: f32, height: f32, }
         } = null,
-        phys: ?struct {
-            dynamic: bool = false,
-            velocity: zm.F32x4 = zm.f32x4s(0.0),
-            is_grounded: bool = false,
-            can_doe_drop_through: bool = false,
+        doe: ?struct {
+            character: *zphy.CharacterVirtual,
+            shape: *zphy.ShapeSettings,
         } = null,
-        is_doe: bool = false,
 
         pub fn deinit(self: *EntityData) void {
-            _ = self;
+            if (self.doe) |*doe| {
+                doe.character.destroy();
+                doe.shape.release();
+            }
+        }
+
+        pub fn create_phys_shape_settings(self: *EntityData) !*zphy.BoxShapeSettings {
+            if (self.quad_data) |*quad_data| {
+                return try zphy.BoxShapeSettings.create([3]f32{ quad_data.size.width / 2.0, quad_data.size.height / 2.0, 0.5 });
+            }
+            return error.NoQuadData;
         }
     };
 
@@ -200,28 +207,68 @@ pub const AberrationApp = struct {
 
         const doe_idx = try eng.entities.insert(.{});
         if (eng.entities.get(doe_idx)) |doe| {
-            doe.app.is_doe = true;
-            doe.transform.position = zm.f32x4(0.0, 100.0, 0.0, 1.0);
+            doe.transform.position = zm.f32x4(0.0, 200.0, 0.0, 1.0);
             doe.app.quad_data = .{
                 .colour = zm.f32x4(1.0,1.0,1.0,1.0),
                 .size = .{ .width = 20.0, .height = 20.0, },
             };
-            doe.app.phys = .{ .dynamic = true, };
+
+            var zphy_character_settings = try zphy.CharacterVirtualSettings.create(); 
+            defer zphy_character_settings.release();
+
+            const doe_shape_settings = try doe.app.create_phys_shape_settings();
+
+            const doe_shape = try doe_shape_settings.asShapeSettings().createShape();
+            defer doe_shape.release();
+
+            zphy_character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
+            zphy_character_settings.base.max_slope_angle = 1.0;
+            zphy_character_settings.base.shape = doe_shape;
+            zphy_character_settings.character_padding = 0.02;
+            //zphy_character_settings.layer = ph.object_layers.moving;
+            zphy_character_settings.mass = 70.0;
+            //zphy_character_settings.friction = 0.0; // will handle manually
+            //zphy_character_settings.gravity_factor = 1.0;
+
+            doe.app.doe = .{
+                .character = try zphy.CharacterVirtual.create(
+                    zphy_character_settings,
+                    zm.vecToArr3(doe.transform.position),
+                    zm.qidentity(),
+                    eng.physics.zphy
+                ),
+                .shape = @constCast(doe_shape_settings.asShapeSettings()),
+            };
         } else |_| { unreachable; }
 
         // ground
-        _ = try eng.entities.insert(.{
+        const entId = try eng.entities.insert(.{
             .transform = Transform {
-                .position = zm.f32x4(0.0, -50.0, 0.0, 1.0),
+                .position = zm.f32x4(0.0, 0.0, 0.0, 1.0),
             },
             .app = .{
                 .quad_data = .{
-                    .colour = zm.f32x4(0.3, 0.3, 0.3, 1.0),
+                    .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
                     .size = .{ .width = 5000.0, .height = 100.0, },
                 },
-                .phys = .{},
             },
         });
+
+        if (eng.entities.get(entId)) |entt| {
+            const ent_shape_settings = try entt.app.create_phys_shape_settings();
+            defer ent_shape_settings.release();
+
+            const ent_shape = try ent_shape_settings.asShapeSettings().createShape();
+            defer ent_shape.release();
+
+            entt.physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = zm.vecToArr4(entt.transform.position),
+                .rotation = zm.qidentity(),
+                .shape = ent_shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+            }, .activate);
+        } else |_| { unreachable; }
 
         return Self {
             .engine = eng,
@@ -252,20 +299,39 @@ pub const AberrationApp = struct {
 
     fn update(self: *Self) void {
         if (self.engine.entities.get(self.doe_idx)) |doe| {
-            if (doe.app.phys) |*phys| {
+            if (doe.app.doe) |*doe_data| {
+                var desired_movement = zm.f32x4s(0.0);
                 if (self.engine.input.get_key(kc.KeyCode.A)) {
-                    phys.velocity[0] -= 1.0;
-                    phys.velocity[0] = @max(-30.0, phys.velocity[0]);
+                    desired_movement[0] -= 1.0;
                 }
                 if (self.engine.input.get_key(kc.KeyCode.D)) {
-                    phys.velocity[0] += 1.0;
-                    phys.velocity[0] = @min(30.0, phys.velocity[0]);
+                    desired_movement[0] += 1.0;
                 }
-                if (self.engine.input.get_key_down(kc.KeyCode.Space)) {
-                    if (phys.is_grounded) {
-                        phys.velocity[1] = 60.0;
+
+                var current_movement = zm.loadArr3(doe_data.character.getLinearVelocity());
+
+                if (doe_data.character.getGroundState() != .on_ground) {
+                    current_movement += 
+                        zm.loadArr3(self.engine.physics.zphy.getGravity()) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0);
+                } else {
+                    current_movement[1] = -0.1;
+
+                    if (self.engine.input.get_key_down(kc.KeyCode.Space)) {
+                        current_movement[1] = 60.0;
+                    }
+                    
+                    if (desired_movement[0] != 0.0) {
+                        const movement_speed = 2.0;
+                        current_movement += (zm.normalize2(desired_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * movement_speed));
+                        current_movement[0] = @min(30.0, @max(-30.0, current_movement[0]));
+                    } else {
+                        if (@reduce(.Add, @abs(current_movement)) != 0.0) {
+                            current_movement -= (zm.normalize2(current_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0));
+                        }
                     }
                 }
+                
+                doe_data.character.setLinearVelocity(zm.vecToArr3(current_movement));
             }
         } else |_| {}
 
@@ -275,37 +341,37 @@ pub const AberrationApp = struct {
         if (self.engine.time.last_frame_time_s > 1.0) {
             std.log.warn("Skipping physics for this frame since the frame time was too large at {}s", .{self.engine.time.last_frame_time_s});
         } else {
-            // self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
-            //     catch std.log.err("Unable to update physics", .{});
+            self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
+                catch std.log.err("Unable to update physics", .{});
 
-            for (self.engine.entities.data.items) |*enti| {
-                if (enti.item_data) |*item| {
-                    if (item.app.phys) |*phys| {
-                        if (phys.dynamic) {
-                            phys.is_grounded = false;
-                            phys.velocity[1] += (-9.8 * 20.0 * self.engine.time.delta_time_f32());
-                            item.transform.position += (phys.velocity * zm.f32x4s(self.engine.time.delta_time_f32()));
+            if (self.engine.entities.get(self.doe_idx)) |doe| {
+                if (doe.app.doe) |*doe_data| {
+                    doe_data.character.extendedUpdate(
+                        self.engine.time.delta_time_f32(), 
+                        [3]f32{0.0, -9.8 * 20.0, 0.0}, 
+                        .{},
+                        .{}
+                    );
 
-                            if (item.transform.position[1] < 10.0) { 
-                                phys.is_grounded = true;
-                                item.transform.position[1] = 10.0;
-                                phys.velocity[1] = 0.0;
-                            }
-                        }
-                    }
+                    doe.transform.position = zm.loadArr3(doe_data.character.getPosition());
+                    doe.transform.position[3] = 1.0;
+
+                    // Remove any z movement
+                    doe.transform.position[2] = 0.0;
+                    var vel = doe_data.character.getLinearVelocity();
+                    vel[2] = 0.0;
+                    doe_data.character.setLinearVelocity(vel);
                 }
-            }
+            } else |_| {}
 
             // After physics update set all entity transforms to match physics bodies
-            {
-                const body_interface = self.engine.physics.zphy.getBodyInterface();
-                for (self.engine.entities.data.items) |*it| {
-                    if (it.item_data) |*en| {
-                        if (en.physics_body) |body_id| {
-                            const pos = body_interface.getPosition(body_id);
-                            en.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-                            en.transform.rotation = body_interface.getRotation(body_id);
-                        }
+            const body_interface = self.engine.physics.zphy.getBodyInterface();
+            for (self.engine.entities.data.items) |*it| {
+                if (it.item_data) |*en| {
+                    if (en.physics_body) |body_id| {
+                        const pos = body_interface.getPosition(body_id);
+                        en.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                        en.transform.rotation = body_interface.getRotation(body_id);
                     }
                 }
             }
@@ -349,13 +415,49 @@ pub const AberrationApp = struct {
         self.engine.gfx.context.RSSetViewports(1, @ptrCast(&editor_viewport));
 
         const game_viewport = d3d11.VIEWPORT {
-            .Width = window_w / 2.0,
-            .Height = window_h / 2.0,
-            .TopLeftX = window_w / 4.0,
+            .Width = (window_w * 2.0) / 3.0,
+            .Height = window_h * 0.8,
+            .TopLeftX = window_w / 6.0,
             .TopLeftY = window_h * 0.1,
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         };
+
+        const game_window_border = 1;
+
+        // game window border
+        self.ui.render_quad(
+            _ui.RectPixels {
+                .left = @as(i32, @intFromFloat(game_viewport.TopLeftX)) - game_window_border,
+                .bottom = @as(i32, @intFromFloat(window_h - (game_viewport.TopLeftY + game_viewport.Height))) - game_window_border,
+                .width = @as(i32, @intFromFloat(game_viewport.Width)) + (game_window_border * 2),
+                .height = @as(i32, @intFromFloat(game_viewport.Height)) + (game_window_border * 2),
+            },
+            _ui.QuadRenderer.QuadProperties {
+                .colour = zm.f32x4(94.0 / 255.0, 97.0 / 255.0, 114.0 / 255.0, 1.0),
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        // clear game window to background colour
+        self.ui.render_quad(
+            _ui.RectPixels {
+                .left = @as(i32, @intFromFloat(game_viewport.TopLeftX)),
+                .bottom = @as(i32, @intFromFloat(window_h - (game_viewport.TopLeftY + game_viewport.Height))),
+                .width = @as(i32, @intFromFloat(game_viewport.Width)),
+                .height = @as(i32, @intFromFloat(game_viewport.Height)),
+            },
+            _ui.QuadRenderer.QuadProperties {
+                .colour = zm.f32x4(30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0),
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
 
         self.camera_proj_matrix = zm.orthographicLh(
             game_viewport.Width, 
@@ -426,20 +528,187 @@ pub const AberrationApp = struct {
             }
         }
 
+        // Draw editor 
+        const panel_sunk_colour = zm.f32x4(38.0 / 255.0, 44.0 / 255.0, 60.0 / 255.0, 1.0);
+        const panel_colour = zm.f32x4(51.0 / 255.0, 57.0 / 255.0, 79.0 / 255.0, 1.0);
+
+        const editor_panel_border = 5;
+        const tab_height = 40;
+
+        const editor_rect = Rect{
+            .left = 0.0, 
+            .bottom = 0.0, 
+            .right = window_w, 
+            .top = window_h - tab_height
+        };
+        
+        const left_rect = Rect{
+            .left = editor_rect.left + editor_panel_border,
+            .bottom = editor_rect.bottom + editor_panel_border,
+            .right = (editor_rect.right / 6.0) - (editor_panel_border * 2.0),
+            .top = editor_rect.top - editor_panel_border,
+        };
+
+        var file_system_area_rect = left_rect;
+        file_system_area_rect.top = (file_system_area_rect.top / 2.0) - editor_panel_border;
+
+        var file_system_rect = file_system_area_rect;
+        file_system_rect.top = (file_system_area_rect.top - tab_height);
+
+        self.ui.render_quad(
+            file_system_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        var file_system_inner_rect = file_system_rect;
+        file_system_inner_rect.top -= editor_panel_border;
+        file_system_inner_rect.bottom += editor_panel_border;
+        file_system_inner_rect.left += editor_panel_border;
+        file_system_inner_rect.right -= editor_panel_border;
+
+        self.ui.render_quad(
+            file_system_inner_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_sunk_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        var file_system_tab_rect = file_system_area_rect;
+        file_system_tab_rect.bottom = file_system_area_rect.top - tab_height;
+        file_system_tab_rect.top = file_system_tab_rect.bottom + tab_height;
+        const file_system_text = "FileSystem";
+        const file_system_font_metrics = self.ui.fonts[@intFromEnum(_ui.FontEnum.GeistMono)].text_bounds_2d(
+            file_system_text,
+            editor_panel_border,
+            editor_panel_border + @as(i32, @intFromFloat(window_h / 2.0)) - (editor_panel_border * 2) - tab_height,
+            .{
+                .size = _ui.Size{.Pixels = 16},
+            },
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height
+        );
+        file_system_tab_rect.right = file_system_tab_rect.left + @as(f32, @floatFromInt(file_system_font_metrics.width)) + 20.0;
+
+        self.ui.render_quad(
+            file_system_tab_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+        self.ui.render_text_2d(
+            _ui.FontEnum.GeistMono,
+            "FileSystem",
+            @intFromFloat(file_system_tab_rect.left + 10.0),
+            @intFromFloat(file_system_tab_rect.bottom + (tab_height / 2.0) - @as(f32, @floatFromInt(file_system_font_metrics.height)) / 2.0),
+            .{
+                .size = _ui.Size{.Pixels = 16},
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        var scene_area_rect = left_rect;
+        scene_area_rect.bottom = scene_area_rect.bottom + (scene_area_rect.top / 2.0) + editor_panel_border;
+
+        var scene_rect = scene_area_rect;
+        scene_rect.top -= editor_panel_border;
+        scene_rect.top = scene_rect.top - tab_height;
+
+        self.ui.render_quad(
+            scene_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        var scene_inner_rect = scene_rect;
+        scene_inner_rect.top -= editor_panel_border;
+        scene_inner_rect.bottom += editor_panel_border;
+        scene_inner_rect.left += editor_panel_border;
+        scene_inner_rect.right -= editor_panel_border;
+
+        self.ui.render_quad(
+            scene_inner_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_sunk_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        var scene_tab_rect = scene_rect;
+        scene_tab_rect.bottom = scene_area_rect.top - tab_height - editor_panel_border;
+        scene_tab_rect.top = scene_tab_rect.bottom + tab_height;
+        const scene_text = "Scene";
+        const scene_text_font_metrics = self.ui.fonts[@intFromEnum(_ui.FontEnum.GeistMono)].text_bounds_2d(
+            scene_text,
+            editor_panel_border,
+            editor_panel_border + @as(i32, @intFromFloat(window_h / 2.0)) - (editor_panel_border * 2) - tab_height,
+            .{
+                .size = _ui.Size{.Pixels = 16},
+            },
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height
+        );
+        scene_tab_rect.right = scene_tab_rect.left + @as(f32, @floatFromInt(scene_text_font_metrics.width)) + 20.0;
+
+        self.ui.render_quad(
+            scene_tab_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+        self.ui.render_text_2d(
+            _ui.FontEnum.GeistMono,
+            scene_text,
+            @intFromFloat(scene_tab_rect.left + 10.0),
+            @intFromFloat(scene_tab_rect.bottom + (tab_height / 2.0) - @as(f32, @floatFromInt(scene_text_font_metrics.height)) / 2.0),
+            .{
+                .size = _ui.Size{.Pixels = 16},
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
         // Draw Physics Debug Wireframes
-        // if (self.engine.input.get_key(kc.KeyCode.C)) {
-        //     if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
-        //         _ = camera_entity;
-        //         self.engine.physics._interfaces.debug_renderer.draw_bodies(
-        //             self.engine.physics.zphy, 
-        //             rtv, 
-        //             self.engine.gfx.swapchain_size.width,
-        //             self.engine.gfx.swapchain_size.height,
-        //             &self.camera, 
-        //             zm.matToArr(self.camera.view_matrix),
-        //         );
-        //     } else |_| {}
-        // }
+        if (self.engine.input.get_key(kc.KeyCode.C)) {
+            self.engine.physics._interfaces.debug_renderer.draw_bodies(
+                self.engine.physics.zphy, 
+                rtv, 
+                self.engine.gfx.swapchain_size.width,
+                self.engine.gfx.swapchain_size.height,
+                zm.matToArr(self.camera_proj_matrix),
+                zm.matToArr(self.camera_view_matrix),
+            );
+        }
 
         self.render_text_over_quad(
             &self.ui.fonts[@intFromEnum(FontEnum.GeistMono)],
@@ -588,6 +857,22 @@ pub const AberrationApp = struct {
 
     fn character_is_supported(chr: *zphy.CharacterVirtual) bool {
         return chr.getGroundState() == zphy.CharacterGroundState.on_ground;
+    }
+};
+
+const Rect = struct {
+    left: f32,
+    bottom: f32,
+    right: f32,
+    top: f32,
+
+    pub fn toRectPixels(self: *const Rect) _ui.RectPixels {
+        return _ui.RectPixels {
+            .left = @intFromFloat(self.left),
+            .bottom = @intFromFloat(self.bottom),
+            .width = @intFromFloat(self.right - self.left),
+            .height = @intFromFloat(self.top - self.bottom),
+        };
     }
 };
 
