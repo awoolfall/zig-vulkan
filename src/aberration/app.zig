@@ -292,9 +292,6 @@ pub const AberrationApp = struct {
             }, .activate);
         } else |_| { unreachable; }
 
-        const client_size = try eng.window.get_client_size();
-        std.log.info("client size is {}", .{client_size});
-
         return Self {
             .engine = eng,
             .depth_stencil_view = depth_stencil_view,
@@ -411,6 +408,11 @@ pub const AberrationApp = struct {
                             // editor to game
                         }
                     }
+                }
+                if (self.engine.input.get_key_down(kc.KeyCode.S)) {
+                    var pos = doe_data.character.getPosition();
+                    pos[1] -= 50.0;
+                    doe_data.character.setPosition(pos);
                 }
             }
         } else |_| {}
@@ -969,30 +971,92 @@ pub const AberrationApp = struct {
 
     fn create_editor_physics_box_from_rect(self: *Self, rect: Rect) !void {
         const box_settings = try zphy.BoxShapeSettings.create([3]f32 { 
-            (rect.right - rect.left) / 2.0, 
-            (rect.top - rect.bottom) / 2.0,
-            1.0 
+            0.5, 
+            0.5,
+            1.0
         });
         defer box_settings.release();
+        const border_size = 5.0;
 
-        const inverse_box_settings = try zphy.DecoratedShapeSettings.createScaled(box_settings.asShapeSettings(), [3]f32{-1.0, -1.0, -1.0});
-        defer inverse_box_settings.release();
-
-        const shape = try inverse_box_settings.createShape();
-        defer shape.release();
-
-        _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
-            .position = [4]f32 {
-                rect.left + ((rect.right - rect.left) / 2.0),
-                rect.bottom + ((rect.top - rect.bottom) / 2.0),
-                20.0,
+        { // Top/Bottom
+            const scaled_settings = try zphy.DecoratedShapeSettings.createScaled(box_settings.asShapeSettings(), [3]f32{
+                rect.right - rect.left,
+                border_size,
                 1.0
-            },
-            .rotation = zm.qidentity(),
-            .shape = shape,
-            .motion_type = .static,
-            .object_layer = ph.object_layers.non_moving,
-        }, .activate);
+            });
+            defer scaled_settings.release();
+
+            const shape = try scaled_settings.createShape();
+            defer shape.release();
+
+            // Top
+            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = [4]f32 {
+                    rect.left + ((rect.right - rect.left) / 2.0),
+                    rect.top + (border_size / 2.0),
+                    20.0,
+                    1.0
+                },
+                .rotation = zm.qidentity(),
+                .shape = shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+            }, .activate);
+
+            // Bottom
+            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = [4]f32 {
+                    rect.left + ((rect.right - rect.left) / 2.0),
+                    rect.bottom - (border_size / 2.0),
+                    20.0,
+                    1.0
+                },
+                .rotation = zm.qidentity(),
+                .shape = shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+            }, .activate);
+        }
+
+        { // Left/Right
+            const scaled_settings = try zphy.DecoratedShapeSettings.createScaled(box_settings.asShapeSettings(), [3]f32{
+                border_size,
+                rect.top - rect.bottom,
+                1.0
+            });
+            defer scaled_settings.release();
+
+            const shape = try scaled_settings.createShape();
+            defer shape.release();
+
+            // Left
+            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = [4]f32 {
+                    rect.left - (border_size / 2.0),
+                    rect.bottom + ((rect.top - rect.bottom) / 2.0),
+                    20.0,
+                    1.0
+                },
+                .rotation = zm.qidentity(),
+                .shape = shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+            }, .activate);
+
+            // Right
+            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = [4]f32 {
+                    rect.right + (border_size / 2.0),
+                    rect.bottom + ((rect.top - rect.bottom) / 2.0),
+                    20.0,
+                    1.0
+                },
+                .rotation = zm.qidentity(),
+                .shape = shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+            }, .activate);
+        }
     }
 
     fn create_editor_collisions(self: *Self, rects: EditorUiKeyRects) !void {
