@@ -47,11 +47,18 @@ pub const AberrationApp = struct {
             character: *zphy.CharacterVirtual,
             shape: *zphy.ShapeSettings,
         } = null,
+        scene_name: ?struct {
+            name: []u8,
+            alloc: std.mem.Allocator,
+        } = null,
 
         pub fn deinit(self: *EntityData) void {
             if (self.doe) |*doe| {
                 doe.character.destroy();
                 doe.shape.release();
+            }
+            if (self.scene_name) |scene_name_data| {
+                scene_name_data.alloc.free(scene_name_data.name);
             }
         }
 
@@ -94,6 +101,9 @@ pub const AberrationApp = struct {
     quad_ps_buffer: *d3d11.IBuffer,
 
     doe_idx: ent.GenerationalIndex,
+
+    // We create editor phys using UI rects. Only know these after 1st frame...
+    editor_phys_created: bool = false,
 
     ui: _ui.UiRenderer,
 
@@ -205,12 +215,20 @@ pub const AberrationApp = struct {
         var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
 
-        const doe_idx = try eng.entities.insert(.{});
+        const doe_idx = try eng.entities.insert(.{
+            .app = .{
+                .scene_name = .{
+                    .name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Doe", .{}),
+                    .alloc = eng.general_allocator.allocator(),
+                },
+            },
+        });
         if (eng.entities.get(doe_idx)) |doe| {
             doe.transform.position = zm.f32x4(0.0, 200.0, 0.0, 1.0);
+            // doe.transform.position = zm.f32x4(100.0, 100.0, 20.0, 1.0);
             doe.app.quad_data = .{
                 .colour = zm.f32x4(1.0,1.0,1.0,1.0),
-                .size = .{ .width = 20.0, .height = 20.0, },
+                .size = .{ .width = 30.0, .height = 30.0, },
             };
 
             var zphy_character_settings = try zphy.CharacterVirtualSettings.create(); 
@@ -247,6 +265,10 @@ pub const AberrationApp = struct {
                 .position = zm.f32x4(0.0, 0.0, 0.0, 1.0),
             },
             .app = .{
+                .scene_name = .{
+                    .name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Ground", .{}),
+                    .alloc = eng.general_allocator.allocator(),
+                },
                 .quad_data = .{
                     .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
                     .size = .{ .width = 5000.0, .height = 100.0, },
@@ -270,6 +292,9 @@ pub const AberrationApp = struct {
             }, .activate);
         } else |_| { unreachable; }
 
+        const client_size = try eng.window.get_client_size();
+        std.log.info("client size is {}", .{client_size});
+
         return Self {
             .engine = eng,
             .depth_stencil_view = depth_stencil_view,
@@ -280,7 +305,7 @@ pub const AberrationApp = struct {
 
             .camera_data_buffer = camera_data_buffer,
             .camera_idx = camera_transform_idx,
-            .camera_view_matrix = zm.inverse(zm.identity()),
+            .camera_view_matrix = zm.inverse(zm.translation(0.0, 0.0, -10.0)),
             .camera_proj_matrix = zm.orthographicLh(
                 @floatFromInt(eng.gfx.swapchain_size.width), 
                 @floatFromInt(eng.gfx.swapchain_size.height),
@@ -298,6 +323,26 @@ pub const AberrationApp = struct {
     }
 
     fn update(self: *Self) void {
+        const window_w: f32 = @floatFromInt(self.engine.gfx.swapchain_size.width);
+        const window_h: f32 = @floatFromInt(self.engine.gfx.swapchain_size.height);
+
+        const editor_viewport = d3d11.VIEWPORT {
+            .Width = window_w,
+            .Height = window_h,
+            .TopLeftX = 0.0,
+            .TopLeftY = 0.0,
+            .MinDepth = 0.0,
+            .MaxDepth = 1.0,
+        };
+        const game_viewport = d3d11.VIEWPORT {
+            .Width = (window_w * 2.0) / 3.0,
+            .Height = (window_h * 2.0) / 3.0,
+            .TopLeftX = window_w / 6.0,
+            .TopLeftY = window_h * 0.1,
+            .MinDepth = 0.0,
+            .MaxDepth = 1.0,
+        };
+
         if (self.engine.entities.get(self.doe_idx)) |doe| {
             if (doe.app.doe) |*doe_data| {
                 var desired_movement = zm.f32x4s(0.0);
@@ -321,17 +366,52 @@ pub const AberrationApp = struct {
                     }
                     
                     if (desired_movement[0] != 0.0) {
-                        const movement_speed = 2.0;
-                        current_movement += (zm.normalize2(desired_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * movement_speed));
-                        current_movement[0] = @min(30.0, @max(-30.0, current_movement[0]));
+                        const acceleration = 20.0;
+                        const max_speed = 120.0;
+                        current_movement += (zm.normalize2(desired_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * acceleration));
+                        current_movement[0] = @min(max_speed, @max(-max_speed, current_movement[0]));
                     } else {
                         if (@reduce(.Add, @abs(current_movement)) != 0.0) {
-                            current_movement -= (zm.normalize2(current_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0));
+                            current_movement -= (zm.normalize2(current_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * 20.0));
                         }
                     }
                 }
                 
                 doe_data.character.setLinearVelocity(zm.vecToArr3(current_movement));
+
+                // Charge
+                if (self.engine.input.get_key_down(kc.KeyCode.E)) {
+                    if (desired_movement[0] != 0.0) {
+                        const pos = doe_data.character.getPosition();
+                        const game_vp_mat = zm.mul(self.camera_view_matrix, self.camera_proj_matrix);
+                        if (pos[2] < 1.0) {
+                            // game to editor
+                            var game_pos = zm.loadArr3(pos);
+                            game_pos[3] = 1.0;
+                            // const game_midpoint_in_editor = zm.f32x4(
+                            //     (game_viewport.TopLeftX + (game_viewport.Width / 2.0)) / editor_viewport.Width,
+                            //     (editor_viewport.Height - (game_viewport.TopLeftY + (game_viewport.Height / 2.0))) / editor_viewport.Height,
+                            //     0.0,
+                            //     0.0
+                            // );
+                            // const game_midpoint_offset = game_midpoint_in_editor - zm.f32x4(0.5, 0.5, 0.0, 0.0);
+                            var editor_pos = zm.mul(game_pos, game_vp_mat);
+                            editor_pos = editor_pos * zm.f32x4(0.5, 0.5, 1.0, 1.0); 
+                            editor_pos = editor_pos + zm.f32x4(0.5, 0.5, 0.0, 0.0);
+                            editor_pos = editor_pos * zm.f32x4(game_viewport.Width, game_viewport.Height, 1.0, 1.0);
+                            editor_pos = editor_pos + zm.f32x4(
+                                game_viewport.TopLeftX, 
+                                editor_viewport.Height - (game_viewport.TopLeftY + game_viewport.Height),
+                                0.0,
+                                0.0
+                            );
+                            //editor_pos = editor_pos + zm.f32x4(game_viewport.TopLeftX, game_viewport.TopLeftY - game_viewport.Height, 0.0, 0.0);
+                            doe_data.character.setPosition([3]f32{editor_pos[0] + desired_movement[0] * 50.0, editor_pos[1], 20.0});
+                        } else {
+                            // editor to game
+                        }
+                    }
+                }
             }
         } else |_| {}
 
@@ -357,7 +437,7 @@ pub const AberrationApp = struct {
                     doe.transform.position[3] = 1.0;
 
                     // Remove any z movement
-                    doe.transform.position[2] = 0.0;
+                    doe.transform.position[2] = @round(doe.transform.position[2]);
                     var vel = doe_data.character.getLinearVelocity();
                     vel[2] = 0.0;
                     doe_data.character.setLinearVelocity(vel);
@@ -401,27 +481,7 @@ pub const AberrationApp = struct {
         self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
-        const window_w: f32 = @floatFromInt(self.engine.gfx.swapchain_size.width);
-        const window_h: f32 = @floatFromInt(self.engine.gfx.swapchain_size.height);
-
-        const editor_viewport = d3d11.VIEWPORT {
-            .Width = window_w,
-            .Height = window_h,
-            .TopLeftX = 0.0,
-            .TopLeftY = 0.0,
-            .MinDepth = 0.0,
-            .MaxDepth = 1.0,
-        };
         self.engine.gfx.context.RSSetViewports(1, @ptrCast(&editor_viewport));
-
-        const game_viewport = d3d11.VIEWPORT {
-            .Width = (window_w * 2.0) / 3.0,
-            .Height = window_h * 0.8,
-            .TopLeftX = window_w / 6.0,
-            .TopLeftY = window_h * 0.1,
-            .MinDepth = 0.0,
-            .MaxDepth = 1.0,
-        };
 
         const game_window_border = 1;
 
@@ -481,13 +541,101 @@ pub const AberrationApp = struct {
 
         self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
 
-        const vp_mat = zm.mul(self.camera_proj_matrix, self.camera_view_matrix);
+        {
+            const vp_mat = zm.mul(self.camera_view_matrix, self.camera_proj_matrix);
 
-        // Iterate through all entities finding those which contain a mesh to be rendered
-        for (self.engine.entities.data.items) |*it| {
-            if (it.item_data) |*entity| {
-                if (entity.app.quad_data) |*quad_data| {
-                    const ent_model = entity.transform.generate_model_matrix();
+            // Iterate through all entities finding those which contain a mesh to be rendered
+            for (self.engine.entities.data.items) |*it| {
+                if (it.item_data) |*entity| {
+                    // render Doe later
+                    if (entity.app.doe) |_| { continue; }
+
+                    if (entity.app.quad_data) |*quad_data| {
+                        const ent_model = entity.transform.generate_model_matrix();
+                        const mvp = zm.mul(ent_model, vp_mat);
+                        var ent_bl_pos = zm.f32x4(
+                            -quad_data.size.width / 2.0, 
+                            -quad_data.size.height / 2.0, 
+                            0.0, 
+                            1.0);
+                        var ent_tr_pos = zm.f32x4(
+                            quad_data.size.width / 2.0, 
+                            quad_data.size.height / 2.0, 
+                            0.0, 
+                            1.0);
+                        ent_bl_pos = zm.mul(ent_bl_pos, mvp);
+                        ent_tr_pos = zm.mul(ent_tr_pos, mvp);
+                        const ent_quad_bounds = zm.f32x4(ent_bl_pos[0], ent_bl_pos[1], ent_tr_pos[0], ent_tr_pos[1]);
+
+                        { // Update quad vs buffer
+                            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                            zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.quad_vs_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                            defer self.engine.gfx.context.Unmap(@ptrCast(self.quad_vs_buffer), 0);
+
+                            var buffer_data: *QuadVsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+                            buffer_data.quad_bounds = ent_quad_bounds;
+                        }
+
+                        { // Update quad ps buffer
+                            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+                            zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.quad_ps_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+                            defer self.engine.gfx.context.Unmap(@ptrCast(self.quad_ps_buffer), 0);
+
+                            var buffer_data: *QuadPsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
+                            buffer_data.colour = quad_data.colour;
+                        }
+
+                        self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_vs_buffer));
+                        self.engine.gfx.context.PSSetConstantBuffers(1, 1, @ptrCast(&self.quad_ps_buffer));
+                        self.engine.gfx.context.Draw(6, 0);
+                    }
+                }
+            }
+        }
+
+        // Draw editor (z = 20)
+        self.render_editor_ui_and_create_collisions(rtv);
+
+        // Draw Doe
+        if (self.engine.entities.get(self.doe_idx)) |doe| {
+            if (doe.app.doe) |*doe_data| {
+                _ = doe_data;
+                var proj_mat: zm.Mat = undefined;
+                var cam_mat: zm.Mat = undefined;
+                if (doe.transform.position[2] < 1.0) {
+                    // Render Doe in game
+                    self.engine.gfx.context.RSSetViewports(1, @ptrCast(&game_viewport));
+                    proj_mat = self.camera_proj_matrix;
+                    cam_mat = self.camera_view_matrix;
+                } else {
+                    // Render Doe in editor
+                    self.engine.gfx.context.RSSetViewports(1, @ptrCast(&editor_viewport));
+                    proj_mat = zm.orthographicLh(
+                        1920.0, 
+                        1080.0,
+                        0.1, 
+                        100.1
+                    );
+                    cam_mat = zm.inverse(zm.translation(1920.0 / 2.0, 1080.0 / 2.0, -10.0));
+                }
+
+                self.engine.gfx.context.PSSetShader(self.pso, null, 0);
+
+                self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
+                self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
+
+                self.engine.gfx.context.VSSetShader(self.vso, null, 0);
+                self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
+
+                self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+                self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
+
+                self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+
+                const vp_mat = zm.mul(cam_mat, proj_mat);
+
+                if (doe.app.quad_data) |*quad_data| {
+                    const ent_model = doe.transform.generate_model_matrix();
                     const mvp = zm.mul(ent_model, vp_mat);
                     var ent_bl_pos = zm.f32x4(
                         -quad_data.size.width / 2.0, 
@@ -526,9 +674,94 @@ pub const AberrationApp = struct {
                     self.engine.gfx.context.Draw(6, 0);
                 }
             }
+        } else |_| {}
+        
+        // Draw Physics Debug Wireframes
+        if (self.engine.input.get_key(kc.KeyCode.C)) {
+            self.engine.physics._interfaces.debug_renderer.draw_bodies(
+                self.engine.physics.zphy, 
+                rtv, 
+                self.engine.gfx.swapchain_size.width,
+                self.engine.gfx.swapchain_size.height,
+                zm.matToArr(self.camera_proj_matrix),
+                zm.matToArr(self.camera_view_matrix),
+            );
         }
 
-        // Draw editor 
+        // Render additional debug UI
+        self.render_text_over_quad(
+            &self.ui.fonts[@intFromEnum(FontEnum.GeistMono)],
+            "Hello World.\nThis is the next line.\nWelcome to GodDoe.",
+            100,
+            100,
+            .{
+                .size = .{.Pixels = 15},
+            }, 
+            .{
+                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width, 
+            self.engine.gfx.swapchain_size.height, 
+        );
+
+        var fps_buf: [64]u8 = [_]u8{0} ** 64;
+        const fps_text = std.fmt.bufPrint(fps_buf[0..], "frame time: {d:2.3}ms\nfps: {d:0.1}", .{
+            self.engine.time.delta_time_f32() * std.time.ms_per_s,
+            self.engine.time.get_fps(),
+        }) catch unreachable;
+
+        self.ui.render_text_2d(
+            FontEnum.GeistMono,
+            fps_text, 
+            10,
+            self.engine.gfx.swapchain_size.height - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.ascender * 12.0)),
+            .{
+                .size = .{.Pixels = 12},
+            }, 
+            rtv, 
+            self.engine.gfx.swapchain_size.width, 
+            self.engine.gfx.swapchain_size.height, 
+            &self.engine.gfx
+        );
+
+        var rev_buf: [64]u8 = [_]u8{0} ** 64;
+        const rev_text = std.fmt.bufPrint(rev_buf[0..], "zig-dx11 - {x}{s}", .{
+            gitrev,
+            blk: { if (gitchanged) { break :blk "*"; } else { break :blk ""; } },
+        }) catch unreachable;
+        self.ui.render_text_2d(
+            FontEnum.GeistMono,
+            rev_text, 
+            10, 
+            - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
+            .{
+                .size = .{.Pixels = 12},
+            }, 
+            rtv, 
+            self.engine.gfx.swapchain_size.width, 
+            self.engine.gfx.swapchain_size.height, 
+            &self.engine.gfx
+        );
+
+        self.engine.gfx.end_frame(rtv) catch |err| {
+            std.log.err("unable to end frame: {}", .{err});
+            return;
+        };
+        return;
+    }
+
+    const EditorUiKeyRects = struct {
+        scene_inner_rect: Rect,
+        file_system_inner_rect: Rect,
+        properties_inner_rect: Rect,
+        bottom_bar_inner_rect: Rect,
+    };
+
+    fn render_editor_ui_and_create_collisions(self: *Self, rtv: *d3d11.IRenderTargetView) void {
+        const window_w = 1920.0;
+        const window_h = 1080.0;
+
         const panel_sunk_colour = zm.f32x4(38.0 / 255.0, 44.0 / 255.0, 60.0 / 255.0, 1.0);
         const panel_colour = zm.f32x4(51.0 / 255.0, 57.0 / 255.0, 79.0 / 255.0, 1.0);
 
@@ -658,6 +891,28 @@ pub const AberrationApp = struct {
             &self.engine.gfx
         );
 
+        var scene_item_y: f32 = 1.0;
+        for (self.engine.entities.data.items) |*entt| {
+            if (entt.item_data) |*item| {
+                if (item.app.scene_name) |scene_name_data| {
+                    self.ui.render_text_2d(
+                        _ui.FontEnum.GeistMono,
+                        scene_name_data.name,
+                        @intFromFloat(scene_inner_rect.left + 30.0),
+                        @intFromFloat(scene_inner_rect.top - 10.0 - (30.0 * scene_item_y)),
+                        .{
+                            .size = _ui.Size{.Pixels = 15},
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    scene_item_y += 1.0;
+                }
+            }
+        }
+
         var scene_tab_rect = scene_rect;
         scene_tab_rect.bottom = scene_area_rect.top - tab_height - editor_panel_border;
         scene_tab_rect.top = scene_tab_rect.bottom + tab_height;
@@ -698,78 +953,53 @@ pub const AberrationApp = struct {
             &self.engine.gfx
         );
 
-        // Draw Physics Debug Wireframes
-        if (self.engine.input.get_key(kc.KeyCode.C)) {
-            self.engine.physics._interfaces.debug_renderer.draw_bodies(
-                self.engine.physics.zphy, 
-                rtv, 
-                self.engine.gfx.swapchain_size.width,
-                self.engine.gfx.swapchain_size.height,
-                zm.matToArr(self.camera_proj_matrix),
-                zm.matToArr(self.camera_view_matrix),
-            );
+        // Create editor collisions if they have not yet been created.
+        // This feels so bad.
+        if (!self.editor_phys_created) {
+            const editor_ui_rects = EditorUiKeyRects {
+                .scene_inner_rect = scene_inner_rect,
+                .file_system_inner_rect = file_system_inner_rect,
+                .properties_inner_rect = undefined,
+                .bottom_bar_inner_rect = undefined,
+            };
+            self.create_editor_collisions(editor_ui_rects) catch unreachable;
+            self.editor_phys_created = true;
         }
+    }
 
-        self.render_text_over_quad(
-            &self.ui.fonts[@intFromEnum(FontEnum.GeistMono)],
-            "Hello World.\nThis is the next line.\nWelcome to GodDoe.",
-            100,
-            100,
-            .{
-                .size = .{.Pixels = 15},
-            }, 
-            .{
-                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+    fn create_editor_physics_box_from_rect(self: *Self, rect: Rect) !void {
+        const box_settings = try zphy.BoxShapeSettings.create([3]f32 { 
+            (rect.right - rect.left) / 2.0, 
+            (rect.top - rect.bottom) / 2.0,
+            1.0 
+        });
+        defer box_settings.release();
+
+        const inverse_box_settings = try zphy.DecoratedShapeSettings.createScaled(box_settings.asShapeSettings(), [3]f32{-1.0, -1.0, -1.0});
+        defer inverse_box_settings.release();
+
+        const shape = try inverse_box_settings.createShape();
+        defer shape.release();
+
+        _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+            .position = [4]f32 {
+                rect.left + ((rect.right - rect.left) / 2.0),
+                rect.bottom + ((rect.top - rect.bottom) / 2.0),
+                20.0,
+                1.0
             },
-            rtv,
-            self.engine.gfx.swapchain_size.width, 
-            self.engine.gfx.swapchain_size.height, 
-        );
+            .rotation = zm.qidentity(),
+            .shape = shape,
+            .motion_type = .static,
+            .object_layer = ph.object_layers.non_moving,
+        }, .activate);
+    }
 
-        var fps_buf: [64]u8 = [_]u8{0} ** 64;
-        const fps_text = std.fmt.bufPrint(fps_buf[0..], "frame time: {d:2.3}ms\nfps: {d:0.1}", .{
-            self.engine.time.delta_time_f32() * std.time.ms_per_s,
-            self.engine.time.get_fps(),
-        }) catch unreachable;
-
-        self.ui.render_text_2d(
-            FontEnum.GeistMono,
-            fps_text, 
-            10,
-            self.engine.gfx.swapchain_size.height - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.ascender * 12.0)),
-            .{
-                .size = .{.Pixels = 12},
-            }, 
-            rtv, 
-            self.engine.gfx.swapchain_size.width, 
-            self.engine.gfx.swapchain_size.height, 
-            &self.engine.gfx
-        );
-
-        var rev_buf: [64]u8 = [_]u8{0} ** 64;
-        const rev_text = std.fmt.bufPrint(rev_buf[0..], "zig-dx11 - {x}{s}", .{
-            gitrev,
-            blk: { if (gitchanged) { break :blk "*"; } else { break :blk ""; } },
-        }) catch unreachable;
-        self.ui.render_text_2d(
-            FontEnum.GeistMono,
-            rev_text, 
-            10, 
-            - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
-            .{
-                .size = .{.Pixels = 12},
-            }, 
-            rtv, 
-            self.engine.gfx.swapchain_size.width, 
-            self.engine.gfx.swapchain_size.height, 
-            &self.engine.gfx
-        );
-
-        self.engine.gfx.end_frame(rtv) catch |err| {
-            std.log.err("unable to end frame: {}", .{err});
-            return;
-        };
-        return;
+    fn create_editor_collisions(self: *Self, rects: EditorUiKeyRects) !void {
+        try self.create_editor_physics_box_from_rect(rects.scene_inner_rect);
+        try self.create_editor_physics_box_from_rect(rects.file_system_inner_rect);
+        // try self.create_editor_physics_box_from_rect(rects.properties_inner_rect);
+        // try self.create_editor_physics_box_from_rect(rects.bottom_bar_inner_rect);
     }
 
     pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !*d3d11.IDepthStencilView {
