@@ -45,7 +45,9 @@ pub const AberrationApp = struct {
         } = null,
         doe: ?struct {
             character: *zphy.CharacterVirtual,
+            contact_listener: DoeCharacterContactListener,
             shape: *zphy.ShapeSettings,
+            coyote_end_time_ns: i128,
         } = null,
         scene_name: ?struct {
             name: []u8,
@@ -255,8 +257,11 @@ pub const AberrationApp = struct {
                     zm.qidentity(),
                     eng.physics.zphy
                 ),
+                .contact_listener = DoeCharacterContactListener {},
                 .shape = @constCast(doe_shape_settings.asShapeSettings()),
+                .coyote_end_time_ns = 0,
             };
+            doe.app.doe.?.character.setListener(@ptrCast(&doe.app.doe.?.contact_listener));
         } else |_| { unreachable; }
 
         // ground
@@ -290,6 +295,8 @@ pub const AberrationApp = struct {
                 .motion_type = .static,
                 .object_layer = ph.object_layers.non_moving,
             }, .activate);
+
+            std.log.info("ground id is {x}", .{entt.physics_body.?});
         } else |_| { unreachable; }
 
         return Self {
@@ -352,25 +359,64 @@ pub const AberrationApp = struct {
 
                 var current_movement = zm.loadArr3(doe_data.character.getLinearVelocity());
 
-                if (doe_data.character.getGroundState() != .on_ground) {
-                    current_movement += 
-                        zm.loadArr3(self.engine.physics.zphy.getGravity()) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0);
-                } else {
-                    current_movement[1] = -0.1;
+                const ground_state = doe_data.character.getGroundState();
 
-                    if (self.engine.input.get_key_down(kc.KeyCode.Space)) {
-                        current_movement[1] = 60.0;
-                    }
-                    
+                const max_speed = 120.0;
+
+                switch (ground_state) {
+                    .on_ground => {
+                        // remove gravity
+                        current_movement[1] = 0.0;
+                    },
+                    .on_steep_ground => {
+                        const slide_speed = -20.0;
+                        // slowly slide down vertical wall
+                        current_movement += 
+                            zm.loadArr3(self.engine.physics.zphy.getGravity()) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0);
+                        if (current_movement[1] < slide_speed) {
+                            current_movement[1] = slide_speed;
+                        }
+                    },
+                    else => {
+                        // Apply gravity
+                        current_movement += 
+                            zm.loadArr3(self.engine.physics.zphy.getGravity()) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0);
+                    },
+                }
+
+                if (ground_state == .on_ground) {
+                    const on_ground_acceleration = 20.0;
+
+                    // if no movement keys, then apply friction
                     if (desired_movement[0] != 0.0) {
-                        const acceleration = 20.0;
-                        const max_speed = 120.0;
-                        current_movement += (zm.normalize2(desired_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * acceleration));
+                        current_movement += (zm.normalize2(desired_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * on_ground_acceleration));
                         current_movement[0] = @min(max_speed, @max(-max_speed, current_movement[0]));
                     } else {
                         if (@reduce(.Add, @abs(current_movement)) != 0.0) {
                             current_movement -= (zm.normalize2(current_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * 20.0));
                         }
+                    }
+                } else {
+                    const in_air_acceleration = 10.0;
+
+                    if (desired_movement[0] != 0.0) {
+                        current_movement += (zm.normalize2(desired_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * in_air_acceleration));
+                        current_movement[0] = @min(max_speed, @max(-max_speed, current_movement[0]));
+                    }
+                }
+
+                const given_coyote_time_s: f32 = 0.3;
+                const given_coyote_time_ns: i128 = given_coyote_time_s * std.time.ns_per_s;
+
+                if (ground_state == .on_ground or ground_state == .on_steep_ground) {
+                    doe_data.coyote_end_time_ns = self.engine.time.frame_start_time_ns + given_coyote_time_ns;
+                }
+
+                // can jump within coyote time 
+                if (self.engine.input.get_key_down(kc.KeyCode.Space)) {
+                    if (self.engine.time.frame_start_time_ns < doe_data.coyote_end_time_ns) {
+                        current_movement[1] = 120.0;
+                        doe_data.coyote_end_time_ns = 0;
                     }
                 }
                 
@@ -385,13 +431,7 @@ pub const AberrationApp = struct {
                             // game to editor
                             var game_pos = zm.loadArr3(pos);
                             game_pos[3] = 1.0;
-                            // const game_midpoint_in_editor = zm.f32x4(
-                            //     (game_viewport.TopLeftX + (game_viewport.Width / 2.0)) / editor_viewport.Width,
-                            //     (editor_viewport.Height - (game_viewport.TopLeftY + (game_viewport.Height / 2.0))) / editor_viewport.Height,
-                            //     0.0,
-                            //     0.0
-                            // );
-                            // const game_midpoint_offset = game_midpoint_in_editor - zm.f32x4(0.5, 0.5, 0.0, 0.0);
+
                             var editor_pos = zm.mul(game_pos, game_vp_mat);
                             editor_pos = editor_pos * zm.f32x4(0.5, 0.5, 1.0, 1.0); 
                             editor_pos = editor_pos + zm.f32x4(0.5, 0.5, 0.0, 0.0);
@@ -409,10 +449,17 @@ pub const AberrationApp = struct {
                         }
                     }
                 }
+
+                // Drop down
                 if (self.engine.input.get_key_down(kc.KeyCode.S)) {
-                    var pos = doe_data.character.getPosition();
-                    pos[1] -= 50.0;
-                    doe_data.character.setPosition(pos);
+                    const ground_id = doe_data.character.getGroundBodyID();
+                    if (ground_id) |id| {
+                        doe_data.contact_listener.ignore_id = id;
+                        doe_data.contact_listener.ignore_id_b = true;
+                    }
+                    // var pos = doe_data.character.getPosition();
+                    // pos[1] -= 5.0;
+                    // doe_data.character.setPosition(pos);
                 }
             }
         } else |_| {}
@@ -685,8 +732,13 @@ pub const AberrationApp = struct {
                 rtv, 
                 self.engine.gfx.swapchain_size.width,
                 self.engine.gfx.swapchain_size.height,
-                zm.matToArr(self.camera_proj_matrix),
-                zm.matToArr(self.camera_view_matrix),
+                zm.matToArr(zm.orthographicLh(
+                        1920.0, 
+                        1080.0,
+                        0.1, 
+                        100.1
+                )),
+                zm.matToArr(zm.inverse(zm.translation(1920.0/2.0, 1080.0/2.0, -10.0))),
             );
         }
 
@@ -978,6 +1030,10 @@ pub const AberrationApp = struct {
         defer box_settings.release();
         const border_size = 5.0;
 
+        var topid: zphy.BodyId = undefined;
+        var bottomid: zphy.BodyId = undefined;
+        var leftid: zphy.BodyId = undefined;
+        var rightid: zphy.BodyId = undefined;
         { // Top/Bottom
             const scaled_settings = try zphy.DecoratedShapeSettings.createScaled(box_settings.asShapeSettings(), [3]f32{
                 rect.right - rect.left,
@@ -990,7 +1046,7 @@ pub const AberrationApp = struct {
             defer shape.release();
 
             // Top
-            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+            topid = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
                 .position = [4]f32 {
                     rect.left + ((rect.right - rect.left) / 2.0),
                     rect.top + (border_size / 2.0),
@@ -1004,7 +1060,7 @@ pub const AberrationApp = struct {
             }, .activate);
 
             // Bottom
-            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+            bottomid = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
                 .position = [4]f32 {
                     rect.left + ((rect.right - rect.left) / 2.0),
                     rect.bottom - (border_size / 2.0),
@@ -1030,7 +1086,7 @@ pub const AberrationApp = struct {
             defer shape.release();
 
             // Left
-            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+            leftid = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
                 .position = [4]f32 {
                     rect.left - (border_size / 2.0),
                     rect.bottom + ((rect.top - rect.bottom) / 2.0),
@@ -1044,7 +1100,7 @@ pub const AberrationApp = struct {
             }, .activate);
 
             // Right
-            _ = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+            rightid = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
                 .position = [4]f32 {
                     rect.right + (border_size / 2.0),
                     rect.bottom + ((rect.top - rect.bottom) / 2.0),
@@ -1057,10 +1113,13 @@ pub const AberrationApp = struct {
                 .object_layer = ph.object_layers.non_moving,
             }, .activate);
         }
+        std.log.info("top id is {x}, bottom id is {x}, left id is {x}, right id is {x}", .{topid, bottomid, leftid, rightid});
     }
 
     fn create_editor_collisions(self: *Self, rects: EditorUiKeyRects) !void {
+        std.log.info("scene", .{});
         try self.create_editor_physics_box_from_rect(rects.scene_inner_rect);
+        std.log.info("file system", .{});
         try self.create_editor_physics_box_from_rect(rects.file_system_inner_rect);
         // try self.create_editor_physics_box_from_rect(rects.properties_inner_rect);
         // try self.create_editor_physics_box_from_rect(rects.bottom_bar_inner_rect);
@@ -1151,6 +1210,98 @@ pub const AberrationApp = struct {
 
     fn character_is_supported(chr: *zphy.CharacterVirtual) bool {
         return chr.getGroundState() == zphy.CharacterGroundState.on_ground;
+    }
+};
+
+const DoeCharacterContactListener = extern struct {
+    usingnamespace zphy.CharacterContactListener.Methods(@This());
+    __v: *const zphy.CharacterContactListener.VTable = &vtable,
+
+    ignore_id_b: bool = false,
+    ignore_id: zphy.BodyId = 0,
+
+    const vtable = zphy.CharacterContactListener.VTable{ 
+        .OnAdjustBodyVelocity = OnAdjustBodyVelocity,
+        .OnContactValidate = OnContactValidate,
+        .OnContactAdded = OnContactAdded,
+        .OnContactSolve = OnContactSolve,
+    };
+
+    fn cast(pself: *zphy.CharacterContactListener) *DoeCharacterContactListener {
+        return @ptrCast(pself);
+    }
+
+    fn OnAdjustBodyVelocity(
+        self: *zphy.CharacterContactListener,
+        character: *const zphy.CharacterVirtual,
+        body: *const zphy.Body,
+        io_linear_velocity: *[3]f32,
+        io_angular_velocity: *[3]f32,
+    ) callconv(.C) void {
+        _ = self;
+        _ = character;
+        _ = body;
+        _ = io_linear_velocity;
+        _ = io_angular_velocity;
+    }
+
+    fn OnContactValidate(
+        self: *zphy.CharacterContactListener,
+        character: *const zphy.CharacterVirtual,
+        body: *const zphy.BodyId,
+        sub_shape_id: *const zphy.SubShapeId,
+    ) callconv(.C) bool {
+        _ = character;
+        _ = sub_shape_id;
+        const pself = cast(self);
+        if (pself.ignore_id_b) {
+            if (body.* == pself.ignore_id) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    fn OnContactAdded(
+        self: *zphy.CharacterContactListener,
+        character: *const zphy.CharacterVirtual,
+        body: *const zphy.BodyId,
+        sub_shape_id: *const zphy.SubShapeId,
+        contact_position: *const [3]zphy.Real,
+        contact_normal: *const [3]f32,
+        io_settings: *zphy.CharacterContactSettings,
+    ) callconv(.C) void {
+        _ = self;
+        _ = character;
+        _ = body;
+        _ = sub_shape_id;
+        _ = contact_position;
+        _ = contact_normal;
+        _ = io_settings;
+    }
+
+    fn OnContactSolve(
+        self: *zphy.CharacterContactListener,
+        character: *const zphy.CharacterVirtual,
+        body: *const zphy.BodyId,
+        sub_shape_id: *const zphy.SubShapeId,
+        contact_position: *const [3]zphy.Real,
+        contact_normal: *const [3]f32,
+        contact_velocity: *const [3]f32,
+        contact_material: *const zphy.Material,
+        character_velocity: *const [3]f32,
+        character_velocity_out: *[3]f32,
+    ) callconv(.C) void {
+        _ = self;
+        _ = character;
+        _ = body;
+        _ = sub_shape_id;
+        _ = contact_position;
+        _ = contact_normal;
+        _ = contact_velocity;
+        _ = contact_material;
+        _ = character_velocity;
+        _ = character_velocity_out;
     }
 };
 
