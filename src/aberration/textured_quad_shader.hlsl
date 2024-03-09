@@ -6,7 +6,11 @@ cbuffer vertex_buffer : register(b0)
 cbuffer pixel_buffer : register(b1)
 {
     float4 colour;
+    int has_texture;
 }
+
+Texture2D quad_texture;
+SamplerState quad_sampler;
 
 struct vs_out
 {
@@ -29,7 +33,7 @@ vs_out vs_main(uint vertId : SV_VertexID)
     output.position = float4(px, py, 0.0, 1.0);
 
     float uvx = x;
-    float uvy = y;
+    float uvy = 1.0 - y;
 
     output.tex_coord = float4(uvx, uvy, 0.0, 0.0);
 
@@ -38,5 +42,9 @@ vs_out vs_main(uint vertId : SV_VertexID)
 
 float4 ps_main(vs_out input) : SV_TARGET
 {
-    return colour;
+    if (has_texture == 1) {
+        return quad_texture.Sample(quad_sampler, input.tex_coord.xy);
+    } else {
+        return colour;
+    }
 }

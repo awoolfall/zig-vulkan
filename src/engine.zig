@@ -12,6 +12,7 @@ pub const tf = @import("engine/transform.zig");
 pub const gen = @import("engine/entity.zig");
 pub const mesh = @import("engine/mesh.zig");
 pub const physics = @import("engine/physics.zig");
+pub const image = @import("engine/image.zig");
 pub const Transform = tf.Transform;
 
 const wb = @import("window.zig");
@@ -33,6 +34,7 @@ pub fn Engine(comptime App: type) type {
 
         window: w32.Win32Window,
         gfx: d3d11.D3D11State,
+        image: image.ImageLoader,
         physics: physics.PhysicsSystem,
         input: input.InputState,
         time: time.TimeState,
@@ -48,6 +50,7 @@ pub fn Engine(comptime App: type) type {
             var engine = Self {
                 .window = undefined,
                 .gfx = undefined,
+                .image = undefined,
                 .physics = undefined,
                 .input = undefined,
                 .time = undefined,
@@ -78,6 +81,9 @@ pub fn Engine(comptime App: type) type {
             Log.debug("Calling Input init", .{});
             engine.input = try input.InputState.init();
             defer engine.input.deinit();
+
+            engine.image = try image.ImageLoader.init(alloc);
+            defer engine.image.deinit();
 
             Log.debug("Calling Window init!", .{});
             engine.window = try w32.Win32Window.init();

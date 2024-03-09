@@ -184,10 +184,6 @@ pub const Font = struct {
             if (glyph_idx >= font_data.value.glyphs.len) {break;}
         }
 
-        // @TODO move generic stbi init to engine?
-        zstbi.init(alloc);
-        defer zstbi.deinit();
-
         // load msdf font png file
         const font_png_path = try font_msdf_png.resolve_path_c_str(alloc);
         defer alloc.free(font_png_path);

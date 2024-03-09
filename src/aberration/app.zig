@@ -32,6 +32,7 @@ const QuadVsBufferStruct = extern struct {
 
 const QuadPsBufferStruct = extern struct {
     colour: zm.F32x4,
+    has_texture: i32,
 };
 
 pub const Engine = engine.Engine(AberrationApp);
@@ -41,7 +42,8 @@ pub const AberrationApp = struct {
     pub const EntityData = struct {
         quad_data: ?struct {
             colour: zm.F32x4,
-            size: struct { width: f32, height: f32, }
+            size: struct { width: f32, height: f32, },
+            texture_view: ?*d3d11.IShaderResourceView,
         } = null,
         doe: ?struct {
             character: *zphy.CharacterVirtual,
@@ -62,6 +64,11 @@ pub const AberrationApp = struct {
             if (self.scene_name) |scene_name_data| {
                 scene_name_data.alloc.free(scene_name_data.name);
             }
+            if (self.quad_data) |quad_data| {
+                if (quad_data.texture_view) |tex_view| {
+                    _ = tex_view.Release();
+                }
+            }
         }
 
         pub fn create_phys_shape_settings(self: *EntityData) !*zphy.BoxShapeSettings {
@@ -73,6 +80,9 @@ pub const AberrationApp = struct {
     };
 
     const textured_quad_shader = @embedFile("textured_quad_shader.hlsl");
+
+    const sprite_sheet = @embedFile("assets/spritesheet.png");
+    const sprite_sheet_json = @embedFile("assets/spritesheet.json");
 
     const triangle_vertices: [3 * 3]zwin32.w32.FLOAT = [_]zwin32.w32.FLOAT{
         0.0, 0.5, 0.0,
@@ -102,6 +112,9 @@ pub const AberrationApp = struct {
     quad_vs_buffer: *d3d11.IBuffer,
     quad_ps_buffer: *d3d11.IBuffer,
 
+    blend_state: *d3d11.IBlendState,
+    sampler: *d3d11.ISamplerState,
+
     doe_idx: ent.GenerationalIndex,
 
     // We create editor phys using UI rects. Only know these after 1st frame...
@@ -120,6 +133,8 @@ pub const AberrationApp = struct {
         self.engine.gfx.context.Flush();
         self.ui.deinit();
 
+        _ = self.blend_state.Release();
+        _ = self.sampler.Release();
         _ = self.camera_data_buffer.Release();
         _ = self.quad_vs_buffer.Release();
         _ = self.quad_ps_buffer.Release();
@@ -212,10 +227,94 @@ pub const AberrationApp = struct {
         try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&ps_constant_buffer_desc, null, @ptrCast(&quad_ps_buffer)));
         errdefer _ = quad_ps_buffer.Release();
 
+        // create sampler
+        const sampler_desc = d3d11.SAMPLER_DESC {
+            .Filter = d3d11.FILTER.MIN_MAG_MIP_POINT,
+            .AddressU = d3d11.TEXTURE_ADDRESS_MODE.BORDER,
+            .AddressV = d3d11.TEXTURE_ADDRESS_MODE.BORDER,
+            .AddressW = d3d11.TEXTURE_ADDRESS_MODE.BORDER,
+            .MipLODBias = 0.0,
+            .MaxAnisotropy = 1,
+            .ComparisonFunc = d3d11.COMPARISON_FUNC.NEVER,
+            .BorderColor = [4]w32.FLOAT{0.0, 0.0, 0.0, 0.0},
+            .MinLOD = 0.0,
+            .MaxLOD = 0.0,
+        };
+        var sampler: *d3d11.ISamplerState = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateSamplerState(&sampler_desc, @ptrCast(&sampler)));
+        errdefer _ = sampler.Release();
+
+        // create blend state
+        var blend_state_desc = d3d11.BLEND_DESC {
+            .AlphaToCoverageEnable = 0,
+            .IndependentBlendEnable = 0,
+            .RenderTarget = [_]d3d11.RENDER_TARGET_BLEND_DESC {undefined} ** 8,
+        };
+        blend_state_desc.RenderTarget[0] = .{
+            .BlendEnable = 1,
+            .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
+            .SrcBlend = d3d11.BLEND.SRC_ALPHA,
+            .DestBlend = d3d11.BLEND.INV_SRC_ALPHA,
+            .BlendOp = d3d11.BLEND_OP.ADD,
+            .SrcBlendAlpha = d3d11.BLEND.ONE,
+            .DestBlendAlpha = d3d11.BLEND.ZERO,
+            .BlendOpAlpha = d3d11.BLEND_OP.ADD,
+        };
+        var blend_state: *d3d11.IBlendState = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBlendState(&blend_state_desc, @ptrCast(&blend_state)));
+        errdefer _ = blend_state.Release();
+
         eng.physics.zphy.optimizeBroadPhase();
 
         var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
+
+        var sprite_sheet_image = try eng.image.load_from_memory(sprite_sheet);
+        defer sprite_sheet_image.deinit();
+
+        const doe_texture_desc = d3d11.TEXTURE2D_DESC {
+            .Width = sprite_sheet_image.width,
+            .Height = sprite_sheet_image.height,
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = zwin32.dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
+            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+                .Count = 1,
+                .Quality = 0,
+            },
+            .Usage = d3d11.USAGE.DEFAULT,
+            .BindFlags = d3d11.BIND_FLAG {.SHADER_RESOURCE = true,},
+            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG {},
+            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
+        };
+        var doe_texture: *d3d11.ITexture2D = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateTexture2D(
+                &doe_texture_desc, 
+                &d3d11.SUBRESOURCE_DATA {
+                    .pSysMem = @ptrCast(sprite_sheet_image.data), 
+                    .SysMemPitch = sprite_sheet_image.width * @sizeOf([4]u8),
+                }, 
+                @ptrCast(&doe_texture)
+        ));
+        defer _ = doe_texture.Release();
+
+        const doe_texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
+            .Format = zwin32.dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
+            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
+            .u = .{
+                .Texture2D = d3d11.TEX2D_SRV {
+                    .MostDetailedMip = 0,
+                    .MipLevels = 1,
+                },
+            },
+        };
+        var doe_texture_view: *d3d11.IShaderResourceView = undefined;
+        try zwin32.hrErrorOnFail(eng.gfx.device.CreateShaderResourceView(
+                @ptrCast(doe_texture), 
+                &doe_texture_resource_view_desc, 
+                @ptrCast(&doe_texture_view)
+        ));
+        errdefer _ = doe_texture_view.Release();
 
         const doe_idx = try eng.entities.insert(.{
             .app = .{
@@ -231,6 +330,7 @@ pub const AberrationApp = struct {
             doe.app.quad_data = .{
                 .colour = zm.f32x4(1.0,1.0,1.0,1.0),
                 .size = .{ .width = 30.0, .height = 30.0, },
+                .texture_view = doe_texture_view,
             };
 
             var zphy_character_settings = try zphy.CharacterVirtualSettings.create(); 
@@ -267,7 +367,7 @@ pub const AberrationApp = struct {
         // ground
         const entId = try eng.entities.insert(.{
             .transform = Transform {
-                .position = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+                .position = zm.f32x4(0.0, -500.0, 0.0, 1.0),
             },
             .app = .{
                 .scene_name = .{
@@ -275,8 +375,9 @@ pub const AberrationApp = struct {
                     .alloc = eng.general_allocator.allocator(),
                 },
                 .quad_data = .{
-                    .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-                    .size = .{ .width = 5000.0, .height = 100.0, },
+                    .colour = zm.f32x4(109.0/255.0, 76.0/255.0, 65.0/255.0, 1.0),
+                    .size = .{ .width = 5000.0, .height = 1000.0, },
+                    .texture_view = null,
                 },
             },
         });
@@ -319,6 +420,9 @@ pub const AberrationApp = struct {
 
             .quad_vs_buffer = quad_vs_buffer,
             .quad_ps_buffer = quad_ps_buffer,
+
+            .sampler = sampler,
+            .blend_state = blend_state,
 
             .doe_idx = doe_idx,
 
@@ -560,7 +664,7 @@ pub const AberrationApp = struct {
                 .height = @as(i32, @intFromFloat(game_viewport.Height)),
             },
             _ui.QuadRenderer.QuadProperties {
-                .colour = zm.f32x4(30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0),
+                .colour = zm.f32x4(135.0/255.0, 206.0/255.0, 235.0/255.0, 1.0),
             },
             rtv,
             self.engine.gfx.swapchain_size.width,
@@ -580,7 +684,7 @@ pub const AberrationApp = struct {
         self.engine.gfx.context.PSSetShader(self.pso, null, 0);
 
         self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view);
-        self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
+        self.engine.gfx.context.OMSetBlendState(@ptrCast(self.blend_state), null, 0xffffffff);
 
         self.engine.gfx.context.VSSetShader(self.vso, null, 0);
         self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
@@ -589,6 +693,7 @@ pub const AberrationApp = struct {
         self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
 
         self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+        self.engine.gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler));
 
         {
             const vp_mat = zm.mul(self.camera_view_matrix, self.camera_proj_matrix);
@@ -632,6 +737,11 @@ pub const AberrationApp = struct {
 
                             var buffer_data: *QuadPsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
                             buffer_data.colour = quad_data.colour;
+                            buffer_data.has_texture = @intFromBool(quad_data.texture_view != null);
+                        }
+
+                        if (quad_data.texture_view) |tex| {
+                            self.engine.gfx.context.PSSetShaderResources(0, 1, @ptrCast(&tex));
                         }
 
                         self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_vs_buffer));
@@ -671,7 +781,7 @@ pub const AberrationApp = struct {
                 self.engine.gfx.context.PSSetShader(self.pso, null, 0);
 
                 self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
-                self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
+                self.engine.gfx.context.OMSetBlendState(@ptrCast(self.blend_state), null, 0xffffffff);
 
                 self.engine.gfx.context.VSSetShader(self.vso, null, 0);
                 self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
@@ -680,6 +790,7 @@ pub const AberrationApp = struct {
                 self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
 
                 self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+                self.engine.gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler));
 
                 const vp_mat = zm.mul(cam_mat, proj_mat);
 
@@ -716,6 +827,11 @@ pub const AberrationApp = struct {
 
                         var buffer_data: *QuadPsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
                         buffer_data.colour = quad_data.colour;
+                        buffer_data.has_texture = @intFromBool(quad_data.texture_view != null);
+                    }
+
+                    if (quad_data.texture_view) |tex| {
+                        self.engine.gfx.context.PSSetShaderResources(0, 1, @ptrCast(&tex));
                     }
 
                     self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_vs_buffer));
