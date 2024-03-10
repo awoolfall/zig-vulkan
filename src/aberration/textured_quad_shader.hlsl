@@ -6,7 +6,7 @@ cbuffer vertex_buffer : register(b0)
 cbuffer pixel_buffer : register(b1)
 {
     float4 colour;
-    int has_texture;
+    int texture_flags;
 }
 
 Texture2D quad_texture;
@@ -42,8 +42,15 @@ vs_out vs_main(uint vertId : SV_VertexID)
 
 float4 ps_main(vs_out input) : SV_TARGET
 {
-    if (has_texture == 1) {
-        return quad_texture.Sample(quad_sampler, input.tex_coord.xy);
+    bool has_texture        = (texture_flags >> 0) & 1;
+    bool flip_texture_h     = (texture_flags >> 1) & 1;
+
+    float4 tex_coords = input.tex_coord;
+    if (has_texture) {
+        if (flip_texture_h) {
+            tex_coords.x = 1.0 - tex_coords.x;
+        }
+        return quad_texture.Sample(quad_sampler, tex_coords.xy);
     } else {
         return colour;
     }

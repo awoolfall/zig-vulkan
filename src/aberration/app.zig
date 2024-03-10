@@ -32,7 +32,7 @@ const QuadVsBufferStruct = extern struct {
 
 const QuadPsBufferStruct = extern struct {
     colour: zm.F32x4,
-    has_texture: i32,
+    texture_flags: i32,
 };
 
 pub const Engine = engine.Engine(AberrationApp);
@@ -44,6 +44,7 @@ pub const AberrationApp = struct {
             colour: zm.F32x4,
             size: struct { width: f32, height: f32, },
             texture_view: ?*d3d11.IShaderResourceView,
+            flip_texture_h: bool = false,
         } = null,
         doe: ?struct {
             character: *zphy.CharacterVirtual,
@@ -114,6 +115,9 @@ pub const AberrationApp = struct {
 
     blend_state: *d3d11.IBlendState,
     sampler: *d3d11.ISamplerState,
+
+    game_viewport: d3d11.VIEWPORT,
+    editor_viewport: d3d11.VIEWPORT,
 
     doe_idx: ent.GenerationalIndex,
 
@@ -329,7 +333,7 @@ pub const AberrationApp = struct {
             // doe.transform.position = zm.f32x4(100.0, 100.0, 20.0, 1.0);
             doe.app.quad_data = .{
                 .colour = zm.f32x4(1.0,1.0,1.0,1.0),
-                .size = .{ .width = 30.0, .height = 30.0, },
+                .size = .{ .width = 40.0, .height = 40.0, },
                 .texture_view = doe_texture_view,
             };
 
@@ -400,6 +404,26 @@ pub const AberrationApp = struct {
             std.log.info("ground id is {x}", .{entt.physics_body.?});
         } else |_| { unreachable; }
 
+        const window_w: f32 = @floatFromInt(eng.gfx.swapchain_size.width);
+        const window_h: f32 = @floatFromInt(eng.gfx.swapchain_size.height);
+
+        const editor_viewport = d3d11.VIEWPORT {
+            .Width = window_w,
+            .Height = window_h,
+            .TopLeftX = 0.0,
+            .TopLeftY = 0.0,
+            .MinDepth = 0.0,
+            .MaxDepth = 1.0,
+        };
+        const game_viewport = d3d11.VIEWPORT {
+            .Width = (window_w * 2.0) / 3.0,
+            .Height = (window_h * 2.0) / 3.0,
+            .TopLeftX = window_w / 6.0,
+            .TopLeftY = window_h * 0.1,
+            .MinDepth = 0.0,
+            .MaxDepth = 1.0,
+        };
+
         return Self {
             .engine = eng,
             .depth_stencil_view = depth_stencil_view,
@@ -424,6 +448,9 @@ pub const AberrationApp = struct {
             .sampler = sampler,
             .blend_state = blend_state,
 
+            .game_viewport = game_viewport,
+            .editor_viewport = editor_viewport,
+
             .doe_idx = doe_idx,
 
             .ui = ui,
@@ -434,7 +461,7 @@ pub const AberrationApp = struct {
         const window_w: f32 = @floatFromInt(self.engine.gfx.swapchain_size.width);
         const window_h: f32 = @floatFromInt(self.engine.gfx.swapchain_size.height);
 
-        const editor_viewport = d3d11.VIEWPORT {
+        self.editor_viewport = d3d11.VIEWPORT {
             .Width = window_w,
             .Height = window_h,
             .TopLeftX = 0.0,
@@ -442,7 +469,7 @@ pub const AberrationApp = struct {
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         };
-        const game_viewport = d3d11.VIEWPORT {
+        self.game_viewport = d3d11.VIEWPORT {
             .Width = (window_w * 2.0) / 3.0,
             .Height = (window_h * 2.0) / 3.0,
             .TopLeftX = window_w / 6.0,
@@ -451,6 +478,22 @@ pub const AberrationApp = struct {
             .MaxDepth = 1.0,
         };
 
+        // Manual game camera movement
+        if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
+            self.camera_view_matrix = zm.mul(zm.translation(-100.0 * self.engine.time.delta_time_f32(), 0.0, 0.0), self.camera_view_matrix);
+        }
+        if (self.engine.input.get_key(kc.KeyCode.ArrowLeft)) {
+            self.camera_view_matrix = zm.mul(zm.translation(100.0 * self.engine.time.delta_time_f32(), 0.0, 0.0), self.camera_view_matrix);
+        }
+
+        // Camera follows doe when in game space
+        if (self.engine.entities.get(self.doe_idx)) |doe| {
+            if (doe.transform.position[2] < 1.0) {
+                self.camera_view_matrix[3][0] = std.math.lerp(self.camera_view_matrix[3][0], @min(0.0, -doe.transform.position[0]), 0.1);
+            }
+        } else |_| {}
+
+        // Doe controls
         if (self.engine.entities.get(self.doe_idx)) |doe| {
             if (doe.app.doe) |*doe_data| {
                 var desired_movement = zm.f32x4s(0.0);
@@ -525,33 +568,14 @@ pub const AberrationApp = struct {
                 }
                 
                 doe_data.character.setLinearVelocity(zm.vecToArr3(current_movement));
+                if (doe.app.quad_data) |*quad_data| {
+                    if (current_movement[0] < -5.0) quad_data.flip_texture_h = true;
+                    if (current_movement[0] >  5.0)  quad_data.flip_texture_h = false;
+                }
 
                 // Charge
                 if (self.engine.input.get_key_down(kc.KeyCode.E)) {
-                    if (desired_movement[0] != 0.0) {
-                        const pos = doe_data.character.getPosition();
-                        const game_vp_mat = zm.mul(self.camera_view_matrix, self.camera_proj_matrix);
-                        if (pos[2] < 1.0) {
-                            // game to editor
-                            var game_pos = zm.loadArr3(pos);
-                            game_pos[3] = 1.0;
-
-                            var editor_pos = zm.mul(game_pos, game_vp_mat);
-                            editor_pos = editor_pos * zm.f32x4(0.5, 0.5, 1.0, 1.0); 
-                            editor_pos = editor_pos + zm.f32x4(0.5, 0.5, 0.0, 0.0);
-                            editor_pos = editor_pos * zm.f32x4(game_viewport.Width, game_viewport.Height, 1.0, 1.0);
-                            editor_pos = editor_pos + zm.f32x4(
-                                game_viewport.TopLeftX, 
-                                editor_viewport.Height - (game_viewport.TopLeftY + game_viewport.Height),
-                                0.0,
-                                0.0
-                            );
-                            //editor_pos = editor_pos + zm.f32x4(game_viewport.TopLeftX, game_viewport.TopLeftY - game_viewport.Height, 0.0, 0.0);
-                            doe_data.character.setPosition([3]f32{editor_pos[0] + desired_movement[0] * 50.0, editor_pos[1], 20.0});
-                        } else {
-                            // editor to game
-                        }
-                    }
+                    self.doe_perform_charge(zm.vecToArr3(desired_movement));
                 }
 
                 // Drop down
@@ -561,9 +585,6 @@ pub const AberrationApp = struct {
                         doe_data.contact_listener.ignore_id = id;
                         doe_data.contact_listener.ignore_id_b = true;
                     }
-                    // var pos = doe_data.character.getPosition();
-                    // pos[1] -= 5.0;
-                    // doe_data.character.setPosition(pos);
                 }
             }
         } else |_| {}
@@ -634,17 +655,17 @@ pub const AberrationApp = struct {
         self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
-        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&editor_viewport));
+        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&self.editor_viewport));
 
         const game_window_border = 1;
 
         // game window border
         self.ui.render_quad(
             _ui.RectPixels {
-                .left = @as(i32, @intFromFloat(game_viewport.TopLeftX)) - game_window_border,
-                .bottom = @as(i32, @intFromFloat(window_h - (game_viewport.TopLeftY + game_viewport.Height))) - game_window_border,
-                .width = @as(i32, @intFromFloat(game_viewport.Width)) + (game_window_border * 2),
-                .height = @as(i32, @intFromFloat(game_viewport.Height)) + (game_window_border * 2),
+                .left = @as(i32, @intFromFloat(self.game_viewport.TopLeftX)) - game_window_border,
+                .bottom = @as(i32, @intFromFloat(window_h - (self.game_viewport.TopLeftY + self.game_viewport.Height))) - game_window_border,
+                .width = @as(i32, @intFromFloat(self.game_viewport.Width)) + (game_window_border * 2),
+                .height = @as(i32, @intFromFloat(self.game_viewport.Height)) + (game_window_border * 2),
             },
             _ui.QuadRenderer.QuadProperties {
                 .colour = zm.f32x4(94.0 / 255.0, 97.0 / 255.0, 114.0 / 255.0, 1.0),
@@ -658,10 +679,10 @@ pub const AberrationApp = struct {
         // clear game window to background colour
         self.ui.render_quad(
             _ui.RectPixels {
-                .left = @as(i32, @intFromFloat(game_viewport.TopLeftX)),
-                .bottom = @as(i32, @intFromFloat(window_h - (game_viewport.TopLeftY + game_viewport.Height))),
-                .width = @as(i32, @intFromFloat(game_viewport.Width)),
-                .height = @as(i32, @intFromFloat(game_viewport.Height)),
+                .left = @as(i32, @intFromFloat(self.game_viewport.TopLeftX)),
+                .bottom = @as(i32, @intFromFloat(window_h - (self.game_viewport.TopLeftY + self.game_viewport.Height))),
+                .width = @as(i32, @intFromFloat(self.game_viewport.Width)),
+                .height = @as(i32, @intFromFloat(self.game_viewport.Height)),
             },
             _ui.QuadRenderer.QuadProperties {
                 .colour = zm.f32x4(135.0/255.0, 206.0/255.0, 235.0/255.0, 1.0),
@@ -673,13 +694,13 @@ pub const AberrationApp = struct {
         );
 
         self.camera_proj_matrix = zm.orthographicLh(
-            game_viewport.Width, 
-            game_viewport.Height,
+            self.game_viewport.Width, 
+            self.game_viewport.Height,
             0.1, 
             100.1
         );
 
-        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&game_viewport));
+        self.engine.gfx.context.RSSetViewports(1, @ptrCast(&self.game_viewport));
 
         self.engine.gfx.context.PSSetShader(self.pso, null, 0);
 
@@ -737,7 +758,9 @@ pub const AberrationApp = struct {
 
                             var buffer_data: *QuadPsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
                             buffer_data.colour = quad_data.colour;
-                            buffer_data.has_texture = @intFromBool(quad_data.texture_view != null);
+                            buffer_data.texture_flags = 0x00;
+                            if (quad_data.texture_view != null) buffer_data.texture_flags |= 1 << 0;
+                            if (quad_data.flip_texture_h)       buffer_data.texture_flags |= 1 << 1;
                         }
 
                         if (quad_data.texture_view) |tex| {
@@ -763,12 +786,12 @@ pub const AberrationApp = struct {
                 var cam_mat: zm.Mat = undefined;
                 if (doe.transform.position[2] < 1.0) {
                     // Render Doe in game
-                    self.engine.gfx.context.RSSetViewports(1, @ptrCast(&game_viewport));
+                    self.engine.gfx.context.RSSetViewports(1, @ptrCast(&self.game_viewport));
                     proj_mat = self.camera_proj_matrix;
                     cam_mat = self.camera_view_matrix;
                 } else {
                     // Render Doe in editor
-                    self.engine.gfx.context.RSSetViewports(1, @ptrCast(&editor_viewport));
+                    self.engine.gfx.context.RSSetViewports(1, @ptrCast(&self.editor_viewport));
                     proj_mat = zm.orthographicLh(
                         1920.0, 
                         1080.0,
@@ -827,7 +850,9 @@ pub const AberrationApp = struct {
 
                         var buffer_data: *QuadPsBufferStruct = @ptrCast(@alignCast(mapped_subresource.pData));
                         buffer_data.colour = quad_data.colour;
-                        buffer_data.has_texture = @intFromBool(quad_data.texture_view != null);
+                        buffer_data.texture_flags = 0x00;
+                        if (quad_data.texture_view != null) buffer_data.texture_flags |= 1 << 0;
+                        if (quad_data.flip_texture_h)       buffer_data.texture_flags |= 1 << 1;
                     }
 
                     if (quad_data.texture_view) |tex| {
@@ -1326,6 +1351,114 @@ pub const AberrationApp = struct {
 
     fn character_is_supported(chr: *zphy.CharacterVirtual) bool {
         return chr.getGroundState() == zphy.CharacterGroundState.on_ground;
+    }
+
+    fn transform_game_pos_to_editor_pos(self: *const Self, game_pos: zm.F32x4) zm.F32x4 {
+        const game_vp_mat = zm.mul(self.camera_view_matrix, self.camera_proj_matrix);
+        var editor_pos = zm.mul(game_pos, game_vp_mat);
+        editor_pos = editor_pos * zm.f32x4(0.5, 0.5, 1.0, 1.0); 
+        editor_pos = editor_pos + zm.f32x4(0.5, 0.5, 0.0, 0.0);
+        editor_pos = editor_pos * zm.f32x4(self.game_viewport.Width, self.game_viewport.Height, 1.0, 1.0);
+        editor_pos = editor_pos + zm.f32x4(
+            self.game_viewport.TopLeftX, 
+            self.editor_viewport.Height - (self.game_viewport.TopLeftY + self.game_viewport.Height),
+            0.0,
+            0.0
+        );
+
+        editor_pos[2] = 20.0;
+        return editor_pos;
+    }
+
+    fn transform_editor_pos_to_game_pos(self: *const Self, editor_pos: zm.F32x4) zm.F32x4 {
+        var game_pos = editor_pos - zm.f32x4(
+            self.game_viewport.TopLeftX, 
+            self.editor_viewport.Height - (self.game_viewport.TopLeftY + self.game_viewport.Height),
+            0.0,
+            0.0
+        );
+
+        game_pos = game_pos - zm.f32x4(self.game_viewport.Width * 0.5, self.game_viewport.Height * 0.5, 1.0, 1.0);
+        game_pos = game_pos - self.camera_view_matrix[3];
+
+        game_pos[2] = 0.0;
+        game_pos[3] = 1.0;
+        return game_pos;
+    }
+
+    fn game_pos_is_within_view(self: *const Self, game_pos: zm.F32x4) bool {
+        const half_size = zm.f32x4(self.game_viewport.Width, self.game_viewport.Height, 0.0, 0.0) * zm.f32x4(0.5, 0.5, 1.0, 1.0);
+        const cam_min = self.camera_view_matrix[3] - half_size;
+        const cam_max = self.camera_view_matrix[3] + half_size;
+        return  game_pos[0] >= cam_min[0] and game_pos[0] <= cam_max[0] and
+                game_pos[1] >= cam_min[1] and game_pos[1] <= cam_max[1];
+    }
+
+    fn doe_perform_charge(self: *Self, desired_movement: [3]f32) void {
+        const charge_distance = 50.0;
+
+        if (self.engine.entities.get(self.doe_idx)) |doe| {
+            if (doe.app.doe) |*doe_data| {
+                if (desired_movement[0] != 0.0) {
+                    const pos = doe_data.character.getPosition();
+
+                    // Check collisions in doe current Space
+                    const doe_is_in_editor = (pos[2] > 19.0);
+                    if (!doe_is_in_editor) {
+                        // game to editor
+                        var game_pos = zm.loadArr3(pos);
+                        game_pos[3] = 1.0;
+
+                        const current_space_ray_result = self.engine.physics.zphy.getNarrowPhaseQuery().castRay(
+                            .{
+                                .origin = [4]f32{pos[0], pos[1], pos[2], 1.0},
+                                .direction = [4]f32{ desired_movement[0] * charge_distance, 0.0, 0.0, 0.0 },
+                            },
+                            .{}
+                        );
+
+                        if (current_space_ray_result.has_hit) {
+                            std.log.info("charge hit in current game space!", .{});
+                            doe_data.character.setPosition([3]f32{pos[0] + (desired_movement[0] * charge_distance), pos[1], pos[2]});
+
+                            return;
+                        }
+
+                        const editor_pos = self.transform_game_pos_to_editor_pos(game_pos);
+                        const editor_space_ray_result = self.engine.physics.zphy.getNarrowPhaseQuery().castRay(
+                            .{
+                                .origin = zm.vecToArr4(editor_pos),
+                                .direction = [4]f32{ desired_movement[0] * charge_distance, 0.0, 0.0, 0.0 },
+                            },
+                            .{}
+                        );
+
+                        if (editor_space_ray_result.has_hit) {
+                            std.log.info("charge hit in editor space!", .{});
+
+                            doe_data.character.setPosition([3]f32{editor_pos[0] + desired_movement[0] * charge_distance, editor_pos[1], editor_pos[2]});
+                            std.log.info("game pos {} to editor pos {}", .{game_pos, editor_pos});
+
+                            return;
+                        }
+                    } else {
+                        // editor to game
+                        var editor_pos = zm.loadArr3(pos);
+                        editor_pos[3] = 1.0;
+
+                        const game_pos = self.transform_editor_pos_to_game_pos(editor_pos + zm.f32x4(desired_movement[0] * charge_distance, 0.0, 0.0, 0.0));
+
+                        if (self.game_pos_is_within_view(game_pos)) {
+                            // do charge
+                            doe_data.character.setPosition([3]f32{game_pos[0], game_pos[1], game_pos[2]});
+                            std.log.info("editor pos {} to game pos {}", .{editor_pos, game_pos});
+
+                            return;
+                        }
+                    }
+                }
+            }
+        } else |_| {}
     }
 };
 
