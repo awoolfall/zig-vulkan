@@ -52,8 +52,8 @@ pub const AberrationApp = struct {
             shape: *zphy.ShapeSettings,
             coyote_end_time_ns: i128,
         } = null,
-        scene_name: ?struct {
-            name: []u8,
+        properties: ?struct {
+            scene_name: []u8,
             alloc: std.mem.Allocator,
         } = null,
 
@@ -62,8 +62,8 @@ pub const AberrationApp = struct {
                 doe.character.destroy();
                 doe.shape.release();
             }
-            if (self.scene_name) |scene_name_data| {
-                scene_name_data.alloc.free(scene_name_data.name);
+            if (self.properties) |properties| {
+                properties.alloc.free(properties.scene_name);
             }
             if (self.quad_data) |quad_data| {
                 if (quad_data.texture_view) |tex_view| {
@@ -322,8 +322,8 @@ pub const AberrationApp = struct {
 
         const doe_idx = try eng.entities.insert(.{
             .app = .{
-                .scene_name = .{
-                    .name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Doe", .{}),
+                .properties = .{
+                    .scene_name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Doe", .{}),
                     .alloc = eng.general_allocator.allocator(),
                 },
             },
@@ -340,9 +340,15 @@ pub const AberrationApp = struct {
             var zphy_character_settings = try zphy.CharacterVirtualSettings.create(); 
             defer zphy_character_settings.release();
 
-            const doe_shape_settings = try doe.app.create_phys_shape_settings();
+            const doe_shape_settings = try zphy.CapsuleShapeSettings.create(0.5, doe.app.quad_data.?.size.width / 2.0);
+            defer doe_shape_settings.release();
 
-            const doe_shape = try doe_shape_settings.asShapeSettings().createShape();
+            const rotated_settings = try zphy.DecoratedShapeSettings.createRotatedTranslated(
+                doe_shape_settings.asShapeSettings(), 
+                zm.vecToArr4(zm.quatFromRollPitchYaw(0.0, std.math.degreesToRadians(f32, 90.0), 0.0)),
+                [3]f32{0.0, 0.0, 0.0});
+
+            const doe_shape = try rotated_settings.asShapeSettings().createShape();
             defer doe_shape.release();
 
             zphy_character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
@@ -361,8 +367,10 @@ pub const AberrationApp = struct {
                     zm.qidentity(),
                     eng.physics.zphy
                 ),
-                .contact_listener = DoeCharacterContactListener {},
-                .shape = @constCast(doe_shape_settings.asShapeSettings()),
+                .contact_listener = DoeCharacterContactListener {
+                    .physics_system = eng.physics.zphy,
+                },
+                .shape = @constCast(rotated_settings.asShapeSettings()),
                 .coyote_end_time_ns = 0,
             };
             doe.app.doe.?.character.setListener(@ptrCast(&doe.app.doe.?.contact_listener));
@@ -374,8 +382,8 @@ pub const AberrationApp = struct {
                 .position = zm.f32x4(0.0, -500.0, 0.0, 1.0),
             },
             .app = .{
-                .scene_name = .{
-                    .name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Ground", .{}),
+                .properties = .{
+                    .scene_name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Ground", .{}),
                     .alloc = eng.general_allocator.allocator(),
                 },
                 .quad_data = .{
@@ -400,6 +408,11 @@ pub const AberrationApp = struct {
                 .motion_type = .static,
                 .object_layer = ph.object_layers.non_moving,
             }, .activate);
+            PhysicsBodyUserBitfield.setBodyIdUserData(
+                eng.physics.zphy,
+                entt.physics_body.?,
+                PhysicsBodyUserBitfield { .doe_can_drop_through = true, }
+            );
 
             std.log.info("ground id is {x}", .{entt.physics_body.?});
         } else |_| { unreachable; }
@@ -477,14 +490,6 @@ pub const AberrationApp = struct {
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         };
-
-        // Manual game camera movement
-        if (self.engine.input.get_key(kc.KeyCode.ArrowRight)) {
-            self.camera_view_matrix = zm.mul(zm.translation(-100.0 * self.engine.time.delta_time_f32(), 0.0, 0.0), self.camera_view_matrix);
-        }
-        if (self.engine.input.get_key(kc.KeyCode.ArrowLeft)) {
-            self.camera_view_matrix = zm.mul(zm.translation(100.0 * self.engine.time.delta_time_f32(), 0.0, 0.0), self.camera_view_matrix);
-        }
 
         // Camera follows doe when in game space
         if (self.engine.entities.get(self.doe_idx)) |doe| {
@@ -579,13 +584,8 @@ pub const AberrationApp = struct {
                 }
 
                 // Drop down
-                if (self.engine.input.get_key_down(kc.KeyCode.S)) {
-                    const ground_id = doe_data.character.getGroundBodyID();
-                    if (ground_id) |id| {
-                        doe_data.contact_listener.ignore_id = id;
-                        doe_data.contact_listener.ignore_id_b = true;
-                    }
-                }
+                doe_data.contact_listener.drop_key_pressed = 
+                    self.engine.input.get_key(kc.KeyCode.S);
             }
         } else |_| {}
 
@@ -607,14 +607,37 @@ pub const AberrationApp = struct {
                         .{}
                     );
 
-                    doe.transform.position = zm.loadArr3(doe_data.character.getPosition());
-                    doe.transform.position[3] = 1.0;
-
                     // Remove any z movement
-                    doe.transform.position[2] = @round(doe.transform.position[2]);
                     var vel = doe_data.character.getLinearVelocity();
                     vel[2] = 0.0;
                     doe_data.character.setLinearVelocity(vel);
+
+                    // wrap Doe when exiting game or editor viewport
+                    var doe_pos = doe_data.character.getPosition();
+                    doe_pos[2] = @round(doe_pos[2]);
+                    if (doe_pos[2] > 19.0) {
+                        if (doe_pos[1] < 0.0) {
+                            doe_pos[1] = self.editor_viewport.Height;
+                        }
+                        else if (doe_pos[1] > self.editor_viewport.Height) {
+                            doe_pos[1] = 0.0;
+                        }
+                        if (doe_pos[0] < 0.0) {
+                            doe_pos[0] = self.editor_viewport.Width;
+                        }
+                        else if (doe_pos[0] > self.editor_viewport.Width) {
+                            doe_pos[0] = 0.0;
+                        }
+                    }
+                    else if (doe_pos[2] < 1.0) {
+                        if (doe_pos[1] < (-self.game_viewport.Height / 2.0)) {
+                            doe_pos[1] = self.game_viewport.Height / 2.0;
+                        }
+                    }
+                    doe_data.character.setPosition(doe_pos);
+
+                    doe.transform.position = zm.loadArr3(doe_data.character.getPosition());
+                    doe.transform.position[3] = 1.0;
                 }
             } else |_| {}
 
@@ -977,6 +1000,13 @@ pub const AberrationApp = struct {
             .top = editor_rect.top - editor_panel_border,
         };
 
+        const right_rect = Rect{
+            .left = (editor_rect.left + (editor_rect.right * 5.0 / 6.0)) + (editor_panel_border * 2.0),
+            .bottom = editor_rect.bottom + editor_panel_border,
+            .right = editor_rect.right - editor_panel_border,
+            .top = editor_rect.top - editor_panel_border,
+        };
+
         var file_system_area_rect = left_rect;
         file_system_area_rect.top = (file_system_area_rect.top / 2.0) - editor_panel_border;
 
@@ -1089,10 +1119,10 @@ pub const AberrationApp = struct {
         var scene_item_y: f32 = 1.0;
         for (self.engine.entities.data.items) |*entt| {
             if (entt.item_data) |*item| {
-                if (item.app.scene_name) |scene_name_data| {
+                if (item.app.properties) |properties| {
                     self.ui.render_text_2d(
                         _ui.FontEnum.GeistMono,
-                        scene_name_data.name,
+                        properties.scene_name,
                         @intFromFloat(scene_inner_rect.left + 30.0),
                         @intFromFloat(scene_inner_rect.top - 10.0 - (30.0 * scene_item_y)),
                         .{
@@ -1148,13 +1178,86 @@ pub const AberrationApp = struct {
             &self.engine.gfx
         );
 
+        const properties_area_rect = right_rect;
+
+        var properties_rect = properties_area_rect;
+        properties_rect.top = (properties_area_rect.top - tab_height);
+
+        self.ui.render_quad(
+            properties_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        var properties_inner_rect = properties_rect;
+        properties_inner_rect.top -= editor_panel_border;
+        properties_inner_rect.bottom += editor_panel_border;
+        properties_inner_rect.left += editor_panel_border;
+        properties_inner_rect.right -= editor_panel_border;
+
+        self.ui.render_quad(
+            properties_inner_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_sunk_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
+        var properties_tab_rect = properties_area_rect;
+        properties_tab_rect.bottom = properties_area_rect.top - tab_height;
+        properties_tab_rect.top = properties_tab_rect.bottom + tab_height;
+        const properties_text = "Properties";
+        const properties_font_metrics = self.ui.fonts[@intFromEnum(_ui.FontEnum.GeistMono)].text_bounds_2d(
+            properties_text,
+            editor_panel_border,
+            editor_panel_border + @as(i32, @intFromFloat(window_h / 2.0)) - (editor_panel_border * 2) - tab_height,
+            .{
+                .size = _ui.Size{.Pixels = 16},
+            },
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height
+        );
+        properties_tab_rect.right = properties_tab_rect.left + @as(f32, @floatFromInt(properties_font_metrics.width)) + 20.0;
+
+        self.ui.render_quad(
+            properties_tab_rect.toRectPixels(),
+            _ui.QuadRenderer.QuadProperties {
+                .colour = panel_colour,
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+        self.ui.render_text_2d(
+            _ui.FontEnum.GeistMono,
+            "Properties",
+            @intFromFloat(properties_tab_rect.left + 10.0),
+            @intFromFloat(properties_tab_rect.bottom + (tab_height / 2.0) - @as(f32, @floatFromInt(properties_font_metrics.height)) / 2.0),
+            .{
+                .size = _ui.Size{.Pixels = 16},
+            },
+            rtv,
+            self.engine.gfx.swapchain_size.width,
+            self.engine.gfx.swapchain_size.height,
+            &self.engine.gfx
+        );
+
         // Create editor collisions if they have not yet been created.
         // This feels so bad.
         if (!self.editor_phys_created) {
             const editor_ui_rects = EditorUiKeyRects {
                 .scene_inner_rect = scene_inner_rect,
                 .file_system_inner_rect = file_system_inner_rect,
-                .properties_inner_rect = undefined,
+                .properties_inner_rect = properties_inner_rect,
                 .bottom_bar_inner_rect = undefined,
             };
             self.create_editor_collisions(editor_ui_rects) catch unreachable;
@@ -1199,6 +1302,14 @@ pub const AberrationApp = struct {
                 .motion_type = .static,
                 .object_layer = ph.object_layers.non_moving,
             }, .activate);
+            PhysicsBodyUserBitfield.setBodyIdUserData(
+                self.engine.physics.zphy,
+                topid,
+                PhysicsBodyUserBitfield {
+                    .doe_can_jump_through = true,
+                    .doe_can_drop_through = true,
+                }
+            );
 
             // Bottom
             bottomid = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
@@ -1213,6 +1324,14 @@ pub const AberrationApp = struct {
                 .motion_type = .static,
                 .object_layer = ph.object_layers.non_moving,
             }, .activate);
+            PhysicsBodyUserBitfield.setBodyIdUserData(
+                self.engine.physics.zphy,
+                bottomid,
+                PhysicsBodyUserBitfield {
+                    .doe_can_jump_through = true,
+                    .doe_can_drop_through = true,
+                }
+            );
         }
 
         { // Left/Right
@@ -1258,11 +1377,9 @@ pub const AberrationApp = struct {
     }
 
     fn create_editor_collisions(self: *Self, rects: EditorUiKeyRects) !void {
-        std.log.info("scene", .{});
         try self.create_editor_physics_box_from_rect(rects.scene_inner_rect);
-        std.log.info("file system", .{});
         try self.create_editor_physics_box_from_rect(rects.file_system_inner_rect);
-        // try self.create_editor_physics_box_from_rect(rects.properties_inner_rect);
+        try self.create_editor_physics_box_from_rect(rects.properties_inner_rect);
         // try self.create_editor_physics_box_from_rect(rects.bottom_bar_inner_rect);
     }
 
@@ -1466,8 +1583,8 @@ const DoeCharacterContactListener = extern struct {
     usingnamespace zphy.CharacterContactListener.Methods(@This());
     __v: *const zphy.CharacterContactListener.VTable = &vtable,
 
-    ignore_id_b: bool = false,
-    ignore_id: zphy.BodyId = 0,
+    physics_system: *zphy.PhysicsSystem,
+    drop_key_pressed: bool = false,
 
     const vtable = zphy.CharacterContactListener.VTable{ 
         .OnAdjustBodyVelocity = OnAdjustBodyVelocity,
@@ -1500,12 +1617,23 @@ const DoeCharacterContactListener = extern struct {
         body: *const zphy.BodyId,
         sub_shape_id: *const zphy.SubShapeId,
     ) callconv(.C) bool {
-        _ = character;
+        // _ = self;
+        // _ = character;
+        // _ = body;
         _ = sub_shape_id;
-        const pself = cast(self);
-        if (pself.ignore_id_b) {
-            if (body.* == pself.ignore_id) {
+        if (PhysicsBodyUserBitfield.getBodyIdUserData(cast(self).physics_system, body.*)) |user_data| {
+            if (user_data.doe_can_drop_through and cast(self).drop_key_pressed) {
                 return false;
+            }
+            if (user_data.doe_can_jump_through) {
+                if (character.getGroundBodyID()) |ground_body_id| {
+                    if (ground_body_id == body.*) {
+                        const ground_normal = zm.loadArr3(character.getGroundNormal());
+                        const dot = zm.dot3(ground_normal, zm.f32x4(0.0, 1.0, 0.0, 0.0))[0];
+                        std.log.info("dot is {}", .{dot});
+                        return @abs(dot - 1.0) < 0.2;
+                    }
+                }
             }
         }
         return true;
@@ -1567,6 +1695,39 @@ const Rect = struct {
             .width = @intFromFloat(self.right - self.left),
             .height = @intFromFloat(self.top - self.bottom),
         };
+    }
+};
+
+const PhysicsBodyUserBitfield = packed struct(u64) {
+    doe_can_drop_through: bool = false,
+    doe_can_jump_through: bool = false,
+
+    _padding: u62 = 0,
+
+    pub fn setBodyIdUserData(physics_system: *zphy.PhysicsSystem, body_id: zphy.BodyId, user_data: PhysicsBodyUserBitfield) void {
+        const lock_interface = physics_system.getBodyLockInterface();
+
+        var write_lock: zphy.BodyLockWrite = .{};
+        write_lock.lock(lock_interface, body_id);
+        defer write_lock.unlock();
+
+        if (write_lock.body) |locked_body| {
+            locked_body.setUserData(@bitCast(user_data));
+        }
+    }
+
+    pub fn getBodyIdUserData(physics_system: *const zphy.PhysicsSystem, body_id: zphy.BodyId) ?PhysicsBodyUserBitfield {
+        const lock_interface = physics_system.getBodyLockInterfaceNoLock();
+
+        var read_lock: zphy.BodyLockRead = .{};
+        read_lock.lock(lock_interface, body_id);
+        defer read_lock.unlock();
+
+        if (read_lock.body) |locked_body| {
+            return @as(PhysicsBodyUserBitfield, @bitCast(locked_body.getUserData()));
+        }
+
+        return null;
     }
 };
 
