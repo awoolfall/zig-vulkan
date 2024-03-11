@@ -52,8 +52,8 @@ pub const Win32Window = struct {
         // width and height is what we want client rect to be 
         // CreateWindowExA takes in absolute height and width including title bar and border
         // Convert using AdjustWindowRectEx then pass rect into CreateWindowExA
-        const width = 1920;
-        const height = 1080;
+        const width = 1600;
+        const height = 900;
 
         var rect = w32.RECT {
             .left = 0,
@@ -68,11 +68,16 @@ pub const Win32Window = struct {
             0
         ) != 0);
 
+        const window_style: u32 = 
+            @as(u32, @intCast(w32.WS_OVERLAPPEDWINDOW)) & 
+            ~@as(u32, @intCast(w32.WS_MAXIMIZEBOX)) & 
+            ~@as(u32, @intCast(w32.WS_THICKFRAME));
+
         const hwnd = w32.CreateWindowExA(
             0, 
             "Window Class", 
             "Window Made using Zig",
-            w32.WS_OVERLAPPEDWINDOW + w32.WS_VISIBLE,
+            window_style + w32.WS_VISIBLE,
             w32.CW_USEDEFAULT,
             w32.CW_USEDEFAULT, 
             rect.right - rect.left, rect.bottom - rect.top, 

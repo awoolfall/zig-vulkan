@@ -918,12 +918,12 @@ pub const AberrationApp = struct {
                     // Render Doe in editor
                     self.engine.gfx.context.RSSetViewports(1, @ptrCast(&self.editor_viewport));
                     proj_mat = zm.orthographicLh(
-                        1920.0, 
-                        1080.0,
+                        1600.0, 
+                        900.0,
                         0.1, 
                         100.1
                     );
-                    cam_mat = zm.inverse(zm.translation(1920.0 / 2.0, 1080.0 / 2.0, -10.0));
+                    cam_mat = zm.inverse(zm.translation(1600.0 / 2.0, 900.0 / 2.0, -10.0));
                 }
 
                 self.engine.gfx.context.PSSetShader(self.pso, null, 0);
@@ -999,12 +999,12 @@ pub const AberrationApp = struct {
                 self.engine.gfx.swapchain_size.width,
                 self.engine.gfx.swapchain_size.height,
                 zm.matToArr(zm.orthographicLh(
-                        1920.0, 
-                        1080.0,
+                        1600.0, 
+                        900.0,
                         0.1, 
                         100.1
                 )),
-                zm.matToArr(zm.inverse(zm.translation(1920.0/2.0, 1080.0/2.0, -10.0))),
+                zm.matToArr(zm.inverse(zm.translation(1600.0/2.0, 900.0/2.0, -10.0))),
             );
         }
 
