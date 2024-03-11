@@ -35,6 +35,31 @@ const QuadPsBufferStruct = extern struct {
     texture_flags: i32,
 };
 
+const EntityProperties = struct {
+    scene_name: []u8,
+    alloc: std.mem.Allocator,
+    max_speed: ?f32 = null,
+
+    pub fn deinit(self: *const EntityProperties) void {
+        self.alloc.free(self.scene_name);
+    }
+
+    pub fn adjust_value(self: *EntityProperties, prop_id: u8, up: bool) void {
+        switch (prop_id) {
+            1 => { // max speed
+                if (self.max_speed) |*max_speed| {
+                    if (up) {
+                        max_speed.* += 10.0;
+                    } else {
+                        max_speed.* -= 10.0;
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+};
+
 pub const Engine = engine.Engine(AberrationApp);
 pub const AberrationApp = struct {
     const Self = @This();
@@ -52,10 +77,7 @@ pub const AberrationApp = struct {
             shape: *zphy.ShapeSettings,
             coyote_end_time_ns: i128,
         } = null,
-        properties: ?struct {
-            scene_name: []u8,
-            alloc: std.mem.Allocator,
-        } = null,
+        properties: ?EntityProperties = null,
 
         pub fn deinit(self: *EntityData) void {
             if (self.doe) |*doe| {
@@ -63,7 +85,7 @@ pub const AberrationApp = struct {
                 doe.shape.release();
             }
             if (self.properties) |properties| {
-                properties.alloc.free(properties.scene_name);
+                properties.deinit();
             }
             if (self.quad_data) |quad_data| {
                 if (quad_data.texture_view) |tex_view| {
@@ -121,6 +143,9 @@ pub const AberrationApp = struct {
 
     doe_idx: ent.GenerationalIndex,
 
+    properties_panel_selected_entity: ent.GenerationalIndex,
+    scene_and_properties_platforms: [64]zphy.BodyId,
+
     // We create editor phys using UI rects. Only know these after 1st frame...
     editor_phys_created: bool = false,
 
@@ -132,6 +157,10 @@ pub const AberrationApp = struct {
             if (maybe_ent.item_data) |*en| {
                 en.app.deinit();
             }
+        }
+
+        for (self.scene_and_properties_platforms) |pid| {
+            self.engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(pid);
         }
 
         self.engine.gfx.context.Flush();
@@ -325,6 +354,7 @@ pub const AberrationApp = struct {
                 .properties = .{
                     .scene_name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Doe", .{}),
                     .alloc = eng.general_allocator.allocator(),
+                    .max_speed = 120.0,
                 },
             },
         });
@@ -437,6 +467,34 @@ pub const AberrationApp = struct {
             .MaxDepth = 1.0,
         };
 
+        
+        const box_shape_settings = try zphy.BoxShapeSettings.create([3]f32{ window_w / 12.0, 5.0 / 2.0, 0.5 });
+        defer box_shape_settings.release();
+
+        const box_shape = try box_shape_settings.asShapeSettings().createShape();
+        defer box_shape.release();
+
+        var platform_ids: [64]zphy.BodyId = [_]zphy.BodyId{undefined} ** 64;
+
+        for (0..64) |i| {
+            platform_ids[i] = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = zm.vecToArr4(zm.f32x4s(0.0)),
+                .rotation = zm.qidentity(),
+                .shape = box_shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+            }, .dont_activate);
+
+            PhysicsBodyUserBitfield.setBodyIdUserData(
+                eng.physics.zphy,
+                platform_ids[i],
+                PhysicsBodyUserBitfield { 
+                    .doe_can_drop_through = true,
+                    .doe_can_jump_through = true,
+                }
+            );
+        }
+
         return Self {
             .engine = eng,
             .depth_stencil_view = depth_stencil_view,
@@ -465,6 +523,8 @@ pub const AberrationApp = struct {
             .editor_viewport = editor_viewport,
 
             .doe_idx = doe_idx,
+            .properties_panel_selected_entity = doe_idx,
+            .scene_and_properties_platforms = platform_ids,
 
             .ui = ui,
         };
@@ -510,10 +570,8 @@ pub const AberrationApp = struct {
                 }
 
                 var current_movement = zm.loadArr3(doe_data.character.getLinearVelocity());
-
                 const ground_state = doe_data.character.getGroundState();
-
-                const max_speed = 120.0;
+                const max_speed = doe.app.properties.?.max_speed.?;
 
                 switch (ground_state) {
                     .on_ground => {
@@ -581,6 +639,46 @@ pub const AberrationApp = struct {
                 // Charge
                 if (self.engine.input.get_key_down(kc.KeyCode.E)) {
                     self.doe_perform_charge(zm.vecToArr3(desired_movement));
+                }
+
+                // Editor interactions
+                if (self.engine.input.get_key_down(kc.KeyCode.ArrowDown)) {
+                    if (doe_data.character.getGroundBodyID()) |ground_id| {
+                        if (PhysicsBodyUserBitfield.getBodyIdUserData(self.engine.physics.zphy, ground_id)) |user_data| {
+                            if (user_data.entity_id != 0) {
+                                self.properties_panel_selected_entity = ent.GenerationalIndex {
+                                    .index = user_data.entity_id,
+                                    .generation = self.engine.entities.data.items[user_data.entity_id].generation,
+                                };
+                            }
+                            if (user_data.property_id != 0) {
+                                if (self.engine.entities.get(self.properties_panel_selected_entity)) |entt| {
+                                    if (entt.app.properties) |*props| {
+                                        props.adjust_value(user_data.property_id, false);
+                                    }
+                                } else |_| {}
+                            }
+                        }
+                    }
+                }
+                if (self.engine.input.get_key_down(kc.KeyCode.ArrowUp)) {
+                    if (doe_data.character.getGroundBodyID()) |ground_id| {
+                        if (PhysicsBodyUserBitfield.getBodyIdUserData(self.engine.physics.zphy, ground_id)) |user_data| {
+                            if (user_data.entity_id != 0) {
+                                self.properties_panel_selected_entity = ent.GenerationalIndex {
+                                    .index = user_data.entity_id,
+                                    .generation = self.engine.entities.data.items[user_data.entity_id].generation,
+                                };
+                            }
+                            if (user_data.property_id != 0) {
+                                if (self.engine.entities.get(self.properties_panel_selected_entity)) |entt| {
+                                    if (entt.app.properties) |*props| {
+                                        props.adjust_value(user_data.property_id, true);
+                                    }
+                                } else |_| {}
+                            }
+                        }
+                    }
                 }
 
                 // Drop down
@@ -977,14 +1075,16 @@ pub const AberrationApp = struct {
     };
 
     fn render_editor_ui_and_create_collisions(self: *Self, rtv: *d3d11.IRenderTargetView) void {
-        const window_w = 1920.0;
-        const window_h = 1080.0;
+        const window_w: f32 = @floatFromInt(self.engine.gfx.swapchain_size.width);
+        const window_h: f32 = @floatFromInt(self.engine.gfx.swapchain_size.height);
 
         const panel_sunk_colour = zm.f32x4(38.0 / 255.0, 44.0 / 255.0, 60.0 / 255.0, 1.0);
         const panel_colour = zm.f32x4(51.0 / 255.0, 57.0 / 255.0, 79.0 / 255.0, 1.0);
 
         const editor_panel_border = 5;
         const tab_height = 40;
+
+        var next_platform_id: usize = 0;
 
         const editor_rect = Rect{
             .left = 0.0, 
@@ -1117,14 +1217,15 @@ pub const AberrationApp = struct {
         );
 
         var scene_item_y: f32 = 1.0;
-        for (self.engine.entities.data.items) |*entt| {
+        for (self.engine.entities.data.items, 0..) |*entt, entid| {
             if (entt.item_data) |*item| {
                 if (item.app.properties) |properties| {
+                    const y: f32 = scene_inner_rect.top - 10.0 - (50.0 * scene_item_y);
                     self.ui.render_text_2d(
                         _ui.FontEnum.GeistMono,
                         properties.scene_name,
                         @intFromFloat(scene_inner_rect.left + 30.0),
-                        @intFromFloat(scene_inner_rect.top - 10.0 - (30.0 * scene_item_y)),
+                        @intFromFloat(y),
                         .{
                             .size = _ui.Size{.Pixels = 15},
                         },
@@ -1134,6 +1235,17 @@ pub const AberrationApp = struct {
                         &self.engine.gfx
                     );
                     scene_item_y += 1.0;
+
+                    self.move_and_activate_properties_platform(
+                        &next_platform_id,
+                        [3]f32 {
+                            scene_inner_rect.left + ((scene_inner_rect.right - scene_inner_rect.left) / 2.0),
+                            y,
+                            20.0
+                        },
+                        @intCast(entid),
+                        0
+                    );
                 }
             }
         }
@@ -1251,6 +1363,75 @@ pub const AberrationApp = struct {
             &self.engine.gfx
         );
 
+        // List properties for entity
+        var prop_item_y: f32 = 1.0;
+        if (self.engine.entities.get(self.properties_panel_selected_entity)) |entt| {
+            if (entt.app.properties) |*properties| {
+                var arena = std.heap.ArenaAllocator.init(self.engine.general_allocator.allocator());
+                defer arena.deinit();
+                const alloc = arena.allocator();
+
+                var y = properties_inner_rect.top - 10.0 - (50.0 * prop_item_y);
+                self.ui.render_text_2d(
+                    _ui.FontEnum.GeistMono,
+                    std.fmt.allocPrint(alloc, "name: {s}", .{properties.scene_name}) catch unreachable,
+                    @intFromFloat(properties_inner_rect.left + 30.0),
+                    @intFromFloat(y),
+                    .{
+                        .size = _ui.Size{.Pixels = 15},
+                    },
+                    rtv,
+                    self.engine.gfx.swapchain_size.width,
+                    self.engine.gfx.swapchain_size.height,
+                    &self.engine.gfx
+                );
+
+                self.move_and_activate_properties_platform(
+                    &next_platform_id,
+                    [3]f32 {
+                        properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                        y,
+                        20.0
+                    },
+                    0,
+                    0
+                );
+
+                prop_item_y += 1.0;
+                y = properties_inner_rect.top - 10.0 - (50.0 * prop_item_y);
+
+                if (properties.max_speed) |max_speed| {
+                    self.ui.render_text_2d(
+                        _ui.FontEnum.GeistMono,
+                        std.fmt.allocPrint(alloc, "max_speed: {d}", .{max_speed}) catch unreachable,
+                        @intFromFloat(properties_inner_rect.left + 30.0),
+                        @intFromFloat(y),
+                        .{
+                            .size = _ui.Size{.Pixels = 15},
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+
+                    self.move_and_activate_properties_platform(
+                        &next_platform_id,
+                        [3]f32 {
+                            properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                            y,
+                            20.0
+                        },
+                        0,
+                        1
+                    );
+
+                    prop_item_y += 1.0;
+                    y = properties_inner_rect.top - 10.0 - (50.0 * prop_item_y);
+                }
+            }
+        } else |_| {}
+
         // Create editor collisions if they have not yet been created.
         // This feels so bad.
         if (!self.editor_phys_created) {
@@ -1263,6 +1444,28 @@ pub const AberrationApp = struct {
             self.create_editor_collisions(editor_ui_rects) catch unreachable;
             self.editor_phys_created = true;
         }
+    }
+
+    fn move_and_activate_properties_platform(
+        self: *Self, 
+        next_platform_id: *usize, 
+        position: [3]f32,
+        entity_id: u8,
+        property_id: u8
+    ) void {
+        const platform_id = self.scene_and_properties_platforms[next_platform_id.*];
+        next_platform_id.* += 1;
+
+        const body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
+        body_interface.setPosition(platform_id, position, .activate);
+        PhysicsBodyUserBitfield.setBodyIdUserData(self.engine.physics.zphy, platform_id, 
+            PhysicsBodyUserBitfield {
+                .doe_can_jump_through = true,
+                .doe_can_drop_through = true,
+                .entity_id = entity_id,
+                .property_id = property_id,
+            }
+        );
     }
 
     fn create_editor_physics_box_from_rect(self: *Self, rect: Rect) !void {
@@ -1381,6 +1584,47 @@ pub const AberrationApp = struct {
         try self.create_editor_physics_box_from_rect(rects.file_system_inner_rect);
         try self.create_editor_physics_box_from_rect(rects.properties_inner_rect);
         // try self.create_editor_physics_box_from_rect(rects.bottom_bar_inner_rect);
+
+        // Top of game scene
+        const box_settings = try zphy.BoxShapeSettings.create([3]f32 { 
+            0.5, 
+            0.5,
+            1.0
+        });
+        defer box_settings.release();
+        const border_size = 5.0;
+
+        const scaled_settings = try zphy.DecoratedShapeSettings.createScaled(box_settings.asShapeSettings(), [3]f32{
+            rects.properties_inner_rect.left - rects.scene_inner_rect.right,
+            border_size,
+            1.0
+        });
+        defer scaled_settings.release();
+
+        const shape = try scaled_settings.createShape();
+        defer shape.release();
+
+        const topgameid = try self.engine.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+            .position = [4]f32 {
+                rects.scene_inner_rect.right + ((rects.properties_inner_rect.left - rects.scene_inner_rect.right) / 2.0),
+                rects.scene_inner_rect.top + (border_size / 2.0),
+                20.0,
+                1.0
+            },
+            .rotation = zm.qidentity(),
+            .shape = shape,
+            .motion_type = .static,
+            .object_layer = ph.object_layers.non_moving,
+        }, .activate);
+        PhysicsBodyUserBitfield.setBodyIdUserData(
+            self.engine.physics.zphy,
+            topgameid,
+            PhysicsBodyUserBitfield {
+                .doe_can_jump_through = true,
+                .doe_can_drop_through = true,
+            }
+        );
+        
     }
 
     pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !*d3d11.IDepthStencilView {
@@ -1630,7 +1874,6 @@ const DoeCharacterContactListener = extern struct {
                     if (ground_body_id == body.*) {
                         const ground_normal = zm.loadArr3(character.getGroundNormal());
                         const dot = zm.dot3(ground_normal, zm.f32x4(0.0, 1.0, 0.0, 0.0))[0];
-                        std.log.info("dot is {}", .{dot});
                         return @abs(dot - 1.0) < 0.2;
                     }
                 }
@@ -1701,8 +1944,10 @@ const Rect = struct {
 const PhysicsBodyUserBitfield = packed struct(u64) {
     doe_can_drop_through: bool = false,
     doe_can_jump_through: bool = false,
+    entity_id: u8 = 0,
+    property_id: u8 = 0,
 
-    _padding: u62 = 0,
+    _padding: u46 = 0,
 
     pub fn setBodyIdUserData(physics_system: *zphy.PhysicsSystem, body_id: zphy.BodyId, user_data: PhysicsBodyUserBitfield) void {
         const lock_interface = physics_system.getBodyLockInterface();
