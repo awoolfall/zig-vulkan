@@ -38,6 +38,7 @@ const QuadPsBufferStruct = extern struct {
 const EntityProperties = struct {
     scene_name: []u8,
     alloc: std.mem.Allocator,
+    is_god: bool = false,
     max_speed: ?f32 = null,
 
     pub fn deinit(self: *const EntityProperties) void {
@@ -46,7 +47,10 @@ const EntityProperties = struct {
 
     pub fn adjust_value(self: *EntityProperties, prop_id: u8, up: bool) void {
         switch (prop_id) {
-            1 => { // max speed
+            1 => { // is god
+                self.is_god = !self.is_god;
+            },
+            2 => { // max speed
                 if (self.max_speed) |*max_speed| {
                     if (up) {
                         max_speed.* += 10.0;
@@ -354,6 +358,7 @@ pub const AberrationApp = struct {
                 .properties = .{
                     .scene_name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Doe", .{}),
                     .alloc = eng.general_allocator.allocator(),
+                    .is_god = true,
                     .max_speed = 120.0,
                 },
             },
@@ -466,9 +471,8 @@ pub const AberrationApp = struct {
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         };
-
         
-        const box_shape_settings = try zphy.BoxShapeSettings.create([3]f32{ window_w / 12.0, 5.0 / 2.0, 0.5 });
+        const box_shape_settings = try zphy.BoxShapeSettings.create([3]f32{ (window_w / 13.0) - 50.0, 5.0 / 2.0, 0.5 });
         defer box_shape_settings.release();
 
         const box_shape = try box_shape_settings.asShapeSettings().createShape();
@@ -1221,6 +1225,24 @@ pub const AberrationApp = struct {
             if (entt.item_data) |*item| {
                 if (item.app.properties) |properties| {
                     const y: f32 = scene_inner_rect.top - 10.0 - (50.0 * scene_item_y);
+
+                    // Underline
+                    self.ui.render_quad(
+                        (Rect {
+                            .top = y - 2,
+                            .bottom = y - 4,
+                            .left = scene_inner_rect.left + 30.0,
+                            .right = scene_inner_rect.right - 50.0,
+                        }).toRectPixels(),
+                        _ui.QuadRenderer.QuadProperties {
+                            .colour = panel_colour,
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    // Name Text
                     self.ui.render_text_2d(
                         _ui.FontEnum.GeistMono,
                         properties.scene_name,
@@ -1236,6 +1258,7 @@ pub const AberrationApp = struct {
                     );
                     scene_item_y += 1.0;
 
+                    // Move platform
                     self.move_and_activate_properties_platform(
                         &next_platform_id,
                         [3]f32 {
@@ -1246,6 +1269,25 @@ pub const AberrationApp = struct {
                         @intCast(entid),
                         0
                     );
+
+                    // Selected quad on selected entity line
+                    if (self.properties_panel_selected_entity.index == entid) {
+                        self.ui.render_quad(
+                            (Rect {
+                                .top = y + 10,
+                                .bottom = y,
+                                .left = scene_inner_rect.left + 10.0,
+                                .right = scene_inner_rect.left + 20.0,
+                            }).toRectPixels(),
+                            _ui.QuadRenderer.QuadProperties {
+                                .colour = zm.f32x4(0.8, 0.8, 0.8, 1.0),
+                            },
+                            rtv,
+                            self.engine.gfx.swapchain_size.width,
+                            self.engine.gfx.swapchain_size.height,
+                            &self.engine.gfx
+                        );
+                    }
                 }
             }
         }
@@ -1371,12 +1413,27 @@ pub const AberrationApp = struct {
                 defer arena.deinit();
                 const alloc = arena.allocator();
 
-                var y = properties_inner_rect.top - 10.0 - (50.0 * prop_item_y);
+                // Name
+                self.ui.render_quad(
+                    (Rect {
+                        .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                        .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                        .left = properties_inner_rect.left + 30.0,
+                        .right = properties_inner_rect.right - 50.0,
+                    }).toRectPixels(),
+                    _ui.QuadRenderer.QuadProperties {
+                        .colour = panel_colour,
+                    },
+                    rtv,
+                    self.engine.gfx.swapchain_size.width,
+                    self.engine.gfx.swapchain_size.height,
+                    &self.engine.gfx
+                );
                 self.ui.render_text_2d(
                     _ui.FontEnum.GeistMono,
                     std.fmt.allocPrint(alloc, "name: {s}", .{properties.scene_name}) catch unreachable,
                     @intFromFloat(properties_inner_rect.left + 30.0),
-                    @intFromFloat(y),
+                    @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
                     .{
                         .size = _ui.Size{.Pixels = 15},
                     },
@@ -1385,27 +1442,81 @@ pub const AberrationApp = struct {
                     self.engine.gfx.swapchain_size.height,
                     &self.engine.gfx
                 );
-
                 self.move_and_activate_properties_platform(
                     &next_platform_id,
                     [3]f32 {
                         properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
-                        y,
+                        calc_property_y(properties_inner_rect, prop_item_y),
                         20.0
                     },
                     0,
                     0
                 );
-
                 prop_item_y += 1.0;
-                y = properties_inner_rect.top - 10.0 - (50.0 * prop_item_y);
 
+                // Is God 
+                self.ui.render_quad(
+                    (Rect {
+                        .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                        .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                        .left = properties_inner_rect.left + 30.0,
+                        .right = properties_inner_rect.right - 50.0,
+                    }).toRectPixels(),
+                    _ui.QuadRenderer.QuadProperties {
+                        .colour = panel_colour,
+                    },
+                    rtv,
+                    self.engine.gfx.swapchain_size.width,
+                    self.engine.gfx.swapchain_size.height,
+                    &self.engine.gfx
+                );
+                self.ui.render_text_2d(
+                    _ui.FontEnum.GeistMono,
+                    std.fmt.allocPrint(alloc, "is_god: {}", .{properties.is_god}) catch unreachable,
+                    @intFromFloat(properties_inner_rect.left + 30.0),
+                    @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
+                    .{
+                        .size = _ui.Size{.Pixels = 15},
+                    },
+                    rtv,
+                    self.engine.gfx.swapchain_size.width,
+                    self.engine.gfx.swapchain_size.height,
+                    &self.engine.gfx
+                );
+                self.move_and_activate_properties_platform(
+                    &next_platform_id,
+                    [3]f32 {
+                        properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                        calc_property_y(properties_inner_rect, prop_item_y),
+                        20.0
+                    },
+                    0,
+                    1
+                );
+                prop_item_y += 1.0;
+
+                // Max Speed
                 if (properties.max_speed) |max_speed| {
+                    self.ui.render_quad(
+                        (Rect {
+                            .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                            .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                            .left = properties_inner_rect.left + 30.0,
+                            .right = properties_inner_rect.right - 50.0,
+                        }).toRectPixels(),
+                        _ui.QuadRenderer.QuadProperties {
+                            .colour = panel_colour,
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
                     self.ui.render_text_2d(
                         _ui.FontEnum.GeistMono,
                         std.fmt.allocPrint(alloc, "max_speed: {d}", .{max_speed}) catch unreachable,
                         @intFromFloat(properties_inner_rect.left + 30.0),
-                        @intFromFloat(y),
+                        @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
                         .{
                             .size = _ui.Size{.Pixels = 15},
                         },
@@ -1414,20 +1525,17 @@ pub const AberrationApp = struct {
                         self.engine.gfx.swapchain_size.height,
                         &self.engine.gfx
                     );
-
                     self.move_and_activate_properties_platform(
                         &next_platform_id,
                         [3]f32 {
                             properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
-                            y,
+                            calc_property_y(properties_inner_rect, prop_item_y),
                             20.0
                         },
                         0,
-                        1
+                        2
                     );
-
                     prop_item_y += 1.0;
-                    y = properties_inner_rect.top - 10.0 - (50.0 * prop_item_y);
                 }
             }
         } else |_| {}
@@ -1446,6 +1554,10 @@ pub const AberrationApp = struct {
         }
     }
 
+    fn calc_property_y(properties_inner_rect: Rect, prop_item_y: f32) f32 {
+        return properties_inner_rect.top - 10.0 - (50.0 * prop_item_y);
+    }
+
     fn move_and_activate_properties_platform(
         self: *Self, 
         next_platform_id: *usize, 
@@ -1456,8 +1568,12 @@ pub const AberrationApp = struct {
         const platform_id = self.scene_and_properties_platforms[next_platform_id.*];
         next_platform_id.* += 1;
 
+        // Move platform down slightly
+        var adjusted_position = position;
+        adjusted_position[1] -= 4;
+
         const body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
-        body_interface.setPosition(platform_id, position, .activate);
+        body_interface.setPosition(platform_id, adjusted_position, .activate);
         PhysicsBodyUserBitfield.setBodyIdUserData(self.engine.physics.zphy, platform_id, 
             PhysicsBodyUserBitfield {
                 .doe_can_jump_through = true,
