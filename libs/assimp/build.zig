@@ -12,8 +12,8 @@ pub const Package = struct {
     pub fn link(pkg: Package, exe: *std.Build.Step.Compile) void {
         exe.linkLibC();
         exe.addIncludePath(.{ .path = thisDir() ++ "/libs/assimp/include/" });
-        exe.addLibraryPath(.{ .path = thisDir() ++ "/libs/assimp/lib/Debug/" });
-        exe.linkSystemLibrary("assimp-vc143-mtd"); // TODO make this more robust
+        exe.addLibraryPath(.{ .path = thisDir() ++ "/libs/assimp/lib/Release/" });
+        exe.linkSystemLibrary("assimp-vc143-mt"); // TODO make this more robust
         exe.root_module.addImport("assimp", pkg.assimp);
         exe.root_module.addImport("assimp_options", pkg.assimp_options);
     }

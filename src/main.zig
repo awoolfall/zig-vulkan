@@ -1,5 +1,5 @@
 const std = @import("std");
-const app = @import("aberration/app.zig");
+const app = @import("app.zig");
 
 pub fn main() !void {
     std.debug.print("Hello from zig!!\n", .{});

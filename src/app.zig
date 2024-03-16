@@ -668,7 +668,7 @@ pub const App = struct {
                     rtv, 
                     self.engine.gfx.swapchain_size.width,
                     self.engine.gfx.swapchain_size.height,
-                    &self.camera, 
+                    zm.matToArr(self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())),
                     zm.matToArr(self.camera.view_matrix),
                 );
             } else |_| {}
