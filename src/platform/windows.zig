@@ -48,16 +48,39 @@ pub const Win32Window = struct {
             .hIconSm = null,
         };
         _ = w32.RegisterClassExA(&wc);
-        const width = 1920;
-        const height = 1080;
+
+        // width and height is what we want client rect to be 
+        // CreateWindowExA takes in absolute height and width including title bar and border
+        // Convert using AdjustWindowRectEx then pass rect into CreateWindowExA
+        const width = 1600;
+        const height = 900;
+
+        var rect = w32.RECT {
+            .left = 0,
+            .right = width,
+            .top = 0,
+            .bottom = height,
+        };
+        std.debug.assert(w32.AdjustWindowRectEx(
+            &rect,
+            w32.WS_OVERLAPPEDWINDOW,
+            0,
+            0
+        ) != 0);
+
+        const window_style: u32 = 
+            @as(u32, @intCast(w32.WS_OVERLAPPEDWINDOW)) & 
+            ~@as(u32, @intCast(w32.WS_MAXIMIZEBOX)) & 
+            ~@as(u32, @intCast(w32.WS_THICKFRAME));
+
         const hwnd = w32.CreateWindowExA(
             0, 
             "Window Class", 
             "Window Made using Zig",
-            w32.WS_OVERLAPPEDWINDOW + w32.WS_VISIBLE,
+            window_style + w32.WS_VISIBLE,
             w32.CW_USEDEFAULT,
             w32.CW_USEDEFAULT, 
-            width, height, 
+            rect.right - rect.left, rect.bottom - rect.top, 
             null, null,
             hInstance, 
             null).?;

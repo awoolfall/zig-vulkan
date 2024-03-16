@@ -66,6 +66,18 @@ pub const Font = struct {
     font_text_buffer: *d3d11.IBuffer,
     _allocator: std.mem.Allocator,
 
+    pub fn deinit(self: *const Font) void {
+        _ = self.msdf_texture_view.Release();
+        _ = self.blend_state.Release();
+        _ = self.rasterizer_state.Release();
+        _ = self.font_text_buffer.Release();
+        _ = self.character_buffer.Release();
+        _ = self.sampler.Release();
+        _ = self.vso_input_layout.Release();
+        _ = self.font_vso.Release();
+        _ = self.font_pso.Release();
+    }
+
     pub fn init(alloc: std.mem.Allocator, font_json: path.Path, font_msdf_png: path.Path, gfx: *gfx_d3d11.D3D11State) !Font {
         const font_json_path = try font_json.resolve_path(alloc);
         defer alloc.free(font_json_path);
@@ -171,10 +183,6 @@ pub const Font = struct {
             glyph_idx += 1;
             if (glyph_idx >= font_data.value.glyphs.len) {break;}
         }
-
-        // @TODO move generic stbi init to engine?
-        zstbi.init(alloc);
-        defer zstbi.deinit();
 
         // load msdf font png file
         const font_png_path = try font_msdf_png.resolve_path_c_str(alloc);
@@ -323,18 +331,6 @@ pub const Font = struct {
 
         // finally return the font structure
         return font;
-    }
-
-    pub fn deinit(self: *const Font) void {
-        _ = self.msdf_texture_view.Release();
-        _ = self.blend_state.Release();
-        _ = self.rasterizer_state.Release();
-        _ = self.font_text_buffer.Release();
-        _ = self.character_buffer.Release();
-        _ = self.sampler.Release();
-        _ = self.vso_input_layout.Release();
-        _ = self.font_vso.Release();
-        _ = self.font_pso.Release();
     }
 
     pub const FontRenderProperties2D = struct {
