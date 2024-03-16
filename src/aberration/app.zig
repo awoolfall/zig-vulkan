@@ -39,7 +39,15 @@ const EntityProperties = struct {
     scene_name: []u8,
     alloc: std.mem.Allocator,
     is_god: bool = false,
+
     max_speed: ?f32 = null,
+    acceleration: ?f32 = null,
+    velocity: ?f32 = null,
+
+    health_points: ?i32 = null,
+    attack_damage: ?i32 = null,
+    attack_interval: ?f32 = null,
+
 
     pub fn deinit(self: *const EntityProperties) void {
         self.alloc.free(self.scene_name);
@@ -51,12 +59,33 @@ const EntityProperties = struct {
                 self.is_god = !self.is_god;
             },
             2 => { // max speed
-                if (self.max_speed) |*max_speed| {
-                    if (up) {
-                        max_speed.* += 10.0;
-                    } else {
-                        max_speed.* -= 10.0;
-                    }
+                if (self.max_speed) |*ms| {
+                    if (up) { ms.* += 10.0; } else { ms.* -= 10.0; }
+                }
+            },
+            3 => { // acceleration
+                if (self.acceleration) |*ac| {
+                    if (up) { ac.* += 1.0; } else { ac.* -= 1.0; }
+                }
+            },
+            4 => { // velocity
+                if (self.velocity) |*vel| {
+                    if (up) { vel.* += 10.0; } else { vel.* -= 10.0; }
+                }
+            },
+            5 => { // health points
+                if (self.health_points) |*hp| {
+                    if (up) { hp.* += 10; } else { hp.* -= 10; }
+                }
+            },
+            6 => { // attack damage
+                if (self.attack_damage) |*ad| {
+                    if (up) { ad.* += 10; } else { ad.* -= 10; }
+                }
+            },
+            7 => { // attack interval
+                if (self.attack_interval) |*at| {
+                    if (up) { at.* += 0.1; } else { at.* -= 0.1; }
                 }
             },
             else => {},
@@ -122,7 +151,10 @@ pub const AberrationApp = struct {
         cull_back_face: *d3d11.IRasterizerState,
     };
 
+    const MAX_PLATFORMS: usize = 32;
+
     engine: *engine.Engine(Self),
+    contact_listener: *ContactListener,
 
     depth_stencil_view: *d3d11.IDepthStencilView,
 
@@ -148,7 +180,7 @@ pub const AberrationApp = struct {
     doe_idx: ent.GenerationalIndex,
 
     properties_panel_selected_entity: ent.GenerationalIndex,
-    scene_and_properties_platforms: [64]zphy.BodyId,
+    scene_and_properties_platforms: [MAX_PLATFORMS]zphy.BodyId,
 
     // We create editor phys using UI rects. Only know these after 1st frame...
     editor_phys_created: bool = false,
@@ -166,6 +198,8 @@ pub const AberrationApp = struct {
         for (self.scene_and_properties_platforms) |pid| {
             self.engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(pid);
         }
+        self.engine.physics.zphy.setContactListener(null);
+        self.engine.general_allocator.allocator().destroy(self.contact_listener);
 
         self.engine.gfx.context.Flush();
         self.ui.deinit();
@@ -303,6 +337,11 @@ pub const AberrationApp = struct {
 
         eng.physics.zphy.optimizeBroadPhase();
 
+        const contact_listener = try eng.general_allocator.allocator().create(ContactListener);
+        errdefer eng.general_allocator.allocator().destroy(contact_listener);
+        contact_listener.* = .{};
+        eng.physics.zphy.setContactListener(contact_listener);
+
         var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
 
@@ -360,6 +399,10 @@ pub const AberrationApp = struct {
                     .alloc = eng.general_allocator.allocator(),
                     .is_god = true,
                     .max_speed = 120.0,
+                    .acceleration = 10.0,
+
+                    .health_points = 20,
+                    .attack_damage = 1,
                 },
             },
         });
@@ -446,10 +489,98 @@ pub const AberrationApp = struct {
             PhysicsBodyUserBitfield.setBodyIdUserData(
                 eng.physics.zphy,
                 entt.physics_body.?,
-                PhysicsBodyUserBitfield { .doe_can_drop_through = true, }
+                PhysicsBodyUserBitfield { .doe_can_jump_through = true, }
             );
+        } else |_| { unreachable; }
 
-            std.log.info("ground id is {x}", .{entt.physics_body.?});
+        // Village
+        const villageId = try eng.entities.insert(.{
+            .transform = Transform {
+                .position = zm.f32x4(500.0, 50.0, 0.0, 1.0),
+            },
+            .app = .{
+                .properties = .{
+                    .scene_name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Village", .{}),
+                    .alloc = eng.general_allocator.allocator(),
+                    .velocity = 0,
+
+                    .health_points = 100,
+                    .attack_damage = 10,
+                    .attack_interval = 0,
+                },
+                .quad_data = .{
+                    .colour = zm.f32x4(0.8, 0.8, 0.8, 1.0),
+                    .size = .{ .width = 400.0, .height = 100.0, },
+                    .texture_view = null,
+                },
+            },
+        });
+
+        if (eng.entities.get(villageId)) |entt| {
+            const ent_shape_settings = try entt.app.create_phys_shape_settings();
+            defer ent_shape_settings.release();
+
+            const ent_shape = try ent_shape_settings.asShapeSettings().createShape();
+            defer ent_shape.release();
+
+            entt.physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = zm.vecToArr4(entt.transform.position),
+                .rotation = zm.qidentity(),
+                .shape = ent_shape,
+                .motion_type = .static,
+                .object_layer = ph.object_layers.non_moving,
+                .is_sensor = true,
+            }, .dont_activate);
+            PhysicsBodyUserBitfield.setBodyIdUserData(
+                eng.physics.zphy,
+                entt.physics_body.?,
+                PhysicsBodyUserBitfield {}
+            );
+        } else |_| { unreachable; }
+
+        // Dragon
+        const dragonId = try eng.entities.insert(.{
+            .transform = Transform {
+                .position = zm.f32x4(2400.0, 50.0, 0.0, 1.0),
+            },
+            .app = .{
+                .properties = .{
+                    .scene_name = try std.fmt.allocPrint(eng.general_allocator.allocator(), "Dragon", .{}),
+                    .alloc = eng.general_allocator.allocator(),
+                    .velocity = -10.0,
+
+                    .health_points = 1000,
+                    .attack_damage = 100,
+                    .attack_interval = 0.5,
+                },
+                .quad_data = .{
+                    .colour = zm.f32x4(0.8, 0.1, 0.1, 1.0),
+                    .size = .{ .width = 200.0, .height = 150.0, },
+                    .texture_view = null,
+                },
+            },
+        });
+
+        if (eng.entities.get(dragonId)) |entt| {
+            const ent_shape_settings = try entt.app.create_phys_shape_settings();
+            defer ent_shape_settings.release();
+
+            const ent_shape = try ent_shape_settings.asShapeSettings().createShape();
+            defer ent_shape.release();
+
+            entt.physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                .position = zm.vecToArr4(entt.transform.position),
+                .rotation = zm.qidentity(),
+                .shape = ent_shape,
+                .motion_type = .dynamic,
+                .object_layer = ph.object_layers.moving,
+                .is_sensor = true,
+            }, .activate);
+            PhysicsBodyUserBitfield.setBodyIdUserData(
+                eng.physics.zphy,
+                entt.physics_body.?,
+                PhysicsBodyUserBitfield {}
+            );
         } else |_| { unreachable; }
 
         const window_w: f32 = @floatFromInt(eng.gfx.swapchain_size.width);
@@ -478,11 +609,11 @@ pub const AberrationApp = struct {
         const box_shape = try box_shape_settings.asShapeSettings().createShape();
         defer box_shape.release();
 
-        var platform_ids: [64]zphy.BodyId = [_]zphy.BodyId{undefined} ** 64;
+        var platform_ids: [MAX_PLATFORMS]zphy.BodyId = [_]zphy.BodyId{undefined} ** MAX_PLATFORMS;
 
-        for (0..64) |i| {
+        for (0..MAX_PLATFORMS) |i| {
             platform_ids[i] = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
-                .position = zm.vecToArr4(zm.f32x4s(0.0)),
+                .position = zm.vecToArr4(zm.f32x4(0.0, 0.0, -100.0, 1.0)),
                 .rotation = zm.qidentity(),
                 .shape = box_shape,
                 .motion_type = .static,
@@ -501,6 +632,7 @@ pub const AberrationApp = struct {
 
         return Self {
             .engine = eng,
+            .contact_listener = contact_listener,
             .depth_stencil_view = depth_stencil_view,
             .vso = vso,
             .pso = pso,
@@ -562,6 +694,17 @@ pub const AberrationApp = struct {
             }
         } else |_| {}
 
+        for (self.engine.entities.data.items) |*ent_item| {
+            if (ent_item.item_data) |*e| {
+                if (e.app.properties) |*props| {
+                    const body_interface = self.engine.physics.zphy.getBodyInterfaceMut();
+                    if (props.velocity) |v| {
+                        body_interface.setLinearVelocity(e.physics_body.?, [3]f32 { v, 0.0, 0.0 });
+                    }
+                }
+            }
+        }
+
         // Doe controls
         if (self.engine.entities.get(self.doe_idx)) |doe| {
             if (doe.app.doe) |*doe_data| {
@@ -598,8 +741,10 @@ pub const AberrationApp = struct {
                     },
                 }
 
+                const acceleration = doe.app.properties.?.acceleration.?;
+
                 if (ground_state == .on_ground) {
-                    const on_ground_acceleration = 20.0;
+                    const on_ground_acceleration = acceleration * 2.0;
 
                     // if no movement keys, then apply friction
                     if (desired_movement[0] != 0.0) {
@@ -611,7 +756,7 @@ pub const AberrationApp = struct {
                         }
                     }
                 } else {
-                    const in_air_acceleration = 10.0;
+                    const in_air_acceleration = acceleration * 1.0;
 
                     if (desired_movement[0] != 0.0) {
                         current_movement += (zm.normalize2(desired_movement) * zm.f32x4s(self.engine.time.delta_time_f32() * 20.0 * in_air_acceleration));
@@ -1537,8 +1682,231 @@ pub const AberrationApp = struct {
                     );
                     prop_item_y += 1.0;
                 }
+
+                // Acceleration
+                if (properties.acceleration) |acceleration| {
+                    self.ui.render_quad(
+                        (Rect {
+                            .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                            .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                            .left = properties_inner_rect.left + 30.0,
+                            .right = properties_inner_rect.right - 50.0,
+                        }).toRectPixels(),
+                        _ui.QuadRenderer.QuadProperties {
+                            .colour = panel_colour,
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.ui.render_text_2d(
+                        _ui.FontEnum.GeistMono,
+                        std.fmt.allocPrint(alloc, "acceleration: {d}", .{acceleration}) catch unreachable,
+                        @intFromFloat(properties_inner_rect.left + 30.0),
+                        @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
+                        .{
+                            .size = _ui.Size{.Pixels = 15},
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.move_and_activate_properties_platform(
+                        &next_platform_id,
+                        [3]f32 {
+                            properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                            calc_property_y(properties_inner_rect, prop_item_y),
+                            20.0
+                        },
+                        0,
+                        3
+                    );
+                    prop_item_y += 1.0;
+                }
+
+                // Velocity
+                if (properties.velocity) |vel| {
+                    self.ui.render_quad(
+                        (Rect {
+                            .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                            .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                            .left = properties_inner_rect.left + 30.0,
+                            .right = properties_inner_rect.right - 50.0,
+                        }).toRectPixels(),
+                        _ui.QuadRenderer.QuadProperties {
+                            .colour = panel_colour,
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.ui.render_text_2d(
+                        _ui.FontEnum.GeistMono,
+                        std.fmt.allocPrint(alloc, "velocity: {d}", .{vel}) catch unreachable,
+                        @intFromFloat(properties_inner_rect.left + 30.0),
+                        @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
+                        .{
+                            .size = _ui.Size{.Pixels = 15},
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.move_and_activate_properties_platform(
+                        &next_platform_id,
+                        [3]f32 {
+                            properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                            calc_property_y(properties_inner_rect, prop_item_y),
+                            20.0
+                        },
+                        0,
+                        4
+                    );
+                    prop_item_y += 1.0;
+                }
+
+                // health points
+                if (properties.health_points) |hp| {
+                    self.ui.render_quad(
+                        (Rect {
+                            .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                            .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                            .left = properties_inner_rect.left + 30.0,
+                            .right = properties_inner_rect.right - 50.0,
+                        }).toRectPixels(),
+                        _ui.QuadRenderer.QuadProperties {
+                            .colour = panel_colour,
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.ui.render_text_2d(
+                        _ui.FontEnum.GeistMono,
+                        std.fmt.allocPrint(alloc, "health_points: {d}", .{hp}) catch unreachable,
+                        @intFromFloat(properties_inner_rect.left + 30.0),
+                        @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
+                        .{
+                            .size = _ui.Size{.Pixels = 15},
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.move_and_activate_properties_platform(
+                        &next_platform_id,
+                        [3]f32 {
+                            properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                            calc_property_y(properties_inner_rect, prop_item_y),
+                            20.0
+                        },
+                        0,
+                        5
+                    );
+                    prop_item_y += 1.0;
+                }
+
+                // attack damage
+                if (properties.attack_damage) |ad| {
+                    self.ui.render_quad(
+                        (Rect {
+                            .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                            .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                            .left = properties_inner_rect.left + 30.0,
+                            .right = properties_inner_rect.right - 50.0,
+                        }).toRectPixels(),
+                        _ui.QuadRenderer.QuadProperties {
+                            .colour = panel_colour,
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.ui.render_text_2d(
+                        _ui.FontEnum.GeistMono,
+                        std.fmt.allocPrint(alloc, "attack_damage: {d}", .{ad}) catch unreachable,
+                        @intFromFloat(properties_inner_rect.left + 30.0),
+                        @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
+                        .{
+                            .size = _ui.Size{.Pixels = 15},
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.move_and_activate_properties_platform(
+                        &next_platform_id,
+                        [3]f32 {
+                            properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                            calc_property_y(properties_inner_rect, prop_item_y),
+                            20.0
+                        },
+                        0,
+                        6
+                    );
+                    prop_item_y += 1.0;
+                }
+
+                // attack interval
+                if (properties.attack_interval) |at| {
+                    self.ui.render_quad(
+                        (Rect {
+                            .top = calc_property_y(properties_inner_rect, prop_item_y) - 2,
+                            .bottom = calc_property_y(properties_inner_rect, prop_item_y) - 4,
+                            .left = properties_inner_rect.left + 30.0,
+                            .right = properties_inner_rect.right - 50.0,
+                        }).toRectPixels(),
+                        _ui.QuadRenderer.QuadProperties {
+                            .colour = panel_colour,
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.ui.render_text_2d(
+                        _ui.FontEnum.GeistMono,
+                        std.fmt.allocPrint(alloc, "attack_interval: {d}", .{at}) catch unreachable,
+                        @intFromFloat(properties_inner_rect.left + 30.0),
+                        @intFromFloat(calc_property_y(properties_inner_rect, prop_item_y)),
+                        .{
+                            .size = _ui.Size{.Pixels = 15},
+                        },
+                        rtv,
+                        self.engine.gfx.swapchain_size.width,
+                        self.engine.gfx.swapchain_size.height,
+                        &self.engine.gfx
+                    );
+                    self.move_and_activate_properties_platform(
+                        &next_platform_id,
+                        [3]f32 {
+                            properties_inner_rect.left + ((properties_inner_rect.right - properties_inner_rect.left) / 2.0),
+                            calc_property_y(properties_inner_rect, prop_item_y),
+                            20.0
+                        },
+                        0,
+                        7
+                    );
+                    prop_item_y += 1.0;
+                }
             }
         } else |_| {}
+
+        // Move remaining platforms to initial position
+        for (next_platform_id..MAX_PLATFORMS) |pid| {
+            var vpid = pid;
+            self.move_and_activate_properties_platform(
+                &vpid, [3]f32 { 0.0, 0.0, -100.0 }, 0, 0
+            );
+        }
 
         // Create editor collisions if they have not yet been created.
         // This feels so bad.
@@ -2092,3 +2460,42 @@ const PhysicsBodyUserBitfield = packed struct(u64) {
     }
 };
 
+const ContactListener = extern struct {
+    usingnamespace zphy.ContactListener.Methods(@This());
+    __v: *const zphy.ContactListener.VTable = &vtable,
+
+    const vtable = zphy.ContactListener.VTable{ 
+        .onContactValidate = _onContactValidate,
+        .onContactPersisted = _OnContactPersisted,
+    };
+
+    fn _onContactValidate(
+        self: *zphy.ContactListener,
+        body1: *const zphy.Body,
+        body2: *const zphy.Body,
+        base_offset: *const [3]zphy.Real,
+        collision_result: *const zphy.CollideShapeResult,
+    ) callconv(.C) zphy.ValidateResult {
+        _ = self;
+        _ = body1;
+        _ = body2;
+        _ = base_offset;
+        _ = collision_result;
+        return .accept_all_contacts;
+    }
+
+    fn _OnContactPersisted(
+        self: *zphy.ContactListener,
+        body1: *const zphy.Body,
+        body2: *const zphy.Body,
+        manifold: *const zphy.ContactManifold,
+        settings: *zphy.ContactSettings
+    ) callconv(.C) void {
+        _ = self;
+        // _ = body1;
+        // _ = body2;
+        _ = manifold;
+        _ = settings;
+        std.log.info("{} persisted {}", .{body1.getId(), body2.getId()});
+    }
+};
