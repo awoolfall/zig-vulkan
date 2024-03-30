@@ -7,6 +7,7 @@ const d3d11 = zwin32.d3d11;
 
 const engine = @import("engine.zig");
 const Transform = engine.Transform;
+const gfx = @import("gfx/gfx.zig");
 const window = @import("window.zig");
 const kc = @import("input/keycode.zig");
 const cm = @import("engine/camera.zig");
@@ -61,20 +62,19 @@ pub const App = struct {
 
     depth_stencil_view: *d3d11.IDepthStencilView,
 
-    vso: *d3d11.IVertexShader,
-    pso: *d3d11.IPixelShader,
-    vso_input_layout: *d3d11.IInputLayout,
-    vertex_buffer: *d3d11.IBuffer,
+    vertex_shader: gfx.VertexShader,
+    pixel_shader: gfx.PixelShader,
+    vertex_buffer: gfx.Buffer,
     rasterizer_states: RasterizationStates,
     
-    camera_data_buffer: *d3d11.IBuffer,
+    camera_data_buffer: gfx.Buffer,
     camera: cm.Camera,
     camera_idx: ent.GenerationalIndex,
 
-    model_buffer: *d3d11.IBuffer,
+    model_buffer: gfx.Buffer,
     model_idx: ent.GenerationalIndex,
 
-    bone_matrix_buffer: *d3d11.IBuffer,
+    bone_matrix_buffer: gfx.Buffer,
 
     chara_model: ms.Model,
     tree_model: ms.Model,
@@ -82,107 +82,72 @@ pub const App = struct {
 
     ui: _ui.UiRenderer,
 
+    pub fn deinit(self: *Self) void {
+        std.log.info("App deinit!", .{});
+        for (self.engine.entities.data.items) |*maybe_ent| {
+            if (maybe_ent.item_data) |*en| {
+                en.app.deinit();
+            }
+        }
+
+        self.engine.gfx.context.Flush();
+        self.ui.deinit();
+
+        self.cone_model.deinit();
+        self.chara_model.deinit();
+        self.tree_model.deinit();
+
+        self.bone_matrix_buffer.deinit();
+        self.camera_data_buffer.deinit();
+        self.model_buffer.deinit();
+        self.vertex_buffer.deinit();
+
+        _ = self.rasterizer_states.double_sided.Release();
+        _ = self.rasterizer_states.cull_back_face.Release();
+        _ = self.depth_stencil_view.Release();
+
+        self.vertex_shader.deinit();
+        self.pixel_shader.deinit();
+    }
+
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
 
         var depth_stencil_view: *d3d11.IDepthStencilView = try create_depth_stencil_view(eng);
         errdefer _ = depth_stencil_view.Release();
 
-        // Load Shader file
-        const shader_file_path = try (path.Path{.ExeRelative = "../../src/shader.hlsl"})
-            .resolve_path(eng.general_allocator.allocator());
-        defer eng.general_allocator.allocator().free(shader_file_path);
+        const vertex_shader = try gfx.VertexShader.init_file(
+            eng.general_allocator.allocator(), 
+            path.Path{.ExeRelative = "../../src/shader.hlsl"}, 
+            "vs_main",
+            ([_]gfx.VertexInputLayoutEntry {
+                .{ .name = "POS",                   .format = .F32x3,   .per = .Vertex, },
+                .{ .name = "NORMAL",                .format = .F32x3,   .per = .Vertex, },
+                .{ .name = "TEXCOORD",  .index = 0, .format = .F32x2,   .per = .Vertex, },
+                .{ .name = "TEXCOORD",  .index = 1, .format = .I32x4,   .per = .Vertex, },
+                .{ .name = "TEXCOORD",  .index = 2, .format = .F32x4,   .per = .Vertex, },
+            })[0..],
+            eng.gfx.device
+        );
+        errdefer vertex_shader.deinit();
 
-        var shader_file = try std.fs.cwd().openFile(shader_file_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
-        defer shader_file.close();
-
-        const shader_file_size = try shader_file.getEndPos();
-
-        var shader_buffer: []u8 = try std.heap.page_allocator.alloc(u8, shader_file_size);
-        defer std.heap.page_allocator.free(shader_buffer);
-
-        if (try shader_file.readAll(shader_buffer) != shader_file_size) {
-            return error.FAILED_SHADER_FILE_READ;
-        }
-        
-        // Compile VS and PS shader blobs from hlsl source
-        var vs_blob: *zwin32.d3d.IBlob = undefined;
-        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&shader_buffer[0], shader_file_size, null, null, null, "vs_main", "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
-        defer _ = vs_blob.Release();
-
-        var vso: *d3d11.IVertexShader = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
-        errdefer _ = vso.Release();
-
-        var ps_blob: *zwin32.d3d.IBlob = undefined;
-        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&shader_buffer[0], shader_file_size, null, null, null, "ps_main", "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
-        defer _ = ps_blob.Release();
-
-        // Create vertex and pixel shaders
-        var pso: *d3d11.IPixelShader = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
-        errdefer _ = pso.Release();
-
-        const vso_input_layout_desc = [_]d3d11.INPUT_ELEMENT_DESC {
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "POS",
-                .SemanticIndex = 0,
-                .Format = zwin32.dxgi.FORMAT.R32G32B32_FLOAT,
-                .InputSlot = 0,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
-            },
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "NORMAL",
-                .SemanticIndex = 0,
-                .Format = zwin32.dxgi.FORMAT.R32G32B32_FLOAT,
-                .InputSlot = 1,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
-            },
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "TEXCOORD",
-                .SemanticIndex = 0,
-                .Format = zwin32.dxgi.FORMAT.R32G32_FLOAT,
-                .InputSlot = 2,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
-            },
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "TEXCOORD", // Bone ids
-                .SemanticIndex = 1,
-                .Format = zwin32.dxgi.FORMAT.R32G32B32A32_SINT,
-                .InputSlot = 3,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
-            },
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "TEXCOORD", // Bone weights
-                .SemanticIndex = 2,
-                .Format = zwin32.dxgi.FORMAT.R32G32B32A32_FLOAT,
-                .InputSlot = 4,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
-            },
-        };
-        var vso_input_layout: *d3d11.IInputLayout = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
-        errdefer _ = vso_input_layout.Release();
+        const pixel_shader = try gfx.PixelShader.init_file(
+            eng.general_allocator.allocator(), 
+            path.Path{.ExeRelative = "../../src/shader.hlsl"}, 
+            "ps_main",
+            eng.gfx.device
+        );
+        errdefer pixel_shader.deinit();
 
         // Define vertex buffer input
-        const vertex_buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(f32) * 3 * 3,
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-        };
-        var vertex_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&vertex_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &triangle_vertices, }, @ptrCast(&vertex_buffer)));
-        errdefer _ = vertex_buffer.Release();
+        var vertex_buffer = try gfx.Buffer.init_with_data(
+            std.mem.sliceAsBytes(triangle_vertices[0..]),
+            .Immutable,
+            .{ .VertexBuffer = true, },
+            .{},
+            eng.gfx.device
+        );
+        errdefer vertex_buffer.deinit();
 
         // Define rasterizer state
         var rasterization_states = RasterizationStates {
@@ -201,48 +166,50 @@ pub const App = struct {
         errdefer _ = rasterization_states.double_sided.Release();
 
         // Create camera constant buffer
-        const camera_constant_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(CameraStruct),
-            .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
-        };
-        var camera_data_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
-        errdefer _ = camera_data_buffer.Release();
+        const camera_constant_buffer = try gfx.Buffer.init(
+            @sizeOf(CameraStruct),
+            .Mutable,
+            .{ .ConstantBuffer = true, },
+            .{ .CpuWrite = true, },
+            eng.gfx.device
+        );
+        errdefer camera_constant_buffer.deinit();
 
         // Create the camera entity
         const camera_transform_idx = try eng.entities.insert(.{});
         (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
         // Create bone matrix constant buffer
-        const bone_matrix_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(zm.Mat) * ms.MAX_BONES,
-            .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
-        };
-        var bone_matrix_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&bone_matrix_buffer_desc, null, @ptrCast(&bone_matrix_buffer)));
-        errdefer _ = bone_matrix_buffer.Release();
+        const bone_matrix_buffer = try gfx.Buffer.init(
+            @sizeOf(zm.Mat) * ms.MAX_BONES,
+            .Mutable,
+            .{ .ConstantBuffer = true, },
+            .{ .CpuWrite = true, },
+            eng.gfx.device
+        );
+        errdefer bone_matrix_buffer.deinit();
 
         // Load model
-        const chara_model = try ms.Model.init_from_file_assimp(
+        var chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim.glb"},
             eng.gfx.device
         );
-        const tree_model = try ms.Model.init_from_file_assimp(
+        errdefer chara_model.deinit();
+
+        var tree_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../res/Demonstration.glb"}, 
             eng.gfx.device
         );
+        errdefer tree_model.deinit();
 
-        const cone_model = try ms.Model.cone(
+        var cone_model = try ms.Model.cone(
             eng.general_allocator.allocator(), 
             8, 
             eng.gfx.device
         );
+        errdefer cone_model.deinit();
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
         const demo_compound_shape_settings = try tree_model.gen_static_compound_physics_shape();
@@ -327,15 +294,14 @@ pub const App = struct {
             .character_shape = chara_shape,
         };
 
-        const model_constant_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(zm.Mat),
-            .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
-        };
-        var model_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateBuffer(&model_constant_buffer_desc, null, @ptrCast(&model_buffer)));
-        errdefer _ = model_buffer.Release();
+        const model_buffer = try gfx.Buffer.init(
+            @sizeOf(zm.Mat),
+            .Mutable,
+            .{ .ConstantBuffer = true, },
+            .{ .CpuWrite = true, },
+            eng.gfx.device
+        );
+        errdefer model_buffer.deinit();
 
         eng.physics.zphy.optimizeBroadPhase();
 
@@ -345,13 +311,12 @@ pub const App = struct {
         return Self {
             .engine = eng,
             .depth_stencil_view = depth_stencil_view,
-            .vso = vso,
-            .pso = pso,
-            .vso_input_layout = vso_input_layout,
+            .vertex_shader = vertex_shader,
+            .pixel_shader = pixel_shader,
             .vertex_buffer = vertex_buffer,
             .rasterizer_states = rasterization_states,
 
-            .camera_data_buffer = camera_data_buffer,
+            .camera_data_buffer = camera_constant_buffer,
             .camera = cm.Camera {
                 .field_of_view_y = 20.0,
                 .near_field = 0.3,
@@ -375,33 +340,6 @@ pub const App = struct {
 
             .ui = ui,
         };
-    }
-
-    pub fn deinit(self: *Self) void {
-        std.log.info("App deinit!", .{});
-        for (self.engine.entities.data.items) |*maybe_ent| {
-            if (maybe_ent.item_data) |*en| {
-                en.app.deinit();
-            }
-        }
-
-        self.engine.gfx.context.Flush();
-        self.ui.deinit();
-
-        self.cone_model.deinit();
-        self.chara_model.deinit();
-        self.tree_model.deinit();
-
-        _ = self.bone_matrix_buffer.Release();
-        _ = self.camera_data_buffer.Release();
-        _ = self.model_buffer.Release();
-        _ = self.rasterizer_states.double_sided.Release();
-        _ = self.rasterizer_states.cull_back_face.Release();
-        _ = self.vertex_buffer.Release();
-        _ = self.vso_input_layout.Release();
-        _ = self.vso.Release();
-        _ = self.pso.Release();
-        _ = self.depth_stencil_view.Release();
     }
 
     fn vecAngle(v0: zm.F32x4, v1: zm.F32x4) f32 {
@@ -547,13 +485,11 @@ pub const App = struct {
             self.camera.update(&camera_entity.transform, model_entity.transform.position + zm.f32x4(0.0, 1.5, 0.0, 0.0), self.engine);
 
             { // Update camera buffer
-                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.camera_data_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-                defer self.engine.gfx.context.Unmap(@ptrCast(self.camera_data_buffer), 0);
+                const mapped_buffer = self.camera_data_buffer.map(CameraStruct, self.engine.gfx.context) catch unreachable;
+                defer mapped_buffer.unmap();
 
-                var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-                buffer_data.view = self.camera.view_matrix;
-                buffer_data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
+                mapped_buffer.data.view = self.camera.view_matrix;
+                mapped_buffer.data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
 
             var bone_transforms = std.ArrayList(zm.Mat).init(std.heap.page_allocator);
@@ -562,13 +498,11 @@ pub const App = struct {
             model_entity.model.?.bone_transform(self.engine.time.time_since_start_of_app() * 0.3, &bone_transforms);
             
             { // Update bone matrix buffer
-                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.bone_matrix_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-                defer self.engine.gfx.context.Unmap(@ptrCast(self.bone_matrix_buffer), 0);
+                const mapped_buffer = self.bone_matrix_buffer.map([ms.MAX_BONES]zm.Mat, self.engine.gfx.context) catch unreachable;
+                defer mapped_buffer.unmap();
 
-                const buffer_data: *([ms.MAX_BONES]zm.Mat) = @ptrCast(@alignCast(mapped_subresource.pData));
-                @memset(buffer_data.*[0..], zm.identity());
-                @memcpy(buffer_data.*[0..bone_transforms.items.len], bone_transforms.items[0..]);
+                @memset(mapped_buffer.data.*[0..], zm.identity());
+                @memcpy(mapped_buffer.data.*[0..bone_transforms.items.len], bone_transforms.items[0..]);
             }
         } else |_| {}
         } else |_| {}
@@ -591,17 +525,17 @@ pub const App = struct {
         };
         self.engine.gfx.context.RSSetViewports(1, @ptrCast(&viewport));
 
-        self.engine.gfx.context.PSSetShader(self.pso, null, 0);
+        self.engine.gfx.context.PSSetShader(self.pixel_shader.pso, null, 0);
 
         self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view);
         self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
 
-        self.engine.gfx.context.VSSetShader(self.vso, null, 0);
-        self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer));
-        self.engine.gfx.context.VSSetConstantBuffers(2, 1, @ptrCast(&self.bone_matrix_buffer));
+        self.engine.gfx.context.VSSetShader(self.vertex_shader.vso, null, 0);
+        self.engine.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_data_buffer.buffer));
+        self.engine.gfx.context.VSSetConstantBuffers(2, 1, @ptrCast(&self.bone_matrix_buffer.buffer));
 
         self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        self.engine.gfx.context.IASetInputLayout(self.vso_input_layout);
+        self.engine.gfx.context.IASetInputLayout(self.vertex_shader.layout);
 
         // Iterate through all entities finding those which contain a mesh to be rendered
         for (self.engine.entities.data.items) |*it| {
@@ -620,7 +554,7 @@ pub const App = struct {
                     self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&m.buffers.bone_weights), @ptrCast(&bone_weight_stride), @ptrCast(&offset));
                     self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
                     // Set model constant buffer
-                    self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer));
+                    self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer.buffer));
 
                     // Finally, render the model
                     self.recursive_render_model(m, &m.nodes_list[m.root_nodes[0]], entity.transform.generate_model_matrix());
@@ -762,12 +696,10 @@ pub const App = struct {
 
         if (model_node.mesh) |*mesh_set| {
             { // Setup model buffer from transform
-                var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-                zwin32.hrPanicOnFail(self.engine.gfx.context.Map(@ptrCast(self.model_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-                defer self.engine.gfx.context.Unmap(@ptrCast(self.model_buffer), 0);
+                const mapped_buffer = self.model_buffer.map(zm.Mat, self.engine.gfx.context) catch unreachable;
+                defer mapped_buffer.unmap();
 
-                const buffer_data: *zm.Mat = @ptrCast(@alignCast(mapped_subresource.pData));
-                buffer_data.* = node_model_matrix;
+                mapped_buffer.data.* = node_model_matrix;
             }
 
             for (mesh_set.primitives) |maybe_prim| {

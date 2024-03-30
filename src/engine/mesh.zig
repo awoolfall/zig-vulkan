@@ -84,7 +84,7 @@ pub const MeshSet = struct {
     primitives: [MAX_PRIMITIVES_PER_SET]?usize,
     physics_shape_settings: *zphy.ShapeSettings,
 
-    pub fn deinit(self: *MeshSet) void {
+    pub fn deinit(self: *const MeshSet) void {
         self.physics_shape_settings.release();
     }
 
