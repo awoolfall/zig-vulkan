@@ -4,7 +4,7 @@ const zmesh = @import("zmesh");
 const zm = @import("zmath");
 const hrPanic = zwin32.hrPanicOnFail;
 
-pub const d3d11 = @import("gfx/d3d11.zig");
+pub const _gfx = @import("gfx/gfx.zig");
 pub const w32 = @import("platform/windows.zig");
 pub const input = @import("input/input.zig");
 pub const time = @import("engine/time.zig");
@@ -33,7 +33,7 @@ pub fn Engine(comptime App: type) type {
         pub const EntityList = gen.GenerationalList(EntitySuperStruct);
 
         window: w32.Win32Window,
-        gfx: d3d11.D3D11State,
+        gfx: _gfx.GfxState,
         image: image.ImageLoader,
         physics: physics.PhysicsSystem,
         input: input.InputState,
@@ -90,7 +90,7 @@ pub fn Engine(comptime App: type) type {
             defer engine.window.deinit();
 
             Log.debug("Calling GFX init!", .{});
-            engine.gfx = try d3d11.D3D11State.init(&engine.window);
+            engine.gfx = try _gfx.GfxState.init(&engine.window);
             defer engine.gfx.deinit();
 
             Log.debug("Calling physics init", .{});

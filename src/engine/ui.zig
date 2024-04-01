@@ -2,7 +2,7 @@ const std = @import("std");
 const win32 = @import("zwin32");
 const d3d11 = win32.d3d11;
 const zstbi = @import("zstbi");
-const gfx_d3d11 = @import("../gfx/d3d11.zig");
+const _gfx = @import("../gfx/gfx.zig");
 const zm = @import("zmath");
 const _font = @import("font.zig");
 const path = @import("path.zig");
@@ -51,7 +51,7 @@ pub const UiRenderer = struct {
         }
     }
 
-    pub fn init(alloc: std.mem.Allocator, gfx: *gfx_d3d11.D3D11State) !UiRenderer {
+    pub fn init(alloc: std.mem.Allocator, gfx: *_gfx.GfxState) !UiRenderer {
         // construct ui object
         return UiRenderer {
             ._allocator = alloc,
@@ -74,10 +74,10 @@ pub const UiRenderer = struct {
         x_pos: i32,
         y_pos: i32,
         props: _font.Font.FontRenderProperties2D,
-        rtv: *d3d11.IRenderTargetView, 
+        rtv: _gfx.RenderTargetView, 
         rtv_width: i32,
         rtv_height: i32,
-        gfx: *gfx_d3d11.D3D11State,
+        gfx: *_gfx.GfxState,
     ) void {
         self.fonts[@intFromEnum(font)].render_text_2d(
             text, x_pos, y_pos, props, rtv, rtv_width, rtv_height, gfx
@@ -88,10 +88,10 @@ pub const UiRenderer = struct {
         self: *UiRenderer,
         rect_pixels: RectPixels,
         props: QuadRenderer.QuadProperties,
-        rtv: *d3d11.IRenderTargetView, 
+        rtv: _gfx.RenderTargetView, 
         rtv_width: i32,
         rtv_height: i32,
-        gfx: *gfx_d3d11.D3D11State,
+        gfx: *_gfx.GfxState,
     ) void {
         self.quad_renderer.render_quad(
             rect_pixels, props, rtv, rtv_width, rtv_height, gfx
@@ -100,31 +100,29 @@ pub const UiRenderer = struct {
 };
 
 pub const QuadRenderer = struct {
-    sampler: *d3d11.ISamplerState,
-    rasterizer_state: *d3d11.IRasterizerState,
-    blend_state: *d3d11.IBlendState,
+    sampler: _gfx.Sampler,
+    rasterizer_state: _gfx.RasterizationState,
+    blend_state: _gfx.BlendState,
 
-    quad_vso: *d3d11.IVertexShader,
-    quad_input_layout: *d3d11.IInputLayout,
-    quad_pso: *d3d11.IPixelShader,
-    quad_buffer_vertex: *d3d11.IBuffer,
-    quad_buffer_pixel: *d3d11.IBuffer,
+    quad_vso: _gfx.VertexShader,
+    quad_pso: _gfx.PixelShader,
+    quad_buffer_vertex: _gfx.Buffer,
+    quad_buffer_pixel: _gfx.Buffer,
 
     const QUAD_SHADER_HLSL = @embedFile("quad_shader.hlsl");
 
     pub fn deinit(self: *QuadRenderer) void {
-        _ = self.blend_state.Release();
-        _ = self.rasterizer_state.Release();
-        _ = self.sampler.Release();
+        self.blend_state.deinit();
+        self.rasterizer_state.deinit();
+        self.sampler.deinit();
 
-        _ = self.quad_buffer_vertex.Release();
-        _ = self.quad_buffer_pixel.Release();
-        _ = self.quad_input_layout.Release();
-        _ = self.quad_vso.Release();
-        _ = self.quad_pso.Release();
+        self.quad_vso.deinit();
+        self.quad_pso.deinit();
+        self.quad_buffer_vertex.deinit();
+        self.quad_buffer_pixel.deinit();
     }
 
-    pub fn init(gfx: *gfx_d3d11.D3D11State) !QuadRenderer {
+    pub fn init(gfx: *_gfx.GfxState) !QuadRenderer {
         // construct ui object
         var ui = QuadRenderer {
             .sampler = undefined,
@@ -132,95 +130,65 @@ pub const QuadRenderer = struct {
             .blend_state = undefined,
 
             .quad_vso = undefined,
-            .quad_input_layout = undefined,
             .quad_pso = undefined,
             .quad_buffer_vertex = undefined,
             .quad_buffer_pixel = undefined,
         };
 
         // create the quad shaders
-        var quad_vs_blob: *win32.d3d.IBlob = undefined;
-        try win32.hrErrorOnFail(win32.d3dcompiler.D3DCompile(&QUAD_SHADER_HLSL[0], QUAD_SHADER_HLSL.len, null, null, null, "vs_main", "vs_5_0", 0, 0, @ptrCast(&quad_vs_blob), null));
-        defer _ = quad_vs_blob.Release();
+        ui.quad_vso = try _gfx.VertexShader.init_buffer(
+            QUAD_SHADER_HLSL,
+            "vs_main",
+            ([_]_gfx.VertexInputLayoutEntry {})[0..],
+            gfx.device
+        );
+        errdefer ui.quad_vso.deinit();
 
-        try win32.hrErrorOnFail(gfx.device.CreateVertexShader(quad_vs_blob.GetBufferPointer(), quad_vs_blob.GetBufferSize(), null, @ptrCast(&ui.quad_vso)));
-        errdefer _ = ui.quad_vso.Release();
-
-        var quad_ps_blob: *win32.d3d.IBlob = undefined;
-        try win32.hrErrorOnFail(win32.d3dcompiler.D3DCompile(&QUAD_SHADER_HLSL[0], QUAD_SHADER_HLSL.len, null, null, null, "ps_main", "ps_5_0", 0, 0, @ptrCast(&quad_ps_blob), null));
-        defer _ = quad_ps_blob.Release();
-
-        try win32.hrErrorOnFail(gfx.device.CreatePixelShader(quad_ps_blob.GetBufferPointer(), quad_ps_blob.GetBufferSize(), null, @ptrCast(&ui.quad_pso)));
-        errdefer _ = ui.quad_pso.Release();
-
-        // create vertex input layout
-        const quad_input_layout_desc = [_]d3d11.INPUT_ELEMENT_DESC {
-        };
-        try win32.hrErrorOnFail(gfx.device.CreateInputLayout(quad_input_layout_desc[0..], quad_input_layout_desc.len, quad_vs_blob.GetBufferPointer(), quad_vs_blob.GetBufferSize(), @ptrCast(&ui.quad_input_layout)));
-        errdefer _ = ui.quad_input_layout.Release();
+        ui.quad_pso = try _gfx.PixelShader.init_buffer(
+            QUAD_SHADER_HLSL,
+            "ps_main",
+            gfx.device
+        );
+        errdefer ui.quad_pso.deinit();
 
         // create quad constant buffers
-        const quad_buffer_vertex_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(QuadBufferVertexBuffer),
-            .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
-        };
-        try win32.hrErrorOnFail(gfx.device.CreateBuffer(&quad_buffer_vertex_desc, null, @ptrCast(&ui.quad_buffer_vertex)));
-        errdefer _ = ui.quad_buffer_vertex.Release();
+        ui.quad_buffer_vertex = try _gfx.Buffer.init(
+            @sizeOf(QuadBufferVertexBuffer),
+            .{ .ConstantBuffer = true, },
+            .{ .CpuWrite = true, },
+            gfx.device
+        );
+        errdefer ui.quad_buffer_vertex.deinit();
 
-        const quad_buffer_pixel_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(QuadBufferPixelBuffer),
-            .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
-        };
-        try win32.hrErrorOnFail(gfx.device.CreateBuffer(&quad_buffer_pixel_desc, null, @ptrCast(&ui.quad_buffer_pixel)));
-        errdefer _ = ui.quad_buffer_pixel.Release();
+        ui.quad_buffer_pixel = try _gfx.Buffer.init(
+            @sizeOf(QuadBufferPixelBuffer),
+            .{ .ConstantBuffer = true, },
+            .{ .CpuWrite = true, },
+            gfx.device
+        );
+        errdefer ui.quad_buffer_pixel.deinit();
 
         // create sampler
-        const sampler_desc = d3d11.SAMPLER_DESC {
-            .Filter = d3d11.FILTER.MIN_MAG_LINEAR_MIP_POINT,
-            .AddressU = d3d11.TEXTURE_ADDRESS_MODE.WRAP,
-            .AddressV = d3d11.TEXTURE_ADDRESS_MODE.WRAP,
-            .AddressW = d3d11.TEXTURE_ADDRESS_MODE.WRAP,
-            .MipLODBias = 0.0,
-            .MaxAnisotropy = 1,
-            .ComparisonFunc = d3d11.COMPARISON_FUNC.NEVER,
-            .BorderColor = [4]win32.w32.FLOAT{0.0, 0.0, 0.0, 1.0},
-            .MinLOD = 0.0,
-            .MaxLOD = 0.0,
-        };
-        try win32.hrErrorOnFail(gfx.device.CreateSamplerState(&sampler_desc, @ptrCast(&ui.sampler)));
-        errdefer _ = ui.sampler.Release();
+        ui.sampler = try _gfx.Sampler.init(
+            .{
+                .filter_min_mag = .Linear,
+                .filter_mip = .Point,
+                .border_mode = .Wrap,
+            },
+            gfx.device
+        );
+        errdefer ui.sampler.deinit();
 
         // create rasterizer state
-        var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
-            .FillMode = d3d11.FILL_MODE.SOLID,
-            .CullMode = d3d11.CULL_MODE.BACK,
-            .FrontCounterClockwise = 1,
-        };
-        try win32.hrErrorOnFail(gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&ui.rasterizer_state)));
-        errdefer _ = ui.rasterizer_state.Release();
+        ui.rasterizer_state = try _gfx.RasterizationState.init(
+            .{ .FillBack = false, .FrontCounterClockwise = true, },
+            gfx.device
+        );
+        errdefer ui.rasterizer_state.deinit();
 
         // create blend state
-        var blend_state_desc = d3d11.BLEND_DESC {
-            .AlphaToCoverageEnable = 0,
-            .IndependentBlendEnable = 0,
-            .RenderTarget = [_]d3d11.RENDER_TARGET_BLEND_DESC {undefined} ** 8,
-        };
-        blend_state_desc.RenderTarget[0] = .{
-            .BlendEnable = 1,
-            .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
-            .SrcBlend = d3d11.BLEND.SRC_ALPHA,
-            .DestBlend = d3d11.BLEND.INV_SRC_ALPHA,
-            .BlendOp = d3d11.BLEND_OP.ADD,
-            .SrcBlendAlpha = d3d11.BLEND.ONE,
-            .DestBlendAlpha = d3d11.BLEND.ZERO,
-            .BlendOpAlpha = d3d11.BLEND_OP.ADD,
-        };
-        try win32.hrErrorOnFail(gfx.device.CreateBlendState(&blend_state_desc, @ptrCast(&ui.blend_state)));
-        errdefer _ = ui.blend_state.Release();
+        ui.blend_state = try _gfx.BlendState.init(([_]_gfx.BlendType{.Simple})[0..], gfx);
+        errdefer ui.blend_state.deinit();
 
         // finally return the ui structure
         return ui;
@@ -234,18 +202,16 @@ pub const QuadRenderer = struct {
         self: *QuadRenderer,
         rect_pixels: RectPixels,
         props: QuadProperties,
-        rtv: *d3d11.IRenderTargetView, 
+        rtv: _gfx.RenderTargetView, 
         rtv_width: i32,
         rtv_height: i32,
-        gfx: *gfx_d3d11.D3D11State,
+        gfx: *_gfx.GfxState,
     ) void {
         { // Setup quad vertex info buffer
-            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-            win32.hrPanicOnFail(gfx.context.Map(@ptrCast(self.quad_buffer_vertex), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-            defer gfx.context.Unmap(@ptrCast(self.quad_buffer_vertex), 0);
+            const mapped_buffer = self.quad_buffer_vertex.map(QuadBufferVertexBuffer, gfx.context) catch unreachable;
+            defer mapped_buffer.unmap();
 
-            const buffer_data: *QuadBufferVertexBuffer = @ptrCast(@alignCast(mapped_subresource.pData));
-            buffer_data.* = QuadBufferVertexBuffer {
+            mapped_buffer.data.* = QuadBufferVertexBuffer {
                 .quad_bounds = Bounds {
                     .left = ((@as(f32, @floatFromInt(rect_pixels.left)) / @as(f32, @floatFromInt(rtv_width))) * 2.0) - 1.0,
                     .right = ((@as(f32, @floatFromInt(rect_pixels.left + rect_pixels.width)) / @as(f32, @floatFromInt(rtv_width))) * 2.0) - 1.0,
@@ -255,12 +221,10 @@ pub const QuadRenderer = struct {
             };
         }
         { // Setup quad pixel info buffer
-            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-            win32.hrPanicOnFail(gfx.context.Map(@ptrCast(self.quad_buffer_pixel), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-            defer gfx.context.Unmap(@ptrCast(self.quad_buffer_pixel), 0);
+            const mapped_buffer = self.quad_buffer_pixel.map(QuadBufferPixelBuffer, gfx.context) catch unreachable;
+            defer mapped_buffer.unmap();
 
-            const buffer_data: *QuadBufferPixelBuffer = @ptrCast(@alignCast(mapped_subresource.pData));
-            buffer_data.* = QuadBufferPixelBuffer {
+            mapped_buffer.data.* = QuadBufferPixelBuffer {
                 .colour = props.colour,
             };
         }
@@ -275,22 +239,20 @@ pub const QuadRenderer = struct {
         };
         gfx.context.RSSetViewports(1, @ptrCast(&viewport));
 
-        gfx.context.PSSetShader(self.quad_pso, null, 0);
+        gfx.context.PSSetShader(self.quad_pso.pso, null, 0);
 
         gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
-        gfx.context.OMSetBlendState(@ptrCast(self.blend_state), null, 0xffffffff);
+        gfx.context.OMSetBlendState(@ptrCast(self.blend_state.state), null, 0xffffffff);
 
-        gfx.context.VSSetShader(self.quad_vso, null, 0);
-        gfx.context.IASetInputLayout(null);
+        gfx.context.VSSetShader(self.quad_vso.vso, null, 0);
+        gfx.context.IASetInputLayout(self.quad_vso.layout);
 
         gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        gfx.context.RSSetState(self.rasterizer_state);
+        gfx.context.RSSetState(self.rasterizer_state.state);
 
-        gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_buffer_vertex));
-        gfx.context.PSSetConstantBuffers(1, 1, @ptrCast(&self.quad_buffer_pixel));
-        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler));
-
-        gfx.context.IASetInputLayout(self.quad_input_layout);
+        gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_buffer_vertex.buffer));
+        gfx.context.PSSetConstantBuffers(1, 1, @ptrCast(&self.quad_buffer_pixel.buffer));
+        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
 
         gfx.context.Draw(6, 0);
     }

@@ -4,7 +4,7 @@ const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
 const en = @import("../engine.zig");
 const tm = @import("../engine/time.zig");
-const graphics = @import("../gfx/d3d11.zig");
+const _gfx = @import("../gfx/gfx.zig");
 const debug = @import("physics_debug_renderer.zig");
 
 pub const PhysicsSystem = struct {
@@ -22,7 +22,7 @@ pub const PhysicsSystem = struct {
     zphy: *zphy.PhysicsSystem, 
     next_update_time: i128 = 0,
 
-    pub fn init(alloc: std.mem.Allocator, gfx: *graphics.D3D11State) !Self {
+    pub fn init(alloc: std.mem.Allocator, gfx: *_gfx.GfxState) !Self {
         try zphy.init(alloc, .{});
         errdefer zphy.deinit();
 

@@ -852,7 +852,7 @@ pub const Model = struct {
         return resolved_transforms[node_idx].?;
     }
 
-    pub fn cone(alloc: std.mem.Allocator, slices: i32, gfx: *d3d11.IDevice) !Model {
+    pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape, gfx: *d3d11.IDevice) !Model {
         var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
         errdefer alloc.destroy(model_arena_allocator);
 
@@ -860,31 +860,21 @@ pub const Model = struct {
         errdefer model_arena_allocator.deinit();
         var model_arena = model_arena_allocator.allocator();
 
-        // Generate cone shape
-        var cone_shape = zmesh.Shape.initCone(slices, 6);
-        defer cone_shape.deinit();
+        shape.computeNormals();
 
-        // rotate to point upwards
-        cone_shape.rotate(std.math.degreesToRadians(f32, -90.0), 1.0, 0.0, 0.0);
-
-        // flat shaded
-        cone_shape.unweld();
-        
-        cone_shape.computeNormals();
-
-        const bone_ids = try alloc.alloc([4]i32, cone_shape.positions.len);
+        const bone_ids = try alloc.alloc([4]i32, shape.positions.len);
         defer alloc.free(bone_ids);
         @memset(bone_ids, [_]i32{MAX_BONES - 1} ** 4);
 
-        const bone_weights = try alloc.alloc([4]f32, cone_shape.positions.len);
+        const bone_weights = try alloc.alloc([4]f32, shape.positions.len);
         defer alloc.free(bone_weights);
         @memset(bone_weights, [4]f32{1.0, 0.0, 0.0, 0.0});
 
         // Construct gfx buffers
         const buffers = try Buffers.init_with_data(
-            cone_shape.indices,
-            cone_shape.positions,
-            cone_shape.normals.?,
+            shape.indices,
+            shape.positions,
+            shape.normals.?,
             ([_]([2]f32){})[0..0],
             ([_]([4]f32){})[0..0],
             bone_ids,
@@ -898,13 +888,13 @@ pub const Model = struct {
         errdefer model_arena.free(mp);
 
         mp[0] = MeshPrimitive {
-            .positions = cone_shape.positions,
+            .positions = shape.positions,
             .topology = .Triangles,
             .indices_offset = 0,
             .pos_offset = 0,
             .nor_offset = 0,
-            .num_indices = cone_shape.indices.len,
-            .num_vertices = cone_shape.positions.len,
+            .num_indices = shape.indices.len,
+            .num_vertices = shape.positions.len,
             .tangents_offset = 0,
             .tex_coord_offset = 0,
             .material_descriptor = MaterialDescriptor{},
@@ -916,7 +906,7 @@ pub const Model = struct {
         mn[0] = ModelNode {
             .mesh = MeshSet {
                 .primitives = .{null} ** MAX_PRIMITIVES_PER_SET,
-                .physics_shape_settings = @ptrCast(try zphy.CylinderShapeSettings.create(0.5, 0.5)),
+                .physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(@ptrCast(shape.positions.ptr), @intCast(shape.positions.len), @sizeOf([3]f32))),
             },
         };
         mn[0].mesh.?.primitives[0] = 0;
@@ -938,6 +928,31 @@ pub const Model = struct {
             .bone_mapping = std.StringHashMap(i32).init(model_arena),
             .bone_info = std.ArrayList(BoneInfo).init(model_arena),
         };
+    }
+
+    pub fn cone(alloc: std.mem.Allocator, slices: i32, gfx: *d3d11.IDevice) !Model {
+        // Generate cone shape
+        var cone_shape = zmesh.Shape.initCone(slices, 6);
+        defer cone_shape.deinit();
+
+        // rotate to point upwards
+        cone_shape.rotate(std.math.degreesToRadians(f32, -90.0), 1.0, 0.0, 0.0);
+
+        // flat shaded
+        cone_shape.unweld();
+
+        return try init_from_shape(alloc, &cone_shape, gfx);
+    }
+
+    pub fn plane(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *d3d11.IDevice) !Model {
+        // Generate cone shape
+        var shape = zmesh.Shape.initPlane(slices, stacks);
+        defer shape.deinit();
+
+        // rotate to point upwards
+        shape.rotate(std.math.degreesToRadians(f32, -90.0), 1.0, 0.0, 0.0);
+
+        return try init_from_shape(alloc, &shape, gfx);
     }
 
     pub fn bone_transform(self: *const Self, time_in_seconds: f64, transforms: *std.ArrayList(zm.Mat)) void {

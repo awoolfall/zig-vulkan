@@ -3,7 +3,7 @@ const zphy = @import("zphysics");
 const zwin32 = @import("zwin32");
 const zm = @import("zmath");
 const d3d11 = zwin32.d3d11;
-const graphics = @import("../gfx/d3d11.zig");
+const _gfx = @import("../gfx/gfx.zig");
 const cm = @import("../engine/camera.zig");
 const tm = @import("../engine/transform.zig");
 
@@ -34,7 +34,7 @@ pub const D3D11DebugRenderer = extern struct {
 
     primitives: [2048]MyRenderPrimitive = [_]MyRenderPrimitive{.{}} ** 2048,
     prim_head: i32 = -1,
-    gfx: *graphics.D3D11State,
+    gfx: *_gfx.GfxState,
     gfx_data: extern struct {
         vso_input_layout: *d3d11.IInputLayout,
         vso: *d3d11.IVertexShader,
@@ -53,7 +53,7 @@ pub const D3D11DebugRenderer = extern struct {
         .drawText3D = drawText3D,
     };
 
-    pub fn init(gfx: *graphics.D3D11State) !D3D11DebugRenderer {
+    pub fn init(gfx: *_gfx.GfxState) !D3D11DebugRenderer {
         const shader_buffer = \\
 \\  cbuffer camera_data : register(b0)
 \\  {

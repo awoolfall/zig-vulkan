@@ -77,7 +77,7 @@ pub const App = struct {
     bone_matrix_buffer: gfx.Buffer,
 
     chara_model: ms.Model,
-    tree_model: ms.Model,
+    terrain_model: ms.Model,
     cone_model: ms.Model,
 
     ui: _ui.UiRenderer,
@@ -95,7 +95,7 @@ pub const App = struct {
 
         self.cone_model.deinit();
         self.chara_model.deinit();
-        self.tree_model.deinit();
+        self.terrain_model.deinit();
 
         self.bone_matrix_buffer.deinit();
         self.camera_data_buffer.deinit();
@@ -122,11 +122,11 @@ pub const App = struct {
             path.Path{.ExeRelative = "../../src/shader.hlsl"}, 
             "vs_main",
             ([_]gfx.VertexInputLayoutEntry {
-                .{ .name = "POS",                   .format = .F32x3,   .per = .Vertex, },
-                .{ .name = "NORMAL",                .format = .F32x3,   .per = .Vertex, },
-                .{ .name = "TEXCOORD",  .index = 0, .format = .F32x2,   .per = .Vertex, },
-                .{ .name = "TEXCOORD",  .index = 1, .format = .I32x4,   .per = .Vertex, },
-                .{ .name = "TEXCOORD",  .index = 2, .format = .F32x4,   .per = .Vertex, },
+                .{ .name = "POS",                   .format = .F32x3,   .per = .Vertex, .slot = 0, },
+                .{ .name = "NORMAL",                .format = .F32x3,   .per = .Vertex, .slot = 1, },
+                .{ .name = "TEXCOORD",  .index = 0, .format = .F32x2,   .per = .Vertex, .slot = 2, },
+                .{ .name = "TEXCOORD",  .index = 1, .format = .I32x4,   .per = .Vertex, .slot = 3, },
+                .{ .name = "TEXCOORD",  .index = 2, .format = .F32x4,   .per = .Vertex, .slot = 4, },
             })[0..],
             eng.gfx.device
         );
@@ -195,12 +195,18 @@ pub const App = struct {
         );
         errdefer chara_model.deinit();
 
-        var tree_model = try ms.Model.init_from_file_assimp(
-            eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/Demonstration.glb"}, 
+        // var terrain_model = try ms.Model.init_from_file_assimp(
+        //      eng.general_allocator.allocator(),
+        //      path.Path{.ExeRelative = "../../res/Demonstration.glb"},
+        //      eng.gfx.device
+        // );
+        // errdefer terrain_model.deinit();
+        var terrain_model = try ms.Model.plane(
+            eng.general_allocator.allocator(),
+            1, 1,
             eng.gfx.device
         );
-        errdefer tree_model.deinit();
+        errdefer terrain_model.deinit();
 
         var cone_model = try ms.Model.cone(
             eng.general_allocator.allocator(), 
@@ -210,21 +216,27 @@ pub const App = struct {
         errdefer cone_model.deinit();
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
-        const demo_compound_shape_settings = try tree_model.gen_static_compound_physics_shape();
+        const demo_compound_shape_settings = try terrain_model.gen_static_compound_physics_shape();
         defer demo_compound_shape_settings.release();
 
-        const demo_compound_shape = try demo_compound_shape_settings.createShape();
+        const scaled_demo_shape = try zphy.DecoratedShapeSettings.createScaled(demo_compound_shape_settings.asShapeSettings(), [3]f32{100.0, 1.0, 100.0});
+        defer scaled_demo_shape.release();
+
+        const demo_compound_shape = try scaled_demo_shape.createShape();
         defer demo_compound_shape.release();
 
         _ = try eng.entities.insert(Engine.EntitySuperStruct {
-            .model = &tree_model,
+            .model = &terrain_model,
             .physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
-                .position = zm.f32x4s(0.0),
+                .position = zm.f32x4(-50.0, -5.0, 50.0, 1.0),
                 .rotation = zm.qidentity(),
                 .shape = demo_compound_shape,
                 .motion_type = .static,
                 .object_layer = ph.object_layers.non_moving,
             }, .activate),
+            .transform = Transform {
+                .scale = zm.f32x4s(100.0),
+            },
         });
 
         const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
@@ -332,7 +344,7 @@ pub const App = struct {
             .bone_matrix_buffer = bone_matrix_buffer,
 
             .chara_model = chara_model,
-            .tree_model = tree_model,
+            .terrain_model = terrain_model,
             .cone_model = cone_model,
 
             .ui = ui,
@@ -506,7 +518,7 @@ pub const App = struct {
             std.log.err("unable to begin frame: {}", .{err});
             return;
         };
-        self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
+        self.engine.gfx.context.ClearRenderTargetView(rtv.view, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view.view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
         const viewport = d3d11.VIEWPORT {
@@ -521,7 +533,7 @@ pub const App = struct {
 
         self.engine.gfx.context.PSSetShader(self.pixel_shader.pso, null, 0);
 
-        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view.view);
+        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), self.depth_stencil_view.view);
         self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
 
         self.engine.gfx.context.VSSetShader(self.vertex_shader.vso, null, 0);
@@ -593,7 +605,7 @@ pub const App = struct {
                 _ = camera_entity;
                 self.engine.physics._interfaces.debug_renderer.draw_bodies(
                     self.engine.physics.zphy, 
-                    rtv, 
+                    rtv.view, 
                     self.engine.gfx.swapchain_size.width,
                     self.engine.gfx.swapchain_size.height,
                     zm.matToArr(self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())),
@@ -790,7 +802,7 @@ pub const App = struct {
         y_pos: i32,
         text_props: font.Font.FontRenderProperties2D,
         quad_props: _ui.QuadRenderer.QuadProperties,
-        rtv: *d3d11.IRenderTargetView,
+        rtv: gfx.RenderTargetView,
         rtv_width: i32,
         rtv_height: i32,
     ) void {
