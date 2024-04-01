@@ -54,13 +54,13 @@ pub const App = struct {
     };
 
     const RasterizationStates = struct {
-        double_sided: *d3d11.IRasterizerState,
-        cull_back_face: *d3d11.IRasterizerState,
+        double_sided: gfx.RasterizationState,
+        cull_back_face: gfx.RasterizationState,
     };
 
     engine: *engine.Engine(Self),
 
-    depth_stencil_view: *d3d11.IDepthStencilView,
+    depth_stencil_view: gfx.DepthStencilView,
 
     vertex_shader: gfx.VertexShader,
     pixel_shader: gfx.PixelShader,
@@ -102,9 +102,9 @@ pub const App = struct {
         self.model_buffer.deinit();
         self.vertex_buffer.deinit();
 
-        _ = self.rasterizer_states.double_sided.Release();
-        _ = self.rasterizer_states.cull_back_face.Release();
-        _ = self.depth_stencil_view.Release();
+        self.rasterizer_states.double_sided.deinit();
+        self.rasterizer_states.cull_back_face.deinit();
+        self.depth_stencil_view.deinit();
 
         self.vertex_shader.deinit();
         self.pixel_shader.deinit();
@@ -112,9 +112,10 @@ pub const App = struct {
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
+        // eng.time.set_target_frame_rate(10.0);
 
-        var depth_stencil_view: *d3d11.IDepthStencilView = try create_depth_stencil_view(eng);
-        errdefer _ = depth_stencil_view.Release();
+        var depth_stencil_view = try create_depth_stencil_view(eng);
+        errdefer depth_stencil_view.deinit();
 
         const vertex_shader = try gfx.VertexShader.init_file(
             eng.general_allocator.allocator(), 
@@ -142,7 +143,6 @@ pub const App = struct {
         // Define vertex buffer input
         var vertex_buffer = try gfx.Buffer.init_with_data(
             std.mem.sliceAsBytes(triangle_vertices[0..]),
-            .Immutable,
             .{ .VertexBuffer = true, },
             .{},
             eng.gfx.device
@@ -151,24 +151,23 @@ pub const App = struct {
 
         // Define rasterizer state
         var rasterization_states = RasterizationStates {
-            .double_sided = undefined,
-            .cull_back_face = undefined,
+            .double_sided = try gfx.RasterizationState.init(
+                .{ .FillFront = true, .FillBack = true, },
+                eng.gfx.device
+            ),
+            .cull_back_face = try gfx.RasterizationState.init(
+                .{ .FillFront = true, .FillBack = false, },
+                eng.gfx.device
+            ),
         };
-        var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
-            .FillMode = d3d11.FILL_MODE.SOLID,
-            .CullMode = d3d11.CULL_MODE.BACK,
-        };
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_states.cull_back_face)));
-        errdefer _ = rasterization_states.cull_back_face.Release();
-
-        rasterizer_state_desc.CullMode = d3d11.CULL_MODE.NONE;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_states.double_sided)));
-        errdefer _ = rasterization_states.double_sided.Release();
+        errdefer {
+            rasterization_states.double_sided.deinit();
+            rasterization_states.cull_back_face.deinit();
+        }
 
         // Create camera constant buffer
         const camera_constant_buffer = try gfx.Buffer.init(
             @sizeOf(CameraStruct),
-            .Mutable,
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
             eng.gfx.device
@@ -182,7 +181,6 @@ pub const App = struct {
         // Create bone matrix constant buffer
         const bone_matrix_buffer = try gfx.Buffer.init(
             @sizeOf(zm.Mat) * ms.MAX_BONES,
-            .Mutable,
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
             eng.gfx.device
@@ -296,7 +294,6 @@ pub const App = struct {
 
         const model_buffer = try gfx.Buffer.init(
             @sizeOf(zm.Mat),
-            .Mutable,
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
             eng.gfx.device
@@ -439,9 +436,6 @@ pub const App = struct {
         if (self.engine.time.last_frame_time_s > 1.0) {
             std.log.warn("Skipping physics for this frame since the frame time was too large at {}s", .{self.engine.time.last_frame_time_s});
         } else {
-            self.engine.physics.zphy.update(self.engine.time.delta_time_f32(), .{}) 
-                catch std.log.err("Unable to update physics", .{});
-
             if (self.engine.entities.get(self.model_idx)) |model_entity| {
                 const p0 = zm.loadArr3(model_entity.app.chara_data.?.character_physics.getPosition());
                 //model_entity.app.chara_data.?.character_physics.update(self.engine.time.delta_time_f32(), [3]f32{0.0, -9.8, 0.0}, .{});
@@ -513,7 +507,7 @@ pub const App = struct {
             return;
         };
         self.engine.gfx.context.ClearRenderTargetView(rtv, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
-        self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
+        self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view.view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(self.engine.gfx.swapchain_size.width),
@@ -527,7 +521,7 @@ pub const App = struct {
 
         self.engine.gfx.context.PSSetShader(self.pixel_shader.pso, null, 0);
 
-        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view);
+        self.engine.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), self.depth_stencil_view.view);
         self.engine.gfx.context.OMSetBlendState(null, null, 0xffffffff);
 
         self.engine.gfx.context.VSSetShader(self.vertex_shader.vso, null, 0);
@@ -707,9 +701,9 @@ pub const App = struct {
                     const p = &model.mesh_list[prim_idx];
 
                     if (p.material_descriptor.double_sided) {
-                        self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided);
+                        self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided.state);
                     } else {
-                        self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face);
+                        self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face.state);
                     }
 
                     if (p.has_indices()) {
@@ -758,42 +752,21 @@ pub const App = struct {
         }
     }
 
-    pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !*d3d11.IDepthStencilView {
-        const depth_format = zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT;
-        const depth_texture_desc = d3d11.TEXTURE2D_DESC {
-            .Width = @intCast(eng.gfx.swapchain_size.width),
-            .Height = @intCast(eng.gfx.swapchain_size.height),
-            .MipLevels = 1,
-            .ArraySize = 1,
-            .Format = depth_format,
-            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
-                .Count = 1,
-                .Quality = 0,
+    pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !gfx.DepthStencilView {
+        const depth_texture = try gfx.Texture2D.init(
+            gfx.Texture2D.Descriptor {
+                .width = @intCast(eng.gfx.swapchain_size.width),
+                .height = @intCast(eng.gfx.swapchain_size.height),
+                .format = .D24S8_Unorm_Uint,
             },
-            .Usage = d3d11.USAGE.DEFAULT,
-            .BindFlags = d3d11.BIND_FLAG {.DEPTH_STENCIL = true,},
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG {},
-            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
-        };
-        var depth_texture: *d3d11.ITexture2D = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateTexture2D(&depth_texture_desc, null, @ptrCast(&depth_texture)));
-        defer _ = depth_texture.Release();
+            .{ .DepthStencil = true, },
+            .{ .GpuWrite = true, },
+            null,
+            eng.gfx.device
+        );
+        defer depth_texture.deinit();
 
-        const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
-            .Format = depth_format,
-            .ViewDimension = d3d11.DSV_DIMENSION.TEXTURE2D,
-            .u = .{
-                .Texture2D = d3d11.TEX2D_DSV {
-                    .MipSlice = 0,
-                },
-            },
-            .Flags = d3d11.DSV_FLAGS {},
-        };
-        var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
-        try zwin32.hrErrorOnFail(eng.gfx.device.CreateDepthStencilView(@ptrCast(depth_texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
-        errdefer _ = depth_stencil_view.Release();
-
-        return depth_stencil_view;
+        return try gfx.DepthStencilView.init_from_texture2d(&depth_texture, eng.gfx.device);
     }
     
     pub fn window_event_received(self: *Self, event: *const window.WindowEvent) void {
@@ -801,7 +774,7 @@ pub const App = struct {
             .EVENTS_CLEARED => { self.update(); },
             .RESIZED => |new_size| {
                 if (new_size.width > 0 and new_size.height > 0) {
-                    _ = self.depth_stencil_view.Release();
+                    self.depth_stencil_view.deinit();
                     self.depth_stencil_view = create_depth_stencil_view(self.engine) catch unreachable;
                 }
             },

@@ -185,16 +185,17 @@ pub const Buffer = struct {
 
     pub fn init(
         byte_size: u32,
-        usage: Usage,
         bind_flags: BindFlag,
-        cpu_access: CpuAccessFlags,
+        access_flags: AccessFlags,
         device: *d3d11.IDevice,
     ) !Buffer {
+        if (!access_flags.CpuWrite and !access_flags.GpuWrite) { return error.DataNotSuppliedToImmutableBuffer; }
+
         const buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = usage.to_d3d11(),
+            .Usage = access_flags.to_d3d11_usage(),
             .ByteWidth = @intCast(byte_size),
             .BindFlags = bind_flags.to_d3d11(),
-            .CPUAccessFlags = cpu_access.to_d3d11(),
+            .CPUAccessFlags = access_flags.to_d3d11_cpu_access(),
         };
         var buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(device.CreateBuffer(&buffer_desc, null, @ptrCast(&buffer)));
@@ -207,16 +208,15 @@ pub const Buffer = struct {
     
     pub fn init_with_data(
         data: []const u8,
-        usage: Usage,
         bind_flags: BindFlag,
-        cpu_access: CpuAccessFlags,
+        access_flags: AccessFlags,
         device: *d3d11.IDevice,
     ) !Buffer {
         const buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = usage.to_d3d11(),
+            .Usage = access_flags.to_d3d11_usage(),
             .ByteWidth = @intCast(data.len),
             .BindFlags = bind_flags.to_d3d11(),
-            .CPUAccessFlags = cpu_access.to_d3d11(),
+            .CPUAccessFlags = access_flags.to_d3d11_cpu_access(),
         };
         var buffer: *d3d11.IBuffer = undefined;
         try zwin32.hrErrorOnFail(device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &data[0], }, @ptrCast(&buffer)));
@@ -249,57 +249,310 @@ pub const Buffer = struct {
         };
     }
 
-    pub const Usage = enum {
-        Mutable,
-        Immutable,
+};
 
-        fn to_d3d11(self: Usage) d3d11.USAGE {
-            switch (self) {
-                .Mutable => return d3d11.USAGE.DYNAMIC,
-                .Immutable => return d3d11.USAGE.IMMUTABLE,
+pub const Texture2D = struct {
+    texture: *d3d11.ITexture2D,
+    desc: Descriptor,
+
+    pub fn deinit(self: *const Texture2D) void {
+        _ = self.texture.Release();
+    }
+
+    pub fn init(
+        desc: Descriptor,
+        bind_flags: BindFlag,
+        access_flags: AccessFlags,
+        data: ?[]const u8,
+        device: *d3d11.IDevice
+    ) !Texture2D {
+        if (data) |d| {
+            if (d.len < (desc.width * desc.height * desc.format.byte_width())) {
+                return error.NotEnoughDataToFillTexture;
+            }
+        } else {
+            if (!access_flags.CpuWrite and !access_flags.GpuWrite) { 
+                return error.DataNotSuppliedToImmutableTexture; 
             }
         }
-    };
 
-    pub const BindFlag = packed struct(u32) {
-        VertexBuffer: bool = false,
-        IndexBuffer: bool = false,
-        ConstantBuffer: bool = false,
-        ShaderResource: bool = false,
-        StreamOutput: bool = false,
-        RenderTarget: bool = false,
-        DepthStencil: bool = false,
-        UnorderedAccess: bool = false,
-        Decoder: bool = false,
-        VideoEncoder: bool = false,
-        __unused: u22 = 0,
-
-        pub fn to_d3d11(self: BindFlag) d3d11.BIND_FLAG {
-            return d3d11.BIND_FLAG {
-                .VERTEX_BUFFER = self.VertexBuffer,
-                .INDEX_BUFFER = self.IndexBuffer,
-                .CONSTANT_BUFFER = self.ConstantBuffer,
-                .SHADER_RESOURCE = self.ShaderResource,
-                .STREAM_OUTPUT = self.StreamOutput,
-                .RENDER_TARGET = self.RenderTarget,
-                .DEPTH_STENCIL = self.DepthStencil,
-                .UNORDERED_ACCESS = self.UnorderedAccess,
-                .DECODER = self.Decoder,
-                .VIDEO_ENCODER = self.VideoEncoder,
-            };
+        const texture_desc = d3d11.TEXTURE2D_DESC {
+            .Width = @intCast(desc.width),
+            .Height = @intCast(desc.height),
+            .MipLevels = @intCast(desc.mip_levels),
+            .ArraySize = @intCast(desc.array_length),
+            .Format = desc.format.to_d3d11(),
+            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+                .Count = 1,
+                .Quality = 0,
+            },
+            .Usage = access_flags.to_d3d11_usage(),
+            .BindFlags = bind_flags.to_d3d11(),
+            .CPUAccessFlags = access_flags.to_d3d11_cpu_access(),
+            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
+        };
+        var texture: *d3d11.ITexture2D = undefined;
+        if (data) |d| {
+            try zwin32.hrErrorOnFail(device.CreateTexture2D(
+                    &texture_desc, 
+                    &d3d11.SUBRESOURCE_DATA {
+                        .pSysMem = @ptrCast(d), 
+                        .SysMemPitch = @intCast(desc.width * desc.format.byte_width()),
+                    }, 
+                    @ptrCast(&texture)
+            ));
+        } else {
+            try zwin32.hrErrorOnFail(device.CreateTexture2D(
+                    &texture_desc, 
+                    null,
+                    @ptrCast(&texture)
+            ));
         }
+        errdefer _ = texture.Release();
+
+        return Texture2D {
+            .texture = texture,
+            .desc = desc,
+        };
+    }
+
+    pub fn init_colour(
+        desc: Descriptor,
+        access_flags: AccessFlags,
+        bind_flags: BindFlag,
+        colour: [4]u8,
+        device: *d3d11.IDevice
+    ) !Texture2D {
+        if (desc.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
+
+        const data = try std.heap.page_allocator.alloc(u8, desc.width * desc.height * 4);
+        defer std.heap.page_allocator.free(data);
+
+        data = colour ** (desc.width * desc.height);
+
+        return init(desc, access_flags, bind_flags, data, device);
+    }
+
+    pub const Descriptor = struct {
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        array_length: u32 = 1,
+        mip_levels: u32 = 1,
     };
 
-    pub const CpuAccessFlags = packed struct(u32) {
-        CpuRead: bool = false,
-        CpuWrite: bool = false,
-        __unused: u30 = 0,
+};
 
-        pub fn to_d3d11(self: CpuAccessFlags) d3d11.CPU_ACCCESS_FLAG {
-            return d3d11.CPU_ACCCESS_FLAG {
-                .READ = self.CpuRead,
-                .WRITE = self.CpuWrite,
-            };
+pub const TextureView2D = struct {
+    view: *d3d11.IShaderResourceView,
+
+    pub fn deinit(self: *const Texture2D) void {
+        _ = self.view.Release();
+    }
+
+    pub fn init_from_texture2d(texture: *const Texture2D, device: *d3d11.IDevice) !TextureView2D {
+        const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
+            .Format = texture.desc.format.to_d3d11(),
+            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
+            .u = .{
+                .Texture2D = d3d11.TEX2D_SRV {
+                    .MostDetailedMip = 0,
+                    .MipLevels = texture.desc.mip_levels,
+                },
+            },
+        };
+        var texture_view: *d3d11.IShaderResourceView = undefined;
+        try zwin32.hrErrorOnFail(device.CreateShaderResourceView(
+                @ptrCast(texture), 
+                &texture_resource_view_desc, 
+                @ptrCast(&texture_view)
+        ));
+        errdefer _ = texture_view.Release();
+
+        return TextureView2D {
+            .view = texture_view,
+        };
+    }
+};
+
+pub const RenderTargetView = struct {
+    view: *d3d11.IRenderTargetView,
+
+    pub fn deinit(self: *const RenderTargetView) void {
+        _ = self.view.Release();
+    }
+
+    pub fn init_from_texture2d(texture: *const Texture2D, device: *d3d11.IDevice) !RenderTargetView {
+        var rtv: *d3d11.IRenderTargetView = undefined;
+        try zwin32.hrErrorOnFail(device.CreateRenderTargetView(
+                @ptrCast(texture.texture), 
+                &d3d11.RENDER_TARGET_VIEW_DESC{
+                    .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
+                    .Format = .@"UNKNOWN",
+                    .u = .{.Texture2D = d3d11.TEX2D_RTV {
+                        .MipSlice = 0,
+                    }},
+                }, 
+                @ptrCast(&rtv)
+        ));
+
+        return RenderTargetView {
+            .view = rtv,
+        };
+    }
+};
+
+pub const DepthStencilView = struct {
+    view: *d3d11.IDepthStencilView,
+
+    pub fn deinit(self: *const DepthStencilView) void {
+        _ = self.view.Release();
+    }
+
+    pub fn init_from_texture2d(texture: *const Texture2D, device: *d3d11.IDevice) !DepthStencilView {
+        if (!texture.desc.format.is_depth()) { return error.NotADepthFormat; }
+
+        const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
+            .Format = texture.desc.format.to_d3d11(),
+            .ViewDimension = d3d11.DSV_DIMENSION.TEXTURE2D,
+            .u = .{
+                .Texture2D = d3d11.TEX2D_DSV {
+                    .MipSlice = 0,
+                },
+            },
+            .Flags = d3d11.DSV_FLAGS {},
+        };
+        var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
+        try zwin32.hrErrorOnFail(device.CreateDepthStencilView(@ptrCast(texture.texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
+        errdefer _ = depth_stencil_view.Release();
+
+        return DepthStencilView {
+            .view = depth_stencil_view,
+        };
+    }
+};
+
+pub const TextureFormat = enum {
+    Rgba8_Unorm_Srgb,
+    D24S8_Unorm_Uint,
+
+    pub fn to_d3d11(self: TextureFormat) zwin32.dxgi.FORMAT {
+        switch (self) {
+            .Rgba8_Unorm_Srgb => return zwin32.dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
+            .D24S8_Unorm_Uint => return zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT,
         }
-    };
+    }
+
+    pub fn byte_width(self: TextureFormat) usize {
+        switch (self) {
+            .Rgba8_Unorm_Srgb => return 4,
+            .D24S8_Unorm_Uint => return 4,
+        }
+    }
+
+    pub fn is_depth(self: TextureFormat) bool {
+        switch (self) {
+            .D24S8_Unorm_Uint => return true,
+            else => return false,
+        }
+    }
+};
+
+pub const BindFlag = packed struct(u32) {
+    VertexBuffer: bool = false,
+    IndexBuffer: bool = false,
+    ConstantBuffer: bool = false,
+    ShaderResource: bool = false,
+    StreamOutput: bool = false,
+    RenderTarget: bool = false,
+    DepthStencil: bool = false,
+    UnorderedAccess: bool = false,
+    Decoder: bool = false,
+    VideoEncoder: bool = false,
+    __unused: u22 = 0,
+
+    pub fn to_d3d11(self: BindFlag) d3d11.BIND_FLAG {
+        return d3d11.BIND_FLAG {
+            .VERTEX_BUFFER = self.VertexBuffer,
+            .INDEX_BUFFER = self.IndexBuffer,
+            .CONSTANT_BUFFER = self.ConstantBuffer,
+            .SHADER_RESOURCE = self.ShaderResource,
+            .STREAM_OUTPUT = self.StreamOutput,
+            .RENDER_TARGET = self.RenderTarget,
+            .DEPTH_STENCIL = self.DepthStencil,
+            .UNORDERED_ACCESS = self.UnorderedAccess,
+            .DECODER = self.Decoder,
+            .VIDEO_ENCODER = self.VideoEncoder,
+        };
+    }
+};
+
+pub const AccessFlags = packed struct(u32) {
+    GpuWrite: bool = false,
+    CpuRead: bool = false,
+    CpuWrite: bool = false,
+    __unused: u29 = 0,
+
+    fn to_d3d11_usage(self: AccessFlags) d3d11.USAGE {
+        if (self.CpuWrite and self.GpuWrite) {
+            return d3d11.USAGE.STAGING;
+        } else if (self.CpuWrite and !self.GpuWrite) {
+            return d3d11.USAGE.DYNAMIC;
+        } else if (!self.CpuWrite and self.GpuWrite) {
+            return d3d11.USAGE.DEFAULT;
+        } else {
+            return d3d11.USAGE.IMMUTABLE;
+        }
+    }
+
+    fn to_d3d11_cpu_access(self: AccessFlags) d3d11.CPU_ACCCESS_FLAG {
+        return d3d11.CPU_ACCCESS_FLAG {
+            .READ = self.CpuRead,
+            .WRITE = self.CpuWrite,
+        };
+    }
+};
+
+pub const RasterizationStateDesc = packed struct(u32) {
+    FillBack: bool = true,
+    FillFront: bool = true,
+    FrontCounterClockwise: bool = false,
+    __unused: u29 = 0,
+};
+
+pub const RasterizationState = struct {
+    state: *d3d11.IRasterizerState,
+
+    pub fn deinit(self: *const RasterizationState) void {
+        _ = self.state.Release();
+    }
+
+    pub fn init(desc: RasterizationStateDesc, device: *d3d11.IDevice) !RasterizationState {
+        var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
+            .FillMode = blk: {
+                if (!desc.FillBack and !desc.FillFront) {
+                    break :blk d3d11.FILL_MODE.WIREFRAME;
+                } else {
+                    break :blk d3d11.FILL_MODE.SOLID;
+                }
+            },
+            .CullMode = blk: {
+                if (desc.FillBack == desc.FillFront) {
+                    break :blk d3d11.CULL_MODE.NONE;
+                } else if (!desc.FillBack) {
+                    break :blk d3d11.CULL_MODE.BACK;
+                } else {
+                    break :blk d3d11.CULL_MODE.FRONT;
+                }
+            },
+        };
+
+        var rasterization_state: *d3d11.IRasterizerState = undefined;
+        try zwin32.hrErrorOnFail(device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
+        errdefer _ = rasterization_state.Release();
+
+        return RasterizationState {
+            .state = rasterization_state,
+        };
+    }
 };

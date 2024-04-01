@@ -126,6 +126,10 @@ pub fn Engine(comptime App: type) type {
 
             switch (event) {
                 .RESIZED => |new_size| { self.gfx.window_resized(new_size.width, new_size.height); },
+                .EVENTS_CLEARED => {
+                    // Update physics
+                    self.physics.update(&self.time);
+                },
                 else => {},
             }
 

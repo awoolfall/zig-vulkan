@@ -3,11 +3,14 @@ pub const zphy = @import("zphysics");
 const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
 const en = @import("../engine.zig");
+const tm = @import("../engine/time.zig");
 const graphics = @import("../gfx/d3d11.zig");
 const debug = @import("physics_debug_renderer.zig");
 
 pub const PhysicsSystem = struct {
     const Self = @This();
+    const UpdateRateHz = 60.0;
+    const UpdateRateNs: i128 = @intFromFloat((1.0 / 60.0) * @as(f64, @floatFromInt(std.time.ns_per_s)));
 
     _allocator: std.mem.Allocator,
     _interfaces: struct {
@@ -16,7 +19,8 @@ pub const PhysicsSystem = struct {
         object_layer_pair_filter: *ObjectLayerPairFilter,
         debug_renderer: *debug.D3D11DebugRenderer,
     },
-    zphy: *zphy.PhysicsSystem,
+    zphy: *zphy.PhysicsSystem, 
+    next_update_time: i128 = 0,
 
     pub fn init(alloc: std.mem.Allocator, gfx: *graphics.D3D11State) !Self {
         try zphy.init(alloc, .{});
@@ -63,6 +67,7 @@ pub const PhysicsSystem = struct {
                 .debug_renderer = debug_renderer,
             },
             .zphy = physics_system,
+            .next_update_time = std.time.nanoTimestamp() + UpdateRateNs,
         };
     }
 
@@ -75,6 +80,16 @@ pub const PhysicsSystem = struct {
         self._allocator.destroy(self._interfaces.object_layer_pair_filter);
         self._allocator.destroy(self._interfaces.debug_renderer);
         zphy.deinit();
+    }
+
+    pub fn update(self: *Self, time: *tm.TimeState) void {
+        // Update at UpdateRateHz, this may happen more than one time before returning
+        while (time.frame_start_time_ns > self.next_update_time) {
+            self.zphy.update(1.0 / UpdateRateHz, .{}) 
+                catch std.log.err("Unable to update physics", .{});
+
+            self.next_update_time += UpdateRateNs;
+        }
     }
 
     pub fn get_raycast_normal(self: *Self, raycast: zphy.RRayCast, raycast_result: zphy.RayCastResult) ?zm.F32x4 {
