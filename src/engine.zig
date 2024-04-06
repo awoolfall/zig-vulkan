@@ -26,11 +26,40 @@ pub fn Engine(comptime App: type) type {
             name: ?[]u8 = null,
             transform: tf.Transform = tf.Transform.new(),
             model: ?*const mesh.Model = null,
-            physics_body: ?physics.zphy.BodyId = null,
+            physics: ?PhysicsOptions = null,
             app: App.EntityData = App.EntityData {},
         };
 
         pub const EntityList = gen.GenerationalList(EntitySuperStruct);
+
+        pub const PhysicsOptions = union(enum) {
+            Body: physics.zphy.BodyId,
+            Character: *physics.zphy.Character,
+            CharacterVirtual: struct {
+                virtual: *physics.zphy.CharacterVirtual,
+                character: ?*physics.zphy.Character,
+                extended_update_settings: ?physics.zphy.CharacterVirtual.ExtendedUpdateSettings = null,
+            },
+
+            pub fn deinit(self: *PhysicsOptions, engine: *Self) void {
+                switch (self.*) {
+                    .Body => |body_id| {
+                        engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(body_id);
+                    },
+                    .Character => |character| {
+                        character.removeFromPhysicsSystem(.{});
+                        character.destroy();
+                    },
+                    .CharacterVirtual => |character| {
+                        character.virtual.destroy();
+                        if (character.character) |c| {
+                            c.removeFromPhysicsSystem(.{});
+                            c.destroy();
+                        }
+                    },
+                }
+            }
+        };
 
         window: w32.Win32Window,
         gfx: _gfx.GfxState,
@@ -90,7 +119,7 @@ pub fn Engine(comptime App: type) type {
             defer engine.window.deinit();
 
             Log.debug("Calling GFX init!", .{});
-            engine.gfx = try _gfx.GfxState.init(&engine.window);
+            engine.gfx = try _gfx.GfxState.init(alloc, &engine.window);
             defer engine.gfx.deinit();
 
             Log.debug("Calling physics init", .{});
@@ -101,9 +130,11 @@ pub fn Engine(comptime App: type) type {
             defer {
                 for (engine.entities.data.items) |*it| {
                     if (it.item_data) |*en| {
-                        if (en.physics_body) |body_id| {
-                            engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(body_id);
-                            en.physics_body = null;
+                        en.app.deinit();
+
+                        if (en.physics) |*phys| {
+                            phys.deinit(&engine);
+                            en.physics = null;
                         }
                     }
                 }
@@ -128,7 +159,7 @@ pub fn Engine(comptime App: type) type {
                 .RESIZED => |new_size| { self.gfx.window_resized(new_size.width, new_size.height); },
                 .EVENTS_CLEARED => {
                     // Update physics
-                    self.physics.update(&self.time);
+                    self.physics.update(Self.EntityList, &self.entities, &self.time);
                 },
                 else => {},
             }

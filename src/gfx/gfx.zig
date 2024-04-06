@@ -21,6 +21,8 @@ pub const GfxState = struct {
     swapchain_flags: zwin32.dxgi.SWAP_CHAIN_FLAG,
     swapchain_size: struct{width: i32, height: i32},
 
+    rasterization_states_map: std.AutoHashMap(RasterizationStateDesc, RasterizationState),
+
     // @TODO: add rasterization state map, blend state map, and sampler map so we can just use them at 
     // draw time instead of creating new objects each time at init. Be aggressive for JIT (Just in Time) gfx object creation
 
@@ -31,13 +33,20 @@ pub const GfxState = struct {
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
         self.context.Flush();
+
+        var rast_iterator = self.rasterization_states_map.iterator();
+        while (rast_iterator.next()) |r| {
+            r.value_ptr.deinit();
+        }
+        self.rasterization_states_map.deinit();
+
         self.rtv.deinit();
         _ = self.swapchain.Release();
         _ = self.context.Release();
         _ = self.device.Release();
     }
 
-    pub fn init(window: *win32window.Win32Window) !Self {
+    pub fn init(alloc: std.mem.Allocator, window: *win32window.Win32Window) !Self {
         const accepted_feature_levels = [_]zwin32.d3d.FEATURE_LEVEL{
             .@"11_0", 
             .@"10_1" 
@@ -118,6 +127,7 @@ pub const GfxState = struct {
             },
             .context = context,
             .rtv = undefined,
+            .rasterization_states_map = std.AutoHashMap(RasterizationStateDesc, RasterizationState).init(alloc),
         };
 
         const framebuffer_texture = try gfx_state.create_texture2d_from_framebuffer();
@@ -182,6 +192,16 @@ pub const GfxState = struct {
 
     pub fn swapchain_aspect(self: *Self) f32 {
         return @as(f32, @floatFromInt(self.swapchain_size.width)) / @as(f32, @floatFromInt(self.swapchain_size.height));
+    }
+
+    pub fn rasterization_state(self: *Self, desc: RasterizationStateDesc) RasterizationState {
+        if (self.rasterization_states_map.get(desc)) |r| {
+            return r;
+        } else {
+            const r = RasterizationState.init(desc, self.device) catch unreachable;
+            self.rasterization_states_map.put(desc, r) catch unreachable;
+            return r;
+        }
     }
 
     pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {

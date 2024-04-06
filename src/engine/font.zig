@@ -61,7 +61,6 @@ pub const Font = struct {
     font_vso: _gfx.VertexShader,
     font_pso: _gfx.PixelShader,
     sampler: _gfx.Sampler,
-    rasterizer_state: _gfx.RasterizationState,
     blend_state: _gfx.BlendState,
     character_buffer: _gfx.Buffer,
     font_text_buffer: _gfx.Buffer,
@@ -71,7 +70,6 @@ pub const Font = struct {
         self.font_vso.deinit();
         self.font_pso.deinit();
         self.sampler.deinit();
-        self.rasterizer_state.deinit();
         self.blend_state.deinit();
         self.character_buffer.deinit();
         self.font_text_buffer.deinit();
@@ -132,7 +130,6 @@ pub const Font = struct {
             .font_vso = undefined,
             .font_pso = undefined,
             .sampler = undefined,
-            .rasterizer_state = undefined,
             .blend_state = undefined,
             .font_text_buffer = undefined,
             .character_buffer = undefined,
@@ -237,13 +234,6 @@ pub const Font = struct {
         );
         errdefer font.sampler.deinit();
 
-        // create rasterizer state
-        font.rasterizer_state = try _gfx.RasterizationState.init(
-            .{ .FillBack = false, .FrontCounterClockwise = true, },
-            gfx.device
-        );
-        errdefer font.rasterizer_state.deinit();
-
         // create blend state
         font.blend_state = try _gfx.BlendState.init(
             ([_]_gfx.BlendType { .Simple })[0..],
@@ -273,6 +263,7 @@ pub const Font = struct {
     }
 
     pub const FontRenderProperties2D = struct {
+        position: struct { x: i32, y: i32 },
         size: ui.Size = ui.Size {.Pixels = 20},
         colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
     };
@@ -280,32 +271,28 @@ pub const Font = struct {
     pub fn render_text_2d(
         self: *Font,
         text: []const u8,
-        x_pos: i32,
-        y_pos: i32,
         props: FontRenderProperties2D,
         rtv: _gfx.RenderTargetView, 
-        rtv_width: i32,
-        rtv_height: i32,
         gfx: *_gfx.GfxState,
     ) void {
         if (text.len == 0) { return; }
         
-        const aspect = (@as(f32, @floatFromInt(rtv_width)) / @as(f32, @floatFromInt(rtv_height)));
-        var y_loc = ((@as(f32, @floatFromInt(y_pos)) / @as(f32, @floatFromInt(rtv_height))) * 2.0) - 1.0;
-        var x_loc = ((@as(f32, @floatFromInt(x_pos)) / @as(f32, @floatFromInt(rtv_width))) * 2.0) - 1.0;
+        const aspect = (@as(f32, @floatFromInt(rtv.size.width)) / @as(f32, @floatFromInt(rtv.size.height)));
+        var y_loc = ((@as(f32, @floatFromInt(props.position.y)) / @as(f32, @floatFromInt(rtv.size.height))) * 2.0) - 1.0;
+        var x_loc = ((@as(f32, @floatFromInt(props.position.x)) / @as(f32, @floatFromInt(rtv.size.width))) * 2.0) - 1.0;
         const x_start_loc = x_loc;
 
         const screen_size = switch (props.size) {
             .Screen => |v| blk: { break :blk (v * 2.0); },
             .Pixels => |px| blk: {
-                const percpx = @as(f32, @floatFromInt(px)) / @as(f32, @floatFromInt(rtv_height));
+                const percpx = @as(f32, @floatFromInt(px)) / @as(f32, @floatFromInt(rtv.size.height));
                 break :blk (percpx * 2.0);
             },
         };
 
         const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(rtv_width),
-            .Height = @floatFromInt(rtv_height),
+            .Width = @floatFromInt(rtv.size.width),
+            .Height = @floatFromInt(rtv.size.height),
             .TopLeftX = 0,
             .TopLeftY = 0,
             .MinDepth = 0.0,
@@ -322,7 +309,9 @@ pub const Font = struct {
         gfx.context.VSSetShader(self.font_vso.vso, null, 0);
 
         gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        gfx.context.RSSetState(self.rasterizer_state.state);
+        gfx.context.RSSetState(gfx.rasterization_state(
+            .{ .FillBack = false, .FrontCounterClockwise = true, },
+        ).state);
 
         gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.font_text_buffer.buffer));
         gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
@@ -394,23 +383,21 @@ pub const Font = struct {
     pub fn text_bounds_2d(
         self: *Font,
         text: []const u8,
-        x_pos: i32,
-        y_pos: i32,
         props: FontRenderProperties2D,
-        rtv_width: i32,
-        rtv_height: i32,
+        rtv_width: u32,
+        rtv_height: u32,
     ) ui.RectPixels {
         _ = rtv_width;
 
         if (text.len == 0) { return ui.RectPixels {
-            .left = x_pos,
-            .bottom = y_pos,
+            .left = props.position.x,
+            .bottom = props.position.y,
             .width = 0,
             .height = 0,
         }; }
         
-        var y_loc = @as(f32, @floatFromInt(y_pos));
-        var x_loc = @as(f32, @floatFromInt(x_pos));
+        var y_loc = @as(f32, @floatFromInt(props.position.y));
+        var x_loc = @as(f32, @floatFromInt(props.position.x));
 
         const screen_size = switch (props.size) {
             .Screen => |v| blk: { break :blk (v * 2.0); },
@@ -439,14 +426,14 @@ pub const Font = struct {
             }
         }
 
-        const left = x_pos;
+        const left = props.position.x;
         const bottom: i32 = @intFromFloat(y_loc + self.font_metrics.descender * pixel_height);
 
         return ui.RectPixels {
             .left = left,
             .bottom = bottom,
             .width = @as(i32, @intFromFloat(max_x)) - left,
-            .height = @as(i32, @intFromFloat((@as(f32, @floatFromInt(y_pos)) + self.font_metrics.ascender * pixel_height))) - bottom,
+            .height = @as(i32, @intFromFloat((@as(f32, @floatFromInt(props.position.y)) + self.font_metrics.ascender * pixel_height))) - bottom,
         };
     }
 };

@@ -82,14 +82,128 @@ pub const PhysicsSystem = struct {
         zphy.deinit();
     }
 
-    pub fn update(self: *Self, time: *tm.TimeState) void {
+    pub fn update(self: *Self, comptime EntityList: type, entity_list: *EntityList, time: *tm.TimeState) void {
         // Update at UpdateRateHz, this may happen more than one time before returning
         while (time.frame_start_time_ns > self.next_update_time) {
+            // Run physics update
             self.zphy.update(1.0 / UpdateRateHz, .{}) 
                 catch std.log.err("Unable to update physics", .{});
 
+            // After physics update set all entity transforms to match physics bodies
+            const body_interface = self.zphy.getBodyInterface();
+            for (entity_list.data.items) |*it| {
+                if (it.item_data) |*e| {
+                    if (e.physics) |phys| {
+                        switch (phys) {
+                            .Body => |body_id| {
+                                const pos = body_interface.getPosition(body_id);
+                                e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                                e.transform.rotation = body_interface.getRotation(body_id);
+                            },
+                            .Character => |character| {
+                                character.postSimulation(0.1, true);
+
+                                const pos = character.getPosition();
+                                e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                                //e.transform.rotation = character.getRotation();
+                            },
+                            .CharacterVirtual => |character| {
+                                // Run update for virtual character
+                                if (character.extended_update_settings) |ext| {
+                                    character.virtual.extendedUpdate(
+                                        1.0 / UpdateRateHz,
+                                        self.zphy.getGravity(),
+                                        ext,
+                                        .{}
+                                    );
+                                } else {
+                                    character.virtual.update(
+                                        1.0 / UpdateRateHz,
+                                        self.zphy.getGravity(),
+                                        .{}
+                                    );
+                                }
+
+                                const pos = character.virtual.getPosition();
+                                if (character.character) |c| {
+                                    c.setPosition(pos);
+                                    c.postSimulation(0.1, true);
+                                }
+
+                                e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                                e.transform.rotation = character.virtual.getRotation();
+                            },
+                        }
+                    }
+                }
+            }
+
             self.next_update_time += UpdateRateNs;
         }
+    }
+
+    pub const BodyReadLock = struct {
+        lock_interface: zphy.BodyLockInterface,
+        read_lock: zphy.BodyLockWrite,
+        body: *const zphy.Body,
+
+        pub fn deinit(self: *BodyWriteLock) void {
+            self.read_lock.unlock();
+        }
+
+        pub fn init(body_id: BodyId, physics_system: *PhysicsSystem) !BodyWriteLock {
+            const lock_interface = physics_system.zphy.getBodyLockInterface();
+
+            var read_lock: zphy.BodyLockRead = .{};
+            read_lock.lock(lock_interface, body_id);
+            errdefer read_lock.unlock();
+
+            if (read_lock.body) |locked_body| {
+                return BodyReadLock {
+                    .lock_interface = lock_interface,
+                    .write_lock = read_lock,
+                    .body = locked_body,
+                };
+            } else {
+                return error.UnableToLockBody;
+            }
+        }
+    };
+
+    pub fn init_body_read_lock(self: *Self, body_id: BodyId) !BodyWriteLock {
+        return BodyReadLock.init(body_id, self);
+    }
+
+    pub const BodyWriteLock = struct {
+        lock_interface: zphy.BodyLockInterface,
+        write_lock: zphy.BodyLockWrite,
+        body: *zphy.Body,
+
+        pub fn deinit(self: *BodyWriteLock) void {
+            self.write_lock.unlock();
+        }
+
+        pub fn init(body_id: BodyId, physics_system: *PhysicsSystem) !BodyWriteLock {
+            const lock_interface = physics_system.zphy.getBodyLockInterface();
+
+            var write_lock: zphy.BodyLockWrite = .{};
+            write_lock.lock(lock_interface, body_id);
+            errdefer write_lock.unlock();
+
+            if (write_lock.body) |locked_body| {
+                return BodyWriteLock {
+                    .lock_interface = lock_interface,
+                    .write_lock = write_lock,
+                    .body = locked_body,
+                };
+            } else {
+                return error.UnableToLockBody;
+            }
+        }
+    };
+
+    pub fn init_body_write_lock(self: *Self, body_id: BodyId) !BodyWriteLock {
+        return BodyWriteLock.init(body_id, self);
     }
 
     pub fn get_raycast_normal(self: *Self, raycast: zphy.RRayCast, raycast_result: zphy.RayCastResult) ?zm.F32x4 {

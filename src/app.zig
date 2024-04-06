@@ -34,28 +34,11 @@ pub const App = struct {
     const Self = @This();
 
     pub const EntityData = struct {
-        chara_data: ?struct {
-            character_shape: *zphy.Shape,
-            character_physics: *zphy.CharacterVirtual,
-        } = null,
+        health_points: ?i32 = null,
 
         pub fn deinit(self: *EntityData) void {
-            if (self.chara_data) |*c| {
-                c.character_physics.destroy();
-                c.character_shape.release();
-            }
+            _ = self;
         }
-    };
-
-    const triangle_vertices: [3 * 3]zwin32.w32.FLOAT = [_]zwin32.w32.FLOAT{
-        0.0, 0.5, 0.0,
-        -0.5, -0.5, 0.0,
-        0.5, -0.5, 0.0,
-    };
-
-    const RasterizationStates = struct {
-        double_sided: gfx.RasterizationState,
-        cull_back_face: gfx.RasterizationState,
     };
 
     engine: *engine.Engine(Self),
@@ -64,15 +47,13 @@ pub const App = struct {
 
     vertex_shader: gfx.VertexShader,
     pixel_shader: gfx.PixelShader,
-    vertex_buffer: gfx.Buffer,
-    rasterizer_states: RasterizationStates,
     
     camera_data_buffer: gfx.Buffer,
     camera: cm.Camera,
     camera_idx: ent.GenerationalIndex,
 
     model_buffer: gfx.Buffer,
-    model_idx: ent.GenerationalIndex,
+    character_idx: ent.GenerationalIndex,
 
     bone_matrix_buffer: gfx.Buffer,
 
@@ -84,11 +65,6 @@ pub const App = struct {
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
-        for (self.engine.entities.data.items) |*maybe_ent| {
-            if (maybe_ent.item_data) |*en| {
-                en.app.deinit();
-            }
-        }
 
         self.engine.gfx.context.Flush();
         self.ui.deinit();
@@ -100,10 +76,7 @@ pub const App = struct {
         self.bone_matrix_buffer.deinit();
         self.camera_data_buffer.deinit();
         self.model_buffer.deinit();
-        self.vertex_buffer.deinit();
 
-        self.rasterizer_states.double_sided.deinit();
-        self.rasterizer_states.cull_back_face.deinit();
         self.depth_stencil_view.deinit();
 
         self.vertex_shader.deinit();
@@ -139,31 +112,6 @@ pub const App = struct {
             eng.gfx.device
         );
         errdefer pixel_shader.deinit();
-
-        // Define vertex buffer input
-        var vertex_buffer = try gfx.Buffer.init_with_data(
-            std.mem.sliceAsBytes(triangle_vertices[0..]),
-            .{ .VertexBuffer = true, },
-            .{},
-            eng.gfx.device
-        );
-        errdefer vertex_buffer.deinit();
-
-        // Define rasterizer state
-        var rasterization_states = RasterizationStates {
-            .double_sided = try gfx.RasterizationState.init(
-                .{ .FillFront = true, .FillBack = true, },
-                eng.gfx.device
-            ),
-            .cull_back_face = try gfx.RasterizationState.init(
-                .{ .FillFront = true, .FillBack = false, },
-                eng.gfx.device
-            ),
-        };
-        errdefer {
-            rasterization_states.double_sided.deinit();
-            rasterization_states.cull_back_face.deinit();
-        }
 
         // Create camera constant buffer
         const camera_constant_buffer = try gfx.Buffer.init(
@@ -227,22 +175,23 @@ pub const App = struct {
 
         _ = try eng.entities.insert(Engine.EntitySuperStruct {
             .model = &terrain_model,
-            .physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
-                .position = zm.f32x4(-50.0, -5.0, 50.0, 1.0),
-                .rotation = zm.qidentity(),
-                .shape = demo_compound_shape,
-                .motion_type = .static,
-                .object_layer = ph.object_layers.non_moving,
-            }, .activate),
+            .physics = .{ .Body = 
+                try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
+                    .position = zm.f32x4(-50.0, -5.0, 50.0, 1.0),
+                    .rotation = zm.qidentity(),
+                    .shape = demo_compound_shape,
+                    .motion_type = .static,
+                    .object_layer = ph.object_layers.non_moving,
+                }, .activate)
+            },
             .transform = Transform {
                 .scale = zm.f32x4s(100.0),
             },
         });
 
-        const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
-            .model = &chara_model,
-        });
-        (try eng.entities.get(chara_root_idx)).transform.position = zm.f32x4(-0.5, 0.0, 0.5, 1.0);
+        const chara_transform = Transform {
+            .position = zm.f32x4(-0.5, 0.0, 0.5, 1.0),
+        };
 
         const chara_shape_settings = try zphy.CapsuleShapeSettings.create(0.7, 0.2);
         defer chara_shape_settings.release();
@@ -255,32 +204,29 @@ pub const App = struct {
         defer chara_offset_shape_settings.release();
 
         const chara_shape = try chara_offset_shape_settings.createShape();
-        errdefer chara_shape.release();
+        defer chara_shape.release();
 
-        const chara_ent = (try eng.entities.get(chara_root_idx));
-        // chara_ent.physics_body = try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(.{
-        //     .position = chara_ent.transform.position,
-        //     .rotation = chara_ent.transform.rotation,
-        //     .shape = chara_shape,
-        //     .motion_type = .dynamic,
-        //     .motion_quality = .linear_cast,
-        //     .object_layer = ph.object_layers.moving,
-        // }, .activate);
+        const chara_smaller_settings = try zphy.DecoratedShapeSettings.createScaled(chara_offset_shape_settings.asShapeSettings(), [3]f32{0.9, 0.9, 0.9});
+        defer chara_smaller_settings.release();
 
-        // {
-        //     var lock_interface = eng.physics.zphy.getBodyLockInterface();
+        const chara_smaller_offset_settings = try zphy.DecoratedShapeSettings.createRotatedTranslated(
+            @ptrCast(chara_smaller_settings), 
+            zm.qidentity(), 
+            [3]f32{0.0, 0.1, 0.0}
+        );
+        defer chara_smaller_offset_settings.release();
+
+        const chara_smaller_shape = try chara_smaller_offset_settings.createShape();
+        defer chara_smaller_shape.release();
+
+        // if (eng.physics.init_body_write_lock(chara_ent.physics..?)) |write_lock| {
+        //     defer write_lock.deinit();
         //
-        //     var write_lock: zphy.BodyLockWrite = .{};
-        //     write_lock.lock(lock_interface, chara_ent.physics_body.?);
-        //     defer write_lock.unlock();
-        //
-        //     if (write_lock.body) |locked_body| {
-        //         locked_body.getMotionPropertiesMut().setInverseMass(1.0 / 70.0);
-        //         // disables rotation somehow (from jolt 3.0.1 Character.cpp line 45)
-        //         locked_body.getMotionPropertiesMut().setInverseInertia([3]f32{0.0, 0.0, 0.0}, zm.qidentity());
-        //         locked_body.setFriction(0.0);
-        //     }
-        // }
+        //     write_lock.body.getMotionPropertiesMut().setInverseMass(1.0 / 70.0);
+        //     // disables rotation somehow (from jolt 3.0.1 Character.cpp line 45)
+        //     write_lock.body.getMotionPropertiesMut().setInverseInertia([3]f32{0.0, 0.0, 0.0}, zm.qidentity());
+        //     write_lock.body.setFriction(0.0);
+        // } else |_| {}
 
         var zphy_character_settings = try zphy.CharacterVirtualSettings.create(); 
         defer zphy_character_settings.release();
@@ -288,21 +234,65 @@ pub const App = struct {
         zphy_character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
         zphy_character_settings.base.max_slope_angle = 70.0;
         zphy_character_settings.base.shape = chara_shape;
+        chara_shape.addRef();
         zphy_character_settings.character_padding = 0.02;
         //zphy_character_settings.layer = ph.object_layers.moving;
         zphy_character_settings.mass = 70.0;
         //zphy_character_settings.friction = 0.0; // will handle manually
         //zphy_character_settings.gravity_factor = 0.0; // will handle manually
 
-        chara_ent.app.chara_data = .{
-            .character_physics = try zphy.CharacterVirtual.create(
-                zphy_character_settings,
-                zm.vecToArr3(chara_ent.transform.position),
-                chara_ent.transform.rotation,
+        var character_settings = try zphy.CharacterSettings.create();
+        defer character_settings.release();
+
+        character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
+        character_settings.base.max_slope_angle = 70.0;
+        character_settings.base.shape = chara_smaller_shape;
+        chara_smaller_shape.addRef();
+        character_settings.layer = ph.object_layers.moving;
+        character_settings.mass = 70.0;
+        character_settings.friction = 1.0; // will handle manually
+        character_settings.gravity_factor = 1.0; // will handle manually
+
+        const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
+            .model = &chara_model,
+            .transform = chara_transform,
+            .physics = .{ .CharacterVirtual = .{
+                .virtual = try zphy.CharacterVirtual.create(
+                    zphy_character_settings,
+                    zm.vecToArr3(chara_transform.position),
+                    chara_transform.rotation,
+                    eng.physics.zphy
+                ),
+                .character = try zphy.Character.create(
+                    character_settings,
+                    [3]f32{0.0, 0.0, 0.0},
+                    zm.qidentity(),
+                    0x00,
+                    eng.physics.zphy
+                ),
+                .extended_update_settings = .{},
+            } },
+            .app = .{
+                .health_points = 100,
+            },
+        });
+        (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character.?.addToPhysicsSystem(.{});
+
+        const opponent_idx = try eng.entities.insert(Engine.EntitySuperStruct {
+            .model = &chara_model,
+            .transform = chara_transform,
+            .physics = .{ .Character = try zphy.Character.create(
+                character_settings,
+                [3]f32{0.0, 0.0, 0.0},
+                zm.qidentity(),
+                0x00,
                 eng.physics.zphy
-            ),
-            .character_shape = chara_shape,
-        };
+            ) },
+            .app = .{
+                .health_points = 100,
+            },
+        });
+        (eng.entities.get(opponent_idx) catch unreachable).physics.?.Character.addToPhysicsSystem(.{});
 
         const model_buffer = try gfx.Buffer.init(
             @sizeOf(zm.Mat),
@@ -322,8 +312,6 @@ pub const App = struct {
             .depth_stencil_view = depth_stencil_view,
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
-            .vertex_buffer = vertex_buffer,
-            .rasterizer_states = rasterization_states,
 
             .camera_data_buffer = camera_constant_buffer,
             .camera = cm.Camera {
@@ -338,7 +326,7 @@ pub const App = struct {
             },
             .camera_idx = camera_transform_idx,
 
-            .model_idx = chara_root_idx,
+            .character_idx = chara_root_idx,
             .model_buffer = model_buffer,
 
             .bone_matrix_buffer = bone_matrix_buffer,
@@ -366,7 +354,7 @@ pub const App = struct {
     fn update(self: *Self) void {
 
         // Input to move the model around
-        if (self.engine.entities.get(self.model_idx)) |model_entity| {
+        if (self.engine.entities.get(self.character_idx)) |character_entity| {
             var movement_direction = zm.f32x4s(0.0);
             if (self.engine.input.get_key(kc.KeyCode.W)) {
                 movement_direction[2] += 1.0;
@@ -392,7 +380,7 @@ pub const App = struct {
                 movement_direction = zm.normalize3(movement_direction);
             }
 
-            const character = model_entity.app.chara_data.?.character_physics;
+            const character = character_entity.physics.?.CharacterVirtual.virtual;
             var current_movement = zm.loadArr3(character.getLinearVelocity());
 
             var current_movement_direction = current_movement;
@@ -402,7 +390,7 @@ pub const App = struct {
                 // remove any gravity
                 current_movement[1] = 0.0;
 
-                const character_movement_speed = 3.0;
+                const character_movement_speed = 8.0;
                 const ramp_speed = 10.0;
 
                 // apply supported movement
@@ -418,15 +406,16 @@ pub const App = struct {
                     + zm.loadArr3(self.engine.physics.zphy.getGravity()) * zm.f32x4s(self.engine.time.delta_time_f32());
             }
 
-            model_entity.app.chara_data.?.character_physics.setLinearVelocity(zm.vecToArr3(current_movement));
+            character.setLinearVelocity(zm.vecToArr3(current_movement));
 
             // Rotate character model to match the input desired direction
             // If no input desired direction (normalized to nan) then remain in last rotation
             const dir = zm.normalize3(movement_direction);
             if (!std.math.isNan(dir[0])) {
                 const rot = zm.lookAtRh(zm.f32x4s(0.0), dir * zm.f32x4(1.0, 1.0, -1.0, 0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0));
-                model_entity.transform.rotation =
-                    zm.slerp(model_entity.transform.rotation, zm.matToQuat(rot), self.engine.time.delta_time_f32() * 10.0);
+                character.setRotation(
+                    zm.slerp(character_entity.transform.rotation, zm.matToQuat(rot), self.engine.time.delta_time_f32() * 15.0)
+                );
             }
         } else |_| {}
 
@@ -444,51 +433,11 @@ pub const App = struct {
         // Update physics. If frame time is greater than 1 second then skip physics for this frame.
         // @TODO: It is most likely we loaded something in and caused a spike... Fix this permanently 
         // by adding async loads and/or loading screens.
-        var character_velocity = zm.f32x4s(0.0);
-        if (self.engine.time.last_frame_time_s > 1.0) {
-            std.log.warn("Skipping physics for this frame since the frame time was too large at {}s", .{self.engine.time.last_frame_time_s});
-        } else {
-            if (self.engine.entities.get(self.model_idx)) |model_entity| {
-                const p0 = zm.loadArr3(model_entity.app.chara_data.?.character_physics.getPosition());
-                //model_entity.app.chara_data.?.character_physics.update(self.engine.time.delta_time_f32(), [3]f32{0.0, -9.8, 0.0}, .{});
-                model_entity.app.chara_data.?.character_physics.extendedUpdate(
-                    self.engine.time.delta_time_f32(), 
-                    [3]f32{0.0, -9.8, 0.0}, 
-                    .{},
-                    .{}
-                );
-                const p1 = zm.loadArr3(model_entity.app.chara_data.?.character_physics.getPosition());
-                character_velocity = (p1 - p0) / zm.f32x4s(self.engine.time.delta_time_f32());
-
-                // Update character virtual linear velocity based on physics interactions from update
-                // because apparently this doesn't happen automatically???
-                //model_entity.app.chara_data.?.character_physics.setLinearVelocity(zm.vecToArr3(character_velocity));
-            } else |_| {}
-
-            if (self.engine.entities.get(self.model_idx)) |model_entity| {
-                const pos = model_entity.app.chara_data.?.character_physics.getPosition();
-                model_entity.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-            } else |_| {}
-
-            // After physics update set all entity transforms to match physics bodies
-            {
-                const body_interface = self.engine.physics.zphy.getBodyInterface();
-                for (self.engine.entities.data.items) |*it| {
-                    if (it.item_data) |*en| {
-                        if (en.physics_body) |body_id| {
-                            const pos = body_interface.getPosition(body_id);
-                            en.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-                            en.transform.rotation = body_interface.getRotation(body_id);
-                        }
-                    }
-                }
-            }
-        }
 
         // Camera input and buffer data management
         if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
-        if (self.engine.entities.get(self.model_idx)) |model_entity| {
-            self.camera.update(&camera_entity.transform, model_entity.transform.position + zm.f32x4(0.0, 1.5, 0.0, 0.0), self.engine);
+        if (self.engine.entities.get(self.character_idx)) |character_entity| {
+            self.camera.update(&camera_entity.transform, character_entity.transform.position + zm.f32x4(0.0, 1.5, 0.0, 0.0), self.engine);
 
             { // Update camera buffer
                 const mapped_buffer = self.camera_data_buffer.map(CameraStruct, self.engine.gfx.context) catch unreachable;
@@ -501,7 +450,7 @@ pub const App = struct {
             var bone_transforms = std.ArrayList(zm.Mat).init(std.heap.page_allocator);
             defer bone_transforms.deinit();
 
-            model_entity.model.?.bone_transform(self.engine.time.time_since_start_of_app() * 0.3, &bone_transforms);
+            character_entity.model.?.bone_transform(self.engine.time.time_since_start_of_app() * 0.3, &bone_transforms);
             
             { // Update bone matrix buffer
                 const mapped_buffer = self.bone_matrix_buffer.map([ms.MAX_BONES]zm.Mat, self.engine.gfx.context) catch unreachable;
@@ -570,7 +519,7 @@ pub const App = struct {
 
         // find bone transforms for chara
         //
-        // if (self.engine.entities.get(self.model_idx)) |chara| {
+        // if (self.engine.entities.get(self.character_idx)) |chara| {
         //     self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
         //
         //     const pos_stride: c_uint = @sizeOf(f32) * 3;
@@ -615,41 +564,39 @@ pub const App = struct {
         }
 
         self.render_text_over_quad(
-            &self.ui.fonts[@intFromEnum(FontEnum.GeistMono)],
+            FontEnum.GeistMono,
             "Hello World.\nThis is the next line.",
-            100,
-            100,
             .{
+                .position = .{ .x = 100, .y = 100, },
                 .size = .{.Pixels = 15},
             }, 
             .{
                 .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
             },
             rtv,
-            self.engine.gfx.swapchain_size.width, 
-            self.engine.gfx.swapchain_size.height, 
         );
 
-        const vel_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "character speed: {d:.2}\nvelocity: {d:.2}\nis supported: {}", .{
-            zm.length3(character_velocity)[0],
-            character_velocity,
-            character_is_supported((self.engine.entities.get(self.model_idx) catch unreachable).app.chara_data.?.character_physics),
-        }) catch unreachable;
-        defer self.engine.general_allocator.allocator().free(vel_text);
+        if (self.engine.entities.get(self.character_idx)) |character_entity| {
+            const character = character_entity.physics.?.CharacterVirtual.virtual;
+            const character_velocity = zm.loadArr3(character.getLinearVelocity());
+            const vel_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "character speed: {d:.2}\nvelocity: {d:.2}\nis supported: {}", .{
+                zm.length3(character_velocity)[0],
+                character_velocity,
+                character_is_supported((self.engine.entities.get(self.character_idx) catch unreachable).physics.?.CharacterVirtual.virtual),
+            }) catch unreachable;
+            defer self.engine.general_allocator.allocator().free(vel_text);
 
-        self.ui.render_text_2d(
-            FontEnum.GeistMono,
-            vel_text, 
-            100, 
-            500, 
-            .{
-                .size = .{.Pixels = 15},
-            }, 
-            rtv, 
-            self.engine.gfx.swapchain_size.width, 
-            self.engine.gfx.swapchain_size.height, 
-            &self.engine.gfx
-        );
+            self.ui.render_text_2d(
+                FontEnum.GeistMono,
+                vel_text, 
+                .{
+                    .position = .{ .x = 100, .y = 500, },
+                    .size = .{.Pixels = 15},
+                }, 
+                rtv, 
+                &self.engine.gfx
+            );
+        } else |_| {}
 
         var fps_buf: [64]u8 = [_]u8{0} ** 64;
         const fps_text = std.fmt.bufPrint(fps_buf[0..], "frame time: {d:2.3}ms\nfps: {d:0.1}", .{
@@ -660,14 +607,16 @@ pub const App = struct {
         self.ui.render_text_2d(
             FontEnum.GeistMono,
             fps_text, 
-            10,
-            self.engine.gfx.swapchain_size.height - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.ascender * 12.0)),
             .{
+                .position = .{
+                    .x = 10,
+                    .y = 
+                        self.engine.gfx.swapchain_size.height - 
+                        @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.ascender * 12.0)),
+                },
                 .size = .{.Pixels = 12},
             }, 
             rtv, 
-            self.engine.gfx.swapchain_size.width, 
-            self.engine.gfx.swapchain_size.height, 
             &self.engine.gfx
         );
 
@@ -679,14 +628,14 @@ pub const App = struct {
         self.ui.render_text_2d(
             FontEnum.GeistMono,
             rev_text, 
-            10, 
-            - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
             .{
+                .position = .{
+                    .x = 10,
+                    .y = -@as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
+                },
                 .size = .{.Pixels = 12},
             }, 
             rtv, 
-            self.engine.gfx.swapchain_size.width, 
-            self.engine.gfx.swapchain_size.height, 
             &self.engine.gfx
         );
 
@@ -713,9 +662,13 @@ pub const App = struct {
                     const p = &model.mesh_list[prim_idx];
 
                     if (p.material_descriptor.double_sided) {
-                        self.engine.gfx.context.RSSetState(self.rasterizer_states.double_sided.state);
+                        self.engine.gfx.context.RSSetState(self.engine.gfx.rasterization_state(
+                            .{ .FillFront = true, .FillBack = true, }
+                        ).state);
                     } else {
-                        self.engine.gfx.context.RSSetState(self.rasterizer_states.cull_back_face.state);
+                        self.engine.gfx.context.RSSetState(self.engine.gfx.rasterization_state(
+                            .{ .FillFront = true, .FillBack = false, }
+                        ).state);
                     }
 
                     if (p.has_indices()) {
@@ -796,32 +749,23 @@ pub const App = struct {
 
     fn render_text_over_quad(
         self: *Self,
-        font_: *font.Font,
+        font_: _ui.FontEnum,
         text: []const u8,
-        x_pos: i32,
-        y_pos: i32,
         text_props: font.Font.FontRenderProperties2D,
         quad_props: _ui.QuadRenderer.QuadProperties,
         rtv: gfx.RenderTargetView,
-        rtv_width: i32,
-        rtv_height: i32,
     ) void {
         self.ui.quad_renderer.render_quad(
-            font_.text_bounds_2d(text, x_pos, y_pos, text_props, rtv_width, rtv_height),
+            self.ui.fonts[@intFromEnum(font_)].text_bounds_2d(text, text_props, rtv.size.width, rtv.size.height),
             quad_props,
             rtv,
-            rtv_width,
-            rtv_height,
             &self.engine.gfx
         );
-        font_.render_text_2d(
+        self.ui.render_text_2d(
+            font_,
             text,
-            x_pos,
-            y_pos,
             text_props,
             rtv,
-            rtv_width,
-            rtv_height,
             &self.engine.gfx
         );
     }

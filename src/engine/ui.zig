@@ -71,16 +71,12 @@ pub const UiRenderer = struct {
         self: *UiRenderer, 
         font: FontEnum,
         text: []const u8,
-        x_pos: i32,
-        y_pos: i32,
         props: _font.Font.FontRenderProperties2D,
         rtv: _gfx.RenderTargetView, 
-        rtv_width: i32,
-        rtv_height: i32,
         gfx: *_gfx.GfxState,
     ) void {
         self.fonts[@intFromEnum(font)].render_text_2d(
-            text, x_pos, y_pos, props, rtv, rtv_width, rtv_height, gfx
+            text, props, rtv, gfx
         );
     }
 
@@ -89,12 +85,10 @@ pub const UiRenderer = struct {
         rect_pixels: RectPixels,
         props: QuadRenderer.QuadProperties,
         rtv: _gfx.RenderTargetView, 
-        rtv_width: i32,
-        rtv_height: i32,
         gfx: *_gfx.GfxState,
     ) void {
         self.quad_renderer.render_quad(
-            rect_pixels, props, rtv, rtv_width, rtv_height, gfx
+            rect_pixels, props, rtv, gfx
         );
     }
 };
@@ -203,8 +197,6 @@ pub const QuadRenderer = struct {
         rect_pixels: RectPixels,
         props: QuadProperties,
         rtv: _gfx.RenderTargetView, 
-        rtv_width: i32,
-        rtv_height: i32,
         gfx: *_gfx.GfxState,
     ) void {
         { // Setup quad vertex info buffer
@@ -213,10 +205,10 @@ pub const QuadRenderer = struct {
 
             mapped_buffer.data.* = QuadBufferVertexBuffer {
                 .quad_bounds = Bounds {
-                    .left = ((@as(f32, @floatFromInt(rect_pixels.left)) / @as(f32, @floatFromInt(rtv_width))) * 2.0) - 1.0,
-                    .right = ((@as(f32, @floatFromInt(rect_pixels.left + rect_pixels.width)) / @as(f32, @floatFromInt(rtv_width))) * 2.0) - 1.0,
-                    .bottom = ((@as(f32, @floatFromInt(rect_pixels.bottom)) / @as(f32, @floatFromInt(rtv_height))) * 2.0) - 1.0,
-                    .top = ((@as(f32, @floatFromInt(rect_pixels.bottom + rect_pixels.height)) / @as(f32, @floatFromInt(rtv_height))) * 2.0) - 1.0,
+                    .left = ((@as(f32, @floatFromInt(rect_pixels.left)) / @as(f32, @floatFromInt(rtv.size.width))) * 2.0) - 1.0,
+                    .right = ((@as(f32, @floatFromInt(rect_pixels.left + rect_pixels.width)) / @as(f32, @floatFromInt(rtv.size.width))) * 2.0) - 1.0,
+                    .bottom = ((@as(f32, @floatFromInt(rect_pixels.bottom)) / @as(f32, @floatFromInt(rtv.size.height))) * 2.0) - 1.0,
+                    .top = ((@as(f32, @floatFromInt(rect_pixels.bottom + rect_pixels.height)) / @as(f32, @floatFromInt(rtv.size.height))) * 2.0) - 1.0,
                 },
             };
         }
@@ -230,8 +222,8 @@ pub const QuadRenderer = struct {
         }
 
         const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(rtv_width),
-            .Height = @floatFromInt(rtv_height),
+            .Width = @floatFromInt(rtv.size.width),
+            .Height = @floatFromInt(rtv.size.height),
             .TopLeftX = 0,
             .TopLeftY = 0,
             .MinDepth = 0.0,
