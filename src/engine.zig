@@ -23,7 +23,7 @@ pub fn Engine(comptime App: type) type {
         const Log = std.log.scoped(.Engine);
 
         pub const EntitySuperStruct = struct {
-            name: ?[]u8 = null,
+            name: ?[]const u8 = null,
             transform: tf.Transform = tf.Transform.new(),
             model: ?*const mesh.Model = null,
             physics: ?PhysicsOptions = null,

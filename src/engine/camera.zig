@@ -40,6 +40,10 @@ pub const Camera = struct {
         return zm.rotate(zm.inverse(zm.quatFromMat(self.view_matrix)), zm.f32x4(1.0, 0.0, 0.0, 0.0));
     }
 
+    pub fn forward_direction(self: *const Self) zm.F32x4 {
+        return zm.rotate(zm.inverse(zm.quatFromMat(self.view_matrix)), zm.f32x4(0.0, 0.0, 1.0, 0.0));
+    }
+
     pub fn fly_camera_update(
         self: *Self, 
         engine: *app.Engine

@@ -83,7 +83,7 @@ pub const PhysicsSystem = struct {
     }
 
     pub fn update(self: *Self, comptime EntityList: type, entity_list: *EntityList, time: *tm.TimeState) void {
-        // Update at UpdateRateHz, this may happen more than one time before returning
+        // Update at UpdateRateHz, this may happen zero or more than one times before returning
         while (time.frame_start_time_ns > self.next_update_time) {
             // Run physics update
             self.zphy.update(1.0 / UpdateRateHz, .{}) 
@@ -127,7 +127,7 @@ pub const PhysicsSystem = struct {
                                 const pos = character.virtual.getPosition();
                                 if (character.character) |c| {
                                     c.setPosition(pos);
-                                    c.postSimulation(0.1, true);
+                                    c.postSimulation(0.05, true);
                                 }
 
                                 e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
@@ -143,15 +143,15 @@ pub const PhysicsSystem = struct {
     }
 
     pub const BodyReadLock = struct {
-        lock_interface: zphy.BodyLockInterface,
-        read_lock: zphy.BodyLockWrite,
+        lock_interface: *const zphy.BodyLockInterface,
+        read_lock: zphy.BodyLockRead,
         body: *const zphy.Body,
 
-        pub fn deinit(self: *BodyWriteLock) void {
+        pub fn deinit(self: *BodyReadLock) void {
             self.read_lock.unlock();
         }
 
-        pub fn init(body_id: BodyId, physics_system: *PhysicsSystem) !BodyWriteLock {
+        pub fn init(body_id: BodyId, physics_system: *PhysicsSystem) !BodyReadLock {
             const lock_interface = physics_system.zphy.getBodyLockInterface();
 
             var read_lock: zphy.BodyLockRead = .{};
@@ -161,7 +161,7 @@ pub const PhysicsSystem = struct {
             if (read_lock.body) |locked_body| {
                 return BodyReadLock {
                     .lock_interface = lock_interface,
-                    .write_lock = read_lock,
+                    .read_lock = read_lock,
                     .body = locked_body,
                 };
             } else {
@@ -170,12 +170,12 @@ pub const PhysicsSystem = struct {
         }
     };
 
-    pub fn init_body_read_lock(self: *Self, body_id: BodyId) !BodyWriteLock {
+    pub fn init_body_read_lock(self: *Self, body_id: BodyId) !BodyReadLock {
         return BodyReadLock.init(body_id, self);
     }
 
     pub const BodyWriteLock = struct {
-        lock_interface: zphy.BodyLockInterface,
+        lock_interface: *zphy.BodyLockInterface,
         write_lock: zphy.BodyLockWrite,
         body: *zphy.Body,
 
@@ -204,6 +204,24 @@ pub const PhysicsSystem = struct {
 
     pub fn init_body_write_lock(self: *Self, body_id: BodyId) !BodyWriteLock {
         return BodyWriteLock.init(body_id, self);
+    }
+
+    pub fn construct_entity_user_data(generational_idx: en.gen.GenerationalIndex, additional_data: u16) u64 {
+        var ret: u64 = 0x00;
+        ret |= @as(u64, @intCast(generational_idx.index));
+        ret |= @as(u64, @intCast(generational_idx.generation)) << 32;
+        ret |= @as(u64, @intCast(additional_data)) << (32 + 16);
+        return ret;
+    }
+
+    pub fn extract_entity_from_user_data(user_data: u64) struct{ entity: en.gen.GenerationalIndex, additional_data: u16 } {
+        return .{
+            .entity = en.gen.GenerationalIndex {
+                .index = @intCast(user_data & 0xffffffff),
+                .generation = @intCast((user_data >> 32) & 0xffff),
+            },
+            .additional_data = @intCast((user_data >> (32 + 16)) & 0xffff),
+        };
     }
 
     pub fn get_raycast_normal(self: *Self, raycast: zphy.RRayCast, raycast_result: zphy.RayCastResult) ?zm.F32x4 {

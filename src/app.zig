@@ -174,6 +174,7 @@ pub const App = struct {
         defer demo_compound_shape.release();
 
         _ = try eng.entities.insert(Engine.EntitySuperStruct {
+            .name = "ground entity",
             .model = &terrain_model,
             .physics = .{ .Body = 
                 try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
@@ -254,6 +255,7 @@ pub const App = struct {
         character_settings.gravity_factor = 1.0; // will handle manually
 
         const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
+            .name = "character entity",
             .model = &chara_model,
             .transform = chara_transform,
             .physics = .{ .CharacterVirtual = .{
@@ -263,35 +265,38 @@ pub const App = struct {
                     chara_transform.rotation,
                     eng.physics.zphy
                 ),
-                .character = try zphy.Character.create(
-                    character_settings,
-                    [3]f32{0.0, 0.0, 0.0},
-                    zm.qidentity(),
-                    0x00,
-                    eng.physics.zphy
-                ),
+                .character = null,
                 .extended_update_settings = .{},
             } },
             .app = .{
                 .health_points = 100,
             },
         });
+        (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character = try zphy.Character.create(
+            character_settings,
+            [3]f32{0.0, 0.0, 0.0},
+            zm.qidentity(),
+            ph.PhysicsSystem.construct_entity_user_data(chara_root_idx, 0),
+            eng.physics.zphy
+        );
         (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character.?.addToPhysicsSystem(.{});
 
         const opponent_idx = try eng.entities.insert(Engine.EntitySuperStruct {
+            .name = "opponent entity",
             .model = &chara_model,
             .transform = chara_transform,
-            .physics = .{ .Character = try zphy.Character.create(
-                character_settings,
-                [3]f32{0.0, 0.0, 0.0},
-                zm.qidentity(),
-                0x00,
-                eng.physics.zphy
-            ) },
+            .physics = null,
             .app = .{
                 .health_points = 100,
             },
         });
+        (eng.entities.get(opponent_idx) catch unreachable).physics = .{ .Character = try zphy.Character.create(
+            character_settings,
+            [3]f32{0.0, 0.0, 0.0},
+            zm.qidentity(),
+            ph.PhysicsSystem.construct_entity_user_data(opponent_idx, 0),
+            eng.physics.zphy
+        ) };
         (eng.entities.get(opponent_idx) catch unreachable).physics.?.Character.addToPhysicsSystem(.{});
 
         const model_buffer = try gfx.Buffer.init(
@@ -322,7 +327,7 @@ pub const App = struct {
                 .mouse_sensitivity = 0.001,
                 .max_orbit_distance = 10.0,
                 .min_orbit_distance = 1.0,
-                .orbit_distance = 2.0,
+                .orbit_distance = 5.0,
             },
             .camera_idx = camera_transform_idx,
 
@@ -349,6 +354,12 @@ pub const App = struct {
 
     fn vecProject(v0: zm.F32x4, v1: zm.F32x4) f32 {
         return zm.length3(v0)[0] * std.math.cos(vecAngle(v0, v1));
+    }
+
+    fn forward_vector_2d(transform: *const Transform) zm.F32x4 {
+        var forward_direction = transform.forward_direction();
+        forward_direction[1] = 0.0;
+        return zm.normalize3(forward_direction);
     }
 
     fn update(self: *Self) void {
@@ -416,6 +427,61 @@ pub const App = struct {
                 character.setRotation(
                     zm.slerp(character_entity.transform.rotation, zm.matToQuat(rot), self.engine.time.delta_time_f32() * 15.0)
                 );
+            }
+
+            if (self.engine.input.get_key_down(kc.KeyCode.MouseLeft)) {
+                var collector = CollideShapeCollector.init(self.engine.general_allocator.allocator());
+                defer collector.deinit();
+
+                const box_shape_settings = zphy.BoxShapeSettings.create([3]f32{0.5, 0.5, 0.5}) catch unreachable;
+                defer box_shape_settings.release();
+
+                const box_shape = box_shape_settings.createShape() catch unreachable;
+                defer box_shape.release();
+
+                var camera_forward_2d = self.camera.forward_direction();
+                camera_forward_2d[1] = 0.0;
+                camera_forward_2d = zm.normalize3(camera_forward_2d);
+
+                const shape_position = character_entity.transform.position + (camera_forward_2d);
+                
+                const matrix = zm.matToArr((Transform {
+                        .position = shape_position,
+                    }).generate_model_matrix());
+
+                self.engine.physics.zphy.getNarrowPhaseQuery().collideShape(
+                    box_shape,
+                    [3]f32{1.0, 1.0, 1.0},
+                    matrix,
+                    [3]zphy.Real{0.0, 0.0, 0.0},
+                    @ptrCast(&collector),
+                    .{}//
+                );
+
+                std.log.info("hits: {}", .{collector.hits.items.len});
+                for (collector.hits.items) |hit| {
+                    var read_lock = self.engine.physics.init_body_read_lock(hit.body2_id) catch unreachable;
+                    defer read_lock.deinit();
+
+                    const user_data = ph.PhysicsSystem.extract_entity_from_user_data(read_lock.body.getUserData());
+                    if (self.engine.entities.get(user_data.entity)) |entity| {
+                        const unnamed_name = "unnamed";
+                        var entity_name: []const u8 = unnamed_name;
+                        if (entity.name) |name| {
+                            std.log.info("- {s}", .{name});
+                            entity_name = name;
+                        } else {
+                            std.log.info("- unnamed", .{});
+                        }
+
+                        if (entity.app.health_points) |*hp| {
+                            hp.* -= 10;
+                            if (hp.* < 0) {
+                                std.log.info("'{s}' fainted!", .{entity_name});
+                            }
+                        }
+                    } else |e| { std.log.warn("{}", .{e}); }
+                }
             }
         } else |_| {}
 
@@ -772,6 +838,51 @@ pub const App = struct {
 
     fn character_is_supported(chr: *zphy.CharacterVirtual) bool {
         return chr.getGroundState() == zphy.CharacterGroundState.on_ground;
+    }
+};
+
+const CollideShapeCollector = extern struct {
+    usingnamespace zphy.CollideShapeCollector.Methods(@This());
+    __v: *const zphy.CollideShapeCollector.VTable = &vtable,
+
+    hits: *std.ArrayList(zphy.CollideShapeResult),
+
+    const vtable = zphy.CollideShapeCollector.VTable{ 
+        .reset = _Reset,
+        .onBody = _OnBody,
+        .addHit = _AddHit,
+    };
+
+    fn _Reset(
+        self: *zphy.CollideShapeCollector,
+    ) callconv(.C) void { 
+        _ = self;
+    }
+    fn _OnBody(
+        self: *zphy.CollideShapeCollector,
+        in_body: *const zphy.Body,
+    ) callconv(.C) void { 
+        _ = self;
+        _ = in_body;
+    }
+    fn _AddHit(
+        self: *zphy.CollideShapeCollector,
+        collide_shape_result: *const zphy.CollideShapeResult,
+    ) callconv(.C) void {
+        @as(*CollideShapeCollector, @ptrCast(self)).hits.append(collide_shape_result.*) catch unreachable;
+    }
+
+    pub fn deinit(self: *CollideShapeCollector) void {
+        self.hits.deinit();
+        self.hits.allocator.destroy(self.hits);
+    }
+
+    pub fn init(alloc: std.mem.Allocator) CollideShapeCollector {
+        const hits = alloc.create(std.ArrayList(zphy.CollideShapeResult)) catch unreachable;
+        hits.* = std.ArrayList(zphy.CollideShapeResult).init(alloc);
+        return CollideShapeCollector {
+            .hits = hits,
+        };
     }
 };
 
