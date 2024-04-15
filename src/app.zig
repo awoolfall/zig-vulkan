@@ -15,6 +15,7 @@ const ms = @import("engine/mesh.zig");
 const ent = @import("engine/entity.zig");
 const ph = @import("engine/physics.zig");
 const path = @import("engine/path.zig");
+const particle = @import("engine/particles.zig");
 const es = @import("easings.zig");
 
 const font = @import("engine/font.zig");
@@ -63,11 +64,14 @@ pub const App = struct {
 
     ui: _ui.UiRenderer,
 
+    particle_system: particle.ParticleSystem,
+
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
 
         self.engine.gfx.context.Flush();
         self.ui.deinit();
+        self.particle_system.deinit();
 
         self.cone_model.deinit();
         self.chara_model.deinit();
@@ -309,8 +313,21 @@ pub const App = struct {
 
         eng.physics.zphy.optimizeBroadPhase();
 
-        const ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
+        var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
+
+        const particle_system = try particle.ParticleSystem.init(
+            eng.general_allocator.allocator(),
+            1000,
+            .{
+                .spawn_offset = zm.f32x4(0.0, -5.0, 0.0, 0.0),
+                .spawn_radius = 1.0,
+                .spawn_rate = 0.01,
+                .spawn_rate_variance = 0.05,
+            },
+            &eng.gfx
+        );
+        errdefer particle_system.deinit();
 
         return Self {
             .engine = eng,
@@ -341,6 +358,7 @@ pub const App = struct {
             .cone_model = cone_model,
 
             .ui = ui,
+            .particle_system = particle_system,
         };
     }
 
@@ -582,6 +600,13 @@ pub const App = struct {
                 }
             }
         }
+
+        self.particle_system.update(&self.engine.time);
+        self.particle_system.draw(
+            zm.mul(self.camera.view_matrix, self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())), 
+            &rtv,
+            &self.engine.gfx
+        );
 
         // find bone transforms for chara
         //
