@@ -51,6 +51,7 @@ pub const App = struct {
     
     camera_data_buffer: gfx.Buffer,
     camera: cm.Camera,
+    target_old_pos: zm.F32x4 = zm.f32x4s(0.0),
     camera_idx: ent.GenerationalIndex,
 
     model_buffer: gfx.Buffer,
@@ -89,7 +90,7 @@ pub const App = struct {
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
-        // eng.time.set_target_frame_rate(10.0);
+        eng.time.set_target_frame_rate(125.0);
 
         var depth_stencil_view = try create_depth_stencil_view(eng);
         errdefer depth_stencil_view.deinit();
@@ -320,10 +321,28 @@ pub const App = struct {
             eng.general_allocator.allocator(),
             1000,
             .{
-                .spawn_offset = zm.f32x4(0.0, -5.0, 0.0, 0.0),
-                .spawn_radius = 1.0,
+                .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
+                .spawn_radius = 2.0,
                 .spawn_rate = 0.01,
-                .spawn_rate_variance = 0.05,
+                .spawn_rate_variance = 0.0,
+                .burst_count = 1,
+                .particle_lifetime = 5.0,
+                .scale = .{
+                    .{ .value = zm.f32x4s(0.0), .key_time = 0.0, },
+                    .{ .value = zm.f32x4s(1.0), .key_time = 0.3, },
+                    .{ .value = zm.f32x4s(0.05), .key_time = 0.99, .easing_into = .OutQuart, },
+                    .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutQuart, },
+                },
+                .colour = .{
+                    // .{ .value = zm.f32x4(1.0, 0.7, 0.0, 1.0), .key_time = 0.0, },
+                    // .{ .value = zm.f32x4(0.8, 0.0, 1.0, 0.1), .key_time = 0.3, },
+                    // .{ .value = zm.f32x4(0.0, 1.0, 0.3, 1.0), .key_time = 0.99, .easing_into = .OutQuart, },
+                    // .{ .value = zm.f32x4(0.7, 0.7, 1.0, 0.8), .key_time = 1.0, .easing_into = .OutQuart, },
+                    .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
+                    .{ .value = zm.hsvToRgb(zm.f32x4(0.5, 1.0, 1.0, 1.0)), .key_time = 0.5, },
+                    .{ .value = zm.hsvToRgb(zm.f32x4(0.999, 1.0, 1.0, 1.0)), .key_time = 1.0, },
+                    null
+                },
             },
             &eng.gfx
         );
@@ -381,7 +400,6 @@ pub const App = struct {
     }
 
     fn update(self: *Self) void {
-
         // Input to move the model around
         if (self.engine.entities.get(self.character_idx)) |character_entity| {
             var movement_direction = zm.f32x4s(0.0);
@@ -521,7 +539,12 @@ pub const App = struct {
         // Camera input and buffer data management
         if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
         if (self.engine.entities.get(self.character_idx)) |character_entity| {
-            self.camera.update(&camera_entity.transform, character_entity.transform.position + zm.f32x4(0.0, 1.5, 0.0, 0.0), self.engine);
+            self.target_old_pos = zm.lerpV(
+                self.target_old_pos,
+                character_entity.transform.position + zm.f32x4(0.0, 1.5, 0.0, 0.0),
+                zm.f32x4s(self.engine.time.delta_time_f32() * 10.0)
+            );
+            self.camera.update(&camera_entity.transform, self.target_old_pos, self.engine);
 
             { // Update camera buffer
                 const mapped_buffer = self.camera_data_buffer.map(CameraStruct, self.engine.gfx.context) catch unreachable;
@@ -604,7 +627,10 @@ pub const App = struct {
         self.particle_system.update(&self.engine.time);
         self.particle_system.draw(
             zm.mul(self.camera.view_matrix, self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())), 
+            self.camera.right_direction(),
+            self.camera.up_direction(),
             &rtv,
+            &self.depth_stencil_view,
             &self.engine.gfx
         );
 
@@ -689,10 +715,12 @@ pub const App = struct {
             );
         } else |_| {}
 
-        var fps_buf: [64]u8 = [_]u8{0} ** 64;
-        const fps_text = std.fmt.bufPrint(fps_buf[0..], "frame time: {d:2.3}ms\nfps: {d:0.1}", .{
-            self.engine.time.delta_time_f32() * std.time.ms_per_s,
+        var fps_buf: [128]u8 = [_]u8{0} ** 128;
+        const fps_text = std.fmt.bufPrint(fps_buf[0..], "fps: {d:0.1}\nframe time: {d:2.3}ms\nwait time: {d:2.3}ms\nwait %: {d:0.0}", .{
             self.engine.time.get_fps(),
+            (self.engine.time.delta_time_f32() - self.engine.time.last_frame_wait_time_s) * std.time.ms_per_s,
+            self.engine.time.last_frame_wait_time_s * std.time.ms_per_s,
+            (self.engine.time.last_frame_wait_time_s / self.engine.time.last_frame_time_s) * 100.0
         }) catch unreachable;
 
         self.ui.render_text_2d(
@@ -911,3 +939,6 @@ const CollideShapeCollector = extern struct {
     }
 };
 
+fn custom_easing(_: f32) f32 {
+    return 1.0;
+}

@@ -918,7 +918,7 @@ pub const BlendState = struct {
         _ = self.state.Release();
     }
 
-    pub fn init(render_target_blend_types: []const BlendType, gfx: *GfxState) !BlendState {
+    pub fn init(render_target_blend_types: []const BlendType, gfx: *const GfxState) !BlendState {
         if (render_target_blend_types.len > 8) {
             return error.Maximum8BlendStates;
         }
