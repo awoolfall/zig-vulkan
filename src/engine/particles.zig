@@ -1,6 +1,7 @@
 const std = @import("std");
 const zm = @import("zmath");
 const w32 = @import("zwin32");
+const zn = @import("znoise");
 const tf = @import("transform.zig");
 const tm = @import("time.zig");
 const gf = @import("../gfx/gfx.zig");
@@ -14,10 +15,16 @@ pub const ParticleSystem = struct {
         colour: zm.F32x4,
     };
     
-    const CameraConstantBuffer = extern struct {
+    const ConstantBuffer = extern struct {
         view_proj_matrix: zm.Mat,
         right_direction: zm.F32x4,
         up_direction: zm.F32x4,
+        flags: u32,
+    };
+
+    const ConstantBufferFlags = packed struct(u32) {
+        is_circle: bool,
+        __unused: u31 = 0,
     };
 
     settings: ParticleSystemSettings,
@@ -26,23 +33,27 @@ pub const ParticleSystem = struct {
 
     alloc: std.mem.Allocator,
     rand: std.rand.DefaultPrng,
+    noise: zn.FnlGenerator,
 
     seconds_to_next_particle: f32 = 0.0,
 
     vertex_shader: gf.VertexShader,
     pixel_shader: gf.PixelShader,
     model_matrix_vertex_buffer: gf.Buffer,
-    camera_constant_buffer: gf.Buffer,
+    constant_buffer: gf.Buffer,
     blend_state: gf.BlendState,
 
-    pub fn deinit(self: *Self) void {
+    sort_particles: []ArrDat,
+
+    pub fn deinit(self: *const Self) void {
         self.alloc.free(self.particles);
+        self.alloc.free(self.sort_particles);
 
         self.vertex_shader.deinit();
         self.pixel_shader.deinit();
         self.blend_state.deinit();
         self.model_matrix_vertex_buffer.deinit();
-        self.camera_constant_buffer.deinit();
+        self.constant_buffer.deinit();
     }
 
     pub fn init(alloc: std.mem.Allocator, max_particles: u32, settings: ParticleSystemSettings, gfx: *gf.GfxState) !Self {
@@ -75,13 +86,13 @@ pub const ParticleSystem = struct {
         );
         errdefer model_matrix_vertex_buffer.deinit();
 
-        const camera_constant_buffer = try gf.Buffer.init(
-            @sizeOf(CameraConstantBuffer),
+        const constant_buffer = try gf.Buffer.init(
+            @sizeOf(ConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
             gfx.device
         );
-        errdefer camera_constant_buffer.deinit();
+        errdefer constant_buffer.deinit();
 
         var blend_state = gf.BlendState.init(([_]gf.BlendType{.Simple})[0..], gfx) catch unreachable;
         errdefer blend_state.deinit();
@@ -90,20 +101,31 @@ pub const ParticleSystem = struct {
         errdefer alloc.free(particles);
         @memset(particles, null);
 
+        const sort_particles = try alloc.alloc(ArrDat, max_particles);
+        errdefer alloc.free(sort_particles);
+
         return Self {
             .settings = settings,
             .particles = particles,
             .alloc = alloc,
             .rand = std.rand.DefaultPrng.init(@intCast(std.time.microTimestamp())),
+            .noise = zn.FnlGenerator{},
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
             .model_matrix_vertex_buffer = model_matrix_vertex_buffer,
-            .camera_constant_buffer = camera_constant_buffer,
+            .constant_buffer = constant_buffer,
             .blend_state = blend_state,
+            .sort_particles = sort_particles,
         };
     }
 
-    pub fn emit_particle(self: *Self) void {
+    pub fn emit_particle_burst(self: *Self) void {
+        for (0..self.settings.burst_count) |_| {
+            self.emit_particle();
+        }
+    }
+
+    fn emit_particle(self: *Self) void {
         // find free particle
         const check_idx = self.next_particle_index;
         var count: u32 = 0;
@@ -117,17 +139,20 @@ pub const ParticleSystem = struct {
         }
 
         self.particles[self.next_particle_index] = ParticleData {
+            .rand = std.rand.DefaultPrng.init(@intCast(std.time.microTimestamp())),
+            .rand_vec = random_v(self.rand.random()),
             .transform = tf.Transform {
                 .position = self.f32x4_variance(self.settings.spawn_offset, zm.f32x4s(self.settings.spawn_radius)),
                 .scale = KeyFrame(zm.F32x4).calc(self.settings.scale[0..], 0.0),
             },
-            .velocity = zm.f32x4(0.0, 1.0, 0.0, 0.0),
+            .velocity = self.settings.initial_velocity,
             .life_remaining = self.f32_variance(self.settings.particle_lifetime, self.settings.particle_lifetime_variance),
         };
     }
 
     pub fn update(self: *Self, time: *const tm.TimeState) void {
         const delta_time = zm.f32x4s(time.delta_time_f32());
+        const current_time = zm.f32x4s(@floatCast(time.time_since_start_of_app()));
         for (self.particles) |*maybe_particle| {
             if (maybe_particle.*) |*p| {
                 p.life_remaining -= delta_time[0];
@@ -136,6 +161,23 @@ pub const ParticleSystem = struct {
                     continue;
                 }
                 const t = 1.0 - (p.life_remaining / self.settings.particle_lifetime);
+
+                for (self.settings.forces) |f| {
+                    if (f) |fo| {
+                        switch (fo) {
+                            .Constant => |v| { p.velocity += (v * delta_time); },
+                            .ConstantRand => |force| { 
+                                const noise_vec = zm.f32x4(
+                                    self.noise.noise2(current_time[0]*100.0, p.rand_vec[0]*1000.0),
+                                    self.noise.noise2(current_time[0]*100.0, p.rand_vec[1]*1000.0),
+                                    self.noise.noise2(current_time[0]*100.0, p.rand_vec[2]*1000.0),
+                                    self.noise.noise2(current_time[0]*100.0, p.rand_vec[3]*1000.0),
+                                );
+                                p.velocity += ((noise_vec - zm.f32x4s(0.5)) * zm.f32x4s(force) * delta_time); 
+                            },
+                        }
+                    }
+                }
 
                 p.transform.scale = KeyFrame(zm.F32x4).calc(self.settings.scale[0..], t);
                 p.colour = KeyFrame(zm.F32x4).hsv_calc(self.settings.colour[0..], t);
@@ -146,13 +188,20 @@ pub const ParticleSystem = struct {
         self.seconds_to_next_particle -= delta_time[0];
         if (self.settings.spawn_rate != 0.0) {
             while (self.seconds_to_next_particle <= 0.0) {
-                for (0..self.settings.burst_count) |_| {
-                    self.emit_particle();
-                }
+                self.emit_particle_burst();
                 self.seconds_to_next_particle += @max(0.0, self.f32_variance(self.settings.spawn_rate, self.settings.spawn_rate_variance));
             }
         }
     }
+
+    fn particle_z_sort_func(_: i32, lhs: ArrDat, rhs: ArrDat) bool {
+        return lhs.z > rhs.z;
+    }
+
+    const ArrDat = struct {
+        z: f32,
+        dat: VertexBufferData,
+    };
 
     pub fn draw(
         self: *Self, 
@@ -163,30 +212,46 @@ pub const ParticleSystem = struct {
         depth_buffer: *const gf.DepthStencilView, 
         gfx: *gf.GfxState
     ) void {
+        const zero_size = zm.scaling(0.0, 0.0, 0.0);
+        for (self.particles, 0..) |*maybe_particle, i| {
+            if (maybe_particle.*) |*p| {
+                self.sort_particles[i].dat.model_matrix = p.transform.generate_model_matrix();
+                self.sort_particles[i].dat.colour = p.colour;
+            } else {
+                self.sort_particles[i].dat.model_matrix = zero_size;
+                self.sort_particles[i].dat.colour = zm.f32x4s(0.0);
+            }
+            self.sort_particles[i].z = zm.mul(zm.f32x4(0.0, 0.0, 0.0, 1.0), zm.mul(self.sort_particles[i].dat.model_matrix, view_proj_matrix))[2];
+        }
+        std.mem.sort(ArrDat, self.sort_particles[0..], @as(i32, @intCast(0)), particle_z_sort_func);
+
         // update all particle model matrices
         if (self.model_matrix_vertex_buffer.map(VertexBufferData, gfx.context)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
-            const zero_size = zm.scaling(0.0, 0.0, 0.0);
-            for (self.particles, 0..) |*maybe_particle, i| {
-                if (maybe_particle.*) |*p| {
-                    @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].model_matrix = p.transform.generate_model_matrix();
-                    @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].colour = p.colour;
-                } else {
-                    @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].model_matrix = zero_size;
-                    @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].colour = zm.f32x4s(0.0);
-                }
+            // for (self.particles, 0..) |*maybe_particle, i| {
+            //     if (maybe_particle.*) |*p| {
+            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].model_matrix = p.transform.generate_model_matrix();
+            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].colour = p.colour;
+            //     } else {
+            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].model_matrix = zero_size;
+            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].colour = zm.f32x4s(0.0);
+            //     }
+            // }
+            for (self.sort_particles, 0..) |*p, i| {
+                @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i] = p.dat;
             }
         } else |_| {}
 
         // update camera constant buffer
-        if (self.camera_constant_buffer.map(CameraConstantBuffer, gfx.context)) |mapped_buffer| {
+        if (self.constant_buffer.map(ConstantBuffer, gfx.context)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data.* = CameraConstantBuffer {
+            mapped_buffer.data.* = ConstantBuffer {
                 .view_proj_matrix = view_proj_matrix,
                 .right_direction = camera_right,
                 .up_direction = camera_up,
+                .flags = @bitCast(ConstantBufferFlags { .is_circle = true, }),
             };
         } else |_| {}
 
@@ -196,7 +261,8 @@ pub const ParticleSystem = struct {
         gfx.context.OMSetBlendState(self.blend_state.state, null, 0xffffffff);
 
         gfx.context.VSSetShader(self.vertex_shader.vso, null, 0);
-        gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.camera_constant_buffer.buffer));
+        gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.constant_buffer.buffer));
+        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.constant_buffer.buffer));
 
         gfx.context.IASetPrimitiveTopology(w32.d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);//
         gfx.context.IASetInputLayout(self.vertex_shader.layout);
@@ -216,26 +282,30 @@ pub const ParticleSystem = struct {
         gfx.context.DrawInstanced(6, @intCast(self.particles.len), 0, 0);
     }
 
+    fn random_v(rand: std.rand.Random) zm.F32x4 {
+        return zm.f32x4(
+            rand.float(f32),
+            rand.float(f32),
+            rand.float(f32),
+            rand.float(f32)
+        );
+    }
+
     fn f32_variance(self: *Self, value: f32, variance: f32) f32 {
         return value + (((self.rand.random().float(f32) - 0.5) * 2.0) * variance);
     }
 
     fn f32x4_variance(self: *Self, value: zm.F32x4, variance: zm.F32x4) zm.F32x4 {
-        const random_v = zm.f32x4(
-            self.rand.random().float(f32),
-            self.rand.random().float(f32),
-            self.rand.random().float(f32),
-            self.rand.random().float(f32)
-        );
-        return value + (((random_v - zm.f32x4s(0.5)) * zm.f32x4s(2.0)) * variance);
+        return value + (((random_v(self.rand.random()) - zm.f32x4s(0.5)) * zm.f32x4s(2.0)) * variance);
     }
 };
 
 pub const ParticleData = struct {
+    rand: std.rand.DefaultPrng,
+    rand_vec: zm.F32x4,
     transform: tf.Transform = .{},
-    colour: zm.F32x4 = zm.f32x4s(0.0),
     velocity: zm.F32x4 = zm.f32x4s(0.0),
-    angular_velocity: zm.F32x4 = zm.f32x4s(0.0),
+    colour: zm.F32x4 = zm.f32x4s(0.0),
     life_remaining: f32 = 0.0,
 };
 
@@ -249,14 +319,22 @@ pub const ParticleSystemSettings = struct {
     particle_lifetime: f32 = 1.0,
     particle_lifetime_variance: f32 = 0.0,
 
+    initial_velocity: zm.F32x4 = zm.f32x4s(0.0),
+
     scale: [4]?KeyFrame(zm.F32x4) = [1]?KeyFrame(zm.F32x4){null} ** 4,
     colour: [4]?KeyFrame(zm.F32x4) = [1]?KeyFrame(zm.F32x4){null} ** 4,
+    forces: [4]?ForceEnum = [1]?ForceEnum{null} ** 4,
+};
+
+pub const ForceEnum = union(enum) {
+    Constant: zm.F32x4,
+    ConstantRand: f32,
 };
 
 pub fn KeyFrame(comptime T: type) type {
     return struct {
         easing_into: es.Easing = .OutLinear,
-        key_time: f32,
+        key_time: f32 = 0.0,
         value: T,
 
         fn calc_(self: *const KeyFrame(T), prev: *const KeyFrame(T), t: f32) T {
@@ -269,9 +347,13 @@ pub fn KeyFrame(comptime T: type) type {
         }
 
         pub fn calc(arr: []?KeyFrame(T), t: f32) T {
-            for (0..arr.len) |i| {
+            for (1..arr.len) |i| {
                 if (arr[i] == null) {
-                    break;
+                    if (arr[i - 1]) |*v| {
+                        return v.value;
+                    } else {
+                        return default_value();
+                    } 
                 }
                 if (arr[i].?.key_time >= t) {
                     if (i == 0) { 
@@ -285,9 +367,13 @@ pub fn KeyFrame(comptime T: type) type {
         }
 
         pub fn hsv_calc(arr: []?KeyFrame(zm.F32x4), t: f32) zm.F32x4 {
-            for (0..arr.len) |i| {
+            for (1..arr.len) |i| {
                 if (arr[i] == null) {
-                    break;
+                    if (arr[i - 1]) |*v| {
+                        return v.value;
+                    } else {
+                        return zm.f32x4s(0.0);
+                    } 
                 }
                 if (arr[i].?.key_time >= t) {
                     if (i == 0) { 
@@ -352,6 +438,7 @@ const SHADER_HLSL = \\
 \\  struct vs_out
 \\  {
 \\      float4 position : SV_POSITION;
+\\      float2 uv: TEXCOORD0;
 \\      float4 colour: Colour;
 \\  };
 \\
@@ -360,6 +447,7 @@ const SHADER_HLSL = \\
 \\      row_major float4x4 vp_matrix;
 \\      float4 right_direction;
 \\      float4 up_direction;
+\\      uint flags;
 \\  }
 \\  
 \\  vs_out vs_main(uint vertId : SV_VertexID, vs_in input)
@@ -376,6 +464,8 @@ const SHADER_HLSL = \\
 \\      pos.w = 1.0;
 \\
 \\      output.position = mul(pos, mvp);
+\\      output.uv = float2(x, y);
+\\      output.uv = (output.uv - 0.5) * 2.0;
 \\
 \\      output.colour = input.colour;
 \\  
@@ -384,6 +474,15 @@ const SHADER_HLSL = \\
 \\  
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
-\\      return input.colour;
+\\      float distance = 0.0;
+\\
+\\      // is_circle
+\\      if (flags & 1) {
+\\          distance = input.uv.x * input.uv.x + input.uv.y * input.uv.y;
+\\          distance = sqrt(distance);
+\\          distance = smoothstep(0.49, 0.51, distance);
+\\      }
+\\      
+\\      return input.colour * float4(1.0, 1.0, 1.0, 1.0 - distance);
 \\  }
 ;

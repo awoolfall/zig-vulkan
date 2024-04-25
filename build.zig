@@ -5,6 +5,7 @@ const zmath = @import("libs/zig-gamedev/libs/zmath/build.zig");
 const zmesh = @import("libs/zig-gamedev/libs/zmesh/build.zig");
 const zphysics = @import("libs/zig-gamedev/libs/zphysics/build.zig");
 const zstbi = @import("libs/zig-gamedev/libs/zstbi/build.zig");
+const znoise = @import("libs/zig-gamedev/libs/znoise/build.zig");
 const assimp = @import("libs/assimp/build.zig");
 
 // Although this function looks imperative, note that its job is to
@@ -83,6 +84,9 @@ pub fn build(b: *std.Build) void {
 
     const zstbi_pkg = zstbi.package(b, target, optimize, .{});
     zstbi_pkg.link(exe);
+
+    const znoise_pkg = znoise.package(b, target, optimize, .{});
+    znoise_pkg.link(exe);
 
     const assimp_pkg = assimp.package(b, target, optimize, .{});
     assimp_pkg.link(exe);

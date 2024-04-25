@@ -65,14 +65,16 @@ pub const App = struct {
 
     ui: _ui.UiRenderer,
 
-    particle_system: particle.ParticleSystem,
+    zero_particle_system: particle.ParticleSystem,
+    player_attack_particle_system: particle.ParticleSystem,
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
 
         self.engine.gfx.context.Flush();
         self.ui.deinit();
-        self.particle_system.deinit();
+        self.zero_particle_system.deinit();
+        self.player_attack_particle_system.deinit();
 
         self.cone_model.deinit();
         self.chara_model.deinit();
@@ -317,36 +319,79 @@ pub const App = struct {
         var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
 
-        const particle_system = try particle.ParticleSystem.init(
+        const zero_particle_system = try particle.ParticleSystem.init(
             eng.general_allocator.allocator(),
             1000,
             .{
                 .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
-                .spawn_radius = 2.0,
+                .spawn_radius = 1.0,
                 .spawn_rate = 0.01,
-                .spawn_rate_variance = 0.0,
+                .spawn_rate_variance = 0.1,
                 .burst_count = 1,
                 .particle_lifetime = 5.0,
                 .scale = .{
-                    .{ .value = zm.f32x4s(0.0), .key_time = 0.0, },
-                    .{ .value = zm.f32x4s(1.0), .key_time = 0.3, },
-                    .{ .value = zm.f32x4s(0.05), .key_time = 0.99, .easing_into = .OutQuart, },
-                    .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutQuart, },
+                    .{ .value = zm.f32x4s(0.0), .key_time = 0.0, .easing_into = .OutExpo, },
+                    .{ .value = zm.f32x4s(0.8), .key_time = 0.3, .easing_into = .OutExpo, },
+                    .{ .value = zm.f32x4s(0.05), .key_time = 0.99, .easing_into = .OutExpo, },
+                    .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutExpo, },
                 },
                 .colour = .{
-                    // .{ .value = zm.f32x4(1.0, 0.7, 0.0, 1.0), .key_time = 0.0, },
-                    // .{ .value = zm.f32x4(0.8, 0.0, 1.0, 0.1), .key_time = 0.3, },
-                    // .{ .value = zm.f32x4(0.0, 1.0, 0.3, 1.0), .key_time = 0.99, .easing_into = .OutQuart, },
-                    // .{ .value = zm.f32x4(0.7, 0.7, 1.0, 0.8), .key_time = 1.0, .easing_into = .OutQuart, },
-                    .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
-                    .{ .value = zm.hsvToRgb(zm.f32x4(0.5, 1.0, 1.0, 1.0)), .key_time = 0.5, },
-                    .{ .value = zm.hsvToRgb(zm.f32x4(0.999, 1.0, 1.0, 1.0)), .key_time = 1.0, },
-                    null
+                    .{ .value = zm.f32x4(1.0, 0.7, 0.0, 1.0), .key_time = 0.0, },
+                    .{ .value = zm.f32x4(0.8, 0.0, 1.0, 0.1), .key_time = 0.3, },
+                    .{ .value = zm.f32x4(0.0, 1.0, 0.3, 1.0), .key_time = 0.99, },
+                    .{ .value = zm.f32x4(0.7, 0.7, 1.0, 0.8), .key_time = 1.0, },
+                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
+                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.5, 1.0, 1.0, 1.0)), .key_time = 0.5, },
+                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.999, 1.0, 1.0, 1.0)), .key_time = 1.0, },
+                    // null
+                },
+                .forces = .{
+                    null, //.{ .ConstantRand = 5.0 },
+                    null,
+                    null,
+                    null,
                 },
             },
             &eng.gfx
         );
-        errdefer particle_system.deinit();
+        errdefer zero_particle_system.deinit();
+
+        const player_attack_particle_system = try particle.ParticleSystem.init(
+            eng.general_allocator.allocator(),
+            60,
+            .{
+                .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
+                .spawn_radius = 1.0,
+                .spawn_rate = 0.0,
+                .spawn_rate_variance = 0.0,
+                .burst_count = 30,
+                .particle_lifetime = 0.05,
+                .scale = .{
+                    .{ .value = zm.f32x4s(0.1), },
+                    null,
+                    null,
+                    null,
+                },
+                .colour = .{
+                    .{ .value = zm.f32x4(0.0, 0.0, 0.0, 1.0), .key_time = 0.0, },
+                    .{ .value = zm.f32x4(0.0, 0.0, 0.0, 0.0), .key_time = 1.0, .easing_into = .OutLinear },
+                    null,
+                    null,
+                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
+                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.5, 1.0, 1.0, 1.0)), .key_time = 0.5, },
+                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.999, 1.0, 1.0, 1.0)), .key_time = 1.0, },
+                    // null
+                },
+                .forces = .{
+                    null,
+                    null,
+                    null,
+                    null,
+                },
+            },
+            &eng.gfx
+        );
+        errdefer player_attack_particle_system.deinit();
 
         return Self {
             .engine = eng,
@@ -377,7 +422,8 @@ pub const App = struct {
             .cone_model = cone_model,
 
             .ui = ui,
-            .particle_system = particle_system,
+            .zero_particle_system = zero_particle_system,
+            .player_attack_particle_system = player_attack_particle_system,
         };
     }
 
@@ -479,11 +525,16 @@ pub const App = struct {
                 camera_forward_2d[1] = 0.0;
                 camera_forward_2d = zm.normalize3(camera_forward_2d);
 
-                const shape_position = character_entity.transform.position + (camera_forward_2d);
+                const shape_position = character_entity.transform.position + zm.f32x4(0.0, 0.6, 0.0, 0.0) + (camera_forward_2d);
                 
                 const matrix = zm.matToArr((Transform {
-                        .position = shape_position,
+                        .position = shape_position
                     }).generate_model_matrix());
+
+                // particles!
+                self.player_attack_particle_system.settings.spawn_offset = shape_position;
+                self.player_attack_particle_system.settings.initial_velocity = camera_forward_2d * zm.f32x4s(40.0);
+                self.player_attack_particle_system.emit_particle_burst();
 
                 self.engine.physics.zphy.getNarrowPhaseQuery().collideShape(
                     box_shape,
@@ -539,10 +590,11 @@ pub const App = struct {
         // Camera input and buffer data management
         if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
         if (self.engine.entities.get(self.character_idx)) |character_entity| {
-            self.target_old_pos = zm.lerpV(
+            self.target_old_pos = zm.lerpVOverTime(
                 self.target_old_pos,
                 character_entity.transform.position + zm.f32x4(0.0, 1.5, 0.0, 0.0),
-                zm.f32x4s(self.engine.time.delta_time_f32() * 10.0)
+                zm.f32x4s(10.0),
+                zm.f32x4s(self.engine.time.delta_time_f32())
             );
             self.camera.update(&camera_entity.transform, self.target_old_pos, self.engine);
 
@@ -624,8 +676,18 @@ pub const App = struct {
             }
         }
 
-        self.particle_system.update(&self.engine.time);
-        self.particle_system.draw(
+        self.zero_particle_system.update(&self.engine.time);
+        self.zero_particle_system.draw(
+            zm.mul(self.camera.view_matrix, self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())), 
+            self.camera.right_direction(),
+            self.camera.up_direction(),
+            &rtv,
+            &self.depth_stencil_view,
+            &self.engine.gfx
+        );
+
+        self.player_attack_particle_system.update(&self.engine.time);
+        self.player_attack_particle_system.draw(
             zm.mul(self.camera.view_matrix, self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())), 
             self.camera.right_direction(),
             self.camera.up_direction(),
