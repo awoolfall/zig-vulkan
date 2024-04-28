@@ -6,6 +6,7 @@ const tf = @import("transform.zig");
 const tm = @import("time.zig");
 const gf = @import("../gfx/gfx.zig");
 const es = @import("../easings.zig");
+const ms = @import("../engine/mesh.zig");
 
 pub const ParticleSystem = struct {
     const Self = @This();
@@ -13,18 +14,20 @@ pub const ParticleSystem = struct {
     const VertexBufferData = extern struct {
         model_matrix: zm.Mat,
         colour: zm.F32x4,
+        velocity: zm.F32x4,
+        scale: zm.F32x4,
     };
     
     const ConstantBuffer = extern struct {
-        view_proj_matrix: zm.Mat,
-        right_direction: zm.F32x4,
-        up_direction: zm.F32x4,
+        view_matrix: zm.Mat,
+        proj_matrix: zm.Mat,
         flags: u32,
     };
 
     const ConstantBufferFlags = packed struct(u32) {
-        is_circle: bool,
-        __unused: u31 = 0,
+        circle_shader: bool = false,
+        velocity_aligned: bool = false,
+        __unused: u30 = 0,
     };
 
     settings: ParticleSystemSettings,
@@ -45,7 +48,7 @@ pub const ParticleSystem = struct {
 
     sort_particles: []ArrDat,
 
-    pub fn deinit(self: *const Self) void {
+    pub fn deinit(self: *Self) void {
         self.alloc.free(self.particles);
         self.alloc.free(self.sort_particles);
 
@@ -66,6 +69,8 @@ pub const ParticleSystem = struct {
                 .{ .name = "RowZ", .slot = 2, .format = .F32x4, .per = .Instance },
                 .{ .name = "RowW", .slot = 3, .format = .F32x4, .per = .Instance },
                 .{ .name = "Colour", .slot = 4, .format = .F32x4, .per = .Instance },
+                .{ .name = "Velocity", .slot = 5, .format = .F32x4, .per = .Instance },
+                .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
             })[0..],
             gfx.device
         );
@@ -175,6 +180,12 @@ pub const ParticleSystem = struct {
                                 );
                                 p.velocity += ((noise_vec - zm.f32x4s(0.5)) * zm.f32x4s(force) * delta_time); 
                             },
+                            .Curl => |force| {
+                                p.velocity += self.compute_curl(p.transform.position * zm.f32x4s(50.0)) * zm.f32x4s(force) * delta_time;
+                            },
+                            .Drag => |force| {
+                                p.velocity -= p.velocity * zm.f32x4s(force) * delta_time;
+                            },
                         }
                     }
                 }
@@ -194,6 +205,41 @@ pub const ParticleSystem = struct {
         }
     }
 
+    fn noise4(self: *Self, pos: zm.F32x4) zm.F32x4 {
+        return zm.f32x4(
+            self.noise.noise3(pos[0], pos[1], pos[2]),
+            self.noise.noise3(pos[1] - 42.8, pos[2] + 77.3, pos[0] + 91.2),
+            self.noise.noise3(pos[2] + 97.3, pos[0] - 149.5, pos[1] + 129.4),
+            self.noise.noise3(pos[0] - 82.1, pos[1] + 32.8, pos[2] - 17.1),
+        );
+    }
+
+    fn compute_curl(self: *Self, position: zm.F32x4) zm.F32x4 {
+        const eps = 0.0001;
+        //Find rate of change in X direction
+        const x1 = self.noise4(zm.f32x4(position[0] + eps, position[1], position[2], 0.0));
+        const x2 = self.noise4(zm.f32x4(position[0] - eps, position[1], position[2], 0.0));
+
+        //Find rate of change in Y direction
+        const y1 = self.noise4(zm.f32x4(position[0], position[1] + eps, position[2], 0.0));
+        const y2 = self.noise4(zm.f32x4(position[0], position[1] - eps, position[2], 0.0));
+
+        //Find rate of change in Y direction
+        const z1 = self.noise4(zm.f32x4(position[0], position[1], position[2] + eps, 0.0));
+        const z2 = self.noise4(zm.f32x4(position[0], position[1], position[2] - eps, 0.0));
+
+        const v = zm.f32x4(
+            y2[2] - y1[2] - z2[1] - z1[1],
+            z2[0] - z1[0] - x2[2] - x1[2],
+            x2[1] - x1[1] - y2[0] - y1[0],
+            0.0
+        );
+
+        //Curl
+        const divisor = 1.0 / (2.0 * eps);
+        return zm.normalize3(v * zm.f32x4s(divisor));
+    }
+
     fn particle_z_sort_func(_: i32, lhs: ArrDat, rhs: ArrDat) bool {
         return lhs.z > rhs.z;
     }
@@ -205,9 +251,8 @@ pub const ParticleSystem = struct {
 
     pub fn draw(
         self: *Self, 
-        view_proj_matrix: zm.Mat, 
-        camera_right: zm.F32x4,
-        camera_up: zm.F32x4,
+        view_matrix: zm.Mat, 
+        proj_matrix: zm.Mat, 
         rtv: *const gf.RenderTargetView, 
         depth_buffer: *const gf.DepthStencilView, 
         gfx: *gf.GfxState
@@ -217,11 +262,18 @@ pub const ParticleSystem = struct {
             if (maybe_particle.*) |*p| {
                 self.sort_particles[i].dat.model_matrix = p.transform.generate_model_matrix();
                 self.sort_particles[i].dat.colour = p.colour;
+                self.sort_particles[i].dat.velocity = p.velocity;
+                self.sort_particles[i].dat.scale = p.transform.scale;
+                if (self.settings.alignment == .VelocityAligned) {
+                    self.sort_particles[i].dat.velocity *= zm.f32x4s(self.settings.alignment.VelocityAligned);
+                }
             } else {
                 self.sort_particles[i].dat.model_matrix = zero_size;
                 self.sort_particles[i].dat.colour = zm.f32x4s(0.0);
+                self.sort_particles[i].dat.velocity = zm.f32x4s(0.0);
+                self.sort_particles[i].dat.scale = zm.f32x4s(0.0);
             }
-            self.sort_particles[i].z = zm.mul(zm.f32x4(0.0, 0.0, 0.0, 1.0), zm.mul(self.sort_particles[i].dat.model_matrix, view_proj_matrix))[2];
+            self.sort_particles[i].z = zm.mul(zm.f32x4(0.0, 0.0, 0.0, 1.0), zm.mul(self.sort_particles[i].dat.model_matrix, zm.mul(view_matrix, proj_matrix)))[2];
         }
         std.mem.sort(ArrDat, self.sort_particles[0..], @as(i32, @intCast(0)), particle_z_sort_func);
 
@@ -248,10 +300,12 @@ pub const ParticleSystem = struct {
             defer mapped_buffer.unmap();
 
             mapped_buffer.data.* = ConstantBuffer {
-                .view_proj_matrix = view_proj_matrix,
-                .right_direction = camera_right,
-                .up_direction = camera_up,
-                .flags = @bitCast(ConstantBufferFlags { .is_circle = true, }),
+                .view_matrix = view_matrix,
+                .proj_matrix = proj_matrix,
+                .flags = @bitCast(ConstantBufferFlags { 
+                    .circle_shader = (self.settings.shape == .Circle),
+                    .velocity_aligned = (self.settings.alignment == .VelocityAligned) 
+                }),
             };
         } else |_| {}
 
@@ -278,6 +332,10 @@ pub const ParticleSystem = struct {
         gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
         offset = 4 * @sizeOf([4]f32);
         gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
+        offset = 5 * @sizeOf([4]f32);
+        gfx.context.IASetVertexBuffers(5, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
+        offset = 6 * @sizeOf([4]f32);
+        gfx.context.IASetVertexBuffers(6, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
 
         gfx.context.DrawInstanced(6, @intCast(self.particles.len), 0, 0);
     }
@@ -303,13 +361,16 @@ pub const ParticleSystem = struct {
 pub const ParticleData = struct {
     rand: std.rand.DefaultPrng,
     rand_vec: zm.F32x4,
-    transform: tf.Transform = .{},
+    transform: tf.Transform,
     velocity: zm.F32x4 = zm.f32x4s(0.0),
     colour: zm.F32x4 = zm.f32x4s(0.0),
     life_remaining: f32 = 0.0,
 };
 
 pub const ParticleSystemSettings = struct {
+    alignment: ParticleAlignment = .Transform,
+    shape: ParticleShape = .Box,
+
     spawn_offset: zm.F32x4,
     spawn_radius: f32,
     spawn_rate: f32,
@@ -326,9 +387,24 @@ pub const ParticleSystemSettings = struct {
     forces: [4]?ForceEnum = [1]?ForceEnum{null} ** 4,
 };
 
+pub const ParticleAlignment = union(enum) {
+    Transform: void,
+    Billboard: void,
+    VelocityAligned: f32,
+};
+
+pub const ParticleShape = union(enum) {
+    Box: void,
+    Circle: void,
+    Texture: *const gf.TextureView2D, // @TODO
+    Model: *const ms.Model, // @TODO
+};
+
 pub const ForceEnum = union(enum) {
     Constant: zm.F32x4,
     ConstantRand: f32,
+    Curl: f32,
+    Drag: f32,
 };
 
 pub fn KeyFrame(comptime T: type) type {
@@ -433,6 +509,8 @@ const SHADER_HLSL = \\
 \\      float4 rowZ : RowZ;
 \\      float4 rowW : RowW;
 \\      float4 colour: Colour;
+\\      float4 velocity: Velocity;
+\\      float4 scale: Scale;
 \\  };
 \\  
 \\  struct vs_out
@@ -444,9 +522,8 @@ const SHADER_HLSL = \\
 \\
 \\  cbuffer camera_constant_buffer: register(b0)
 \\  {
-\\      row_major float4x4 vp_matrix;
-\\      float4 right_direction;
-\\      float4 up_direction;
+\\      row_major float4x4 v_matrix;
+\\      row_major float4x4 p_matrix;
 \\      uint flags;
 \\  }
 \\  
@@ -458,20 +535,33 @@ const SHADER_HLSL = \\
 \\      float x = float(((uint(vertId) + 2u) / 3u)%2u); 
 \\      float y = float(((uint(vertId) + 1u) / 3u)%2u);
 \\  
-\\      float4x4 mvp = mul(model_matrix, vp_matrix);
+\\      float4x4 mv = mul(model_matrix, v_matrix);
+\\      float4x4 mv_noscale = mv;
+\\      mv_noscale[0] = float4(1.0, 0.0, 0.0, mv[0][3]);
+\\      mv_noscale[1] = float4(0.0, 1.0, 0.0, mv[1][3]);
+\\      mv_noscale[2] = float4(0.0, 0.0, 1.0, mv[2][3]);
+\\      float4x4 mvp = mul(mv, p_matrix);
+\\      float4x4 mvp_noscale = mul(mv_noscale, p_matrix);
 \\
-\\      float4 pos = right_direction * (x - 0.5) + up_direction * (y - 0.5);
+\\      float4 right_v = float4(1.0, 0.0, 0.0, 0.0);
+\\      float4 up_v = float4(0.0, 1.0, 0.0, 0.0);
+\\      if (flags & 2) {
+\\          float4 cam_vel = normalize(mul(input.velocity, mvp)) * length(input.velocity.xyz);
+\\          right_v = normalize(float4(cross(normalize(cam_vel.xyz), float3(0.0, 0.0, 1.0)), 0.0));
+\\          up_v = (cam_vel) + normalize(cam_vel);
+\\      }
+\\      float4 pos = right_v * (x - 0.5) * input.scale.x + up_v * (y - 0.5) * input.scale.y;
 \\      pos.w = 1.0;
 \\
-\\      output.position = mul(pos, mvp);
+\\      output.position = mul(pos, mvp_noscale);
 \\      output.uv = float2(x, y);
 \\      output.uv = (output.uv - 0.5) * 2.0;
 \\
 \\      output.colour = input.colour;
-\\  
+\\
 \\      return output;
 \\  }
-\\  
+\\
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
 \\      float distance = 0.0;
@@ -482,7 +572,8 @@ const SHADER_HLSL = \\
 \\          distance = sqrt(distance);
 \\          distance = smoothstep(0.49, 0.51, distance);
 \\      }
-\\      
+\\  
+\\      //distance = smoothstep(0.29, 0.31, distance);
 \\      return input.colour * float4(1.0, 1.0, 1.0, 1.0 - distance);
 \\  }
 ;

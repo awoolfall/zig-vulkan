@@ -319,35 +319,48 @@ pub const App = struct {
         var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
 
-        const zero_particle_system = try particle.ParticleSystem.init(
+        var zero_particle_system = try particle.ParticleSystem.init(
             eng.general_allocator.allocator(),
-            1000,
+            2000,
             .{
+                .alignment = .{ .VelocityAligned = 3.0 },
+                .shape = .Circle,
                 .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
                 .spawn_radius = 1.0,
                 .spawn_rate = 0.01,
-                .spawn_rate_variance = 0.1,
+                .spawn_rate_variance = 0.01,
                 .burst_count = 1,
-                .particle_lifetime = 5.0,
+                .particle_lifetime = 10.0,
+                .initial_velocity = zm.f32x4(0.0, 1.0, 0.0, 0.0),
                 .scale = .{
-                    .{ .value = zm.f32x4s(0.0), .key_time = 0.0, .easing_into = .OutExpo, },
-                    .{ .value = zm.f32x4s(0.8), .key_time = 0.3, .easing_into = .OutExpo, },
-                    .{ .value = zm.f32x4s(0.05), .key_time = 0.99, .easing_into = .OutExpo, },
-                    .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutExpo, },
+                    .{ .value = zm.f32x4s(0.05), .key_time = 0.0, },
+                    .{ .value = zm.f32x4s(0.05), .key_time = 0.95, },
+                    .{ .value = zm.f32x4s(0.0), .key_time = 1.0, },
+                    null
+                    // .{ .value = zm.f32x4s(0.0), .key_time = 0.0, .easing_into = .OutExpo, },
+                    // .{ .value = zm.f32x4s(0.8), .key_time = 0.3, .easing_into = .OutExpo, },
+                    // .{ .value = zm.f32x4s(0.05), .key_time = 0.99, .easing_into = .OutExpo, },
+                    // .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutExpo, },
                 },
                 .colour = .{
-                    .{ .value = zm.f32x4(1.0, 0.7, 0.0, 1.0), .key_time = 0.0, },
-                    .{ .value = zm.f32x4(0.8, 0.0, 1.0, 0.1), .key_time = 0.3, },
-                    .{ .value = zm.f32x4(0.0, 1.0, 0.3, 1.0), .key_time = 0.99, },
-                    .{ .value = zm.f32x4(0.7, 0.7, 1.0, 0.8), .key_time = 1.0, },
+                    .{ .value = zm.f32x4(1.0, 1.0, 1.0, 0.0), .key_time = 0.0, },
+                    .{ .value = zm.f32x4(1.0, 1.0, 1.0, 1.0), .key_time = 0.05, },
+                    null,
+                    null,
+                    // .{ .value = zm.f32x4(1.0, 0.7, 0.0, 1.0), .key_time = 0.0, },
+                    // .{ .value = zm.f32x4(0.8, 0.0, 1.0, 0.1), .key_time = 0.3, },
+                    // .{ .value = zm.f32x4(0.0, 1.0, 0.3, 1.0), .key_time = 0.99, },
+                    // .{ .value = zm.f32x4(0.7, 0.7, 1.0, 0.8), .key_time = 1.0, },
+                    
                     // .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
                     // .{ .value = zm.hsvToRgb(zm.f32x4(0.5, 1.0, 1.0, 1.0)), .key_time = 0.5, },
                     // .{ .value = zm.hsvToRgb(zm.f32x4(0.999, 1.0, 1.0, 1.0)), .key_time = 1.0, },
                     // null
                 },
                 .forces = .{
-                    null, //.{ .ConstantRand = 5.0 },
-                    null,
+                    //.{ .Constant = zm.f32x4(0.0, -9.8, 0.0, 0.0) },
+                    .{ .Curl = 0.25 },
+                    .{ .Drag = 0.25 },
                     null,
                     null,
                 },
@@ -356,7 +369,7 @@ pub const App = struct {
         );
         errdefer zero_particle_system.deinit();
 
-        const player_attack_particle_system = try particle.ParticleSystem.init(
+        var player_attack_particle_system = try particle.ParticleSystem.init(
             eng.general_allocator.allocator(),
             60,
             .{
@@ -678,9 +691,8 @@ pub const App = struct {
 
         self.zero_particle_system.update(&self.engine.time);
         self.zero_particle_system.draw(
-            zm.mul(self.camera.view_matrix, self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())), 
-            self.camera.right_direction(),
-            self.camera.up_direction(),
+            self.camera.view_matrix, 
+            self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect()), 
             &rtv,
             &self.depth_stencil_view,
             &self.engine.gfx
@@ -688,9 +700,8 @@ pub const App = struct {
 
         self.player_attack_particle_system.update(&self.engine.time);
         self.player_attack_particle_system.draw(
-            zm.mul(self.camera.view_matrix, self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())), 
-            self.camera.right_direction(),
-            self.camera.up_direction(),
+            self.camera.view_matrix, 
+            self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect()), 
             &rtv,
             &self.depth_stencil_view,
             &self.engine.gfx
