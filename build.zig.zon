@@ -1,0 +1,17 @@
+.{
+    .name = "zig_dx11",
+    .version = "0.0.1",
+    .dependencies = .{
+        .zwin32 = .{ .path = "libs/zig-gamedev/libs/zwin32" },
+        .zmath = .{ .path = "libs/zig-gamedev/libs/zmath" },
+        .zmesh = .{ .path = "libs/zig-gamedev/libs/zmesh" },
+        .zphysics = .{ .path = "libs/zig-gamedev/libs/zphysics" },
+        .zstbi = .{ .path = "libs/zig-gamedev/libs/zstbi" },
+        .znoise = .{ .path = "libs/zig-gamedev/libs/znoise" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src"
+    },
+}

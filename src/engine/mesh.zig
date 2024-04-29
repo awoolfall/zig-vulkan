@@ -936,7 +936,7 @@ pub const Model = struct {
         defer cone_shape.deinit();
 
         // rotate to point upwards
-        cone_shape.rotate(std.math.degreesToRadians(f32, -90.0), 1.0, 0.0, 0.0);
+        cone_shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
 
         // flat shaded
         cone_shape.unweld();
@@ -950,7 +950,7 @@ pub const Model = struct {
         defer shape.deinit();
 
         // rotate to point upwards
-        shape.rotate(std.math.degreesToRadians(f32, -90.0), 1.0, 0.0, 0.0);
+        shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
 
         return try init_from_shape(alloc, &shape, gfx);
     }

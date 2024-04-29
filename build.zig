@@ -1,11 +1,5 @@
 const std = @import("std");
 
-const zwin32 = @import("libs/zig-gamedev/libs/zwin32/build.zig");
-const zmath = @import("libs/zig-gamedev/libs/zmath/build.zig");
-const zmesh = @import("libs/zig-gamedev/libs/zmesh/build.zig");
-const zphysics = @import("libs/zig-gamedev/libs/zphysics/build.zig");
-const zstbi = @import("libs/zig-gamedev/libs/zstbi/build.zig");
-const znoise = @import("libs/zig-gamedev/libs/znoise/build.zig");
 const assimp = @import("libs/assimp/build.zig");
 
 // Although this function looks imperative, note that its job is to
@@ -60,33 +54,35 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    const zwin32_pkg = zwin32.package(b, target, optimize, .{});
-    zwin32_pkg.link(exe, .{ 
-        .d3d12 = true, 
-        .xaudio2 = false, 
-        .directml = false 
+    const zwin32 = b.dependency("zwin32", .{});
+    exe.root_module.addImport("zwin32", zwin32.module("root"));
+    // const zwin32_path = zwin32.path("").getPath(b);
+    // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
+    // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
+    // try @import("zwin32").install_directml(&tests.step, .bin, zwin32_path);
+
+    const zmath = b.dependency("zmath", .{});
+    exe.root_module.addImport("zmath", zmath.module("root"));
+
+    const zmesh = b.dependency("zmesh", .{});
+    exe.root_module.addImport("zmesh", zmesh.module("root"));
+    exe.linkLibrary(zmesh.artifact("zmesh"));
+
+    const zphysics = b.dependency("zphysics", .{
+        .use_double_precision = false,
+        .enable_cross_platform_determinism = true,
+        .enable_debug_renderer = true,
     });
+    exe.root_module.addImport("zphysics", zphysics.module("root"));
+    exe.linkLibrary(zphysics.artifact("joltc"));
 
-    const zmath_pkg = zmath.package(b, target, optimize, .{});
-    zmath_pkg.link(exe);
+    const zstbi = b.dependency("zstbi", .{});
+    exe.root_module.addImport("zstbi", zstbi.module("root"));
+    exe.linkLibrary(zstbi.artifact("zstbi"));
 
-    const zmesh_pkg = zmesh.package(b, target, optimize, .{});
-    zmesh_pkg.link(exe);
-
-    const zphysics_pkg = zphysics.package(b, target, optimize, .{
-        .options = .{
-            .use_double_precision = false,
-            .enable_cross_platform_determinism = true,
-            .enable_debug_renderer = true,
-        }
-    });
-    zphysics_pkg.link(exe);
-
-    const zstbi_pkg = zstbi.package(b, target, optimize, .{});
-    zstbi_pkg.link(exe);
-
-    const znoise_pkg = znoise.package(b, target, optimize, .{});
-    znoise_pkg.link(exe);
+    const znoise = b.dependency("znoise", .{});
+    exe.root_module.addImport("znoise", znoise.module("root"));
+    exe.linkLibrary(znoise.artifact("FastNoiseLite"));
 
     const assimp_pkg = assimp.package(b, target, optimize, .{});
     assimp_pkg.link(exe);
