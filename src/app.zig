@@ -45,6 +45,7 @@ pub const App = struct {
     engine: *engine.Engine(Self),
 
     depth_stencil_view: gfx.DepthStencilView,
+    depth_stencil_view_read_only_depth: gfx.DepthStencilView,
 
     vertex_shader: gfx.VertexShader,
     pixel_shader: gfx.PixelShader,
@@ -85,6 +86,7 @@ pub const App = struct {
         self.model_buffer.deinit();
 
         self.depth_stencil_view.deinit();
+        self.depth_stencil_view_read_only_depth.deinit();
 
         self.vertex_shader.deinit();
         self.pixel_shader.deinit();
@@ -92,10 +94,10 @@ pub const App = struct {
 
     pub fn init(eng: *engine.Engine(Self)) !Self {
         std.log.info("App init!", .{});
-        eng.time.set_target_frame_rate(125.0);
+        eng.time.set_target_frame_rate(140.0);
 
-        var depth_stencil_view = try create_depth_stencil_view(eng);
-        errdefer depth_stencil_view.deinit();
+        var depth_struct = try create_depth_stencil_view(eng);
+        errdefer { depth_struct.view.deinit(); depth_struct.view_read_only.deinit(); }
 
         const vertex_shader = try gfx.VertexShader.init_file(
             eng.general_allocator.allocator(), 
@@ -331,10 +333,10 @@ pub const App = struct {
                 .spawn_rate_variance = 0.01,
                 .burst_count = 1,
                 .particle_lifetime = 10.0,
-                .initial_velocity = zm.f32x4(0.0, 1.0, 0.0, 0.0),
+                .initial_velocity = zm.f32x4(0.0, 0.0, 0.0, 0.0),
                 .scale = .{
-                    .{ .value = zm.f32x4s(0.05), .key_time = 0.0, },
-                    .{ .value = zm.f32x4s(0.05), .key_time = 0.95, },
+                    .{ .value = zm.f32x4s(0.03), .key_time = 0.0, },
+                    .{ .value = zm.f32x4s(0.03), .key_time = 0.95, },
                     .{ .value = zm.f32x4s(0.0), .key_time = 1.0, },
                     null
                     // .{ .value = zm.f32x4s(0.0), .key_time = 0.0, .easing_into = .OutExpo, },
@@ -360,7 +362,8 @@ pub const App = struct {
                 .forces = .{
                     //.{ .Constant = zm.f32x4(0.0, -9.8, 0.0, 0.0) },
                     .{ .Curl = 0.25 },
-                    .{ .Drag = 0.25 },
+                    .{ .Drag = 0.5 },
+                    //null,
                     null,
                     null,
                 },
@@ -408,7 +411,8 @@ pub const App = struct {
 
         return Self {
             .engine = eng,
-            .depth_stencil_view = depth_stencil_view,
+            .depth_stencil_view = depth_struct.view,
+            .depth_stencil_view_read_only_depth = depth_struct.view_read_only,
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
 
@@ -694,7 +698,7 @@ pub const App = struct {
             self.camera.view_matrix, 
             self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect()), 
             &rtv,
-            &self.depth_stencil_view,
+            &self.depth_stencil_view_read_only_depth,
             &self.engine.gfx
         );
 
@@ -703,7 +707,7 @@ pub const App = struct {
             self.camera.view_matrix, 
             self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect()), 
             &rtv,
-            &self.depth_stencil_view,
+            &self.depth_stencil_view_read_only_depth,
             &self.engine.gfx
         );
 
@@ -909,7 +913,7 @@ pub const App = struct {
         }
     }
 
-    pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !gfx.DepthStencilView {
+    pub fn create_depth_stencil_view(eng: *engine.Engine(Self)) !struct{view: gfx.DepthStencilView, view_read_only: gfx.DepthStencilView} {
         const depth_texture = try gfx.Texture2D.init(
             gfx.Texture2D.Descriptor {
                 .width = @intCast(eng.gfx.swapchain_size.width),
@@ -923,7 +927,9 @@ pub const App = struct {
         );
         defer depth_texture.deinit();
 
-        return try gfx.DepthStencilView.init_from_texture2d(&depth_texture, eng.gfx.device);
+        const view = try gfx.DepthStencilView.init_from_texture2d(&depth_texture, .{}, eng.gfx.device);
+        const view_read_only = try gfx.DepthStencilView.init_from_texture2d(&depth_texture, .{ .read_only_depth = true, }, eng.gfx.device);
+        return .{ .view = view, .view_read_only = view_read_only, };
     }
     
     pub fn window_event_received(self: *Self, event: *const window.WindowEvent) void {
@@ -932,7 +938,10 @@ pub const App = struct {
             .RESIZED => |new_size| {
                 if (new_size.width > 0 and new_size.height > 0) {
                     self.depth_stencil_view.deinit();
-                    self.depth_stencil_view = create_depth_stencil_view(self.engine) catch unreachable;
+                    self.depth_stencil_view_read_only_depth.deinit();
+                    const d = create_depth_stencil_view(self.engine) catch unreachable;
+                    self.depth_stencil_view = d.view;
+                    self.depth_stencil_view_read_only_depth = d.view_read_only;
                 }
             },
             else => {},
