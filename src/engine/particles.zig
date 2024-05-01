@@ -152,6 +152,7 @@ pub const ParticleSystem = struct {
             },
             .velocity = self.settings.initial_velocity,
             .life_remaining = self.f32_variance(self.settings.particle_lifetime, self.settings.particle_lifetime_variance),
+            .last_curl = zm.f32x4s(0.0),
         };
     }
 
@@ -181,7 +182,7 @@ pub const ParticleSystem = struct {
                                 p.velocity += ((noise_vec - zm.f32x4s(0.5)) * zm.f32x4s(force) * delta_time); 
                             },
                             .Curl => |force| {
-                                p.velocity += self.compute_curl(p.transform.position * zm.f32x4s(50.0)) * zm.f32x4s(force) * delta_time;
+                                p.velocity += self.compute_curl_frame(p) * zm.f32x4s(force) * delta_time;
                             },
                             .Drag => |force| {
                                 p.velocity -= p.velocity * zm.f32x4s(force) * delta_time;
@@ -205,38 +206,37 @@ pub const ParticleSystem = struct {
         }
     }
 
-    fn noise4(self: *Self, pos: zm.F32x4) zm.F32x4 {
+    fn noise3(self: *Self, pos: zm.F32x4) zm.F32x4 {
         return zm.f32x4(
             self.noise.noise3(pos[0], pos[1], pos[2]),
             self.noise.noise3(pos[1] - 42.8, pos[2] + 77.3, pos[0] + 91.2),
             self.noise.noise3(pos[2] + 97.3, pos[0] - 149.5, pos[1] + 129.4),
-            self.noise.noise3(pos[0] - 82.1, pos[1] + 32.8, pos[2] - 17.1),
+            0.0//self.noise.noise3(pos[0] - 82.1, pos[1] + 32.8, pos[2] - 17.1),
         );
     }
 
-    fn compute_curl(self: *Self, position: zm.F32x4) zm.F32x4 {
-        const eps = 0.0001;
-        //Find rate of change in X direction
-        const x1 = self.noise4(zm.f32x4(position[0] + eps, position[1], position[2], 0.0));
-        const x2 = self.noise4(zm.f32x4(position[0] - eps, position[1], position[2], 0.0));
+    fn compute_curl_frame(self: *Self, p: *ParticleData) zm.F32x4 {
+        // jitter particle by epsilon so we can get a rate of change reading
+        // randomly swap between jitterring by +/- eps so it averages to 0 movement
+        const eps: f32 = 0.0001 * (@as(f32, @floatFromInt(@intFromBool(self.rand.random().boolean()))) * 2.0 - 1.0);
+        p.transform.position += zm.f32x4(eps, eps, eps, 0.0);
 
-        //Find rate of change in Y direction
-        const y1 = self.noise4(zm.f32x4(position[0], position[1] + eps, position[2], 0.0));
-        const y2 = self.noise4(zm.f32x4(position[0], position[1] - eps, position[2], 0.0));
+        const position = p.transform.position * zm.f32x4s(50.0);
 
-        //Find rate of change in Y direction
-        const z1 = self.noise4(zm.f32x4(position[0], position[1], position[2] + eps, 0.0));
-        const z2 = self.noise4(zm.f32x4(position[0], position[1], position[2] - eps, 0.0));
+        //Find rate of change
+        const x1 = self.noise3(zm.f32x4(position[0], position[1], position[2], 0.0));
 
         const v = zm.f32x4(
-            y2[2] - y1[2] - z2[1] - z1[1],
-            z2[0] - z1[0] - x2[2] - x1[2],
-            x2[1] - x1[1] - y2[0] - y1[0],
+            p.last_curl[2] - x1[2] - p.last_curl[1] - x1[1],
+            p.last_curl[0] - x1[0] - p.last_curl[2] - x1[2],
+            p.last_curl[1] - x1[1] - p.last_curl[0] - x1[0],
             0.0
         );
 
+        p.last_curl = x1;
+
         //Curl
-        const divisor = 1.0 / (2.0 * eps);
+        const divisor = 1.0 / (0.0002);
         return zm.normalize3(v * zm.f32x4s(divisor));
     }
 
@@ -254,7 +254,7 @@ pub const ParticleSystem = struct {
         view_matrix: zm.Mat, 
         proj_matrix: zm.Mat, 
         rtv: *const gf.RenderTargetView, 
-        depth_buffer: *const gf.DepthStencilView, 
+        depth_view: *const gf.DepthStencilView, 
         gfx: *gf.GfxState
     ) void {
         const zero_size = zm.scaling(0.0, 0.0, 0.0);
@@ -311,7 +311,7 @@ pub const ParticleSystem = struct {
 
         gfx.context.PSSetShader(self.pixel_shader.pso, null, 0);
 
-        gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), depth_buffer.view);
+        gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), depth_view.view);
         gfx.context.OMSetBlendState(self.blend_state.state, null, 0xffffffff);
 
         gfx.context.VSSetShader(self.vertex_shader.vso, null, 0);
@@ -365,6 +365,7 @@ pub const ParticleData = struct {
     velocity: zm.F32x4 = zm.f32x4s(0.0),
     colour: zm.F32x4 = zm.f32x4s(0.0),
     life_remaining: f32 = 0.0,
+    last_curl: zm.F32x4,
 };
 
 pub const ParticleSystemSettings = struct {
