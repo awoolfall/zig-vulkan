@@ -4,6 +4,7 @@ const wb = @import("../window.zig");
 pub const TimeState = struct {
     const Self = @This();
 
+    frame_number: u128 = 0,
     start_time_ns: i128,
     frame_start_time_ns: i128,
     last_frame_time_s: f64,
@@ -25,6 +26,8 @@ pub const TimeState = struct {
     }
 
     fn on_update(self: *Self) void {
+        self.frame_number += 1;
+
         // collect frame time difference
         var frame_diff_ns = std.time.nanoTimestamp() - self.frame_start_time_ns;
 

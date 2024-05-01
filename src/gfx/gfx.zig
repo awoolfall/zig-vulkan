@@ -16,19 +16,27 @@ pub const GfxState = struct {
     device: *d3d11.IDevice,
     swapchain: *zwin32.dxgi.ISwapChain,
     context: *d3d11.IDeviceContext,
-    rtv: RenderTargetView,
+
+    framebuffer_rtv: RenderTargetView,
+
+    hdr_rtv: RenderTargetView,
+    hdr_texture_view: TextureView2D,
 
     swapchain_flags: zwin32.dxgi.SWAP_CHAIN_FLAG,
     swapchain_size: struct{width: i32, height: i32},
 
     rasterization_states_map: std.AutoHashMap(RasterizationStateDesc, RasterizationState),
 
+    exposure_tone_mapping_filter: ExposureToneMappingFilter,
+
     // @TODO: add rasterization state map, blend state map, and sampler map so we can just use them at 
     // draw time instead of creating new objects each time at init. Be aggressive for JIT (Just in Time) gfx object creation
 
     const enable_debug_layers = true;
     const swapchain_buffer_count: u32 = 3;
-    const swapchain_format = TextureFormat.Bgra8_Unorm;
+    const hdr_format = TextureFormat.Rgba16_Float;
+    const ldr_format = TextureFormat.Rgba8_Unorm;
+    const swapchain_format = ldr_format;
 
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
@@ -40,7 +48,12 @@ pub const GfxState = struct {
         }
         self.rasterization_states_map.deinit();
 
-        self.rtv.deinit();
+        self.exposure_tone_mapping_filter.deinit();
+
+        self.hdr_rtv.deinit();
+        self.hdr_texture_view.deinit();
+
+        self.framebuffer_rtv.deinit();
         _ = self.swapchain.Release();
         _ = self.context.Release();
         _ = self.device.Release();
@@ -126,15 +139,30 @@ pub const GfxState = struct {
                 .height = @intCast(window_size.height)
             },
             .context = context,
-            .rtv = undefined,
+            .framebuffer_rtv = undefined,
+            .hdr_rtv = undefined,
+            .hdr_texture_view = undefined,
+            .exposure_tone_mapping_filter = undefined,
             .rasterization_states_map = std.AutoHashMap(RasterizationStateDesc, RasterizationState).init(alloc),
         };
 
         const framebuffer_texture = try gfx_state.create_texture2d_from_framebuffer();
         defer framebuffer_texture.deinit();
 
-        gfx_state.rtv = try RenderTargetView.init_from_texture2d(&framebuffer_texture, gfx_state.device);
-        errdefer gfx_state.rtv.deinit();
+        gfx_state.framebuffer_rtv = try RenderTargetView.init_from_texture2d(&framebuffer_texture, gfx_state.device);
+        errdefer gfx_state.framebuffer_rtv.deinit();
+
+        const hdr_texture = try gfx_state.create_hdr_rtv_texture2d_from_framebuffer();
+        defer hdr_texture.deinit();
+
+        gfx_state.hdr_rtv = try RenderTargetView.init_from_texture2d(&hdr_texture, gfx_state.device);
+        errdefer gfx_state.hdr_rtv.deinit();
+
+        gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&hdr_texture, gfx_state.device);
+        errdefer gfx_state.hdr_texture_view.deinit();
+
+        gfx_state.exposure_tone_mapping_filter = try ExposureToneMappingFilter.init(&gfx_state);
+        errdefer gfx_state.exposure_tone_mapping_filter.deinit();
         
         return gfx_state;
     }
@@ -176,17 +204,32 @@ pub const GfxState = struct {
             .desc = Texture2D.Descriptor {
                 .width = @intCast(self.swapchain_size.width),
                 .height = @intCast(self.swapchain_size.height),
-                .format = Self.swapchain_format,
+                .format = TextureFormat.Rgba8_Unorm_Srgb,
             },
         };
     }
 
+    fn create_hdr_rtv_texture2d_from_framebuffer(self: *Self) !Texture2D {
+        return try Texture2D.init(
+            .{ 
+                .height = @intCast(self.swapchain_size.height),
+                .width = @intCast(self.swapchain_size.width),
+                .format = hdr_format,
+            },
+            .{ .RenderTarget = true, .ShaderResource = true, },
+            .{ .GpuWrite = true, },
+            null,
+            self.device
+        );
+    }
+
     pub fn begin_frame(self: *Self) !RenderTargetView {
-        return self.rtv;
+        return self.hdr_rtv;
     }
 
     pub fn end_frame(self: *Self, rtv: RenderTargetView) !void {
         _ = rtv;
+        self.exposure_tone_mapping_filter.apply_filter(&self.hdr_texture_view, &self.framebuffer_rtv, self);
         try zwin32.hrErrorOnFail(self.swapchain.Present(1, zwin32.dxgi.PRESENT_FLAG {}));
     }
 
@@ -207,7 +250,9 @@ pub const GfxState = struct {
     pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {
         // Release help render target view before we update the swapchain.
         // If we dont do this swapchain resize buffers will fail.
-        self.rtv.deinit();
+        self.hdr_rtv.deinit();
+        self.hdr_texture_view.deinit();
+        self.framebuffer_rtv.deinit();
 
         zwin32.hrPanicOnFail(self.swapchain.ResizeBuffers(
                 0, 0, 0, zwin32.dxgi.FORMAT.UNKNOWN, // automatic
@@ -221,7 +266,16 @@ pub const GfxState = struct {
         var framebuffer_texture = self.create_texture2d_from_framebuffer() catch unreachable;
         defer framebuffer_texture.deinit();
 
-        self.rtv = RenderTargetView.init_from_texture2d(&framebuffer_texture, self.device)
+        self.framebuffer_rtv = RenderTargetView.init_from_texture2d(&framebuffer_texture, self.device)
+            catch unreachable;
+
+        var hdr_texture = self.create_hdr_rtv_texture2d_from_framebuffer() catch unreachable;
+        defer hdr_texture.deinit();
+
+        self.hdr_rtv = RenderTargetView.init_from_texture2d(&hdr_texture, self.device)
+            catch unreachable;
+
+        self.hdr_texture_view = TextureView2D.init_from_texture2d(&hdr_texture, self.device)
             catch unreachable;
     }
 
@@ -551,8 +605,8 @@ pub const Texture2D = struct {
 
     pub fn init_colour(
         desc: Descriptor,
-        access_flags: AccessFlags,
         bind_flags: BindFlag,
+        access_flags: AccessFlags,
         colour: [4]u8,
         device: *d3d11.IDevice
     ) !Texture2D {
@@ -561,9 +615,12 @@ pub const Texture2D = struct {
         const data = try std.heap.page_allocator.alloc(u8, desc.width * desc.height * 4);
         defer std.heap.page_allocator.free(data);
 
-        data = colour ** (desc.width * desc.height);
+        const data_u32: *const align(1) []u32 = @ptrCast(&data);
+        const colour_u32: *const align(1) u32 = @ptrCast(&colour);
 
-        return init(desc, access_flags, bind_flags, data, device);
+        @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
+
+        return init(desc, bind_flags, access_flags, data, device);
     }
 
     pub const Descriptor = struct {
@@ -622,7 +679,7 @@ pub const RenderTargetView = struct {
                 @ptrCast(texture.texture), 
                 &d3d11.RENDER_TARGET_VIEW_DESC{
                     .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
-                    .Format = .@"UNKNOWN",
+                    .Format = texture.desc.format.to_d3d11(),
                     .u = .{.Texture2D = d3d11.TEX2D_RTV {
                         .MipSlice = 0,
                     }},
@@ -647,7 +704,11 @@ pub const DepthStencilView = struct {
         _ = self.view.Release();
     }
 
-    pub fn init_from_texture2d(texture: *const Texture2D, device: *d3d11.IDevice) !DepthStencilView {
+    pub fn init_from_texture2d(
+        texture: *const Texture2D, 
+        flags: struct{ read_only_depth: bool = false, read_only_stencil: bool = false, },
+        device: *d3d11.IDevice
+    ) !DepthStencilView {
         if (!texture.desc.format.is_depth()) { return error.NotADepthFormat; }
 
         const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
@@ -658,7 +719,10 @@ pub const DepthStencilView = struct {
                     .MipSlice = 0,
                 },
             },
-            .Flags = d3d11.DSV_FLAGS {},
+            .Flags = d3d11.DSV_FLAGS {
+                .READ_ONLY_DEPTH = flags.read_only_depth,
+                .READ_ONLY_STENCIL = flags.read_only_stencil,
+            },
         };
         var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
         try zwin32.hrErrorOnFail(device.CreateDepthStencilView(@ptrCast(texture.texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
@@ -674,6 +738,7 @@ pub const TextureFormat = enum {
     Rgba8_Unorm_Srgb,
     Rgba8_Unorm,
     Bgra8_Unorm,
+    Rgba16_Float,
     D24S8_Unorm_Uint,
 
     pub fn to_d3d11(self: TextureFormat) zwin32.dxgi.FORMAT {
@@ -681,6 +746,7 @@ pub const TextureFormat = enum {
             .Rgba8_Unorm_Srgb => return zwin32.dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
             .Rgba8_Unorm => return zwin32.dxgi.FORMAT.R8G8B8A8_UNORM,
             .Bgra8_Unorm => return zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
+            .Rgba16_Float => return zwin32.dxgi.FORMAT.R16G16B16A16_FLOAT,
             .D24S8_Unorm_Uint => return zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT,
         }
     }
@@ -690,6 +756,7 @@ pub const TextureFormat = enum {
             .Rgba8_Unorm_Srgb => return 4,
             .Rgba8_Unorm => return 4,
             .Bgra8_Unorm => return 4,
+            .Rgba16_Float => return 8,
             .D24S8_Unorm_Uint => return 4,
         }
     }
@@ -890,8 +957,8 @@ pub const BlendType = enum {
             .None => return d3d11.RENDER_TARGET_BLEND_DESC {
                 .BlendEnable = 0,
                 .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
-                .SrcBlend = d3d11.BLEND.SRC_ALPHA,
-                .DestBlend = d3d11.BLEND.INV_SRC_ALPHA,
+                .SrcBlend = d3d11.BLEND.ONE,
+                .DestBlend = d3d11.BLEND.ZERO,
                 .BlendOp = d3d11.BLEND_OP.ADD,
                 .SrcBlendAlpha = d3d11.BLEND.ONE,
                 .DestBlendAlpha = d3d11.BLEND.ZERO,
@@ -926,22 +993,12 @@ pub const BlendState = struct {
         var blend_state_desc = d3d11.BLEND_DESC {
             .AlphaToCoverageEnable = 0,
             .IndependentBlendEnable = 0,
-            .RenderTarget = [_]d3d11.RENDER_TARGET_BLEND_DESC {render_target_blend_types[0].to_d3d11()} ** 8,
+            .RenderTarget = [_]d3d11.RENDER_TARGET_BLEND_DESC {BlendType.None.to_d3d11()} ** 8,
         };
         for (render_target_blend_types, 0..) |t, i| {
             blend_state_desc.RenderTarget[i] = t.to_d3d11();
         }
 
-        blend_state_desc.RenderTarget[0] = .{
-            .BlendEnable = 1,
-            .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
-            .SrcBlend = d3d11.BLEND.SRC_ALPHA,
-            .DestBlend = d3d11.BLEND.INV_SRC_ALPHA,
-            .BlendOp = d3d11.BLEND_OP.ADD,
-            .SrcBlendAlpha = d3d11.BLEND.ONE,
-            .DestBlendAlpha = d3d11.BLEND.ZERO,
-            .BlendOpAlpha = d3d11.BLEND_OP.ADD,
-        };
         var blend_state: *d3d11.IBlendState = undefined;
         try zwin32.hrErrorOnFail(gfx.device.CreateBlendState(&blend_state_desc, @ptrCast(&blend_state)));
         errdefer _ = blend_state.Release();
@@ -949,5 +1006,113 @@ pub const BlendState = struct {
         return BlendState {
             .state = blend_state,
         };
+    }
+};
+
+const ExposureToneMappingFilter = struct {
+    const HLSL = //
+\\  struct vs_out
+\\  {
+\\      float4 position : SV_POSITION;
+\\      float2 uv: TEXCOORD0;
+\\  };
+\\
+\\  Texture2D hdr_buffer;
+\\  SamplerState hdr_sampler;
+\\
+\\  vs_out vs_main(uint vertId : SV_VertexID)
+\\  {
+\\      vs_out output = (vs_out) 0;
+\\      float x = float(((uint(vertId) + 2u) / 3u)%2u) * 2.0 - 1.0; 
+\\      float y = float(((uint(vertId) + 1u) / 3u)%2u) * 2.0 - 1.0;
+\\
+\\      output.position = float4(x, y, 0.0, 1.0);
+\\      output.uv = float2(x, -y);
+\\      output.uv = (output.uv / 2.0) + 0.5;
+\\
+\\      return output;
+\\  }
+\\
+\\  float4 ps_main(vs_out input) : SV_TARGET
+\\  {
+\\      const float exposure = 1.5;
+\\
+\\      float3 hdr_colour = hdr_buffer.Sample(hdr_sampler, input.uv).rgb;
+\\      float3 mapped = float3(1.0, 1.0, 1.0) - exp(-hdr_colour * exposure);
+\\      return float4(mapped, 1.0);
+\\  }
+;
+    vertex_shader: VertexShader,
+    pixel_shader: PixelShader,
+    sampler: Sampler,
+
+    pub fn deinit(self: *ExposureToneMappingFilter) void {
+        _ = self.vertex_shader.deinit();
+        _ = self.pixel_shader.deinit();
+        _ = self.sampler.deinit();
+    }
+
+    pub fn init(gfx: *GfxState) !ExposureToneMappingFilter {
+        var vertex_shader = try VertexShader.init_buffer(
+            HLSL,
+            "vs_main",
+            ([0]VertexInputLayoutEntry {})[0..],
+            gfx.device
+        );
+        errdefer vertex_shader.deinit();
+
+        var pixel_shader = try PixelShader.init_buffer(
+            HLSL,
+            "ps_main",
+            gfx.device
+        );
+        errdefer pixel_shader.deinit();
+
+        var sampler = try Sampler.init(
+            SamplerDescriptor {},
+            gfx.device
+        );
+        errdefer sampler.deinit();
+
+        return ExposureToneMappingFilter {
+            .vertex_shader = vertex_shader,
+            .pixel_shader = pixel_shader,
+            .sampler = sampler,
+        };
+    }
+
+    pub fn apply_filter(
+        self: *ExposureToneMappingFilter,
+        hdr_buffer: *TextureView2D,
+        rtv: *RenderTargetView,
+        gfx: *GfxState
+    ) void {
+        const viewport = d3d11.VIEWPORT {
+            .Width = @floatFromInt(rtv.size.width),
+            .Height = @floatFromInt(rtv.size.height),
+            .TopLeftX = 0.0,
+            .TopLeftY = 0.0,
+            .MinDepth = 0.0,
+            .MaxDepth = 0.0,
+        };
+
+        gfx.context.OMSetBlendState(null, null, 0xffffffff);
+        gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), null);
+
+        gfx.context.RSSetViewports(1, @ptrCast(&viewport));
+        gfx.context.RSSetState(@ptrCast(gfx.rasterization_state(.{ .FillBack = true, }).state));
+
+        gfx.context.VSSetShader(@ptrCast(self.vertex_shader.vso), null, 0);
+
+        gfx.context.PSSetShader(@ptrCast(self.pixel_shader.pso), null, 0);
+        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
+        gfx.context.PSSetShaderResources(0, 1, @ptrCast(&hdr_buffer.view));
+
+        gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+
+        gfx.context.Draw(6, 0);
+        
+        // unset hdr texture so it can be used as rtv again
+        gfx.context.PSSetShaderResources(0, 1, @ptrCast(&([1]?*d3d11.IShaderResourceView{null})));
     }
 };

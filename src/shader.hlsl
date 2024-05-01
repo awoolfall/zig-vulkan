@@ -102,5 +102,5 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
 
 float4 ps_main(vs_out input) : SV_TARGET
 {
-    return (((input.colour / 2.0) + 0.5) / 2.0) + 0.5;
+    return (input.colour / 2.0) + 0.5;
 }

@@ -643,7 +643,11 @@ pub const App = struct {
             std.log.err("unable to begin frame: {}", .{err});
             return;
         };
-        self.engine.gfx.context.ClearRenderTargetView(rtv.view, &[4]zwin32.w32.FLOAT{30.0/255.0, 30.0/255.0, 46.0/255.0, 1.0});
+        self.engine.gfx.context.ClearRenderTargetView(rtv.view, &[4]zwin32.w32.FLOAT{
+            std.math.pow(f32, 30.0/255.0, 2.2), 
+            std.math.pow(f32, 30.0/255.0, 2.2), 
+            std.math.pow(f32, 46.0/255.0, 2.2), 
+            1.0});
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view.view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
         const viewport = d3d11.VIEWPORT {
