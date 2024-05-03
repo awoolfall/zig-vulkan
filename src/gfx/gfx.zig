@@ -5,6 +5,7 @@ const d3d11 = zwin32.d3d11;
 const wb = @import("../window.zig");
 const win32window = @import("../platform/windows.zig");
 const path = @import("../engine/path.zig");
+const bloom = @import("bloom.zig");
 
 inline fn is_dbg() bool {
     return (builtin.mode == std.builtin.Mode.Debug);
@@ -27,7 +28,7 @@ pub const GfxState = struct {
 
     rasterization_states_map: std.AutoHashMap(RasterizationStateDesc, RasterizationState),
 
-    exposure_tone_mapping_filter: ExposureToneMappingFilter,
+    exposure_tone_mapping_filter: ExposureToneMappingAndBloomFilter,
 
     // @TODO: add rasterization state map, blend state map, and sampler map so we can just use them at 
     // draw time instead of creating new objects each time at init. Be aggressive for JIT (Just in Time) gfx object creation
@@ -161,9 +162,9 @@ pub const GfxState = struct {
         gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&hdr_texture, gfx_state.device);
         errdefer gfx_state.hdr_texture_view.deinit();
 
-        gfx_state.exposure_tone_mapping_filter = try ExposureToneMappingFilter.init(&gfx_state);
+        gfx_state.exposure_tone_mapping_filter = try ExposureToneMappingAndBloomFilter.init(&gfx_state);
         errdefer gfx_state.exposure_tone_mapping_filter.deinit();
-        
+
         return gfx_state;
     }
 
@@ -281,7 +282,12 @@ pub const GfxState = struct {
 
     pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
         switch (event.*) {
-            .RESIZED => |new_size| { self.window_resized(new_size.width, new_size.height); },
+            .RESIZED => |new_size| { 
+                self.window_resized(new_size.width, new_size.height);
+
+                // send resize event to children
+                self.exposure_tone_mapping_filter.framebuffer_resized(self) catch unreachable;
+            },
             else => {},
         }
     }
@@ -674,6 +680,10 @@ pub const RenderTargetView = struct {
     }
 
     pub fn init_from_texture2d(texture: *const Texture2D, device: *d3d11.IDevice) !RenderTargetView {
+        return init_from_texture2d_mip(texture, 0, device);
+    }
+
+    pub fn init_from_texture2d_mip(texture: *const Texture2D, mip_level: u32, device: *d3d11.IDevice) !RenderTargetView {
         var rtv: *d3d11.IRenderTargetView = undefined;
         try zwin32.hrErrorOnFail(device.CreateRenderTargetView(
                 @ptrCast(texture.texture), 
@@ -681,7 +691,7 @@ pub const RenderTargetView = struct {
                     .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
                     .Format = texture.desc.format.to_d3d11(),
                     .u = .{.Texture2D = d3d11.TEX2D_RTV {
-                        .MipSlice = 0,
+                        .MipSlice = mip_level,
                     }},
                 }, 
                 @ptrCast(&rtv)
@@ -690,8 +700,8 @@ pub const RenderTargetView = struct {
         return RenderTargetView {
             .view = rtv,
             .size = .{
-                .width = texture.desc.width,
-                .height = texture.desc.height,
+                .width = texture.desc.width / std.math.pow(u32, 2, mip_level),
+                .height = texture.desc.height / std.math.pow(u32, 2, mip_level),
             },
         };
     }
@@ -739,6 +749,7 @@ pub const TextureFormat = enum {
     Rgba8_Unorm,
     Bgra8_Unorm,
     Rgba16_Float,
+    Rg11b10_Float,
     D24S8_Unorm_Uint,
 
     pub fn to_d3d11(self: TextureFormat) zwin32.dxgi.FORMAT {
@@ -747,6 +758,7 @@ pub const TextureFormat = enum {
             .Rgba8_Unorm => return zwin32.dxgi.FORMAT.R8G8B8A8_UNORM,
             .Bgra8_Unorm => return zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
             .Rgba16_Float => return zwin32.dxgi.FORMAT.R16G16B16A16_FLOAT,
+            .Rg11b10_Float => return zwin32.dxgi.FORMAT.R11G11B10_FLOAT,
             .D24S8_Unorm_Uint => return zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT,
         }
     }
@@ -757,6 +769,7 @@ pub const TextureFormat = enum {
             .Rgba8_Unorm => return 4,
             .Bgra8_Unorm => return 4,
             .Rgba16_Float => return 8,
+            .Rg11b10_Float => return 3,
             .D24S8_Unorm_Uint => return 4,
         }
     }
@@ -875,6 +888,8 @@ pub const SamplerDescriptor = struct {
     filter_mip: SamplerFilter = .Point,
     border_mode: SamplerBorderMode = .Clamp,
     border_colour: [4]f32 = [4]f32{0.0, 0.0, 0.0, 0.0},
+    min_lod: f32 = 0.0,
+    max_lod: f32 = 0.0,
 };
 
 pub const SamplerFilter = enum {
@@ -935,8 +950,8 @@ pub const Sampler = struct {
             .BorderColor = desc.border_colour,
             .MipLODBias = 0.0,
             .ComparisonFunc = .NEVER,
-            .MinLOD = 0.0,
-            .MaxLOD = 0.0,
+            .MinLOD = desc.min_lod,
+            .MaxLOD = desc.max_lod,
         };
         var sampler: *d3d11.ISamplerState = undefined;
         try zwin32.hrErrorOnFail(device.CreateSamplerState(&sampler_desc, @ptrCast(&sampler)));
@@ -1009,36 +1024,21 @@ pub const BlendState = struct {
     }
 };
 
-const ExposureToneMappingFilter = struct {
+const ExposureToneMappingAndBloomFilter = struct {
+    const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.hlsl");
     const HLSL = //
-\\  struct vs_out
-\\  {
-\\      float4 position : SV_POSITION;
-\\      float2 uv: TEXCOORD0;
-\\  };
-\\
 \\  Texture2D hdr_buffer;
+\\  Texture2D bloom_buffer;
 \\  SamplerState hdr_sampler;
-\\
-\\  vs_out vs_main(uint vertId : SV_VertexID)
-\\  {
-\\      vs_out output = (vs_out) 0;
-\\      float x = float(((uint(vertId) + 2u) / 3u)%2u) * 2.0 - 1.0; 
-\\      float y = float(((uint(vertId) + 1u) / 3u)%2u) * 2.0 - 1.0;
-\\
-\\      output.position = float4(x, y, 0.0, 1.0);
-\\      output.uv = float2(x, -y);
-\\      output.uv = (output.uv / 2.0) + 0.5;
-\\
-\\      return output;
-\\  }
 \\
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
 \\      const float exposure = 1.5;
 \\
 \\      float3 hdr_colour = hdr_buffer.Sample(hdr_sampler, input.uv).rgb;
-\\      float3 mapped = float3(1.0, 1.0, 1.0) - exp(-hdr_colour * exposure);
+\\      float3 bloom_colour = bloom_buffer.Sample(hdr_sampler, input.uv).rgb;
+\\      float3 mixed_colour = lerp(hdr_colour, bloom_colour, 0.04);
+\\      float3 mapped = float3(1.0, 1.0, 1.0) - exp(-mixed_colour * exposure);
 \\      return float4(mapped, 1.0);
 \\  }
 ;
@@ -1046,15 +1046,18 @@ const ExposureToneMappingFilter = struct {
     pixel_shader: PixelShader,
     sampler: Sampler,
 
-    pub fn deinit(self: *ExposureToneMappingFilter) void {
+    bloom_filter: bloom.BloomFilter,
+
+    pub fn deinit(self: *ExposureToneMappingAndBloomFilter) void {
+        self.bloom_filter.deinit();
         _ = self.vertex_shader.deinit();
         _ = self.pixel_shader.deinit();
         _ = self.sampler.deinit();
     }
 
-    pub fn init(gfx: *GfxState) !ExposureToneMappingFilter {
+    pub fn init(gfx: *GfxState) !ExposureToneMappingAndBloomFilter {
         var vertex_shader = try VertexShader.init_buffer(
-            HLSL,
+            FULL_SCREEN_QUAD_VS,
             "vs_main",
             ([0]VertexInputLayoutEntry {})[0..],
             gfx.device
@@ -1062,7 +1065,7 @@ const ExposureToneMappingFilter = struct {
         errdefer vertex_shader.deinit();
 
         var pixel_shader = try PixelShader.init_buffer(
-            HLSL,
+            FULL_SCREEN_QUAD_VS ++ HLSL,
             "ps_main",
             gfx.device
         );
@@ -1074,19 +1077,25 @@ const ExposureToneMappingFilter = struct {
         );
         errdefer sampler.deinit();
 
-        return ExposureToneMappingFilter {
+        var bloom_filter = try bloom.BloomFilter.init(gfx);
+        errdefer bloom_filter.deinit();
+
+        return ExposureToneMappingAndBloomFilter {
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
             .sampler = sampler,
+            .bloom_filter = bloom_filter,
         };
     }
 
     pub fn apply_filter(
-        self: *ExposureToneMappingFilter,
+        self: *ExposureToneMappingAndBloomFilter,
         hdr_buffer: *TextureView2D,
         rtv: *RenderTargetView,
         gfx: *GfxState
     ) void {
+        self.bloom_filter.render_bloom_texture(hdr_buffer, 0.005, gfx);
+
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(rtv.size.width),
             .Height = @floatFromInt(rtv.size.height),
@@ -1100,19 +1109,26 @@ const ExposureToneMappingFilter = struct {
         gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), null);
 
         gfx.context.RSSetViewports(1, @ptrCast(&viewport));
-        gfx.context.RSSetState(@ptrCast(gfx.rasterization_state(.{ .FillBack = true, }).state));
+        gfx.context.RSSetState(@ptrCast(gfx.rasterization_state(.{ .FillBack = false, .FrontCounterClockwise = true, }).state));
 
         gfx.context.VSSetShader(@ptrCast(self.vertex_shader.vso), null, 0);
 
         gfx.context.PSSetShader(@ptrCast(self.pixel_shader.pso), null, 0);
         gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
-        gfx.context.PSSetShaderResources(0, 1, @ptrCast(&hdr_buffer.view));
+        gfx.context.PSSetShaderResources(0, 2, @ptrCast(&([2]*d3d11.IShaderResourceView{
+            hdr_buffer.view, 
+            self.bloom_filter.get_bloom_view().view
+        })));
 
         gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
 
         gfx.context.Draw(6, 0);
         
         // unset hdr texture so it can be used as rtv again
-        gfx.context.PSSetShaderResources(0, 1, @ptrCast(&([1]?*d3d11.IShaderResourceView{null})));
+        gfx.context.PSSetShaderResources(0, 2, @ptrCast(&([2]?*d3d11.IShaderResourceView{null, null})));
+    }
+
+    pub fn framebuffer_resized(self: *ExposureToneMappingAndBloomFilter, gfx: *GfxState) !void {
+        self.bloom_filter.framebuffer_resized(gfx);
     }
 };

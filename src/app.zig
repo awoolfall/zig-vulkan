@@ -325,7 +325,7 @@ pub const App = struct {
             eng.general_allocator.allocator(),
             2000,
             .{
-                .alignment = .{ .VelocityAligned = 3.0 },
+                .alignment = .{ .VelocityAligned = 5.0 },
                 .shape = .Circle,
                 .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
                 .spawn_radius = 1.0,
@@ -345,8 +345,8 @@ pub const App = struct {
                     // .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutExpo, },
                 },
                 .colour = .{
-                    .{ .value = zm.f32x4(1.0, 1.0, 1.0, 0.0), .key_time = 0.0, },
-                    .{ .value = zm.f32x4(1.0, 1.0, 1.0, 1.0), .key_time = 0.05, },
+                    .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 1.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.0, },
+                    .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 1.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.05, },
                     null,
                     null,
                     // .{ .value = zm.f32x4(1.0, 0.7, 0.0, 1.0), .key_time = 0.0, },
@@ -389,8 +389,8 @@ pub const App = struct {
                     null,
                 },
                 .colour = .{
-                    .{ .value = zm.f32x4(0.0, 0.0, 0.0, 1.0), .key_time = 0.0, },
-                    .{ .value = zm.f32x4(0.0, 0.0, 0.0, 0.0), .key_time = 1.0, .easing_into = .OutLinear },
+                    .{ .value = srgb_to_rgb(zm.f32x4(0.0, 0.0, 0.0, 1.0)), .key_time = 0.0, },
+                    .{ .value = srgb_to_rgb(zm.f32x4(0.0, 0.0, 0.0, 0.0)), .key_time = 1.0, .easing_into = .OutLinear },
                     null,
                     null,
                     // .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
@@ -442,6 +442,15 @@ pub const App = struct {
             .zero_particle_system = zero_particle_system,
             .player_attack_particle_system = player_attack_particle_system,
         };
+    }
+
+    fn srgb_to_rgb(rgb: zm.F32x4) zm.F32x4 {
+        return zm.f32x4(
+            std.math.pow(f32, rgb[0], 2.2), 
+            std.math.pow(f32, rgb[1], 2.2), 
+            std.math.pow(f32, rgb[2], 2.2), 
+            rgb[3]
+        );
     }
 
     fn vecAngle(v0: zm.F32x4, v1: zm.F32x4) f32 {
@@ -643,11 +652,12 @@ pub const App = struct {
             std.log.err("unable to begin frame: {}", .{err});
             return;
         };
-        self.engine.gfx.context.ClearRenderTargetView(rtv.view, &[4]zwin32.w32.FLOAT{
-            std.math.pow(f32, 30.0/255.0, 2.2), 
-            std.math.pow(f32, 30.0/255.0, 2.2), 
-            std.math.pow(f32, 46.0/255.0, 2.2), 
-            1.0});
+        self.engine.gfx.context.ClearRenderTargetView(rtv.view, &zm.vecToArr4(srgb_to_rgb(zm.f32x4(
+            30.0/255.0, 
+            30.0/255.0, 
+            46.0/255.0, 
+            1.0
+        ))));
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view.view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
 
         const viewport = d3d11.VIEWPORT {
