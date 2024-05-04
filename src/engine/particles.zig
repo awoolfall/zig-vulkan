@@ -309,6 +309,7 @@ pub const ParticleSystem = struct {
             };
         } else |_| {}
 
+        gfx.context.RSSetState(gfx.rasterization_state(.{ .FillBack = true, }).state);
         gfx.context.PSSetShader(self.pixel_shader.pso, null, 0);
 
         gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), depth_view.view);
@@ -518,6 +519,7 @@ const SHADER_HLSL = \\
 \\  {
 \\      float4 position : SV_POSITION;
 \\      float2 uv: TEXCOORD0;
+\\      float2 uv_scale: TEXCOORD1;
 \\      float4 colour: Colour;
 \\  };
 \\
@@ -533,7 +535,7 @@ const SHADER_HLSL = \\
 \\      vs_out output = (vs_out) 0;
 \\      float4x4 model_matrix = float4x4(input.rowX, input.rowY, input.rowZ, input.rowW);
 \\  
-\\      float x = float(((uint(vertId) + 2u) / 3u)%2u); 
+\\      float x = float(((uint(vertId) + 2u) / 3u)%2u);
 \\      float y = float(((uint(vertId) + 1u) / 3u)%2u);
 \\  
 \\      float4x4 mv = mul(model_matrix, v_matrix);
@@ -546,10 +548,11 @@ const SHADER_HLSL = \\
 \\
 \\      float4 right_v = float4(1.0, 0.0, 0.0, 0.0);
 \\      float4 up_v = float4(0.0, 1.0, 0.0, 0.0);
-\\      if (flags & 2) {
-\\          float4 cam_vel = normalize(mul(input.velocity, mvp)) * length(input.velocity.xyz);
+\\      if ((flags & 2) && length(input.velocity.xyz) > 0.0) {
+\\          float4 cam_vel = mul(input.velocity, mvp);
+\\          cam_vel = float4(cam_vel.xyz, 0.0) + float4(normalize(cam_vel.xyz), 0.0);
 \\          right_v = normalize(float4(cross(normalize(cam_vel.xyz), float3(0.0, 0.0, 1.0)), 0.0));
-\\          up_v = (cam_vel) + normalize(cam_vel);
+\\          up_v = cam_vel;
 \\      }
 \\      float4 pos = right_v * (x - 0.5) * input.scale.x + up_v * (y - 0.5) * input.scale.y;
 \\      pos.w = 1.0;
@@ -557,6 +560,7 @@ const SHADER_HLSL = \\
 \\      output.position = mul(pos, mvp_noscale);
 \\      output.uv = float2(x, y);
 \\      output.uv = (output.uv - 0.5) * 2.0;
+\\      output.uv_scale = float2(1.0, length(up_v));
 \\
 \\      output.colour = input.colour;
 \\
@@ -566,12 +570,20 @@ const SHADER_HLSL = \\
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
 \\      float distance = 0.0;
+\\      float2 uv = input.uv;
 \\
 \\      // is_circle
 \\      if (flags & 1) {
-\\          distance = input.uv.x * input.uv.x + input.uv.y * input.uv.y;
+\\          // if velocity aligned we want to extend the middle of the circle while keeping
+\\          // the ends perfectly circular. Manipulate uvs to create this (saber-like) effect
+\\          uv.y = (uv.y * input.uv_scale.y) - (uv.y / abs(uv.y)) * (input.uv_scale.y - 1.0);
+\\          if ((uv.y * input.uv.y) < 0.0) {
+\\              uv.y = 0.0;
+\\          }
+\\
+\\          distance = uv.x * uv.x + uv.y * uv.y;
 \\          distance = sqrt(distance);
-\\          distance = smoothstep(0.49, 0.51, distance);
+\\          distance = smoothstep(0.99, 1.00, distance);
 \\      }
 \\  
 \\      //distance = smoothstep(0.29, 0.31, distance);

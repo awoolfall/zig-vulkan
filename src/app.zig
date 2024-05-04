@@ -325,7 +325,7 @@ pub const App = struct {
             eng.general_allocator.allocator(),
             2000,
             .{
-                .alignment = .{ .VelocityAligned = 5.0 },
+                .alignment = .{ .VelocityAligned = 200.0 },
                 .shape = .Circle,
                 .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
                 .spawn_radius = 1.0,
@@ -345,7 +345,7 @@ pub const App = struct {
                     // .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutExpo, },
                 },
                 .colour = .{
-                    .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 1.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.0, },
+                    .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 0.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.0, },
                     .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 1.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.05, },
                     null,
                     null,
