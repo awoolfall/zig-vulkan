@@ -147,7 +147,7 @@ pub const ParticleSystem = struct {
             .rand = std.rand.DefaultPrng.init(@intCast(std.time.microTimestamp())),
             .rand_vec = random_v(self.rand.random()),
             .transform = tf.Transform {
-                .position = self.f32x4_variance(self.settings.spawn_origin + self.settings.spawn_offset, zm.f32x4s(self.settings.spawn_radius)),
+                .position = self.f32x4_variance(self.settings.spawn_offset, zm.f32x4s(self.settings.spawn_radius)),
                 .scale = KeyFrame(zm.F32x4).calc(self.settings.scale[0..], 0.0),
             },
             .velocity = self.settings.initial_velocity,
@@ -188,13 +188,9 @@ pub const ParticleSystem = struct {
                                 p.velocity -= p.velocity * zm.f32x4s(force) * delta_time;
                             },
                             .Vortex => |d| {
-                                const vec_to_p = p.transform.position - self.settings.spawn_origin;
-                                // vortex
-                                var force = zm.cross3(zm.normalize3(vec_to_p), d.axis) * zm.f32x4s(d.force);
-                                // origin pull
-                                force += -zm.normalize3(vec_to_p) * zm.f32x4s(d.origin_pull);
-                                
-                                p.velocity += force * delta_time;
+                                p.velocity += 
+                                    zm.cross3(zm.normalize3(p.transform.position - self.settings.spawn_offset), d.axis) * zm.f32x4s(d.force) * delta_time;
+                                p.velocity += zm.normalize3(self.settings.spawn_offset - p.transform.position) * zm.f32x4s(d.origin_pull) * delta_time;
                             },
                         }
                     }
@@ -202,7 +198,7 @@ pub const ParticleSystem = struct {
 
                 p.transform.scale = KeyFrame(zm.F32x4).calc(self.settings.scale[0..], t);
                 p.colour = KeyFrame(zm.F32x4).hsv_calc(self.settings.colour[0..], t);
-                p.transform.position += p.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0) * delta_time;
+                p.transform.position += p.velocity * delta_time;
             }
         }
 
@@ -271,7 +267,7 @@ pub const ParticleSystem = struct {
             if (maybe_particle.*) |*p| {
                 self.sort_particles[i].dat.model_matrix = p.transform.generate_model_matrix();
                 self.sort_particles[i].dat.colour = p.colour;
-                self.sort_particles[i].dat.velocity = p.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0);
+                self.sort_particles[i].dat.velocity = p.velocity;
                 self.sort_particles[i].dat.scale = p.transform.scale;
                 if (self.settings.alignment == .VelocityAligned) {
                     self.sort_particles[i].dat.velocity *= zm.f32x4s(self.settings.alignment.VelocityAligned);
@@ -382,7 +378,6 @@ pub const ParticleSystemSettings = struct {
     alignment: ParticleAlignment = .Transform,
     shape: ParticleShape = .Box,
 
-    spawn_origin: zm.F32x4,
     spawn_offset: zm.F32x4,
     spawn_radius: f32,
     spawn_rate: f32,
@@ -416,7 +411,7 @@ pub const ForceEnum = union(enum) {
     ConstantRand: f32,
     Curl: f32,
     Drag: f32,
-    Vortex: struct { axis: zm.F32x4, force: f32, origin_pull: f32 },
+    Vortex: struct { axis: zm.F32x4, force: f32, origin_pull: f32, },
 };
 
 pub fn KeyFrame(comptime T: type) type {

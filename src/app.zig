@@ -327,7 +327,8 @@ pub const App = struct {
             .{
                 .alignment = .{ .VelocityAligned = 200.0 },
                 .shape = .Circle,
-                .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
+                .spawn_origin = zm.f32x4(0.0, -4.0, 0.0, 0.0),
+                .spawn_offset = zm.f32x4s(0.0),
                 .spawn_radius = 1.0,
                 .spawn_rate = 0.01,
                 .spawn_rate_variance = 0.01,
@@ -339,32 +340,18 @@ pub const App = struct {
                     .{ .value = zm.f32x4s(0.03), .key_time = 0.95, },
                     .{ .value = zm.f32x4s(0.0), .key_time = 1.0, },
                     null
-                    // .{ .value = zm.f32x4s(0.0), .key_time = 0.0, .easing_into = .OutExpo, },
-                    // .{ .value = zm.f32x4s(0.8), .key_time = 0.3, .easing_into = .OutExpo, },
-                    // .{ .value = zm.f32x4s(0.05), .key_time = 0.99, .easing_into = .OutExpo, },
-                    // .{ .value = zm.f32x4s(1.0), .key_time = 1.0, .easing_into = .OutExpo, },
                 },
                 .colour = .{
                     .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 0.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.0, },
                     .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 1.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.05, },
                     null,
                     null,
-                    // .{ .value = zm.f32x4(1.0, 0.7, 0.0, 1.0), .key_time = 0.0, },
-                    // .{ .value = zm.f32x4(0.8, 0.0, 1.0, 0.1), .key_time = 0.3, },
-                    // .{ .value = zm.f32x4(0.0, 1.0, 0.3, 1.0), .key_time = 0.99, },
-                    // .{ .value = zm.f32x4(0.7, 0.7, 1.0, 0.8), .key_time = 1.0, },
-                    
-                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
-                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.5, 1.0, 1.0, 1.0)), .key_time = 0.5, },
-                    // .{ .value = zm.hsvToRgb(zm.f32x4(0.999, 1.0, 1.0, 1.0)), .key_time = 1.0, },
-                    // null
                 },
                 .forces = .{
                     //.{ .Constant = zm.f32x4(0.0, -9.8, 0.0, 0.0) },
-                    .{ .Curl = 0.25 },
-                    .{ .Drag = 0.5 },
-                    //null,
-                    null,
+                    .{ .Curl = 0.05 },
+                    .{ .Drag = 1.0 },
+                    .{ .Vortex = .{ .axis = zm.f32x4(1.0, 0.0, 0.0, 0.0), .force = 1.0, .origin_pull = 0.5,  } },
                     null,
                 },
             },
@@ -376,14 +363,17 @@ pub const App = struct {
             eng.general_allocator.allocator(),
             60,
             .{
-                .spawn_offset = zm.f32x4(0.0, -4.0, 0.0, 0.0),
+                .alignment = .{ .VelocityAligned = 5.0 },
+                .shape = .Circle,
+                .spawn_origin = zm.f32x4(0.0, 0.0, 0.0, 0.0),
+                .spawn_offset = zm.f32x4s(0.0),
                 .spawn_radius = 1.0,
                 .spawn_rate = 0.0,
                 .spawn_rate_variance = 0.0,
-                .burst_count = 30,
-                .particle_lifetime = 0.05,
+                .burst_count = 60,
+                .particle_lifetime = 1.0,
                 .scale = .{
-                    .{ .value = zm.f32x4s(0.1), },
+                    .{ .value = zm.f32x4s(0.05), },
                     null,
                     null,
                     null,
@@ -399,8 +389,8 @@ pub const App = struct {
                     // null
                 },
                 .forces = .{
-                    null,
-                    null,
+                    .{ .Vortex = .{ .axis = zm.f32x4(0.0, 1.0, 0.0, 0.0), .force = 50.0, .origin_pull = 50.0, } },
+                    .{ .Drag = 5.0 },
                     null,
                     null,
                 },
@@ -558,8 +548,9 @@ pub const App = struct {
                     }).generate_model_matrix());
 
                 // particles!
-                self.player_attack_particle_system.settings.spawn_offset = shape_position;
-                self.player_attack_particle_system.settings.initial_velocity = camera_forward_2d * zm.f32x4s(40.0);
+                self.player_attack_particle_system.settings.spawn_origin = shape_position;
+                self.player_attack_particle_system.settings.spawn_offset = camera_right;
+                self.player_attack_particle_system.settings.initial_velocity = zm.f32x4s(0.0); //camera_forward_2d * zm.f32x4s(10.0);
                 self.player_attack_particle_system.emit_particle_burst();
 
                 self.engine.physics.zphy.getNarrowPhaseQuery().collideShape(
