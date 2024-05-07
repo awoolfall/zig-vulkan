@@ -1,10 +1,9 @@
 const std = @import("std");
 const zmesh = @import("zmesh");
-const zwin32 = @import("zwin32");
 const zm = @import("zmath");
 const zphy = @import("zphysics");
-const d3d11 = zwin32.d3d11;
 const assert = std.debug.assert;
+const gf = @import("../gfx/gfx.zig");
 const tm = @import("../engine/transform.zig");
 const path = @import("../engine/path.zig");
 const assimp = @import("assimp");
@@ -123,8 +122,8 @@ pub const ModelNode = struct {
 };
 
 pub const Buffers = struct {
-    indices: *d3d11.IBuffer,
-    vertices: *d3d11.IBuffer,
+    indices: gf.Buffer,
+    vertices: gf.Buffer,
 
     offsets: struct {
         normals: usize,
@@ -135,23 +134,8 @@ pub const Buffers = struct {
     },
 
     pub fn deinit(self: *const Buffers) void {
-        _ = self.indices.Release();
-        _ = self.vertices.Release();
-    }
-
-    fn create_vertex_buffer(
-        comptime T: type,
-        data: []const T,
-        gfx_device: *d3d11.IDevice
-    ) !*d3d11.IBuffer {
-        const buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(T) * @as(c_uint, @intCast(data.len)),
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-        };
-        var buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(data.ptr), }, @ptrCast(&buffer)));
-        return buffer;
+        self.vertices.deinit();
+        self.indices.deinit();
     }
 
     inline fn copy_data_to_buffer(
@@ -179,7 +163,7 @@ pub const Buffers = struct {
         mesh_tangents: ?[]const ([4]f32),
         mesh_bone_ids: ?[]const ([4]i32),
         mesh_weights: ?[]const ([4]f32),
-        gfx_device: *d3d11.IDevice,
+        gfx: *gf.GfxState,
     ) !Buffers {
         const num_positions = mesh_positions.len;
 
@@ -218,23 +202,22 @@ pub const Buffers = struct {
         copy_data_to_buffer([4]f32, vertices_data, bone_weights_offset, num_positions, mesh_weights, [4]f32{0.0, 0.0, 0.0, 0.0});
 
         // create gfx buffer
-        const buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @intCast(vertices_buffer_length),
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, },
-        };
-        var vertices_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(vertices_data.ptr), }, @ptrCast(&vertices_buffer)));
+        const vertices_buffer = try gf.Buffer.init_with_data(
+            vertices_data,
+            .{ .VertexBuffer = true, },
+            .{},
+            gfx.device
+        );
+        errdefer vertices_buffer.deinit();
 
         // Indicex buffer
-        const indices_buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = @sizeOf(u32) * @as(c_uint, @intCast(mesh_indices.len)),
-            .BindFlags = d3d11.BIND_FLAG{ .INDEX_BUFFER = true, },
-        };
-        var indices_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx_device.CreateBuffer(&indices_buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(mesh_indices.ptr), }, @ptrCast(&indices_buffer)));
-        errdefer _ = indices_buffer.Release();
+        const indices_buffer = try gf.Buffer.init_with_data(
+            std.mem.sliceAsBytes(mesh_indices[0..]),
+            .{ .IndexBuffer = true, },
+            .{},
+            gfx.device
+        );
+        errdefer indices_buffer.deinit();
 
         return Buffers {
             .vertices = vertices_buffer,
@@ -484,7 +467,7 @@ pub const Model = struct {
     //     };
     // }
 
-    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
+    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path, gfx: *gf.GfxState) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
 
@@ -693,7 +676,7 @@ pub const Model = struct {
             mesh_tangents.items,
             mesh_bone_ids.items,
             mesh_weights.items,
-            gfx_device
+            gfx
         );
         errdefer buffers.deinit();
 
@@ -882,7 +865,7 @@ pub const Model = struct {
         return resolved_transforms[node_idx].?;
     }
 
-    pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape, gfx: *d3d11.IDevice) !Model {
+    pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape, gfx: *gf.GfxState) !Model {
         var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
         errdefer alloc.destroy(model_arena_allocator);
 
@@ -961,7 +944,7 @@ pub const Model = struct {
         };
     }
 
-    pub fn cone(alloc: std.mem.Allocator, slices: i32, gfx: *d3d11.IDevice) !Model {
+    pub fn cone(alloc: std.mem.Allocator, slices: i32, gfx: *gf.GfxState) !Model {
         // Generate cone shape
         var cone_shape = zmesh.Shape.initCone(slices, 6);
         defer cone_shape.deinit();
@@ -975,7 +958,7 @@ pub const Model = struct {
         return try init_from_shape(alloc, &cone_shape, gfx);
     }
 
-    pub fn plane(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *d3d11.IDevice) !Model {
+    pub fn plane(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *gf.GfxState) !Model {
         // Generate cone shape
         var shape = zmesh.Shape.initPlane(slices, stacks);
         defer shape.deinit();

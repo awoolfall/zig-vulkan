@@ -148,7 +148,7 @@ pub const App = struct {
         var chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim.glb"},
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer chara_model.deinit();
 
@@ -161,14 +161,14 @@ pub const App = struct {
         var terrain_model = try ms.Model.plane(
             eng.general_allocator.allocator(),
             1, 1,
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer terrain_model.deinit();
 
         var cone_model = try ms.Model.cone(
             eng.general_allocator.allocator(), 
             8, 
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer cone_model.deinit();
 
@@ -681,11 +681,11 @@ pub const App = struct {
                 if (entity.model) |m| {
                     std.log.info("af",.{});
                     const buffers = [_]*d3d11.IBuffer{
-                        m.buffers.vertices,
-                        m.buffers.vertices,
-                        m.buffers.vertices,
-                        m.buffers.vertices,
-                        m.buffers.vertices
+                        m.buffers.vertices.buffer,
+                        m.buffers.vertices.buffer,
+                        m.buffers.vertices.buffer,
+                        m.buffers.vertices.buffer,
+                        m.buffers.vertices.buffer
                     };
                     const strides = [_]c_uint{
                         @sizeOf([3]f32),
@@ -709,7 +709,7 @@ pub const App = struct {
                         @ptrCast(offsets[0..].ptr)
                     );
                     std.log.info("af'",.{});
-                    self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
+                    self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices.buffer, zwin32.dxgi.FORMAT.R32_UINT, 0);
                     // Set model constant buffer
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer.buffer));
 
