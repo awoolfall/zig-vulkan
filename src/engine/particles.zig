@@ -191,7 +191,7 @@ pub const ParticleSystem = struct {
                                 const vec_to_p = p.transform.position - self.settings.spawn_origin;
                                 // vortex
                                 var force = zm.cross3(zm.normalize3(vec_to_p), d.axis) * zm.f32x4s(d.force);
-                                // origin pull
+                                // origin pull, @TODO: maybe make this pull to the axis line?
                                 force += -zm.normalize3(vec_to_p) * zm.f32x4s(d.origin_pull);
                                 
                                 p.velocity += force * delta_time;

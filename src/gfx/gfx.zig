@@ -231,7 +231,7 @@ pub const GfxState = struct {
     pub fn end_frame(self: *Self, rtv: RenderTargetView) !void {
         _ = rtv;
         self.exposure_tone_mapping_filter.apply_filter(&self.hdr_texture_view, &self.framebuffer_rtv, self);
-        try zwin32.hrErrorOnFail(self.swapchain.Present(1, zwin32.dxgi.PRESENT_FLAG {}));
+        try zwin32.hrErrorOnFail(self.swapchain.Present(0, zwin32.dxgi.PRESENT_FLAG {}));
     }
 
     pub fn swapchain_aspect(self: *Self) f32 {

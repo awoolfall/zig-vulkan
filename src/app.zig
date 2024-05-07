@@ -627,8 +627,8 @@ pub const App = struct {
             defer bone_transforms.deinit();
 
             character_entity.model.?.bone_transform(self.engine.time.time_since_start_of_app() * 0.3, &bone_transforms);
-            
-            { // Update bone matrix buffer
+
+            if (bone_transforms.items.len != 0) { // Update bone matrix buffer
                 const mapped_buffer = self.bone_matrix_buffer.map([ms.MAX_BONES]zm.Mat, self.engine.gfx.context) catch unreachable;
                 defer mapped_buffer.unmap();
 
@@ -673,21 +673,42 @@ pub const App = struct {
         self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
         self.engine.gfx.context.IASetInputLayout(self.vertex_shader.layout);
 
+        std.log.info("a", .{});
         // Iterate through all entities finding those which contain a mesh to be rendered
         for (self.engine.entities.data.items) |*it| {
             if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
                 if (entity.model) |m| {
-                    const pos_stride: c_uint = @sizeOf(f32) * 3;
-                    const tex_coord_stride: c_uint = @sizeOf(f32) * 2;
-                    const bone_id_stride: c_uint = @sizeOf([4]i32);
-                    const bone_weight_stride: c_uint = @sizeOf([4]f32);
-                    const offset: c_uint = 0;
-                    self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.buffers.positions), @ptrCast(&pos_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.buffers.normals), @ptrCast(&pos_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.buffers.tex_coords), @ptrCast(&tex_coord_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&m.buffers.bone_ids), @ptrCast(&bone_id_stride), @ptrCast(&offset));
-                    self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&m.buffers.bone_weights), @ptrCast(&bone_weight_stride), @ptrCast(&offset));
+                    std.log.info("af",.{});
+                    const buffers = [_]*d3d11.IBuffer{
+                        m.buffers.vertices,
+                        m.buffers.vertices,
+                        m.buffers.vertices,
+                        m.buffers.vertices,
+                        m.buffers.vertices
+                    };
+                    const strides = [_]c_uint{
+                        @sizeOf([3]f32),
+                        @sizeOf([3]f32),
+                        @sizeOf([2]f32),
+                        @sizeOf([4]i32),
+                        @sizeOf([4]f32)
+                    };
+                    const offsets = [_]c_uint{
+                        0,
+                        @truncate(m.buffers.offsets.normals),
+                        @truncate(m.buffers.offsets.texcoords),
+                        @truncate(m.buffers.offsets.bone_ids),
+                        @truncate(m.buffers.offsets.bone_weights)
+                    };
+                    self.engine.gfx.context.IASetVertexBuffers(
+                        0, 
+                        5, 
+                        @ptrCast(buffers[0..].ptr),
+                        @ptrCast(strides[0..].ptr),
+                        @ptrCast(offsets[0..].ptr)
+                    );
+                    std.log.info("af'",.{});
                     self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices, zwin32.dxgi.FORMAT.R32_UINT, 0);
                     // Set model constant buffer
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer.buffer));
@@ -697,6 +718,7 @@ pub const App = struct {
                 }
             }
         }
+        std.log.info("a'", .{});
 
         self.zero_particle_system.update(&self.engine.time);
         self.zero_particle_system.draw(
