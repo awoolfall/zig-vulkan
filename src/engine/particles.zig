@@ -72,14 +72,14 @@ pub const ParticleSystem = struct {
                 .{ .name = "Velocity", .slot = 5, .format = .F32x4, .per = .Instance },
                 .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
             })[0..],
-            gfx.device
+            gfx
         );
         errdefer vertex_shader.deinit();
         
         const pixel_shader = try gf.PixelShader.init_buffer(
             SHADER_HLSL,
             "ps_main",
-            gfx.device
+            gfx
         );
         errdefer pixel_shader.deinit();
 
@@ -87,7 +87,7 @@ pub const ParticleSystem = struct {
             @sizeOf(VertexBufferData) * max_particles,
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx.device
+            gfx
         );
         errdefer model_matrix_vertex_buffer.deinit();
 
@@ -95,7 +95,7 @@ pub const ParticleSystem = struct {
             @sizeOf(ConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx.device
+            gfx
         );
         errdefer constant_buffer.deinit();
 
@@ -287,7 +287,7 @@ pub const ParticleSystem = struct {
         std.mem.sort(ArrDat, self.sort_particles[0..], @as(i32, @intCast(0)), particle_z_sort_func);
 
         // update all particle model matrices
-        if (self.model_matrix_vertex_buffer.map(VertexBufferData, gfx.context)) |mapped_buffer| {
+        if (self.model_matrix_vertex_buffer.map(VertexBufferData, gfx)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
             // for (self.particles, 0..) |*maybe_particle, i| {
@@ -305,7 +305,7 @@ pub const ParticleSystem = struct {
         } else |_| {}
 
         // update camera constant buffer
-        if (self.constant_buffer.map(ConstantBuffer, gfx.context)) |mapped_buffer| {
+        if (self.constant_buffer.map(ConstantBuffer, gfx)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
             mapped_buffer.data.* = ConstantBuffer {

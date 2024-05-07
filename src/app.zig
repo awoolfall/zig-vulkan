@@ -110,7 +110,7 @@ pub const App = struct {
                 .{ .name = "TEXCOORD",  .index = 1, .format = .I32x4,   .per = .Vertex, .slot = 3, },
                 .{ .name = "TEXCOORD",  .index = 2, .format = .F32x4,   .per = .Vertex, .slot = 4, },
             })[0..],
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer vertex_shader.deinit();
 
@@ -118,7 +118,7 @@ pub const App = struct {
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../src/shader.hlsl"}, 
             "ps_main",
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer pixel_shader.deinit();
 
@@ -127,7 +127,7 @@ pub const App = struct {
             @sizeOf(CameraStruct),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer camera_constant_buffer.deinit();
 
@@ -140,7 +140,7 @@ pub const App = struct {
             @sizeOf(zm.Mat) * ms.MAX_BONES,
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer bone_matrix_buffer.deinit();
 
@@ -312,7 +312,7 @@ pub const App = struct {
             @sizeOf(zm.Mat),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            eng.gfx.device
+            &eng.gfx
         );
         errdefer model_buffer.deinit();
 
@@ -616,7 +616,7 @@ pub const App = struct {
             self.camera.update(&camera_entity.transform, self.target_old_pos, self.engine);
 
             { // Update camera buffer
-                const mapped_buffer = self.camera_data_buffer.map(CameraStruct, self.engine.gfx.context) catch unreachable;
+                const mapped_buffer = self.camera_data_buffer.map(CameraStruct, &self.engine.gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
                 mapped_buffer.data.view = self.camera.view_matrix;
@@ -629,7 +629,7 @@ pub const App = struct {
             character_entity.model.?.bone_transform(self.engine.time.time_since_start_of_app() * 0.3, &bone_transforms);
 
             if (bone_transforms.items.len != 0) { // Update bone matrix buffer
-                const mapped_buffer = self.bone_matrix_buffer.map([ms.MAX_BONES]zm.Mat, self.engine.gfx.context) catch unreachable;
+                const mapped_buffer = self.bone_matrix_buffer.map([ms.MAX_BONES]zm.Mat, &self.engine.gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
                 @memset(mapped_buffer.data.*[0..], zm.identity());
@@ -874,7 +874,7 @@ pub const App = struct {
 
         if (model_node.mesh) |*mesh_set| {
             { // Setup model buffer from transform
-                const mapped_buffer = self.model_buffer.map(zm.Mat, self.engine.gfx.context) catch unreachable;
+                const mapped_buffer = self.model_buffer.map(zm.Mat, &self.engine.gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
                 mapped_buffer.data.* = node_model_matrix;
@@ -950,12 +950,12 @@ pub const App = struct {
             .{ .DepthStencil = true, },
             .{ .GpuWrite = true, },
             null,
-            eng.gfx.device
+            &eng.gfx
         );
         defer depth_texture.deinit();
 
-        const view = try gfx.DepthStencilView.init_from_texture2d(&depth_texture, .{}, eng.gfx.device);
-        const view_read_only = try gfx.DepthStencilView.init_from_texture2d(&depth_texture, .{ .read_only_depth = true, }, eng.gfx.device);
+        const view = try gfx.DepthStencilView.init_from_texture2d(&depth_texture, .{}, &eng.gfx);
+        const view_read_only = try gfx.DepthStencilView.init_from_texture2d(&depth_texture, .{ .read_only_depth = true, }, &eng.gfx);
         return .{ .view = view, .view_read_only = view_read_only, };
     }
     

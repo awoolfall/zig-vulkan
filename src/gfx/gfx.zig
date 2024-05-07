@@ -150,16 +150,16 @@ pub const GfxState = struct {
         const framebuffer_texture = try gfx_state.create_texture2d_from_framebuffer();
         defer framebuffer_texture.deinit();
 
-        gfx_state.framebuffer_rtv = try RenderTargetView.init_from_texture2d(&framebuffer_texture, gfx_state.device);
+        gfx_state.framebuffer_rtv = try RenderTargetView.init_from_texture2d(&framebuffer_texture, &gfx_state);
         errdefer gfx_state.framebuffer_rtv.deinit();
 
         const hdr_texture = try gfx_state.create_hdr_rtv_texture2d_from_framebuffer();
         defer hdr_texture.deinit();
 
-        gfx_state.hdr_rtv = try RenderTargetView.init_from_texture2d(&hdr_texture, gfx_state.device);
+        gfx_state.hdr_rtv = try RenderTargetView.init_from_texture2d(&hdr_texture, &gfx_state);
         errdefer gfx_state.hdr_rtv.deinit();
 
-        gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&hdr_texture, gfx_state.device);
+        gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&hdr_texture, &gfx_state);
         errdefer gfx_state.hdr_texture_view.deinit();
 
         gfx_state.exposure_tone_mapping_filter = try ExposureToneMappingAndBloomFilter.init(&gfx_state);
@@ -220,7 +220,7 @@ pub const GfxState = struct {
             .{ .RenderTarget = true, .ShaderResource = true, },
             .{ .GpuWrite = true, },
             null,
-            self.device
+            self
         );
     }
 
@@ -242,7 +242,7 @@ pub const GfxState = struct {
         if (self.rasterization_states_map.get(desc)) |r| {
             return r;
         } else {
-            const r = RasterizationState.init(desc, self.device) catch unreachable;
+            const r = RasterizationState.init(desc, self) catch unreachable;
             self.rasterization_states_map.put(desc, r) catch unreachable;
             return r;
         }
@@ -267,16 +267,16 @@ pub const GfxState = struct {
         var framebuffer_texture = self.create_texture2d_from_framebuffer() catch unreachable;
         defer framebuffer_texture.deinit();
 
-        self.framebuffer_rtv = RenderTargetView.init_from_texture2d(&framebuffer_texture, self.device)
+        self.framebuffer_rtv = RenderTargetView.init_from_texture2d(&framebuffer_texture, self)
             catch unreachable;
 
         var hdr_texture = self.create_hdr_rtv_texture2d_from_framebuffer() catch unreachable;
         defer hdr_texture.deinit();
 
-        self.hdr_rtv = RenderTargetView.init_from_texture2d(&hdr_texture, self.device)
+        self.hdr_rtv = RenderTargetView.init_from_texture2d(&hdr_texture, self)
             catch unreachable;
 
-        self.hdr_texture_view = TextureView2D.init_from_texture2d(&hdr_texture, self.device)
+        self.hdr_texture_view = TextureView2D.init_from_texture2d(&hdr_texture, self)
             catch unreachable;
     }
 
@@ -307,7 +307,7 @@ pub const VertexShader = struct {
         vs_path: path.Path, 
         vs_func: []const u8,
         vs_layout: []const VertexInputLayoutEntry,
-        device: *d3d11.IDevice,
+        gfx: *GfxState,
     ) !VertexShader {
         const vs_res_path = try vs_path.resolve_path(alloc);
         defer alloc.free(vs_res_path);
@@ -324,14 +324,14 @@ pub const VertexShader = struct {
             return error.FailedToReadVertexShader;
         }
 
-        return init_buffer(vs_buf, vs_func, vs_layout, device);
+        return init_buffer(vs_buf, vs_func, vs_layout, gfx);
     }
 
     pub fn init_buffer(
         vs_data: []const u8, 
         vs_func: []const u8, 
         vs_layout: []const VertexInputLayoutEntry,
-        device: *d3d11.IDevice,
+        gfx: *GfxState,
     ) !VertexShader {
         const vs_func_c = try std.heap.page_allocator.dupeZ(u8, vs_func);
         defer std.heap.page_allocator.free(vs_func_c);
@@ -341,7 +341,7 @@ pub const VertexShader = struct {
         defer _ = vs_blob.Release();
 
         var vso: *d3d11.IVertexShader = undefined;
-        try zwin32.hrErrorOnFail(device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
+        try zwin32.hrErrorOnFail(gfx.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
         errdefer _ = vso.Release();
 
         var d3d11_layout_desc = try std.BoundedArray(d3d11.INPUT_ELEMENT_DESC, 32).init(0);
@@ -366,7 +366,7 @@ pub const VertexShader = struct {
         }
 
         var vso_input_layout: *d3d11.IInputLayout = undefined;
-        try zwin32.hrErrorOnFail(device.CreateInputLayout(@ptrCast(&d3d11_layout_desc.buffer[0]), d3d11_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
+        try zwin32.hrErrorOnFail(gfx.device.CreateInputLayout(@ptrCast(&d3d11_layout_desc.buffer[0]), d3d11_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
         errdefer _ = vso_input_layout.Release();
 
         return VertexShader {
@@ -427,7 +427,7 @@ pub const PixelShader = struct {
         alloc: std.mem.Allocator,
         ps_path: path.Path, 
         ps_func: []const u8,
-        device: *d3d11.IDevice,
+        gfx: *GfxState,
     ) !PixelShader {
         const ps_res_path = try ps_path.resolve_path(alloc);
         defer alloc.free(ps_res_path);
@@ -444,13 +444,13 @@ pub const PixelShader = struct {
             return error.FailedToReadVertexShader;
         }
 
-        return init_buffer(ps_buf, ps_func, device);
+        return init_buffer(ps_buf, ps_func, gfx);
     }
 
     pub fn init_buffer(
         ps_data: []const u8, 
         ps_func: []const u8, 
-        device: *d3d11.IDevice,
+        gfx: *GfxState,
     ) !PixelShader {
         const ps_func_c = try std.heap.page_allocator.dupeZ(u8, ps_func);
         defer std.heap.page_allocator.free(ps_func_c);
@@ -460,7 +460,7 @@ pub const PixelShader = struct {
         defer _ = ps_blob.Release();
 
         var pso: *d3d11.IPixelShader = undefined;
-        try zwin32.hrErrorOnFail(device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
+        try zwin32.hrErrorOnFail(gfx.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
         errdefer _ = pso.Release();
 
         return PixelShader {
@@ -480,7 +480,7 @@ pub const Buffer = struct {
         byte_size: u32,
         bind_flags: BindFlag,
         access_flags: AccessFlags,
-        device: *d3d11.IDevice,
+        gfx: *GfxState,
     ) !Buffer {
         if (!access_flags.CpuWrite and !access_flags.GpuWrite) { return error.DataNotSuppliedToImmutableBuffer; }
 
@@ -491,7 +491,7 @@ pub const Buffer = struct {
             .CPUAccessFlags = access_flags.to_d3d11_cpu_access(),
         };
         var buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(device.CreateBuffer(&buffer_desc, null, @ptrCast(&buffer)));
+        try zwin32.hrErrorOnFail(gfx.device.CreateBuffer(&buffer_desc, null, @ptrCast(&buffer)));
         errdefer _ = buffer.Release();
         
         return Buffer {
@@ -503,7 +503,7 @@ pub const Buffer = struct {
         data: []const u8,
         bind_flags: BindFlag,
         access_flags: AccessFlags,
-        device: *d3d11.IDevice,
+        gfx: *GfxState,
     ) !Buffer {
         const buffer_desc = d3d11.BUFFER_DESC {
             .Usage = access_flags.to_d3d11_usage(),
@@ -512,7 +512,7 @@ pub const Buffer = struct {
             .CPUAccessFlags = access_flags.to_d3d11_cpu_access(),
         };
         var buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &data[0], }, @ptrCast(&buffer)));
+        try zwin32.hrErrorOnFail(gfx.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &data[0], }, @ptrCast(&buffer)));
         errdefer _ = buffer.Release();
         
         return Buffer {
@@ -520,11 +520,11 @@ pub const Buffer = struct {
         };
     }
 
-    pub fn map(self: *const Buffer, comptime OutType: type, context: *d3d11.IDeviceContext) !MappedBuffer(OutType) {
+    pub fn map(self: *const Buffer, comptime OutType: type, gfx: *GfxState) !MappedBuffer(OutType) {
         var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-        try zwin32.hrErrorOnFail(context.Map(@ptrCast(self.buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+        try zwin32.hrErrorOnFail(gfx.context.Map(@ptrCast(self.buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
         return MappedBuffer(OutType) {
-            .context = context,
+            .context = gfx.context,
             .buffer = self.buffer,
             .data = @ptrCast(@alignCast(mapped_subresource.pData)),
         };
@@ -557,7 +557,7 @@ pub const Texture2D = struct {
         bind_flags: BindFlag,
         access_flags: AccessFlags,
         data: ?[]const u8,
-        device: *d3d11.IDevice
+        gfx: *GfxState
     ) !Texture2D {
         if (data) |d| {
             if (d.len < (desc.width * desc.height * desc.format.byte_width())) {
@@ -586,7 +586,7 @@ pub const Texture2D = struct {
         };
         var texture: *d3d11.ITexture2D = undefined;
         if (data) |d| {
-            try zwin32.hrErrorOnFail(device.CreateTexture2D(
+            try zwin32.hrErrorOnFail(gfx.device.CreateTexture2D(
                     &texture_desc, 
                     &d3d11.SUBRESOURCE_DATA {
                         .pSysMem = @ptrCast(d), 
@@ -595,7 +595,7 @@ pub const Texture2D = struct {
                     @ptrCast(&texture)
             ));
         } else {
-            try zwin32.hrErrorOnFail(device.CreateTexture2D(
+            try zwin32.hrErrorOnFail(gfx.device.CreateTexture2D(
                     &texture_desc, 
                     null,
                     @ptrCast(&texture)
@@ -614,7 +614,7 @@ pub const Texture2D = struct {
         bind_flags: BindFlag,
         access_flags: AccessFlags,
         colour: [4]u8,
-        device: *d3d11.IDevice
+        gfx: *GfxState
     ) !Texture2D {
         if (desc.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
 
@@ -626,7 +626,7 @@ pub const Texture2D = struct {
 
         @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
 
-        return init(desc, bind_flags, access_flags, data, device);
+        return init(desc, bind_flags, access_flags, data, gfx.device);
     }
 
     pub const Descriptor = struct {
@@ -646,7 +646,7 @@ pub const TextureView2D = struct {
         _ = self.view.Release();
     }
 
-    pub fn init_from_texture2d(texture: *const Texture2D, device: *d3d11.IDevice) !TextureView2D {
+    pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !TextureView2D {
         const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
             .Format = texture.desc.format.to_d3d11(),
             .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
@@ -658,7 +658,7 @@ pub const TextureView2D = struct {
             },
         };
         var texture_view: *d3d11.IShaderResourceView = undefined;
-        try zwin32.hrErrorOnFail(device.CreateShaderResourceView(
+        try zwin32.hrErrorOnFail(gfx.device.CreateShaderResourceView(
                 @ptrCast(texture.texture), 
                 &texture_resource_view_desc, 
                 @ptrCast(&texture_view)
@@ -679,13 +679,13 @@ pub const RenderTargetView = struct {
         _ = self.view.Release();
     }
 
-    pub fn init_from_texture2d(texture: *const Texture2D, device: *d3d11.IDevice) !RenderTargetView {
-        return init_from_texture2d_mip(texture, 0, device);
+    pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !RenderTargetView {
+        return init_from_texture2d_mip(texture, 0, gfx);
     }
 
-    pub fn init_from_texture2d_mip(texture: *const Texture2D, mip_level: u32, device: *d3d11.IDevice) !RenderTargetView {
+    pub fn init_from_texture2d_mip(texture: *const Texture2D, mip_level: u32, gfx: *GfxState) !RenderTargetView {
         var rtv: *d3d11.IRenderTargetView = undefined;
-        try zwin32.hrErrorOnFail(device.CreateRenderTargetView(
+        try zwin32.hrErrorOnFail(gfx.device.CreateRenderTargetView(
                 @ptrCast(texture.texture), 
                 &d3d11.RENDER_TARGET_VIEW_DESC{
                     .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
@@ -717,7 +717,7 @@ pub const DepthStencilView = struct {
     pub fn init_from_texture2d(
         texture: *const Texture2D, 
         flags: struct{ read_only_depth: bool = false, read_only_stencil: bool = false, },
-        device: *d3d11.IDevice
+        gfx: *GfxState
     ) !DepthStencilView {
         if (!texture.desc.format.is_depth()) { return error.NotADepthFormat; }
 
@@ -735,7 +735,7 @@ pub const DepthStencilView = struct {
             },
         };
         var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
-        try zwin32.hrErrorOnFail(device.CreateDepthStencilView(@ptrCast(texture.texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
+        try zwin32.hrErrorOnFail(gfx.device.CreateDepthStencilView(@ptrCast(texture.texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
         errdefer _ = depth_stencil_view.Release();
 
         return DepthStencilView {
@@ -851,7 +851,7 @@ pub const RasterizationState = struct {
         _ = self.state.Release();
     }
 
-    pub fn init(desc: RasterizationStateDesc, device: *d3d11.IDevice) !RasterizationState {
+    pub fn init(desc: RasterizationStateDesc, gfx: *GfxState) !RasterizationState {
         var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
             .FillMode = blk: {
                 if (!desc.FillBack and !desc.FillFront) {
@@ -873,7 +873,7 @@ pub const RasterizationState = struct {
         };
 
         var rasterization_state: *d3d11.IRasterizerState = undefined;
-        try zwin32.hrErrorOnFail(device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
+        try zwin32.hrErrorOnFail(gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
         errdefer _ = rasterization_state.Release();
 
         return RasterizationState {
@@ -920,7 +920,7 @@ pub const Sampler = struct {
         _ = self.sampler.Release();
     }
 
-    pub fn init(desc: SamplerDescriptor, device: *d3d11.IDevice) !Sampler {
+    pub fn init(desc: SamplerDescriptor, gfx: *GfxState) !Sampler {
         const d3d11_filter = blk: {
             if (desc.anisotropic_filter) {
                 break :blk d3d11.FILTER.ANISOTROPIC;
@@ -954,7 +954,7 @@ pub const Sampler = struct {
             .MaxLOD = desc.max_lod,
         };
         var sampler: *d3d11.ISamplerState = undefined;
-        try zwin32.hrErrorOnFail(device.CreateSamplerState(&sampler_desc, @ptrCast(&sampler)));
+        try zwin32.hrErrorOnFail(gfx.device.CreateSamplerState(&sampler_desc, @ptrCast(&sampler)));
         errdefer _ = sampler.Release();
 
         return Sampler {
@@ -1060,20 +1060,20 @@ const ExposureToneMappingAndBloomFilter = struct {
             FULL_SCREEN_QUAD_VS,
             "vs_main",
             ([0]VertexInputLayoutEntry {})[0..],
-            gfx.device
+            gfx
         );
         errdefer vertex_shader.deinit();
 
         var pixel_shader = try PixelShader.init_buffer(
             FULL_SCREEN_QUAD_VS ++ HLSL,
             "ps_main",
-            gfx.device
+            gfx
         );
         errdefer pixel_shader.deinit();
 
         var sampler = try Sampler.init(
             SamplerDescriptor {},
-            gfx.device
+            gfx
         );
         errdefer sampler.deinit();
 

@@ -37,21 +37,21 @@ pub const BloomFilter = struct {
             FULL_SCREEN_QUAD_VS,
             "vs_main",
             ([0]gf.VertexInputLayoutEntry {})[0..],
-            gfx.device
+            gfx
         );
         errdefer full_screen_quad_vertex_shader.deinit();
 
         var downsample_pixel_shader = try gf.PixelShader.init_buffer(
             FULL_SCREEN_QUAD_VS ++ BLOOM_DOWNSAMPLE_HLSL,
             "ps_main",
-            gfx.device
+            gfx
         );
         errdefer downsample_pixel_shader.deinit();
 
         var upsample_pixel_shader = try gf.PixelShader.init_buffer(
             FULL_SCREEN_QUAD_VS ++ BLOOM_UPSAMPLE_HLSL,
             "ps_main",
-            gfx.device
+            gfx
         );
         errdefer upsample_pixel_shader.deinit();
 
@@ -60,7 +60,7 @@ pub const BloomFilter = struct {
                 .filter_min_mag = .Linear,
                 .max_lod = @floatFromInt(MIP_LEVELS - 1),
             },
-            gfx.device
+            gfx
         );
         errdefer sampler.deinit();
 
@@ -68,7 +68,7 @@ pub const BloomFilter = struct {
             @sizeOf(ConstantBufferData),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx.device
+            gfx
         );
         errdefer constant_buffer.deinit();
 
@@ -111,14 +111,14 @@ pub const BloomFilter = struct {
                 .{ .ShaderResource = true, .RenderTarget = true, },
                 .{ .GpuWrite = true, },
                 null,
-                gfx.device
+                gfx
             );
 
-            t.view = try gf.TextureView2D.init_from_texture2d(&t.texture, gfx.device);
+            t.view = try gf.TextureView2D.init_from_texture2d(&t.texture, gfx);
 
             // create a render target view for each mip level
             for (t.rtv[0..], 0..) |*r, mip_level| {
-                r.* = try gf.RenderTargetView.init_from_texture2d_mip(&t.texture, @intCast(mip_level), gfx.device);
+                r.* = try gf.RenderTargetView.init_from_texture2d_mip(&t.texture, @intCast(mip_level), gfx);
             }
         }
     }
@@ -152,7 +152,7 @@ pub const BloomFilter = struct {
         for (0..MIP_LEVELS) |mip_level| {
             const mip_level_minus_one = @max(@as(i32, @intCast(mip_level)) - 1, 0);
             {
-                var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx.context) catch unreachable;
+                var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx) catch unreachable;
                 defer mapped_buffer.unmap();
                 mapped_buffer.data.resolution_or_radius[0] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.width));
                 mapped_buffer.data.resolution_or_radius[1] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.height));
@@ -205,7 +205,7 @@ pub const BloomFilter = struct {
             };
             
             {
-                var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx.context) catch unreachable;
+                var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx) catch unreachable;
                 defer mapped_buffer.unmap();
                 mapped_buffer.data.resolution_or_radius[0] = filter_radius;
                 mapped_buffer.data.resolution_or_radius[1] = @floatFromInt(mip_level + 1);

@@ -196,11 +196,11 @@ pub const Font = struct {
             .{ .ShaderResource = true, },
             .{},
             font_image.data,
-            gfx.device
+            gfx
         );
         defer msdf_texture.deinit();
 
-        font.msdf_texture_view = try _gfx.TextureView2D.init_from_texture2d(&msdf_texture, gfx.device);
+        font.msdf_texture_view = try _gfx.TextureView2D.init_from_texture2d(&msdf_texture, gfx);
         errdefer font.msdf_texture_view.deinit();
 
         // create the font shaders
@@ -212,14 +212,14 @@ pub const Font = struct {
                 .{ .name = "TEXCOORD", .index = 0, .format = .F32x4, .per = .Instance, },
                 .{ .name = "TEXCOORD", .index = 1, .format = .F32x4, .per = .Instance, },
             })[0..],
-            gfx.device
+            gfx
         );
         errdefer font.font_vso.deinit();
 
         font.font_pso = try _gfx.PixelShader.init_buffer(
             MSDF_FONT_SHADER_HLSL,
             "ps_main",
-            gfx.device
+            gfx
         );
         errdefer font.font_pso.deinit();
 
@@ -230,7 +230,7 @@ pub const Font = struct {
                 .filter_mip = .Point,
                 .border_mode = .Wrap,
             },
-            gfx.device
+            gfx
         );
         errdefer font.sampler.deinit();
 
@@ -246,7 +246,7 @@ pub const Font = struct {
             @sizeOf(FontConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx.device
+            gfx
         );
         errdefer font.font_text_buffer.deinit();
 
@@ -254,7 +254,7 @@ pub const Font = struct {
             @sizeOf([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer),
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx.device
+            gfx
         );
         errdefer font.character_buffer.deinit();
 
@@ -322,7 +322,7 @@ pub const Font = struct {
         gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.character_buffer.buffer), @ptrCast(&stride), @ptrCast(&offset));
 
         { // Setup font text info buffer
-            const mapped_buffer = self.font_text_buffer.map(FontConstantBuffer, gfx.context) catch unreachable;
+            const mapped_buffer = self.font_text_buffer.map(FontConstantBuffer, gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
             mapped_buffer.data.* = FontConstantBuffer {
@@ -337,7 +337,7 @@ pub const Font = struct {
         while (text_offset < text.len) {
             var instance_count: u32 = 0;
             {
-                const mapped_buffer = self.character_buffer.map(([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer), gfx.context) catch unreachable;
+                const mapped_buffer = self.character_buffer.map(([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer), gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
                 while (instance_count < RENDER_INSTANCE_COUNT and (text_offset + instance_count) < text.len) {

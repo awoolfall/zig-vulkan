@@ -206,7 +206,7 @@ pub const Buffers = struct {
             vertices_data,
             .{ .VertexBuffer = true, },
             .{},
-            gfx.device
+            gfx
         );
         errdefer vertices_buffer.deinit();
 
@@ -215,7 +215,7 @@ pub const Buffers = struct {
             std.mem.sliceAsBytes(mesh_indices[0..]),
             .{ .IndexBuffer = true, },
             .{},
-            gfx.device
+            gfx
         );
         errdefer indices_buffer.deinit();
 

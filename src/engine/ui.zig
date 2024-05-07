@@ -134,14 +134,14 @@ pub const QuadRenderer = struct {
             QUAD_SHADER_HLSL,
             "vs_main",
             ([_]_gfx.VertexInputLayoutEntry {})[0..],
-            gfx.device
+            gfx
         );
         errdefer ui.quad_vso.deinit();
 
         ui.quad_pso = try _gfx.PixelShader.init_buffer(
             QUAD_SHADER_HLSL,
             "ps_main",
-            gfx.device
+            gfx
         );
         errdefer ui.quad_pso.deinit();
 
@@ -150,7 +150,7 @@ pub const QuadRenderer = struct {
             @sizeOf(QuadBufferVertexBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx.device
+            gfx
         );
         errdefer ui.quad_buffer_vertex.deinit();
 
@@ -158,7 +158,7 @@ pub const QuadRenderer = struct {
             @sizeOf(QuadBufferPixelBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx.device
+            gfx
         );
         errdefer ui.quad_buffer_pixel.deinit();
 
@@ -169,14 +169,14 @@ pub const QuadRenderer = struct {
                 .filter_mip = .Point,
                 .border_mode = .Wrap,
             },
-            gfx.device
+            gfx
         );
         errdefer ui.sampler.deinit();
 
         // create rasterizer state
         ui.rasterizer_state = try _gfx.RasterizationState.init(
             .{ .FillBack = false, .FrontCounterClockwise = true, },
-            gfx.device
+            gfx
         );
         errdefer ui.rasterizer_state.deinit();
 
@@ -200,7 +200,7 @@ pub const QuadRenderer = struct {
         gfx: *_gfx.GfxState,
     ) void {
         { // Setup quad vertex info buffer
-            const mapped_buffer = self.quad_buffer_vertex.map(QuadBufferVertexBuffer, gfx.context) catch unreachable;
+            const mapped_buffer = self.quad_buffer_vertex.map(QuadBufferVertexBuffer, gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
             mapped_buffer.data.* = QuadBufferVertexBuffer {
@@ -213,7 +213,7 @@ pub const QuadRenderer = struct {
             };
         }
         { // Setup quad pixel info buffer
-            const mapped_buffer = self.quad_buffer_pixel.map(QuadBufferPixelBuffer, gfx.context) catch unreachable;
+            const mapped_buffer = self.quad_buffer_pixel.map(QuadBufferPixelBuffer, gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
             mapped_buffer.data.* = QuadBufferPixelBuffer {
