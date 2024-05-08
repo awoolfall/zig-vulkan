@@ -17,6 +17,7 @@ const ph = @import("engine/physics.zig");
 const path = @import("engine/path.zig");
 const particle = @import("engine/particles.zig");
 const es = @import("easings.zig");
+const ac = @import("engine/anim_controller.zig");
 
 const font = @import("engine/font.zig");
 const _ui = @import("engine/ui.zig");
@@ -64,6 +65,8 @@ pub const App = struct {
     terrain_model: ms.Model,
     cone_model: ms.Model,
 
+    anim_controller: ac.AnimController,
+
     ui: _ui.UiRenderer,
 
     zero_particle_system: particle.ParticleSystem,
@@ -80,6 +83,7 @@ pub const App = struct {
         self.cone_model.deinit();
         self.chara_model.deinit();
         self.terrain_model.deinit();
+        self.anim_controller.deinit();
 
         self.bone_matrix_buffer.deinit();
         self.camera_data_buffer.deinit();
@@ -147,7 +151,7 @@ pub const App = struct {
         // Load model
         var chara_model = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim.glb"},
+            path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim2.glb"},
             &eng.gfx
         );
         errdefer chara_model.deinit();
@@ -171,6 +175,9 @@ pub const App = struct {
             &eng.gfx
         );
         errdefer cone_model.deinit();
+
+        var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator());
+        errdefer anim_controller.deinit();
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
         const demo_compound_shape_settings = try terrain_model.gen_static_compound_physics_shape();
@@ -427,6 +434,7 @@ pub const App = struct {
             .chara_model = chara_model,
             .terrain_model = terrain_model,
             .cone_model = cone_model,
+            .anim_controller = anim_controller,
 
             .ui = ui,
             .zero_particle_system = zero_particle_system,
@@ -434,12 +442,12 @@ pub const App = struct {
         };
     }
 
-    fn srgb_to_rgb(rgb: zm.F32x4) zm.F32x4 {
+    inline fn srgb_to_rgb(srgb: zm.F32x4) zm.F32x4 {
         return zm.f32x4(
-            std.math.pow(f32, rgb[0], 2.2), 
-            std.math.pow(f32, rgb[1], 2.2), 
-            std.math.pow(f32, rgb[2], 2.2), 
-            rgb[3]
+            std.math.pow(f32, srgb[0], 2.2), 
+            std.math.pow(f32, srgb[1], 2.2), 
+            std.math.pow(f32, srgb[2], 2.2), 
+            srgb[3]
         );
     }
 
@@ -559,7 +567,7 @@ pub const App = struct {
                     matrix,
                     [3]zphy.Real{0.0, 0.0, 0.0},
                     @ptrCast(&collector),
-                    .{}//
+                    .{}
                 );
 
                 std.log.info("hits: {}", .{collector.hits.items.len});
@@ -623,17 +631,21 @@ pub const App = struct {
                 mapped_buffer.data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
 
-            var bone_transforms = std.ArrayList(zm.Mat).init(std.heap.page_allocator);
-            defer bone_transforms.deinit();
+            const bone_transforms = self.anim_controller.calculate_bone_transforms(
+                character_entity.model.?,
+                &character_entity.model.?.animations[0],
+                .{
+                    .animation_1 = &character_entity.model.?.animations[1],
+                    .lerp_amount = 1.0,
+                },
+                &self.engine.time
+            );
 
-            character_entity.model.?.bone_transform(self.engine.time.time_since_start_of_app() * 0.3, &bone_transforms);
-
-            if (bone_transforms.items.len != 0) { // Update bone matrix buffer
+            { // Update bone matrix buffer
                 const mapped_buffer = self.bone_matrix_buffer.map([ms.MAX_BONES]zm.Mat, &self.engine.gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
-                @memset(mapped_buffer.data.*[0..], zm.identity());
-                @memcpy(mapped_buffer.data.*[0..bone_transforms.items.len], bone_transforms.items[0..]);
+                @memcpy(mapped_buffer.data.*[0..], bone_transforms[0..]);
             }
         } else |_| {}
         } else |_| {}
@@ -673,13 +685,11 @@ pub const App = struct {
         self.engine.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
         self.engine.gfx.context.IASetInputLayout(self.vertex_shader.layout);
 
-        std.log.info("a", .{});
         // Iterate through all entities finding those which contain a mesh to be rendered
         for (self.engine.entities.data.items) |*it| {
             if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
                 if (entity.model) |m| {
-                    std.log.info("af",.{});
                     const buffers = [_]*d3d11.IBuffer{
                         m.buffers.vertices.buffer,
                         m.buffers.vertices.buffer,
@@ -708,7 +718,6 @@ pub const App = struct {
                         @ptrCast(strides[0..].ptr),
                         @ptrCast(offsets[0..].ptr)
                     );
-                    std.log.info("af'",.{});
                     self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices.buffer, zwin32.dxgi.FORMAT.R32_UINT, 0);
                     // Set model constant buffer
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer.buffer));
@@ -718,7 +727,6 @@ pub const App = struct {
                 }
             }
         }
-        std.log.info("a'", .{});
 
         self.zero_particle_system.update(&self.engine.time);
         self.zero_particle_system.draw(

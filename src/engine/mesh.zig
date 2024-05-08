@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const gf = @import("../gfx/gfx.zig");
 const tm = @import("../engine/transform.zig");
 const path = @import("../engine/path.zig");
+const an = @import("animation.zig");
 const assimp = @import("assimp");
 
 pub const AlphaMode = enum {
@@ -233,25 +234,6 @@ pub const Buffers = struct {
     }
 };
 
-pub const AnimationKey = struct {
-    time: f64,
-    value: zm.F32x4,
-};
-
-pub const BoneAnimationChannel = struct {
-    node_name: []const u8,
-    position_keys: []AnimationKey,
-    rotation_keys: []AnimationKey,
-    scale_keys: []AnimationKey,
-};
-
-pub const BoneAnimation = struct {
-    name: []u8,
-    duration: f64,
-    ticks_per_second: f64,
-    channels: []BoneAnimationChannel,
-};
-
 pub const MAX_BONES: usize = 128;
 pub const Model = struct {
     const Self = @This();
@@ -259,7 +241,7 @@ pub const Model = struct {
     mesh_list: []MeshPrimitive,
     nodes_list: []ModelNode,
     root_nodes: []usize,
-    animations: []BoneAnimation,
+    animations: []an.BoneAnimation,
     arena_allocator: *std.heap.ArenaAllocator,
 
     global_inverse_transform: zm.Mat,
@@ -718,42 +700,46 @@ pub const Model = struct {
         }
 
         // Load animations
-        const animations = try model_arena.alloc(BoneAnimation, scene.animations().len);
+        const animations = try model_arena.alloc(an.BoneAnimation, scene.animations().len);
         errdefer model_arena.free(animations);
 
         for (scene.animations(), 0..) |anim, anim_id| {
-            animations[anim_id] = BoneAnimation {
+            animations[anim_id] = an.BoneAnimation {
                 .name = try std.fmt.allocPrint(model_arena, "{s}", .{anim.name()}),
                 .duration = anim.duration(),
                 .ticks_per_second = anim.ticks_per_second(),
-                .channels = try model_arena.alloc(BoneAnimationChannel, anim.channels().len),
+                .channels = try model_arena.alloc(an.BoneAnimationChannel, anim.channels().len),
             };
             for (anim.channels(), 0..) |ch, ch_id| {
                 const node_id = nodes_name_map.get(ch.node_name()).?;
 
-                animations[anim_id].channels[ch_id] = BoneAnimationChannel {
+                std.debug.assert(ch.position_keys().len >= 2);
+                std.debug.assert(ch.rotation_keys().len >= 2);
+                std.debug.assert(ch.scale_keys().len >= 2);
+
+                animations[anim_id].channels[ch_id] = an.BoneAnimationChannel {
                     .node_name = model_nodes[node_id].name.?,
-                    .position_keys = try model_arena.alloc(AnimationKey, ch.position_keys().len),
-                    .rotation_keys = try model_arena.alloc(AnimationKey, ch.rotation_keys().len),
-                    .scale_keys = try model_arena.alloc(AnimationKey, ch.scale_keys().len),
+                    .position_keys = try model_arena.alloc(an.AnimationKey, ch.position_keys().len),
+                    .rotation_keys = try model_arena.alloc(an.AnimationKey, ch.rotation_keys().len),
+                    .scale_keys = try model_arena.alloc(an.AnimationKey, ch.scale_keys().len),
                 };
 
                 for (ch.position_keys(), 0..) |pk, pk_id| {
-                    animations[anim_id].channels[ch_id].position_keys[pk_id] = AnimationKey {
+                    animations[anim_id].channels[ch_id].position_keys[pk_id] = an.AnimationKey {
                         .time = pk.time(),
                         .value = pk.value(),
                     };
                 }
 
                 for (ch.rotation_keys(), 0..) |rk, rk_id| {
-                    animations[anim_id].channels[ch_id].rotation_keys[rk_id] = AnimationKey {
+                    animations[anim_id].channels[ch_id].rotation_keys[rk_id] = an.AnimationKey {
                         .time = rk.time(),
                         .value = rk.value(),
                     };
                 }
 
                 for (ch.scale_keys(), 0..) |sk, sk_id| {
-                    animations[anim_id].channels[ch_id].scale_keys[sk_id] = AnimationKey {
+                    animations[anim_id].channels[ch_id].scale_keys[sk_id] = an.AnimationKey {
                         .time = sk.time(),
                         .value = sk.value(),
                     };
@@ -877,6 +863,7 @@ pub const Model = struct {
 
         const bone_ids = try alloc.alloc([4]i32, shape.positions.len);
         defer alloc.free(bone_ids);
+        // set all bone ids to default to pointing at the last valid bone
         @memset(bone_ids, [_]i32{MAX_BONES - 1} ** 4);
 
         const bone_weights = try alloc.alloc([4]f32, shape.positions.len);
@@ -969,61 +956,36 @@ pub const Model = struct {
         return try init_from_shape(alloc, &shape, gfx);
     }
 
-    pub fn bone_transform(self: *const Self, time_in_seconds: f64, transforms: *std.ArrayList(zm.Mat)) void {
-        if (self.animations.len == 0) { return; }
-        var ticks_per_second = self.animations[0].ticks_per_second;
-        if (ticks_per_second == 0.0) { ticks_per_second = 25.0; }
-        const time_in_ticks = time_in_seconds * ticks_per_second;
-        const animation_time = @mod(time_in_ticks, self.animations[0].duration);
+    pub fn generate_bone_transforms_for_animation_pose(
+        self: *const Self, 
+        animation: *const an.BoneAnimation,
+        out_bone_transforms: []zm.Mat,
+    ) void {
+        std.debug.assert(out_bone_transforms.len >= MAX_BONES);
 
-        self.read_node_heirarchy(animation_time, &self.nodes_list[self.root_nodes[0]], zm.identity());
-
-        transforms.resize(self.bone_info.items.len) catch unreachable;
-
-        for (self.bone_info.items, 0..) |*bn, i| {
-            transforms.items[i] = bn.final_transform;
-        }
+        // recurse heirarchy inserting bone transforms into transforms array
+        self.recurse_calculate_animation_bone_transforms(
+            animation, 
+            out_bone_transforms, 
+            &self.nodes_list[self.root_nodes[0]], 
+            zm.identity()
+        );
     }
 
-    pub fn read_node_heirarchy(self: *const Self, animation_time: f64, node: *const ModelNode, parent_mat: zm.Mat) void {
+    fn recurse_calculate_animation_bone_transforms(
+        self: *const Self, 
+        animation: *const an.BoneAnimation,
+        final_transforms: []zm.Mat,
+        node: *const ModelNode, 
+        parent_mat: zm.Mat
+    ) void {
+        if (node.name == null) { std.log.warn("node name was null in animation", .{}); return; }
+
         const node_name = node.name.?;
-        const animation = &self.animations[0];
         var node_transform = node.transform.generate_model_matrix();
-        
-        const maybe_node_anim = self.find_node_anim(animation, node_name);
 
-        if (maybe_node_anim) |node_anim| {
-            const scale_idx = self.find_anim_scale(animation_time, node_anim);
-            const scale_0 = node_anim.scale_keys[scale_idx];
-            var scale = scale_0.value;
-            if ((scale_idx + 1) < node_anim.scale_keys.len) {
-                const scale_1 = node_anim.scale_keys[scale_idx + 1];
-                const scale_t: f32 = @floatCast((animation_time - scale_0.time) / (scale_1.time - scale_0.time));
-                scale = zm.lerp(scale_0.value, scale_1.value, scale_t);
-            }
-            const scale_mat = zm.scalingV(scale);
-
-            const rotation_idx = self.find_anim_rotation(animation_time, node_anim);
-            const rotation_0 = node_anim.rotation_keys[rotation_idx];
-            var rotation = rotation_0.value;
-            if ((rotation_idx + 1) < node_anim.rotation_keys.len) {
-                const rotation_1 = node_anim.rotation_keys[rotation_idx + 1];
-                const rotation_t: f32 = @floatCast((animation_time - rotation_0.time) / (rotation_1.time - rotation_0.time));
-                rotation = zm.slerp(rotation_0.value, rotation_1.value, rotation_t);
-            }
-            const rotation_mat = zm.matFromQuat(zm.normalize4(rotation));
-
-            const position_idx = self.find_anim_position(animation_time, node_anim);
-            const position_0 = node_anim.position_keys[position_idx];
-            var position = position_0.value;
-            if ((position_idx + 1) < node_anim.position_keys.len) {
-                const position_1 = node_anim.position_keys[position_idx + 1];
-                const position_t: f32 = @floatCast((animation_time - position_0.time) / (position_1.time - position_0.time));
-                position = zm.lerp(position_0.value, position_1.value, position_t);
-            }
-            const position_mat = zm.translationV(position);
-
-            node_transform = zm.mul(scale_mat, zm.mul(rotation_mat, position_mat));
+        if (animation.find_node_anim(node_name)) |anim_channel| {
+            node_transform = anim_channel.selected_transform.generate_model_matrix();
         }
 
         const global_transform = zm.mul(node_transform, parent_mat);
@@ -1031,61 +993,17 @@ pub const Model = struct {
         if (self.bone_mapping.get(node_name)) |bone_id| {
             const bone_info = &self.bone_info.items[@intCast(bone_id)];
             const final_transform = zm.mul(bone_info.bone_offset, zm.mul(global_transform, self.global_inverse_transform));
-            self.bone_info.items[@intCast(bone_id)].final_transform = final_transform;
+            final_transforms[@intCast(bone_id)] = final_transform;
         }
 
         for (node.children) |child_idx| {
-            self.read_node_heirarchy(animation_time, &self.nodes_list[child_idx], global_transform);
+            self.recurse_calculate_animation_bone_transforms(
+                animation,
+                final_transforms,
+                &self.nodes_list[child_idx],
+                global_transform
+            );
         }
-    }
-
-    pub fn find_node_anim(self: *const Self, animation: *const BoneAnimation, name: []const u8) ?*const BoneAnimationChannel {
-        _ = self;
-        for (animation.channels) |*channel| {
-            if (std.mem.eql(u8, channel.node_name, name)) {
-                return channel;
-            }
-        }
-        return null;
-    }
-
-    pub fn find_anim_position(self: *const Self, animation_time: f64, anim_channel: *const BoneAnimationChannel) usize {
-        _ = self;
-        std.debug.assert(anim_channel.position_keys.len > 0);
-
-        for (0..(anim_channel.position_keys.len - 1)) |i| {
-            if (animation_time < anim_channel.position_keys[i + 1].time) {
-                return i;
-            }
-        }
-
-        return 0;
-    }
-
-    pub fn find_anim_rotation(self: *const Self, animation_time: f64, anim_channel: *const BoneAnimationChannel) usize {
-        _ = self;
-        std.debug.assert(anim_channel.rotation_keys.len > 0);
-
-        for (0..(anim_channel.rotation_keys.len - 1)) |i| {
-            if (animation_time < anim_channel.rotation_keys[i + 1].time) {
-                return i;
-            }
-        }
-
-        return 0;
-    }
-
-    pub fn find_anim_scale(self: *const Self, animation_time: f64, anim_channel: *const BoneAnimationChannel) usize {
-        _ = self;
-        std.debug.assert(anim_channel.scale_keys.len > 0);
-
-        for (0..(anim_channel.scale_keys.len - 1)) |i| {
-            if (animation_time < anim_channel.scale_keys[i + 1].time) {
-                return i;
-            }
-        }
-
-        return 0;
     }
 
     pub fn gen_static_compound_physics_shape(self: *const Model) !*zphy.CompoundShapeSettings {
@@ -1099,8 +1017,8 @@ pub const Model = struct {
                 defer scaled_shape_settings.release();
 
                 shape_settings.addShape(
-                    .{node.transform.position[0], node.transform.position[1], node.transform.position[2]},
-                    .{node.transform.rotation[0], node.transform.rotation[1], node.transform.rotation[2], node.transform.rotation[3]},
+                    zm.vecToArr3(node.transform.position),
+                    zm.vecToArr4(node.transform.rotation),
                     scaled_shape_settings.asShapeSettings(),
                     0
                 );
@@ -1124,7 +1042,7 @@ pub const Model = struct {
         }
     }
 
-    pub fn resolve_bones_with_offsets(self: *const Model, bone_map: *std.AutoHashMap(i32, zm.Mat), bone_offsets: *[MAX_BONES]zm.Mat) void {
+    fn resolve_bones_with_offsets(self: *const Model, bone_map: *std.AutoHashMap(i32, zm.Mat), bone_offsets: *[MAX_BONES]zm.Mat) void {
         self.recurse_resolve_bones_with_offsets(&(self.nodes_list[self.root_nodes[0]]), zm.identity(), bone_map, bone_offsets);
     }
 };
@@ -1252,6 +1170,5 @@ fn appendMeshPrimitive(
 const BoneInfo = struct {
     bone_name: []u8,
     bone_offset: zm.Mat = zm.identity(),
-    final_transform: zm.Mat = zm.identity(),
 };
 
