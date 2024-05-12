@@ -68,6 +68,7 @@ pub const App = struct {
     anim_controller: ac.AnimController,
 
     ui: _ui.UiRenderer,
+    imui: _ui.Imui,
 
     zero_particle_system: particle.ParticleSystem,
     player_attack_particle_system: particle.ParticleSystem,
@@ -77,6 +78,7 @@ pub const App = struct {
 
         self.engine.gfx.context.Flush();
         self.ui.deinit();
+        self.imui.deinit();
         self.zero_particle_system.deinit();
         self.player_attack_particle_system.deinit();
 
@@ -328,6 +330,9 @@ pub const App = struct {
         var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
 
+        var imui = try _ui.Imui.init(eng.general_allocator.allocator(), &eng.input, &eng.gfx);
+        errdefer imui.deinit();
+
         var zero_particle_system = try particle.ParticleSystem.init(
             eng.general_allocator.allocator(),
             2000,
@@ -437,6 +442,7 @@ pub const App = struct {
             .anim_controller = anim_controller,
 
             .ui = ui,
+            .imui = imui,
             .zero_particle_system = zero_particle_system,
             .player_attack_particle_system = player_attack_particle_system,
         };
@@ -797,7 +803,7 @@ pub const App = struct {
             "Hello World.\nThis is the next line.",
             .{
                 .position = .{ .x = 100, .y = 100, },
-                .size = .{.Pixels = 15},
+                .pixel_height = 15,
             }, 
             .{
                 .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
@@ -820,12 +826,25 @@ pub const App = struct {
                 vel_text, 
                 .{
                     .position = .{ .x = 100, .y = 500, },
-                    .size = .{.Pixels = 15},
+                    .pixel_height = 15,
                 }, 
                 rtv, 
                 &self.engine.gfx
             );
         } else |_| {}
+
+        if (self.imui.button("Hello, this is a button!", 1).dragged) {
+            std.log.info("button has been pressed1!", .{});
+        }
+        if (self.imui.button("Hello, this is a button2!", 2).clicked) {
+            std.log.info("button has been pressed2!", .{});
+        }
+        if (self.imui.button("Hello, this is a button3!", 3).clicked) {
+            std.log.info("button has been pressed3!", .{});
+        }
+        if (self.imui.button("Hello, this is a button4!", 4).clicked) {
+            std.log.info("button has been pressed4!", .{});
+        }
 
         var fps_buf: [128]u8 = [_]u8{0} ** 128;
         const fps_text = std.fmt.bufPrint(fps_buf[0..], "fps: {d:0.1}\nframe time: {d:2.3}ms\nwait time: {d:2.3}ms\nwait %: {d:0.0}", .{
@@ -842,10 +861,9 @@ pub const App = struct {
                 .position = .{
                     .x = 10,
                     .y = 
-                        self.engine.gfx.swapchain_size.height - 
-                        @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.ascender * 12.0)),
+                        @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)),
                 },
-                .size = .{.Pixels = 12},
+                .pixel_height = 12,
             }, 
             rtv, 
             &self.engine.gfx
@@ -862,13 +880,18 @@ pub const App = struct {
             .{
                 .position = .{
                     .x = 10,
-                    .y = -@as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
+                    .y = self.engine.gfx.swapchain_size.height -
+                        @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
                 },
-                .size = .{.Pixels = 12},
+                .pixel_height = 12,
             }, 
             rtv, 
             &self.engine.gfx
         );
+
+        self.imui.compute_widget_rects();
+        self.imui.render_imui(&rtv, &self.engine.gfx);
+        self.imui.end_frame(&self.engine.gfx);
 
         self.engine.gfx.end_frame(rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});
@@ -991,8 +1014,9 @@ pub const App = struct {
         quad_props: _ui.QuadRenderer.QuadProperties,
         rtv: gfx.RenderTargetView,
     ) void {
+        const text_bounds = self.ui.get_font(font_).text_bounds_2d_pixels(text, text_props.pixel_height);
         self.ui.quad_renderer.render_quad(
-            self.ui.fonts[@intFromEnum(font_)].text_bounds_2d(text, text_props, rtv.size.width, rtv.size.height),
+            text_bounds.translate(text_props.position.x, text_props.position.y),
             quad_props,
             rtv,
             &self.engine.gfx

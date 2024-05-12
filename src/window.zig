@@ -1,19 +1,6 @@
 const kc = @import("input/keycode.zig");
 
-pub const WindowEventTag = enum {
-    RESIZED,
-    EVENTS_CLEARED,
-    LOST_FOCUS,
-    GAINED_FOCUS,
-    KEY_DOWN,
-    KEY_REPEAT,
-    KEY_UP,
-    CHAR,
-    CURSOR_MOVED,
-    RAW_MOUSE_MOVED,
-};
-
-pub const WindowEvent = union(WindowEventTag) {
+pub const WindowEvent = union(enum) {
     RESIZED: WindowSize,
     EVENTS_CLEARED: void,
     LOST_FOCUS: void,

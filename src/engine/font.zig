@@ -143,7 +143,7 @@ pub const Font = struct {
                 .em_size = font_data.value.metrics.emSize,
                 .line_height = font_data.value.metrics.lineHeight,
                 .ascender = font_data.value.metrics.ascender,
-                .descender = font_data.value.metrics.descender,
+                .descender = -font_data.value.metrics.descender,
                 .underline_y = font_data.value.metrics.underlineY,
                 .underline_thickness = font_data.value.metrics.underlineThickness,
             },
@@ -264,7 +264,7 @@ pub const Font = struct {
 
     pub const FontRenderProperties2D = struct {
         position: struct { x: i32, y: i32 },
-        size: ui.Size = ui.Size {.Pixels = 20},
+        pixel_height: u32 = 20,
         colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
     };
 
@@ -278,17 +278,13 @@ pub const Font = struct {
         if (text.len == 0) { return; }
         
         const aspect = (@as(f32, @floatFromInt(rtv.size.width)) / @as(f32, @floatFromInt(rtv.size.height)));
-        var y_loc = ((@as(f32, @floatFromInt(props.position.y)) / @as(f32, @floatFromInt(rtv.size.height))) * 2.0) - 1.0;
-        var x_loc = ((@as(f32, @floatFromInt(props.position.x)) / @as(f32, @floatFromInt(rtv.size.width))) * 2.0) - 1.0;
+        const xy_screen_space = ui.position_pixels_to_screen_space(props.position.x, props.position.y, rtv.size.width, rtv.size.height);
+        var y_loc = xy_screen_space[1];
+        var x_loc = xy_screen_space[0];
         const x_start_loc = x_loc;
 
-        const screen_size = switch (props.size) {
-            .Screen => |v| blk: { break :blk (v * 2.0); },
-            .Pixels => |px| blk: {
-                const percpx = @as(f32, @floatFromInt(px)) / @as(f32, @floatFromInt(rtv.size.height));
-                break :blk (percpx * 2.0);
-            },
-        };
+        const percpx = @as(f32, @floatFromInt(props.pixel_height)) / @as(f32, @floatFromInt(rtv.size.height));
+        const screen_size = (percpx * 2.0);
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(rtv.size.width),
@@ -380,33 +376,21 @@ pub const Font = struct {
         }
     }
 
-    pub fn text_bounds_2d(
+    pub fn text_bounds_2d_pixels(
         self: *Font,
         text: []const u8,
-        props: FontRenderProperties2D,
-        rtv_width: u32,
-        rtv_height: u32,
+        pixel_height: u32,
     ) ui.RectPixels {
-        _ = rtv_width;
-
-        if (text.len == 0) { return ui.RectPixels {
-            .left = props.position.x,
-            .bottom = props.position.y,
+        const pixel_height_f32: f32 = @floatFromInt(pixel_height);
+        if (text.len == 0) { return ui.RectPixels{
+            .left = 0,
+            .top = 0,
             .width = 0,
             .height = 0,
         }; }
         
-        var y_loc = @as(f32, @floatFromInt(props.position.y));
-        var x_loc = @as(f32, @floatFromInt(props.position.x));
-
-        const screen_size = switch (props.size) {
-            .Screen => |v| blk: { break :blk (v * 2.0); },
-            .Pixels => |px| blk: {
-                const percpx = @as(f32, @floatFromInt(px)) / @as(f32, @floatFromInt(rtv_height));
-                break :blk (percpx * 2.0);
-            },
-        };
-        const pixel_height = (screen_size / 2.0) * @as(f32, @floatFromInt(rtv_height));
+        var line_count: f32 = 0.0;
+        var x_loc: f32 = 0.0;
 
         const x_start_loc = x_loc;
 
@@ -415,25 +399,22 @@ pub const Font = struct {
             switch (c) {
                 '\n' => {
                     x_loc = x_start_loc;
-                    y_loc -= self.font_metrics.line_height * pixel_height;
+                    line_count += 1.0;
                 },
                 else => {
                     const char_info = &self.ascii_character_map[@intCast(c)];
 
-                    x_loc += char_info.advance * pixel_height;
+                    x_loc += char_info.advance;
                     max_x = @max(max_x, x_loc);
                 },
             }
         }
 
-        const left = props.position.x;
-        const bottom: i32 = @intFromFloat(y_loc + self.font_metrics.descender * pixel_height);
-
         return ui.RectPixels {
-            .left = left,
-            .bottom = bottom,
-            .width = @as(i32, @intFromFloat(max_x)) - left,
-            .height = @as(i32, @intFromFloat((@as(f32, @floatFromInt(props.position.y)) + self.font_metrics.ascender * pixel_height))) - bottom,
+            .left = 0,
+            .top = @intFromFloat(-self.font_metrics.ascender * pixel_height_f32),
+            .width = @intFromFloat(max_x * pixel_height_f32),
+            .height = @intFromFloat((self.font_metrics.ascender + self.font_metrics.descender + (line_count * self.font_metrics.line_height)) * pixel_height_f32),
         };
     }
 };

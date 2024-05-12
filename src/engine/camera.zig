@@ -79,14 +79,14 @@ pub const Camera = struct {
                 self.view_matrix, 
                 zm.matFromAxisAngle(
                     zm.rotate(zm.quatFromMat(self.view_matrix), zm.f32x4(0.0, -1.0, 0.0, 0.0)), 
-                    self.mouse_sensitivity * engine.input.mouse_delta.x
+                    self.mouse_sensitivity * engine.input.mouse_delta[0]
                 )
             );
             self.view_matrix = zm.mul(
                 self.view_matrix, 
                 zm.matFromAxisAngle(
                     zm.f32x4(-1.0, 0.0, 0.0, 0.0), 
-                    self.mouse_sensitivity * engine.input.mouse_delta.y
+                    self.mouse_sensitivity * engine.input.mouse_delta[1]
                 )
             );
         }
@@ -111,7 +111,7 @@ pub const Camera = struct {
             self.view_matrix = zm.mul(
                 zm.matFromAxisAngle(
                     zm.f32x4(0.0, -1.0, 0.0, 0.0), 
-                    self.mouse_sensitivity * engine.input.mouse_delta.x
+                    self.mouse_sensitivity * engine.input.mouse_delta[0]
                 ),
                 self.view_matrix,
             );
@@ -119,7 +119,7 @@ pub const Camera = struct {
                 self.view_matrix, 
                 zm.matFromAxisAngle(
                     zm.f32x4(-1.0, 0.0, 0.0, 0.0), 
-                    self.mouse_sensitivity * engine.input.mouse_delta.y
+                    self.mouse_sensitivity * engine.input.mouse_delta[1]
                 )
             );
         }
