@@ -127,12 +127,21 @@ pub const Buffers = struct {
     vertices: gf.Buffer,
 
     offsets: struct {
+        positions: usize,
         normals: usize,
         texcoords: usize,
         tangents: usize,
         bone_ids: usize,
         bone_weights: usize,
     },
+    strides: struct {
+        positions: usize,
+        normals: usize,
+        texcoords: usize,
+        tangents: usize,
+        bone_ids: usize,
+        bone_weights: usize,
+    }, 
 
     pub fn deinit(self: *const Buffers) void {
         self.vertices.deinit();
@@ -224,11 +233,20 @@ pub const Buffers = struct {
             .vertices = vertices_buffer,
             .indices = indices_buffer,
             .offsets = .{
+                .positions = 0,
                 .normals = normals_offset,
                 .texcoords = tex_coords_offset,
                 .tangents = tangents_offset,
                 .bone_ids = bone_ids_offset,
                 .bone_weights = bone_weights_offset,
+            },
+            .strides = .{
+                .positions = @sizeOf([3]f32),
+                .normals = @sizeOf([3]f32),
+                .texcoords = @sizeOf([2]f32),
+                .tangents = @sizeOf([4]f32),
+                .bone_ids = @sizeOf([4]i32),
+                .bone_weights = @sizeOf([4]f32),
             },
         };
     }

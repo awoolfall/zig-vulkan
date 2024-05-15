@@ -61,9 +61,9 @@ pub const App = struct {
 
     bone_matrix_buffer: gfx.Buffer,
 
-    chara_model: ms.Model,
-    terrain_model: ms.Model,
-    cone_model: ms.Model,
+    chara_model: *ms.Model,
+    terrain_model: *ms.Model,
+    cone_model: *ms.Model,
 
     anim_controller: ac.AnimController,
 
@@ -83,8 +83,11 @@ pub const App = struct {
         self.player_attack_particle_system.deinit();
 
         self.cone_model.deinit();
+        self.engine.general_allocator.allocator().destroy(self.cone_model);
         self.chara_model.deinit();
+        self.engine.general_allocator.allocator().destroy(self.chara_model);
         self.terrain_model.deinit();
+        self.engine.general_allocator.allocator().destroy(self.terrain_model);
         self.anim_controller.deinit();
 
         self.bone_matrix_buffer.deinit();
@@ -151,7 +154,9 @@ pub const App = struct {
         errdefer bone_matrix_buffer.deinit();
 
         // Load model
-        var chara_model = try ms.Model.init_from_file_assimp(
+        const chara_model = try eng.general_allocator.allocator().create(ms.Model);
+        errdefer eng.general_allocator.allocator().destroy(chara_model);
+        chara_model.* = try ms.Model.init_from_file_assimp(
             eng.general_allocator.allocator(), 
             path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim2.glb"},
             &eng.gfx
@@ -164,14 +169,18 @@ pub const App = struct {
         //      eng.gfx.device
         // );
         // errdefer terrain_model.deinit();
-        var terrain_model = try ms.Model.plane(
+        const terrain_model = try eng.general_allocator.allocator().create(ms.Model);
+        errdefer eng.general_allocator.allocator().destroy(terrain_model);
+        terrain_model.* = try ms.Model.plane(
             eng.general_allocator.allocator(),
             1, 1,
             &eng.gfx
         );
         errdefer terrain_model.deinit();
 
-        var cone_model = try ms.Model.cone(
+        const cone_model = try eng.general_allocator.allocator().create(ms.Model);
+        errdefer eng.general_allocator.allocator().destroy(cone_model);
+        cone_model.* = try ms.Model.cone(
             eng.general_allocator.allocator(), 
             8, 
             &eng.gfx
@@ -193,7 +202,7 @@ pub const App = struct {
 
         _ = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "ground entity",
-            .model = &terrain_model,
+            .model = terrain_model,
             .physics = .{ .Body = 
                 try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
                     .position = zm.f32x4(-50.0, -5.0, 50.0, 1.0),
@@ -274,7 +283,7 @@ pub const App = struct {
 
         const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "character entity",
-            .model = &chara_model,
+            .model = chara_model,
             .transform = chara_transform,
             .physics = .{ .CharacterVirtual = .{
                 .virtual = try zphy.CharacterVirtual.create(
@@ -301,7 +310,7 @@ pub const App = struct {
 
         const opponent_idx = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "opponent entity",
-            .model = &chara_model,
+            .model = chara_model,
             .transform = chara_transform,
             .physics = null,
             .app = .{
@@ -696,34 +705,26 @@ pub const App = struct {
             if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
                 if (entity.model) |m| {
-                    const buffers = [_]*d3d11.IBuffer{
-                        m.buffers.vertices.buffer,
-                        m.buffers.vertices.buffer,
-                        m.buffers.vertices.buffer,
-                        m.buffers.vertices.buffer,
-                        m.buffers.vertices.buffer
+                    const strides = [_]zwin32.w32.UINT{
+                        @truncate(m.buffers.strides.positions),
+                        @truncate(m.buffers.strides.normals),
+                        @truncate(m.buffers.strides.texcoords),
+                        @truncate(m.buffers.strides.bone_ids),
+                        @truncate(m.buffers.strides.bone_weights),
                     };
-                    const strides = [_]c_uint{
-                        @sizeOf([3]f32),
-                        @sizeOf([3]f32),
-                        @sizeOf([2]f32),
-                        @sizeOf([4]i32),
-                        @sizeOf([4]f32)
-                    };
-                    const offsets = [_]c_uint{
-                        0,
+                    const offsets = [_]zwin32.w32.UINT{
+                        @truncate(m.buffers.offsets.positions),
                         @truncate(m.buffers.offsets.normals),
                         @truncate(m.buffers.offsets.texcoords),
                         @truncate(m.buffers.offsets.bone_ids),
-                        @truncate(m.buffers.offsets.bone_weights)
+                        @truncate(m.buffers.offsets.bone_weights),
                     };
-                    self.engine.gfx.context.IASetVertexBuffers(
-                        0, 
-                        5, 
-                        @ptrCast(buffers[0..].ptr),
-                        @ptrCast(strides[0..].ptr),
-                        @ptrCast(offsets[0..].ptr)
-                    );
+                    self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[0]), @ptrCast(&offsets[0]));
+                    self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[1]), @ptrCast(&offsets[1]));
+                    self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[2]), @ptrCast(&offsets[2]));
+                    self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[3]), @ptrCast(&offsets[3]));
+                    self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[4]), @ptrCast(&offsets[4]));
+
                     self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices.buffer, zwin32.dxgi.FORMAT.R32_UINT, 0);
                     // Set model constant buffer
                     self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer.buffer));

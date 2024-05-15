@@ -41,7 +41,6 @@ pub const GfxState = struct {
 
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
-        self.context.Flush();
 
         var rast_iterator = self.rasterization_states_map.iterator();
         while (rast_iterator.next()) |r| {
@@ -56,8 +55,26 @@ pub const GfxState = struct {
 
         self.framebuffer_rtv.deinit();
         _ = self.swapchain.Release();
+        self.context.ClearState();
+        self.context.Flush();
         _ = self.context.Release();
         _ = self.device.Release();
+
+        var debug: *zwin32.dxgi.IDebug1 = undefined;
+        if (zwin32.hrErrorOnFail(zwin32.dxgi.GetDebugInterface1(0, &zwin32.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
+            zwin32.hrErrorOnFail(debug.ReportLiveObjects(
+                zwin32.dxgi.DXGI_DEBUG_ALL,
+                zwin32.dxgi.RLO_FLAGS{ 
+                    .DETAIL = true,
+                    .IGNORE_INTERNAL = true,
+                }
+            )) catch |err| {
+                std.log.warn("Dxgi debug failed to report live objects: {}", .{err});
+            };
+            _ = debug.Release();
+        } else |err| {
+            std.log.warn("Unable to get dxgi debug interface: {}", .{err});
+        }
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *win32window.Win32Window) !Self {
@@ -176,6 +193,9 @@ pub const GfxState = struct {
         feature_level: ?*zwin32.d3d.FEATURE_LEVEL,
         context: ?*?*d3d11.IDeviceContext,
     ) !void {
+        if (is_dbg() and enable_debug_layers) {
+            std.log.debug("enabling d3d11 debug layers", .{});
+        }
         try zwin32.hrErrorOnFail(d3d11.D3D11CreateDeviceAndSwapChain(
                 null,
                 zwin32.d3d.DRIVER_TYPE.HARDWARE, 
@@ -255,6 +275,8 @@ pub const GfxState = struct {
         self.hdr_texture_view.deinit();
         self.framebuffer_rtv.deinit();
 
+        self.context.ClearState();
+        self.context.Flush();
         zwin32.hrPanicOnFail(self.swapchain.ResizeBuffers(
                 0, 0, 0, zwin32.dxgi.FORMAT.UNKNOWN, // automatic
                 self.swapchain_flags)); 

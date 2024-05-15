@@ -53,6 +53,20 @@ pub const D3D11DebugRenderer = extern struct {
         .drawText3D = drawText3D,
     };
 
+    pub fn deinit(self: *D3D11DebugRenderer) void {
+        for (self.primitives) |prim| {
+            if (prim.buffer != null) {
+                _ = prim.buffer.?.Release();
+            }
+        }
+        _ = self.gfx_data.camera_buffer.Release();
+        _ = self.gfx_data.model_matrix_buffer.Release();
+        _ = self.gfx_data.rasterization_state.Release();
+        _ = self.gfx_data.vso_input_layout.Release();
+        _ = self.gfx_data.vso.Release();
+        _ = self.gfx_data.pso.Release();
+    }
+
     pub fn init(gfx: *_gfx.GfxState) !D3D11DebugRenderer {
         const shader_buffer = \\
 \\  cbuffer camera_data : register(b0)
@@ -198,20 +212,6 @@ pub const D3D11DebugRenderer = extern struct {
                 .camera_buffer = camera_data_buffer,
             },
         };
-    }
-
-    pub fn deinit(self: *D3D11DebugRenderer) void {
-        for (self.primitives) |prim| {
-            if (prim.buffer != null) {
-                _ = prim.buffer.?.Release();
-            }
-        }
-        _ = self.gfx_data.camera_buffer.Release();
-        _ = self.gfx_data.model_matrix_buffer.Release();
-        _ = self.gfx_data.rasterization_state.Release();
-        _ = self.gfx_data.vso_input_layout.Release();
-        _ = self.gfx_data.vso.Release();
-        _ = self.gfx_data.pso.Release();
     }
 
     pub fn draw_bodies(
