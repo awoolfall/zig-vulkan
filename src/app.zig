@@ -73,6 +73,8 @@ pub const App = struct {
     zero_particle_system: particle.ParticleSystem,
     player_attack_particle_system: particle.ParticleSystem,
 
+    button_2_pos: [2]i32 = .{100,100},
+
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
 
@@ -339,7 +341,7 @@ pub const App = struct {
         var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
         errdefer ui.deinit();
 
-        var imui = try _ui.Imui.init(eng.general_allocator.allocator(), &eng.input, &eng.gfx);
+        var imui = try _ui.Imui.init(eng.general_allocator.allocator(), &eng.input, &eng.time, &eng.gfx);
         errdefer imui.deinit();
 
         var zero_particle_system = try particle.ParticleSystem.init(
@@ -671,9 +673,9 @@ pub const App = struct {
             return;
         };
         self.engine.gfx.context.ClearRenderTargetView(rtv.view, &zm.vecToArr4(srgb_to_rgb(zm.f32x4(
-            30.0/255.0, 
-            30.0/255.0, 
-            46.0/255.0, 
+            135.0/255.0, 
+            206.0/255.0, 
+            235.0/255.0, 
             1.0
         ))));
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view.view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
@@ -808,6 +810,8 @@ pub const App = struct {
             }, 
             .{
                 .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+                .border_colour = zm.f32x4(1.0, 0.0, 0.0, 1.0),
+                .corner_radii_px = .{},
             },
             rtv,
         );
@@ -834,18 +838,52 @@ pub const App = struct {
             );
         } else |_| {}
 
-        if (self.imui.button("Hello, this is a button!", 1).dragged) {
-            std.log.info("button has been pressed1!", .{});
+        const top_layout = self.imui.push_floating_layout(.X, 500, 500);
+        if (self.imui.get_widget(top_layout)) |top_widget| {
+            top_widget.flags.render = true;
+            top_widget.background_colour = zm.f32x4(1.0, 1.0, 1.0, 1.0);
+            top_widget.border_colour = zm.f32x4(0.5, 0.5, 0.5, 1.0);
+            top_widget.border_width_px = 2;
+            top_widget.padding_px = .{
+                .left = 10,
+                .right = 10,
+                .top = 10,
+                .bottom = 10,
+            };
+            top_widget.corner_radii_px = .{
+                .top_left = 10,
+                .top_right = 10,
+                .bottom_left = 10,
+                .bottom_right = 10,
+            };
+            top_widget.children_gap = 20.0;
         }
-        if (self.imui.button("Hello, this is a button2!", 2).clicked) {
-            std.log.info("button has been pressed2!", .{});
-        }
-        if (self.imui.button("Hello, this is a button3!", 3).clicked) {
-            std.log.info("button has been pressed3!", .{});
-        }
-        if (self.imui.button("Hello, this is a button4!", 4).clicked) {
-            std.log.info("button has been pressed4!", .{});
-        }
+
+        const labels_layout = self.imui.push_layout(.Y);
+        self.imui.get_widget(labels_layout).?.children_gap = 5.0;
+        self.imui.pop_layout();
+        const buttons_layout = self.imui.push_layout(.Y);
+        self.imui.get_widget(buttons_layout).?.children_gap = 5.0;
+        self.imui.pop_layout();
+        self.imui.push_layout_id(labels_layout);
+        self.imui.label("Option 1:");
+        self.imui.pop_layout();
+        self.imui.push_layout_id(buttons_layout);
+        _ = self.imui.button("Option 1 button", 1);
+        self.imui.pop_layout();
+        self.imui.push_layout_id(labels_layout);
+        self.imui.label("Option 2 longlonglong:");
+        self.imui.pop_layout();
+        self.imui.push_layout_id(buttons_layout);
+        _ = self.imui.button("Option 2 button", 2);
+        self.imui.pop_layout();
+        self.imui.push_layout_id(labels_layout);
+        self.imui.label("Option 3:");
+        self.imui.pop_layout();
+        self.imui.push_layout_id(buttons_layout);
+        _ = self.imui.button("Option 3 button longlonglong", 3);
+        self.imui.pop_layout();
+        self.imui.pop_layout();
 
         var fps_buf: [128]u8 = [_]u8{0} ** 128;
         const fps_text = std.fmt.bufPrint(fps_buf[0..], "fps: {d:0.1}\nframe time: {d:2.3}ms\nwait time: {d:2.3}ms\nwait %: {d:0.0}", .{
