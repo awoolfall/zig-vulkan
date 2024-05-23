@@ -26,35 +26,17 @@ pub const AnimController = struct {
     }
 
     pub fn calculate_bone_transforms(
-        self: *Self, 
+        self: *Self,
         model: *const ms.Model,
-        animation: *an.BoneAnimation,
-        properties: struct {
-            animation_1: ?*an.BoneAnimation = null,
-            lerp_amount: f32 = 0.0,
-        },
-        time: *const tm.TimeState
+        animations: []const ms.Model.AnimationEntry,
     ) []const zm.Mat {
-        animation.set_animation_to_time(time.time_since_start_of_app());
-        if (properties.animation_1) |anim1| {
-            anim1.set_animation_to_time(time.time_since_start_of_app());
-
-            // lerp all channels by the lerp amount using 'animation' as the donor
-            const lerp = zm.f32x4s(properties.lerp_amount);
-            for (animation.channels) |*c| {
-                if (anim1.find_node_anim(c.node_name)) |anim1_c| {
-                c.selected_transform.position = 
-                    zm.lerpV(c.selected_transform.position, anim1_c.selected_transform.position, lerp);
-                c.selected_transform.rotation =
-                    zm.slerpV(c.selected_transform.rotation, anim1_c.selected_transform.rotation, lerp);
-                c.selected_transform.scale =
-                    zm.lerpV(c.selected_transform.scale, anim1_c.selected_transform.scale, lerp);
-                }
-            }
+        if (animations.len == 0) { 
+            @memset(self.bone_transforms[0..], zm.identity());
+            return self.bone_transforms[0..];
         }
 
         model.generate_bone_transforms_for_animation_pose(
-            animation,
+            animations,
             self.bone_transforms[0..]
         );
 

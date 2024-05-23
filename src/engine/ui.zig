@@ -11,6 +11,15 @@ const zm = @import("zmath");
 const _font = @import("font.zig");
 const path = @import("path.zig");
 
+inline fn srgb_to_rgb(comptime srgb: zm.F32x4) zm.F32x4 {
+    return zm.f32x4(
+        std.math.pow(f32, srgb[0], 2.2), 
+        std.math.pow(f32, srgb[1], 2.2), 
+        std.math.pow(f32, srgb[2], 2.2), 
+        srgb[3]
+    );
+}
+
 // pixels, top left of screen is 0, 0. moving down and right increases
 pub const RectPixels = struct {
     left: i32,
@@ -103,7 +112,8 @@ pub const QuadBufferPixelBuffer = packed struct {
 
 pub const FontEnum = enum(usize) {
     GeistMono = 0,
-    Count
+    Geist,
+    Count,
 };
 
 pub const UiRenderer = struct {
@@ -128,6 +138,12 @@ pub const UiRenderer = struct {
                     alloc,
                     path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
                     path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
+                    gfx
+                ),
+                try _font.Font.init(
+                    alloc,
+                    path.Path{.ExeRelative = "../../res/Geist-Regular.json"},
+                    path.Path{.ExeRelative = "../../res/Geist-Regular.png"},
                     gfx
                 ),
             },
@@ -377,11 +393,16 @@ pub const Imui = struct {
 
     pub const WidgetFlags = packed struct(u32) {
         render: bool = true,
+
         allows_overflow_x: bool = false,
         allows_overflow_y: bool = false,
+
         floating_x: bool = false,
         floating_y: bool = false,
-        __unused: u27 = 0,
+
+        clickable: bool = false,
+
+        __unused: u26 = 0,
 
         pub inline fn get_allow_overflow_flag(flags: *const WidgetFlags, axis: Axis) bool {
             switch (axis) {
@@ -459,6 +480,7 @@ pub const Imui = struct {
         clicked: bool = false,
         hover: bool = false,
         dragged: bool = false,
+        widget_id: usize = 0,
     };
 
     hot_item: ?Key = null,
@@ -525,8 +547,7 @@ pub const Imui = struct {
         }
     }
 
-    fn compute_standalone_widget_size(self: *Self, widget_id: usize) void {
-        const widget = &self.widgets.items[widget_id];
+    fn compute_standalone_widget_size(self: *Self, widget: *Widget) void {
         for (widget.semantic_size, 0..) |s, axis| {
             switch (s.kind) {
                 .Pixels => {
@@ -541,7 +562,7 @@ pub const Imui = struct {
                         );
                         switch (axis) {
                             0 => widget.computed.size[0] = @floatFromInt(text_bounds.width),
-                            1 => widget.computed.size[1] = @floatFromInt(text_bounds.height),
+                            1 => widget.computed.size[1] = @as(f32,@floatFromInt(text_bounds.height)) - self.ui.get_font(text.font).font_metrics.descender,
                             else => {unreachable;}
                         }
                     } else {
@@ -561,7 +582,6 @@ pub const Imui = struct {
         const parent_id = self.parent_stack.getLast();
 
         self.add_heirarchy_links(parent_id, widget_id);
-        self.compute_standalone_widget_size(widget_id);
         return widget_id;
     }
 
@@ -603,7 +623,6 @@ pub const Imui = struct {
             switch (s.kind) {
                 .ParentPercentage => {
                     widget.computed.size[axis] = parent.computed.size[axis] * s.value;
-                    apply_padding(widget, axis);
                 },
                 else => {},
             }
@@ -702,17 +721,18 @@ pub const Imui = struct {
     }
 
     pub fn compute_widget_rects(self: *Self) void {
-        // upward solve
-        for (self.widgets.items, 0..) |*widget, widget_id| {
-            std.debug.assert(widget.parent <= widget_id);
-            self.solve_upward_dependant_sizes(widget);
-        }
-
         // downward solve
         for (0..self.widgets.items.len) |inv_id| {
             const id = self.widgets.items.len - inv_id - 1;
             const widget = &self.widgets.items[id];
+            self.compute_standalone_widget_size(widget);
             self.solve_downward_dependant_sizes(widget);
+        }
+
+        // upward solve
+        for (self.widgets.items, 0..) |*widget, widget_id| {
+            std.debug.assert(widget.parent <= widget_id);
+            self.solve_upward_dependant_sizes(widget);
         }
 
         // calculate relative positions and rects
@@ -873,18 +893,20 @@ pub const Imui = struct {
                 }
             }
 
-            if (self.active_item == widget.key) {
-                if (self.input.get_key(self.primary_interact_key)) {
-                    // dragged
-                    widget_signal.dragged = true;
-                }
-                if (self.input.get_key_up(self.primary_interact_key)) {
-                    self.active_item = null;
-                }
-            } else if (self.hot_item == widget.key) {
-                if (self.input.get_key_down(self.primary_interact_key)) {
-                    widget_signal.clicked = true;
-                    self.active_item = widget.key;
+            if (widget.flags.clickable) {
+                if (self.active_item == widget.key) {
+                    if (self.input.get_key(self.primary_interact_key)) {
+                        // dragged
+                        widget_signal.dragged = true;
+                    }
+                    if (self.input.get_key_up(self.primary_interact_key)) {
+                        self.active_item = null;
+                    }
+                } else if (self.hot_item == widget.key) {
+                    if (self.input.get_key_down(self.primary_interact_key)) {
+                        widget_signal.clicked = true;
+                        self.active_item = widget.key;
+                    }
                 }
             }
         }
@@ -956,20 +978,25 @@ pub const Imui = struct {
         _ = self.parent_stack.pop();
     }
 
-    pub fn label(self: *Self, text: []const u8) void {
-        const widget = Widget {
+    pub fn label(self: *Self, text: []const u8) WidgetSignal {
+        var widget = Widget {
             .key = 0,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
             },
             .text_content = .{
+                .font = .Geist,
                 .text = text,
             },
             .background_colour = zm.f32x4s(0.0),
             .border_colour = zm.f32x4s(0.0),
         };
-        _ = self.add_widget(widget);
+
+        var signals = self.generate_widget_signals(&widget);
+        signals.widget_id = self.add_widget(widget);
+
+        return signals;
     }
 
     pub fn button(self: *Self, text: []const u8, key: Key) WidgetSignal {
@@ -980,19 +1007,32 @@ pub const Imui = struct {
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
             },
             .text_content = .{
+                .font = .Geist,
                 .text = text,
+                .colour = srgb_to_rgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)),
             },
-            .background_colour = zm.f32x4(0.5, 0.5, 0.5, 1.0),
-            .border_colour = zm.f32x4(0.1, 0.1, 0.1, 1.0),
+            .background_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
+            .border_colour = srgb_to_rgb(zm.f32x4(228.0/255.0, 228.0/255.0, 231.0/255.0, 1.0)),
             .border_width_px = 1,
             .padding_px = .{
-                .left = 5,
-                .right = 5,
+                .left = 10,
+                .right = 10,
+                .top = 2,
+                .bottom = 2,
+            },
+            .corner_radii_px = .{
+                .top_left = 6,
+                .top_right = 6,
+                .bottom_left = 6,
+                .bottom_right = 6,
+            },
+            .flags = .{
+                .clickable = true,
             },
         };
 
-        const signals = self.generate_widget_signals(&widget);
-        _ = self.add_widget(widget);
+        var signals = self.generate_widget_signals(&widget);
+        signals.widget_id = self.add_widget(widget);
 
         return signals;
     }

@@ -28,7 +28,7 @@ pub const GfxState = struct {
 
     rasterization_states_map: std.AutoHashMap(RasterizationStateDesc, RasterizationState),
 
-    exposure_tone_mapping_filter: ExposureToneMappingAndBloomFilter,
+    tone_mapping_filter: ToneMappingAndBloomFilter,
 
     // @TODO: add rasterization state map, blend state map, and sampler map so we can just use them at 
     // draw time instead of creating new objects each time at init. Be aggressive for JIT (Just in Time) gfx object creation
@@ -48,7 +48,7 @@ pub const GfxState = struct {
         }
         self.rasterization_states_map.deinit();
 
-        self.exposure_tone_mapping_filter.deinit();
+        self.tone_mapping_filter.deinit();
 
         self.hdr_rtv.deinit();
         self.hdr_texture_view.deinit();
@@ -160,7 +160,7 @@ pub const GfxState = struct {
             .framebuffer_rtv = undefined,
             .hdr_rtv = undefined,
             .hdr_texture_view = undefined,
-            .exposure_tone_mapping_filter = undefined,
+            .tone_mapping_filter = undefined,
             .rasterization_states_map = std.AutoHashMap(RasterizationStateDesc, RasterizationState).init(alloc),
         };
 
@@ -179,8 +179,8 @@ pub const GfxState = struct {
         gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&hdr_texture, &gfx_state);
         errdefer gfx_state.hdr_texture_view.deinit();
 
-        gfx_state.exposure_tone_mapping_filter = try ExposureToneMappingAndBloomFilter.init(&gfx_state);
-        errdefer gfx_state.exposure_tone_mapping_filter.deinit();
+        gfx_state.tone_mapping_filter = try ToneMappingAndBloomFilter.init(&gfx_state);
+        errdefer gfx_state.tone_mapping_filter.deinit();
 
         return gfx_state;
     }
@@ -248,9 +248,9 @@ pub const GfxState = struct {
         return self.hdr_rtv;
     }
 
-    pub fn end_frame(self: *Self, rtv: RenderTargetView) !void {
+    pub fn end_frame(self: *Self, exposure: f32, rtv: RenderTargetView) !void {
         _ = rtv;
-        self.exposure_tone_mapping_filter.apply_filter(&self.hdr_texture_view, &self.framebuffer_rtv, self);
+        self.tone_mapping_filter.apply_filter(&self.hdr_texture_view, exposure, &self.framebuffer_rtv, self);
         try zwin32.hrErrorOnFail(self.swapchain.Present(0, zwin32.dxgi.PRESENT_FLAG {}));
     }
 
@@ -1046,38 +1046,68 @@ pub const BlendState = struct {
     }
 };
 
-const ExposureToneMappingAndBloomFilter = struct {
+const ToneMappingAndBloomFilter = struct {
     const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.hlsl");
     const HLSL = //
 \\  Texture2D hdr_buffer;
 \\  Texture2D bloom_buffer;
 \\  SamplerState hdr_sampler;
 \\
+\\  cbuffer exposure_buffer : register(b0)
+\\  {
+\\      float exposure;
+\\      float __unused0;
+\\      float __unused1;
+\\      float __unused2;
+\\  }
+\\
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
-\\      const float exposure = 1.5;
-\\
 \\      float3 hdr_colour = hdr_buffer.Sample(hdr_sampler, input.uv).rgb;
 \\      float3 bloom_colour = bloom_buffer.Sample(hdr_sampler, input.uv).rgb;
 \\      float3 mixed_colour = lerp(hdr_colour, bloom_colour, 0.04);
-\\      float3 mapped = float3(1.0, 1.0, 1.0) - exp(-mixed_colour * exposure);
-\\      return float4(mapped, 1.0);
+\\      
+\\      bool use_aces = false;
+\\      if (use_aces) {
+\\          float3 c = mixed_colour;
+\\          float3 mapped_aces = (c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14);
+\\          return float4(saturate(mapped_aces), 1.0);
+\\      }
+\\      
+\\      bool use_exposure = false;
+\\      if (use_exposure) {
+\\          float3 mapped = float3(1.0, 1.0, 1.0) - exp(-mixed_colour * exposure);
+\\          return float4(saturate(mapped), 1.0);
+\\      }
+\\
+\\      // otherwise just use LDR clamped
+\\      return float4(saturate(mixed_colour), 1.0);
 \\  }
 ;
+
+    const ExposureConstantBuffer = extern struct {
+        exposure: f32,
+        __unused0: f32 = 0.0,
+        __unused1: f32 = 0.0,
+        __unused2: f32 = 0.0,
+    };
+
     vertex_shader: VertexShader,
     pixel_shader: PixelShader,
     sampler: Sampler,
+    buffer: Buffer,
 
     bloom_filter: bloom.BloomFilter,
 
-    pub fn deinit(self: *ExposureToneMappingAndBloomFilter) void {
+    pub fn deinit(self: *ToneMappingAndBloomFilter) void {
         self.bloom_filter.deinit();
-        _ = self.vertex_shader.deinit();
-        _ = self.pixel_shader.deinit();
-        _ = self.sampler.deinit();
+        self.buffer.deinit();
+        self.vertex_shader.deinit();
+        self.pixel_shader.deinit();
+        self.sampler.deinit();
     }
 
-    pub fn init(gfx: *GfxState) !ExposureToneMappingAndBloomFilter {
+    pub fn init(gfx: *GfxState) !ToneMappingAndBloomFilter {
         var vertex_shader = try VertexShader.init_buffer(
             FULL_SCREEN_QUAD_VS,
             "vs_main",
@@ -1099,24 +1129,39 @@ const ExposureToneMappingAndBloomFilter = struct {
         );
         errdefer sampler.deinit();
 
+        var buffer = try Buffer.init(
+            @sizeOf(ExposureConstantBuffer),
+            .{ .ConstantBuffer = true, },
+            .{ .CpuWrite = true, },
+            gfx
+        );
+        errdefer buffer.deinit();
+
         var bloom_filter = try bloom.BloomFilter.init(gfx);
         errdefer bloom_filter.deinit();
 
-        return ExposureToneMappingAndBloomFilter {
+        return ToneMappingAndBloomFilter {
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
             .sampler = sampler,
             .bloom_filter = bloom_filter,
+            .buffer = buffer,
         };
     }
 
     pub fn apply_filter(
-        self: *ExposureToneMappingAndBloomFilter,
+        self: *ToneMappingAndBloomFilter,
         hdr_buffer: *TextureView2D,
+        exposure: f32,
         rtv: *RenderTargetView,
         gfx: *GfxState
     ) void {
         self.bloom_filter.render_bloom_texture(hdr_buffer, 0.005, gfx);
+
+        if (self.buffer.map(ExposureConstantBuffer, gfx)) |mapped_buffer| {
+            defer mapped_buffer.unmap();
+            mapped_buffer.data.exposure = exposure;
+        } else |_| {}
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(rtv.size.width),
@@ -1141,6 +1186,7 @@ const ExposureToneMappingAndBloomFilter = struct {
             hdr_buffer.view, 
             self.bloom_filter.get_bloom_view().view
         })));
+        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.buffer.buffer));
 
         gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
 
@@ -1150,7 +1196,7 @@ const ExposureToneMappingAndBloomFilter = struct {
         gfx.context.PSSetShaderResources(0, 2, @ptrCast(&([2]?*d3d11.IShaderResourceView{null, null})));
     }
 
-    pub fn framebuffer_resized(self: *ExposureToneMappingAndBloomFilter, gfx: *GfxState) !void {
+    pub fn framebuffer_resized(self: *ToneMappingAndBloomFilter, gfx: *GfxState) !void {
         self.bloom_filter.framebuffer_resized(gfx);
     }
 };

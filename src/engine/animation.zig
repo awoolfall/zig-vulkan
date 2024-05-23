@@ -17,62 +17,68 @@ pub const BoneAnimationChannel = struct {
     // used in BoneAnimation to select a specific animation time
     selected_transform: tf.Transform = .{},
 
-    fn find_anim_position(self: *const BoneAnimationChannel, animation_time: f64) usize {
+    fn find_anim_position(self: *const BoneAnimationChannel, animation_time: f64) ?usize {
         for (0..(self.position_keys.len - 1)) |i| {
             if (animation_time < self.position_keys[i + 1].time) {
                 return i;
             }
         }
 
-        return 0;
+        return self.position_keys.len - 1;
     }
 
-    fn find_anim_rotation(self: *const BoneAnimationChannel, animation_time: f64) usize {
+    fn find_anim_rotation(self: *const BoneAnimationChannel, animation_time: f64) ?usize {
         for (0..(self.rotation_keys.len - 1)) |i| {
             if (animation_time < self.rotation_keys[i + 1].time) {
                 return i;
             }
         }
 
-        return 0;
+        return self.rotation_keys.len - 1;
     }
 
-    fn find_anim_scale(self: *const BoneAnimationChannel, animation_time: f64) usize {
+    fn find_anim_scale(self: *const BoneAnimationChannel, animation_time: f64) ?usize {
         for (0..(self.scale_keys.len - 1)) |i| {
             if (animation_time < self.scale_keys[i + 1].time) {
                 return i;
             }
         }
 
-        return 0;
+        return self.scale_keys.len - 1;
     }
 
     fn select(self: *BoneAnimationChannel, animation_time: f64) void {
-        const scale_idx = self.find_anim_scale(animation_time);
-        const scale_0 = self.scale_keys[scale_idx];
-        var scale = scale_0.value;
-        if ((scale_idx + 1) < self.scale_keys.len) {
-            const scale_1 = self.scale_keys[scale_idx + 1];
-            const scale_t: f32 = @floatCast((animation_time - scale_0.time) / (scale_1.time - scale_0.time));
-            scale = zm.lerp(scale_0.value, scale_1.value, scale_t);
+        var scale = self.scale_keys[0].value;
+        if (self.find_anim_scale(animation_time)) |scale_idx| {
+            const scale_0 = self.scale_keys[scale_idx];
+            scale = scale_0.value;
+            if ((scale_idx + 1) < self.scale_keys.len) {
+                const scale_1 = self.scale_keys[scale_idx + 1];
+                const scale_t: f32 = @floatCast((animation_time - scale_0.time) / (scale_1.time - scale_0.time));
+                scale = zm.lerp(scale_0.value, scale_1.value, scale_t);
+            }
         }
 
-        const rotation_idx = self.find_anim_rotation(animation_time);
-        const rotation_0 = self.rotation_keys[rotation_idx];
-        var rotation = rotation_0.value;
-        if ((rotation_idx + 1) < self.rotation_keys.len) {
-            const rotation_1 = self.rotation_keys[rotation_idx + 1];
-            const rotation_t: f32 = @floatCast((animation_time - rotation_0.time) / (rotation_1.time - rotation_0.time));
-            rotation = zm.slerp(rotation_0.value, rotation_1.value, rotation_t);
+        var rotation = self.rotation_keys[0].value;
+        if (self.find_anim_rotation(animation_time)) |rotation_idx| {
+            const rotation_0 = self.rotation_keys[rotation_idx];
+            rotation = rotation_0.value;
+            if ((rotation_idx + 1) < self.rotation_keys.len) {
+                const rotation_1 = self.rotation_keys[rotation_idx + 1];
+                const rotation_t: f32 = @floatCast((animation_time - rotation_0.time) / (rotation_1.time - rotation_0.time));
+                rotation = zm.slerp(rotation_0.value, rotation_1.value, rotation_t);
+            }
         }
 
-        const position_idx = self.find_anim_position(animation_time);
-        const position_0 = self.position_keys[position_idx];
-        var position = position_0.value;
-        if ((position_idx + 1) < self.position_keys.len) {
-            const position_1 = self.position_keys[position_idx + 1];
-            const position_t: f32 = @floatCast((animation_time - position_0.time) / (position_1.time - position_0.time));
-            position = zm.lerp(position_0.value, position_1.value, position_t);
+        var position = self.position_keys[0].value;
+        if (self.find_anim_position(animation_time)) |position_idx| {
+            const position_0 = self.position_keys[position_idx];
+            position = position_0.value;
+            if ((position_idx + 1) < self.position_keys.len) {
+                const position_1 = self.position_keys[position_idx + 1];
+                const position_t: f32 = @floatCast((animation_time - position_0.time) / (position_1.time - position_0.time));
+                position = zm.lerp(position_0.value, position_1.value, position_t);
+            }
         }
 
         self.selected_transform.position = position;

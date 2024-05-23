@@ -64,6 +64,7 @@ pub const App = struct {
     chara_model: *ms.Model,
     terrain_model: *ms.Model,
     cone_model: *ms.Model,
+    turntable_model: *ms.Model,
 
     anim_controller: ac.AnimController,
 
@@ -74,6 +75,7 @@ pub const App = struct {
     player_attack_particle_system: particle.ParticleSystem,
 
     button_2_pos: [2]i32 = .{100,100},
+    exposure: f32 = 2.0,
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
@@ -84,6 +86,8 @@ pub const App = struct {
         self.zero_particle_system.deinit();
         self.player_attack_particle_system.deinit();
 
+        self.turntable_model.deinit();
+        self.engine.general_allocator.allocator().destroy(self.turntable_model);
         self.cone_model.deinit();
         self.engine.general_allocator.allocator().destroy(self.cone_model);
         self.chara_model.deinit();
@@ -188,6 +192,15 @@ pub const App = struct {
             &eng.gfx
         );
         errdefer cone_model.deinit();
+
+        const turntable_model = try eng.general_allocator.allocator().create(ms.Model);
+        errdefer eng.general_allocator.allocator().destroy(turntable_model);
+        turntable_model.* = try ms.Model.init_from_file_assimp(
+            eng.general_allocator.allocator(), 
+            path.Path{.ExeRelative = "../../res/sea_house.glb"},
+            &eng.gfx
+        );
+        errdefer turntable_model.deinit();
 
         var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator());
         errdefer anim_controller.deinit();
@@ -450,6 +463,7 @@ pub const App = struct {
             .chara_model = chara_model,
             .terrain_model = terrain_model,
             .cone_model = cone_model,
+            .turntable_model = turntable_model,
             .anim_controller = anim_controller,
 
             .ui = ui,
@@ -487,6 +501,118 @@ pub const App = struct {
     }
 
     fn update(self: *Self) void {
+        const top_layout = self.imui.push_floating_layout(.X, 500, 100);
+        if (self.imui.get_widget(top_layout)) |top_widget| {
+            top_widget.flags.render = true;
+            top_widget.background_colour = zm.f32x4(1.0, 1.0, 1.0, 1.0);
+            top_widget.border_colour = zm.f32x4(0.5, 0.5, 0.5, 1.0);
+            top_widget.border_width_px = 2;
+            top_widget.padding_px = .{
+                .left = 10,
+                .right = 10,
+                .top = 10,
+                .bottom = 10,
+            };
+            top_widget.corner_radii_px = .{
+                .top_left = 10,
+                .top_right = 10,
+                .bottom_left = 10,
+                .bottom_right = 10,
+            };
+            top_widget.children_gap = 20.0;
+        }
+
+        const labels_layout = self.imui.push_layout(.Y);
+        self.imui.get_widget(labels_layout).?.children_gap = 5.0;
+        self.imui.pop_layout();
+        const buttons_layout = self.imui.push_layout(.Y);
+        self.imui.get_widget(buttons_layout).?.children_gap = 5.0;
+        self.imui.pop_layout();
+        self.imui.push_layout_id(labels_layout);
+        _ = self.imui.label("Option 1:");
+        self.imui.pop_layout();
+        self.imui.push_layout_id(buttons_layout);
+        const b1 = self.imui.button("Option 1 button", 1);
+        if (self.imui.get_widget(b1.widget_id)) |w| {
+            w.semantic_size[0].kind = .ParentPercentage;
+            w.semantic_size[0].value = 1.0;
+        }
+        if (b1.clicked) {
+            std.log.info("b1 clicked!", .{});
+        }
+        self.imui.pop_layout();
+        self.imui.push_layout_id(labels_layout);
+        _ = self.imui.label("Option 2 longlonglong:");
+        self.imui.pop_layout();
+        self.imui.push_layout_id(buttons_layout);
+        const b2 = self.imui.button("Option 2 button", 2);
+        if (self.imui.get_widget(b2.widget_id)) |w| {
+            w.semantic_size[0].kind = .ParentPercentage;
+            w.semantic_size[0].value = 1.0;
+        }
+        if (b2.clicked) {
+            std.log.info("b2 clicked!", .{});
+        }
+        self.imui.pop_layout();
+        self.imui.push_layout_id(labels_layout);
+        _ = self.imui.label("Option 3:");
+        self.imui.pop_layout();
+        self.imui.push_layout_id(buttons_layout);
+        if (self.imui.button("Option 3 button longlonglong", 3).clicked) {
+            std.log.info("b3 clicked!", .{});
+        }
+        self.imui.pop_layout();
+        self.imui.pop_layout();
+
+        // exposure panel
+        const exposure_float_layout_id = self.imui.push_floating_layout(
+            .Y, 
+            self.engine.gfx.swapchain_size.width - 250,
+            self.engine.gfx.swapchain_size.height - 200,
+        );
+        if (self.imui.get_widget(exposure_float_layout_id)) |ex_w| {
+            ex_w.flags.render = true;
+            ex_w.background_colour = zm.f32x4s(1.0);
+            ex_w.border_colour = zm.f32x4(0.2, 0.2, 0.2, 1.0);
+            ex_w.border_width_px = 1;
+            ex_w.corner_radii_px = .{
+                .top_left = 10,
+                .top_right = 10,
+                .bottom_left = 10,
+                .bottom_right = 10,
+            };
+            ex_w.children_gap = 5;
+            ex_w.padding_px = .{
+                .left = 10,
+                .right = 10,
+                .top = 10,
+                .bottom = 10,
+            };
+        }
+        if (self.imui.button("Set camera pos to scene", 991).clicked) {
+            self.camera.view_matrix = zm.Mat {
+                zm.f32x4(0.7, 0.2, 0.7, 0.0),
+                zm.f32x4(0.0, 1.0, -0.3, 0.0),
+                zm.f32x4(-0.7, 0.2, 0.7, 0.0),
+                zm.f32x4(-1.2, -2.9, 10.0, 1.0),
+            };
+        }
+        _ = self.imui.label("Camera view matrix:");
+        _ = self.imui.push_layout(.X);
+        var camera_pos_text: [256]u8 = [_]u8{0} ** 256;
+        _ = std.fmt.bufPrint(camera_pos_text[0..], "{d:.1}\n{d:.1}\n{d:.1}\n{d:.1}", .{
+            self.camera.view_matrix[0],
+            self.camera.view_matrix[1],
+            self.camera.view_matrix[2],
+            self.camera.view_matrix[3]
+        }) catch unreachable;
+        const cam_pos_lbl = self.imui.label(camera_pos_text[0..]);
+        if (self.imui.get_widget(cam_pos_lbl.widget_id)) |ww| {
+            ww.text_content.?.font = .GeistMono;
+        }
+        self.imui.pop_layout();
+        self.imui.pop_layout();
+
         // Input to move the model around
         if (self.engine.entities.get(self.character_idx)) |character_entity| {
             var movement_direction = zm.f32x4s(0.0);
@@ -648,14 +774,22 @@ pub const App = struct {
                 mapped_buffer.data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
 
+            character_entity.model.?.animations[0].set_animation_to_time(self.engine.time.time_since_start_of_app());
+            character_entity.model.?.animations[1].set_animation_to_time(self.engine.time.time_since_start_of_app());
+
+            const anims = [_]ms.Model.AnimationEntry{
+                .{
+                    .animation = &character_entity.model.?.animations[0],
+                    .strength = 1.0,
+                },
+                .{
+                    .animation = &character_entity.model.?.animations[1],
+                    .strength = 1.0,
+                },
+            };
             const bone_transforms = self.anim_controller.calculate_bone_transforms(
                 character_entity.model.?,
-                &character_entity.model.?.animations[0],
-                .{
-                    .animation_1 = &character_entity.model.?.animations[1],
-                    .lerp_amount = 1.0,
-                },
-                &self.engine.time
+                anims[0..]
             );
 
             { // Update bone matrix buffer
@@ -673,12 +807,13 @@ pub const App = struct {
             return;
         };
         self.engine.gfx.context.ClearRenderTargetView(rtv.view, &zm.vecToArr4(srgb_to_rgb(zm.f32x4(
-            135.0/255.0, 
-            206.0/255.0, 
-            235.0/255.0, 
+            133.0/255.0, 
+            193.0/255.0, 
+            233.0/255.0, 
             1.0
         ))));
         self.engine.gfx.context.ClearDepthStencilView(self.depth_stencil_view.view, d3d11.CLEAR_FLAG {.CLEAR_DEPTH = true,}, 1, 0);
+
 
         const viewport = d3d11.VIEWPORT {
             .Width = @floatFromInt(self.engine.gfx.swapchain_size.width),
@@ -735,6 +870,36 @@ pub const App = struct {
                     self.recursive_render_model(m, &m.nodes_list[m.root_nodes[0]], entity.transform.generate_model_matrix());
                 }
             }
+        }
+
+        // render sea house scene
+        {
+            const strides = [_]zwin32.w32.UINT{
+                @truncate(self.turntable_model.buffers.strides.positions),
+                @truncate(self.turntable_model.buffers.strides.normals),
+                @truncate(self.turntable_model.buffers.strides.texcoords),
+                @truncate(self.turntable_model.buffers.strides.bone_ids),
+                @truncate(self.turntable_model.buffers.strides.bone_weights),
+            };
+            const offsets = [_]zwin32.w32.UINT{
+                @truncate(self.turntable_model.buffers.offsets.positions),
+                @truncate(self.turntable_model.buffers.offsets.normals),
+                @truncate(self.turntable_model.buffers.offsets.texcoords),
+                @truncate(self.turntable_model.buffers.offsets.bone_ids),
+                @truncate(self.turntable_model.buffers.offsets.bone_weights),
+            };
+            self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[0]), @ptrCast(&offsets[0]));
+            self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[1]), @ptrCast(&offsets[1]));
+            self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[2]), @ptrCast(&offsets[2]));
+            self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[3]), @ptrCast(&offsets[3]));
+            self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[4]), @ptrCast(&offsets[4]));
+
+            self.engine.gfx.context.IASetIndexBuffer(self.turntable_model.buffers.indices.buffer, zwin32.dxgi.FORMAT.R32_UINT, 0);
+            // Set model constant buffer
+            self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer.buffer));
+
+            // Finally, render the model
+            self.recursive_render_model(self.turntable_model, &self.turntable_model.nodes_list[self.turntable_model.root_nodes[0]], (Transform{ .scale = zm.f32x4s(0.05) }).generate_model_matrix());
         }
 
         self.zero_particle_system.update(&self.engine.time);
@@ -832,58 +997,12 @@ pub const App = struct {
                 .{
                     .position = .{ .x = 100, .y = 500, },
                     .pixel_height = 15,
+                    .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
                 }, 
                 rtv, 
                 &self.engine.gfx
             );
         } else |_| {}
-
-        const top_layout = self.imui.push_floating_layout(.X, 500, 500);
-        if (self.imui.get_widget(top_layout)) |top_widget| {
-            top_widget.flags.render = true;
-            top_widget.background_colour = zm.f32x4(1.0, 1.0, 1.0, 1.0);
-            top_widget.border_colour = zm.f32x4(0.5, 0.5, 0.5, 1.0);
-            top_widget.border_width_px = 2;
-            top_widget.padding_px = .{
-                .left = 10,
-                .right = 10,
-                .top = 10,
-                .bottom = 10,
-            };
-            top_widget.corner_radii_px = .{
-                .top_left = 10,
-                .top_right = 10,
-                .bottom_left = 10,
-                .bottom_right = 10,
-            };
-            top_widget.children_gap = 20.0;
-        }
-
-        const labels_layout = self.imui.push_layout(.Y);
-        self.imui.get_widget(labels_layout).?.children_gap = 5.0;
-        self.imui.pop_layout();
-        const buttons_layout = self.imui.push_layout(.Y);
-        self.imui.get_widget(buttons_layout).?.children_gap = 5.0;
-        self.imui.pop_layout();
-        self.imui.push_layout_id(labels_layout);
-        self.imui.label("Option 1:");
-        self.imui.pop_layout();
-        self.imui.push_layout_id(buttons_layout);
-        _ = self.imui.button("Option 1 button", 1);
-        self.imui.pop_layout();
-        self.imui.push_layout_id(labels_layout);
-        self.imui.label("Option 2 longlonglong:");
-        self.imui.pop_layout();
-        self.imui.push_layout_id(buttons_layout);
-        _ = self.imui.button("Option 2 button", 2);
-        self.imui.pop_layout();
-        self.imui.push_layout_id(labels_layout);
-        self.imui.label("Option 3:");
-        self.imui.pop_layout();
-        self.imui.push_layout_id(buttons_layout);
-        _ = self.imui.button("Option 3 button longlonglong", 3);
-        self.imui.pop_layout();
-        self.imui.pop_layout();
 
         var fps_buf: [128]u8 = [_]u8{0} ** 128;
         const fps_text = std.fmt.bufPrint(fps_buf[0..], "fps: {d:0.1}\nframe time: {d:2.3}ms\nwait time: {d:2.3}ms\nwait %: {d:0.0}", .{
@@ -903,6 +1022,7 @@ pub const App = struct {
                         @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)),
                 },
                 .pixel_height = 12,
+                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
             }, 
             rtv, 
             &self.engine.gfx
@@ -923,6 +1043,7 @@ pub const App = struct {
                         @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
                 },
                 .pixel_height = 12,
+                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
             }, 
             rtv, 
             &self.engine.gfx
@@ -932,7 +1053,7 @@ pub const App = struct {
         self.imui.render_imui(&rtv, &self.engine.gfx);
         self.imui.end_frame(&self.engine.gfx);
 
-        self.engine.gfx.end_frame(rtv) catch |err| {
+        self.engine.gfx.end_frame(self.exposure, rtv) catch |err| {
             std.log.err("unable to end frame: {}", .{err});
             return;
         };

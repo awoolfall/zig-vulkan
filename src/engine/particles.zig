@@ -159,7 +159,7 @@ pub const ParticleSystem = struct {
     pub fn update(self: *Self, time: *const tm.TimeState) void {
         const delta_time = zm.f32x4s(time.delta_time_f32());
         const current_time = zm.f32x4s(@floatCast(time.time_since_start_of_app()));
-        for (self.particles) |*maybe_particle| {
+        for (self.particles, 0..) |*maybe_particle, i| {
             if (maybe_particle.*) |*p| {
                 p.life_remaining -= delta_time[0];
                 if (p.life_remaining <= 0.0) { 
@@ -204,7 +204,27 @@ pub const ParticleSystem = struct {
                 p.colour = KeyFrame(zm.F32x4).hsv_calc(self.settings.colour[0..], t);
                 p.transform.position += p.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0) * delta_time;
             }
+
+            // render prep
+            if (maybe_particle.*) |*p| {
+                self.sort_particles[i].dat.model_matrix = p.transform.generate_model_matrix();
+                self.sort_particles[i].dat.colour = p.colour;
+                self.sort_particles[i].dat.velocity = p.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0);
+                self.sort_particles[i].dat.scale = p.transform.scale;
+                if (self.settings.alignment == .VelocityAligned) {
+                    self.sort_particles[i].dat.velocity *= zm.f32x4s(self.settings.alignment.VelocityAligned);
+                }
+            } else {
+                const zero_size = zm.scaling(0.0, 0.0, 0.0);
+                self.sort_particles[i].dat.model_matrix = zero_size;
+                self.sort_particles[i].dat.colour = zm.f32x4s(0.0);
+                self.sort_particles[i].dat.velocity = zm.f32x4s(0.0);
+                self.sort_particles[i].dat.scale = zm.f32x4s(0.0);
+            }
+            //self.sort_particles[i].z = zm.mul(zm.f32x4(0.0, 0.0, 0.0, 1.0), zm.mul(self.sort_particles[i].dat.model_matrix, zm.mul(view_matrix, proj_matrix)))[2];
         }
+        //std.mem.sort(ArrDat, self.sort_particles[0..], @as(i32, @intCast(0)), particle_z_sort_func);
+
 
         self.seconds_to_next_particle -= delta_time[0];
         if (self.settings.spawn_rate != 0.0) {
@@ -266,39 +286,10 @@ pub const ParticleSystem = struct {
         depth_view: *const gf.DepthStencilView, 
         gfx: *gf.GfxState
     ) void {
-        const zero_size = zm.scaling(0.0, 0.0, 0.0);
-        for (self.particles, 0..) |*maybe_particle, i| {
-            if (maybe_particle.*) |*p| {
-                self.sort_particles[i].dat.model_matrix = p.transform.generate_model_matrix();
-                self.sort_particles[i].dat.colour = p.colour;
-                self.sort_particles[i].dat.velocity = p.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0);
-                self.sort_particles[i].dat.scale = p.transform.scale;
-                if (self.settings.alignment == .VelocityAligned) {
-                    self.sort_particles[i].dat.velocity *= zm.f32x4s(self.settings.alignment.VelocityAligned);
-                }
-            } else {
-                self.sort_particles[i].dat.model_matrix = zero_size;
-                self.sort_particles[i].dat.colour = zm.f32x4s(0.0);
-                self.sort_particles[i].dat.velocity = zm.f32x4s(0.0);
-                self.sort_particles[i].dat.scale = zm.f32x4s(0.0);
-            }
-            self.sort_particles[i].z = zm.mul(zm.f32x4(0.0, 0.0, 0.0, 1.0), zm.mul(self.sort_particles[i].dat.model_matrix, zm.mul(view_matrix, proj_matrix)))[2];
-        }
-        std.mem.sort(ArrDat, self.sort_particles[0..], @as(i32, @intCast(0)), particle_z_sort_func);
-
         // update all particle model matrices
         if (self.model_matrix_vertex_buffer.map(VertexBufferData, gfx)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
-            // for (self.particles, 0..) |*maybe_particle, i| {
-            //     if (maybe_particle.*) |*p| {
-            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].model_matrix = p.transform.generate_model_matrix();
-            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].colour = p.colour;
-            //     } else {
-            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].model_matrix = zero_size;
-            //         @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i].colour = zm.f32x4s(0.0);
-            //     }
-            // }
             for (self.sort_particles, 0..) |*p, i| {
                 @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i] = p.dat;
             }

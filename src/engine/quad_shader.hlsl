@@ -5,7 +5,7 @@ cbuffer vertex_buffer : register(b0)
 
 cbuffer pixel_buffer : register(b1)
 {
-    float4 bg_colour;
+    float4 background_colour;
     float4 border_colour;
     float2 quad_size_px;
     uint packed_corner_radii_px;
@@ -45,53 +45,53 @@ float4 ps_main(vs_out input) : SV_TARGET
 {
     float2 uvpx = input.tex_coord.xy * quad_size_px;
     float2 px_from_border = (0.5 - abs(input.tex_coord.xy - 0.5)) * quad_size_px;
+    // center of a pixel is 0.5, therefore need to bias by 0.5
+    px_from_border += 0.5;
 
-    // top right corner radii
-    float corner_radii = (packed_corner_radii_px >> (1*8)) & 0xff;
-    if (uvpx.x > quad_size_px.x - corner_radii && uvpx.y > quad_size_px.y - corner_radii) {
-        float2 uvpxro = px_from_border - float2(corner_radii, corner_radii);
-        float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-        px_from_border = float2(d, d);
-        uvpxro = uvpxro * uvpxro;
-        if (uvpxro.x + uvpxro.y > corner_radii*corner_radii) { discard; }
+    // calculate pixels from border with corner radii
+    {
+        // top right corner
+        float corner_radii = (packed_corner_radii_px >> (1*8)) & 0xff;
+        if (uvpx.x > quad_size_px.x - corner_radii && uvpx.y > quad_size_px.y - corner_radii) {
+            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
+            px_from_border = float2(d, d);
+        }
+
+        // top left corner
+        corner_radii = (packed_corner_radii_px >> (0*8)) & 0xff;
+        if (uvpx.x < corner_radii && uvpx.y > quad_size_px.y - corner_radii) {
+            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
+            px_from_border = float2(d, d);
+        }
+
+        // bottom right corner
+        corner_radii = (packed_corner_radii_px >> (3*8)) & 0xff;
+        if (uvpx.x > quad_size_px.x - corner_radii && uvpx.y < corner_radii) {
+            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
+            px_from_border = float2(d, d);
+        }
+
+        // bottom left corner
+        corner_radii = (packed_corner_radii_px >> (2*8)) & 0xff;
+        if (uvpx.x < corner_radii && uvpx.y < corner_radii) {
+            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
+            px_from_border = float2(d, d);
+        }
     }
 
-    // top left corner radii
-    corner_radii = (packed_corner_radii_px >> (0*8)) & 0xff;
-    if (uvpx.x < corner_radii && uvpx.y > quad_size_px.y - corner_radii) {
-        float2 uvpxro = px_from_border - float2(corner_radii, corner_radii);
-        float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-        px_from_border = float2(d, d);
-        uvpxro = uvpxro * uvpxro;
-        if (uvpxro.x + uvpxro.y > corner_radii*corner_radii) { discard; }
-    }
+    float min_px_from_border = min(px_from_border.x, px_from_border.y);
+    // cull if outside of quad
+    if (min_px_from_border <= 0.0) { discard; }
 
-    // bottom right corner radii
-    corner_radii = (packed_corner_radii_px >> (3*8)) & 0xff;
-    if (uvpx.x > quad_size_px.x - corner_radii && uvpx.y < corner_radii) {
-        float2 uvpxro = px_from_border - float2(corner_radii, corner_radii);
-        float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-        px_from_border = float2(d, d);
-        uvpxro = uvpxro * uvpxro;
-        if (uvpxro.x + uvpxro.y > corner_radii*corner_radii) { discard; }
-    }
+    // background colour
+    float4 colour = background_colour;
 
-    // bottom left corner radii
-    corner_radii = (packed_corner_radii_px >> (2*8)) & 0xff;
-    if (uvpx.x < corner_radii && uvpx.y < corner_radii) {
-        float2 uvpxro = px_from_border - float2(corner_radii, corner_radii);
-        float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-        px_from_border = float2(d, d);
-        uvpxro = uvpxro * uvpxro;
-        if (uvpxro.x + uvpxro.y > corner_radii*corner_radii) { discard; }
-    }
+    // border colour
+    float border_alpha = saturate(border_width_px - min_px_from_border + 1.0);
+    colour = colour * (1.0 - border_colour.a * border_alpha) + border_colour * border_alpha;
 
-    float4 colour = bg_colour;
-
-    // border
-    if (px_from_border.x < border_width_px || px_from_border.y < border_width_px) {
-        colour = colour * (1.0 - border_colour.a) + border_colour;
-    }
+    // corner anti-aliasing
+    colour.a *= saturate(min_px_from_border);
 
     return colour;
 }

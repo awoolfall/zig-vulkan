@@ -618,7 +618,6 @@ pub const Model = struct {
                     var bone_id: i32 = undefined;
                     const bone_name = bn.name();
 
-                    std.log.info("bone name len is {}, and is '{s}'", .{bone_name.len, bone_name});
                     if (bone_mapping.get(bone_name)) |id| {
                         bone_id = id;
                     } else {
@@ -763,11 +762,6 @@ pub const Model = struct {
                     };
                 }
             }
-        }
-
-        std.log.info("animations are:", .{});
-        for (animations) |*anim| {
-            std.log.info("\t- {s}", .{anim.name});
         }
 
         return Self {
@@ -974,16 +968,21 @@ pub const Model = struct {
         return try init_from_shape(alloc, &shape, gfx);
     }
 
+    pub const AnimationEntry = struct {
+        animation: *an.BoneAnimation,
+        strength: f32,
+    };
+
     pub fn generate_bone_transforms_for_animation_pose(
         self: *const Self, 
-        animation: *const an.BoneAnimation,
+        animations: []const AnimationEntry,
         out_bone_transforms: []zm.Mat,
     ) void {
         std.debug.assert(out_bone_transforms.len >= MAX_BONES);
 
         // recurse heirarchy inserting bone transforms into transforms array
         self.recurse_calculate_animation_bone_transforms(
-            animation, 
+            animations, 
             out_bone_transforms, 
             &self.nodes_list[self.root_nodes[0]], 
             zm.identity()
@@ -992,7 +991,7 @@ pub const Model = struct {
 
     fn recurse_calculate_animation_bone_transforms(
         self: *const Self, 
-        animation: *const an.BoneAnimation,
+        animations: []const AnimationEntry,
         final_transforms: []zm.Mat,
         node: *const ModelNode, 
         parent_mat: zm.Mat
@@ -1000,11 +999,17 @@ pub const Model = struct {
         if (node.name == null) { std.log.warn("node name was null in animation", .{}); return; }
 
         const node_name = node.name.?;
-        var node_transform = node.transform.generate_model_matrix();
 
-        if (animation.find_node_anim(node_name)) |anim_channel| {
-            node_transform = anim_channel.selected_transform.generate_model_matrix();
+        var anims_transform = node.transform;
+        for (animations) |entry| {
+            if (entry.animation.find_node_anim(node_name)) |anim_channel| {
+                // @TODO apply animation strengths
+                anims_transform.position = anim_channel.selected_transform.position;
+                anims_transform.rotation = anim_channel.selected_transform.rotation;
+                anims_transform.scale = anim_channel.selected_transform.scale;
+            }
         }
+        const node_transform = anims_transform.generate_model_matrix();
 
         const global_transform = zm.mul(node_transform, parent_mat);
 
@@ -1016,7 +1021,7 @@ pub const Model = struct {
 
         for (node.children) |child_idx| {
             self.recurse_calculate_animation_bone_transforms(
-                animation,
+                animations,
                 final_transforms,
                 &self.nodes_list[child_idx],
                 global_transform
