@@ -77,6 +77,12 @@ pub const Node = opaque {
     }
 };
 
+pub fn index_from_embedded_texture_path(texture_path: []const u8) ?usize {
+    if (texture_path.len < 2) { return null; }
+    if (texture_path[0] != '*') { return null; }
+    return std.fmt.parseInt(usize, texture_path[1..], 10) catch null;
+}
+
 pub const Scene = opaque {
     pub const AssimpType = c.aiScene;
 
@@ -144,6 +150,7 @@ pub const Scene = opaque {
 
 pub const TextureType = enum(c_uint) {
     Diffuse = c.aiTextureType_DIFFUSE,
+    Normals = c.aiTextureType_NORMALS,
 };
 
 pub const Material = opaque {
@@ -167,11 +174,11 @@ pub const Material = opaque {
 
     pub fn get_texture_properties(pself: Ptr, texture_type: TextureType, texture_index: u32) ?MaterialTextureProperties {
         var path_string: c.struct_aiString = undefined;
-        var mapping: c.enum_aiTextureMapping = undefined;
+        var mapping: [3]c.enum_aiTextureMapping = undefined;
         var uvindex: c_uint = undefined;
         var blend: c.ai_real = undefined;
         var op: c.enum_aiTextureOp = undefined;
-        var mapmode: c.enum_aiTextureMapMode = undefined;
+        var mapmode: [3]c.enum_aiTextureMapMode = undefined;
         var flags: c_uint = undefined;
         const ret = c.aiGetMaterialTexture(
             pself.cast(),
@@ -204,11 +211,11 @@ pub const Material = opaque {
 pub const MaterialTextureProperties = struct {
     path_data: [1024]u8,
     path_length: u32,
-    mapping: c.enum_aiTextureMapping,
+    mapping: [3]c.enum_aiTextureMapping,
     uvindex: u32,
     blend: f32,
     op: c.enum_aiTextureOp,
-    mapmode: c.enum_aiTextureMapMode,
+    mapmode: [3]c.enum_aiTextureMapMode,
     flags: u32,
 
     pub fn path(self: *const MaterialTextureProperties) []const u8 {
@@ -253,9 +260,24 @@ pub const MaterialProperty = opaque {
         return @enumFromInt(pself.cast().mType);
     }
 
-    pub fn data(pself: Ptr) []const u8 {
+    pub fn data_bytes(pself: Ptr) []const u8 {
         const self = pself.cast();
         return self.mData[0..self.mDataLength];
+    }
+
+    pub fn data_f32(pself: Ptr) f32 {
+        std.debug.assert(pself.data_bytes().len >= @sizeOf(f32));
+        return std.mem.bytesAsValue(f32, pself.data_bytes()).*;
+    }
+
+    pub fn data_f64(pself: Ptr) f64 {
+        std.debug.assert(pself.data_bytes().len >= @sizeOf(f64));
+        return std.mem.bytesAsValue(f64, pself.data_bytes()).*;
+    }
+
+    pub fn data_i32(pself: Ptr) i32 {
+        std.debug.assert(pself.data_bytes().len >= @sizeOf(i32));
+        return std.mem.bytesAsValue(i32, pself.data_bytes()).*;
     }
 };
 
@@ -651,7 +673,11 @@ pub const Texture = opaque {
     pub fn compressed_data(pself: Ptr) ?[]const u8 {
         if (!pself.is_compressed_data()) { return null; }
 
-        return pself.cast().pcData[0..(pself.cast().mWidth)];
+        return std.mem.sliceAsBytes(pself.cast().pcData[0..(pself.cast().mWidth)]);
+    }
+
+    pub fn compressed_length(pself: Ptr) u32 {
+        return pself.cast().mWidth;
     }
 
     pub fn data(pself: Ptr) ?[]const Texel4D {
@@ -670,7 +696,7 @@ pub const Texture = opaque {
     }
 
     pub fn filename(pself: Ptr) []const u8 {
-        return util.stringFromAiString(pself.cast().mFilename);
+        return util.stringFromAiString(&pself.cast().mFilename);
     }
 };
 

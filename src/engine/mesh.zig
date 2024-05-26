@@ -2,6 +2,7 @@ const std = @import("std");
 const zmesh = @import("zmesh");
 const zm = @import("zmath");
 const zphy = @import("zphysics");
+const zstbi = @import("zstbi");
 const assert = std.debug.assert;
 const gf = @import("../gfx/gfx.zig");
 const tm = @import("../engine/transform.zig");
@@ -45,11 +46,31 @@ fn primitive_topology_from_zcgltf(topology: zmesh.io.zcgltf.PrimitiveType) Primi
     };
 }
 
-pub const MaterialDescriptor = struct {
-    alpha_mode: AlphaMode = AlphaMode.Opaque,
-    alpha_cutoff: f32 = 0.0,
+pub const MaterialTextureMap = struct {
+    map: gf.TextureView2D,
+    uv_index: u32,
+    sampler: ?gf.Sampler = null,
+
+    fn deinit(self: *MaterialTextureMap) void {
+        self.map.deinit();
+        if (self.sampler) |*s| s.deinit();
+    }
+};
+
+pub const MaterialTemplate = struct {
     double_sided: bool = true,
-    unlit: bool = false,
+    metallic_factor: f32 = 0.0,
+    roughness_factor: f32 = 1.0,
+    shininess: f32 = 0.0,
+    emissiveness: f32 = 0.0,
+    opacity: f32 = 1.0,
+    diffuse_map: ?MaterialTextureMap = null,
+    normals_map: ?MaterialTextureMap = null,
+
+    fn deinit(self: *MaterialTemplate) void {
+        if (self.diffuse_map) |*m| m.deinit();
+        if (self.normals_map) |*m| m.deinit();
+    }
 };
 
 pub const MeshPrimitive = struct {
@@ -61,7 +82,7 @@ pub const MeshPrimitive = struct {
     tex_coord_offset: usize,
     tangents_offset: usize,
     topology: PrimitiveTopology,
-    material_descriptor: MaterialDescriptor,
+    material_template: ?usize,
     positions: [][3]f32,
 
     // Check whether the mesh primitive has indices
@@ -260,6 +281,8 @@ pub const Model = struct {
     nodes_list: []ModelNode,
     root_nodes: []usize,
     animations: []an.BoneAnimation,
+    materials: []MaterialTemplate,
+    textures: []gf.Texture2D,
     arena_allocator: *std.heap.ArenaAllocator,
 
     global_inverse_transform: zm.Mat,
@@ -267,6 +290,12 @@ pub const Model = struct {
     bone_info: std.ArrayList(BoneInfo),
 
     pub fn deinit(self: *Self) void {
+        for (self.materials) |*mat| {
+            mat.deinit();
+        }
+        for (self.textures) |tex| {
+            tex.deinit();
+        }
         for (self.nodes_list) |*node| {
             node.deinit();
         }
@@ -279,197 +308,46 @@ pub const Model = struct {
 
         self.buffers.deinit();
     }
-    //
-    // pub fn init_from_file_cgltf(alloc: std.mem.Allocator, file: path.Path, gfx_device: *d3d11.IDevice) !Self {
-    //     const file_path = try file.resolve_path_c_str(alloc);
-    //     defer alloc.free(file_path);
-    //
-    //     const data = try zmesh.io.parseAndLoadFile(file_path);
-    //     defer zmesh.io.freeData(data);
-    //
-    //     var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
-    //     errdefer alloc.destroy(model_arena_allocator);
-    //
-    //     model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
-    //     errdefer model_arena_allocator.deinit();
-    //     var model_arena = model_arena_allocator.allocator();
-    //
-    //     var local_arena = std.heap.ArenaAllocator.init(alloc);
-    //     defer local_arena.deinit();
-    //
-    //     // Create a number of array lists to store attribute data of various types.
-    //     // This will later be used to construct model-wide gfx buffers.
-    //     var mesh_indices = std.ArrayList(u32).init(local_arena.allocator());
-    //     var mesh_positions = std.ArrayList([3]f32).init(local_arena.allocator());
-    //     var mesh_normals = std.ArrayList([3]f32).init(local_arena.allocator());
-    //     var mesh_tex_coords = std.ArrayList([2]f32).init(local_arena.allocator());
-    //     var mesh_tangents = std.ArrayList([4]f32).init(local_arena.allocator());
-    //
-    //     // Create an arraylist ready to store upcoming mesh primitives
-    //     var mesh_primatives_list = std.ArrayList(MeshPrimitive).init(local_arena.allocator());
-    //     defer mesh_primatives_list.deinit();
-    //
-    //     // Create a mesh sets array
-    //     const mesh_sets = try local_arena.allocator().alloc(MeshSet, data.meshes_count);
-    //     defer {
-    //         for (mesh_sets) |*mesh| {
-    //             mesh.physics_shape_settings.release();
-    //         }
-    //         local_arena.allocator().free(mesh_sets);
-    //     }
-    //
-    //     // Iterate through meshes and their primitives adding all data to 
-    //     // the above arraylists and appending mesh data to a arraylist
-    //     for (0..data.meshes_count) |mi| {
-    //         mesh_sets[mi] = MeshSet {
-    //             .primitives = [_]?usize{null} ** MAX_PRIMITIVES_PER_SET,
-    //             .physics_shape_settings = undefined,
-    //         };
-    //
-    //         const m = &data.meshes.?[mi];
-    //
-    //         for (0..m.primitives_count) |pi| {
-    //             var prim_mat = MaterialDescriptor {};
-    //             if (m.primitives[pi].material) |material| {
-    //                 prim_mat.double_sided = material.double_sided > 0;
-    //                 prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
-    //                 prim_mat.alpha_cutoff = material.alpha_cutoff;
-    //                 prim_mat.unlit = material.unlit > 0;
-    //             }
-    //
-    //             var prim = MeshPrimitive {
-    //                 .num_indices = undefined,
-    //                 .num_vertices = undefined,
-    //                 .positions = undefined,
-    //                 .indices_offset = mesh_indices.items.len,
-    //                 .pos_offset = mesh_positions.items.len,
-    //                 .nor_offset = mesh_normals.items.len,
-    //                 .tex_coord_offset = mesh_tex_coords.items.len,
-    //                 .tangents_offset = mesh_tangents.items.len,
-    //                 .material_descriptor = prim_mat,
-    //                 .topology = primitive_topology_from_zcgltf(m.primitives[pi].type),
-    //             };
-    //
-    //             try appendMeshPrimitive(
-    //                 data,
-    //                 @intCast(mi),
-    //                 @intCast(pi),
-    //                 &mesh_indices,
-    //                 &mesh_positions,
-    //                 &mesh_normals,
-    //                 [_]?*std.ArrayList([2]f32){&mesh_tex_coords, null, null, null},
-    //                 &mesh_tangents
-    //             );
-    //
-    //             prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
-    //             prim.num_indices = mesh_indices.items.len - prim.indices_offset;
-    //
-    //             prim.positions = try model_arena.alloc([3]f32, prim.num_vertices);
-    //             @memcpy(prim.positions, mesh_positions.items[prim.pos_offset..]);
-    //
-    //             try mesh_primatives_list.append(prim);
-    //             mesh_sets[mi].primitives[pi] = mesh_primatives_list.items.len - 1;
-    //         }
-    //
-    //         try mesh_sets[mi].generate_physics_shape(alloc, mesh_primatives_list.items);
-    //     }
-    //
-    //     const buffers = try Buffers.init_with_data(
-    //         mesh_indices.items,
-    //         mesh_positions.items,
-    //         mesh_normals.items,
-    //         mesh_tex_coords.items,
-    //         mesh_tangents.items,
-    //         null,
-    //         null,
-    //         gfx_device
-    //     );
-    //     errdefer buffers.deinit();
-    //
-    //     // Solidify mesh primitives list into a constant size array, this will be used in the model
-    //     const mesh_primitives = try model_arena.alloc(MeshPrimitive, mesh_primatives_list.items.len);
-    //     errdefer model_arena.free(mesh_primitives);
-    //     @memcpy(mesh_primitives, mesh_primatives_list.items);
-    //
-    //     // Nodes
-    //     var nodes_list = try model_arena.alloc(ModelNode, data.nodes_count);
-    //     @memset(nodes_list, ModelNode{});
-    //
-    //     for (0..data.nodes_count) |gltf_node_idx| {
-    //         const gltf_node = &data.nodes.?[gltf_node_idx];   
-    //
-    //         var name: ?[]u8 = null;
-    //         if (gltf_node.name != null) {
-    //             name = try std.fmt.allocPrint(model_arena, "{s}", .{gltf_node.name.?});
-    //         }
-    //
-    //         var transform = tm.Transform.new();
-    //         transform.position = zm.f32x4(gltf_node.translation[0], gltf_node.translation[1], gltf_node.translation[2], 0.0);
-    //         transform.rotation = zm.f32x4(gltf_node.rotation[0], gltf_node.rotation[1], gltf_node.rotation[2], gltf_node.rotation[3]);
-    //         transform.scale = zm.f32x4(gltf_node.scale[0], gltf_node.scale[1], gltf_node.scale[2], 1.0);
-    //
-    //         var mesh: ?MeshSet = null;
-    //         if (gltf_node.mesh) |m| {
-    //             // pointer math to convert zmesh mesh pointer to its index in the meshes array in data
-    //             const mesh_index = (@intFromPtr(m) - @intFromPtr(data.meshes)) / @sizeOf(zmesh.io.zcgltf.Mesh);
-    //             std.debug.assert(mesh_index >= 0 and mesh_index < mesh_sets.len);
-    //
-    //             mesh = mesh_sets[mesh_index];
-    //             mesh.?.physics_shape_settings.addRef();
-    //         }
-    //
-    //         // link all children
-    //         var children = try model_arena.alloc(usize, gltf_node.children_count);
-    //         if (gltf_node.children) |_| {
-    //             for (0..gltf_node.children_count) |child_idx| {
-    //                 const node_index_in_model_nodes_list = (@intFromPtr(gltf_node.children.?[child_idx]) - @intFromPtr(data.nodes.?)) / @sizeOf(zmesh.io.zcgltf.Node);
-    //                 // Assert child node index is within bounds
-    //                 std.debug.assert(node_index_in_model_nodes_list >= 0 and node_index_in_model_nodes_list < data.nodes_count);
-    //
-    //                 // Assert child does not already have a parent set
-    //                 std.debug.assert(nodes_list[node_index_in_model_nodes_list].parent == null);
-    //                 // Set parent on the child node
-    //                 nodes_list[node_index_in_model_nodes_list].parent = gltf_node_idx;
-    //
-    //                 // Add child to current node
-    //                 children[child_idx] = node_index_in_model_nodes_list;
-    //             }
-    //         }
-    //
-    //         nodes_list[gltf_node_idx] = ModelNode {
-    //             .name = name,
-    //             .transform = transform,
-    //             .mesh = mesh,
-    //             .children = children,
-    //
-    //             // the parent field is set out of order, hence we need to copy it from the already 
-    //             // existing data when creating the new ModelNode
-    //             .parent = nodes_list[gltf_node_idx].parent,
-    //         };
-    //     }
-    //
-    //     std.debug.assert(data.scene != null);
-    //     var root_nodes_list = try model_arena.alloc(usize, data.scene.?.nodes_count);
-    //     for (0..data.scene.?.nodes_count) |n_idx| {
-    //         const node_index_in_model_nodes_list = (@intFromPtr(data.scene.?.nodes.?[n_idx]) - @intFromPtr(data.nodes.?)) / @sizeOf(zmesh.io.zcgltf.Node);
-    //         std.debug.assert(node_index_in_model_nodes_list >= 0 and node_index_in_model_nodes_list < data.nodes_count);
-    //         root_nodes_list[n_idx] = node_index_in_model_nodes_list;
-    //     }
-    //
-    //     return Self {
-    //         .buffers = buffers,
-    //         .mesh_list = mesh_primitives,
-    //         .nodes_list = nodes_list,
-    //         .root_nodes = root_nodes_list,
-    //         .animations = ([0]BoneAnimation{})[0..0],
-    //         .arena_allocator = model_arena_allocator,
-    //         .global_inverse_transform = zm.identity(),
-    //     };
-    // }
+
+    fn create_gfx_texture_from_assimp_texture(tex: assimp.Texture.Ptr, format: gf.TextureFormat, gfx: *gf.GfxState) !gf.Texture2D {
+        var data: []const u8 = undefined;
+        if (tex.compressed_data()) |compressed_data| {
+            data = compressed_data;
+        } else {
+            data = tex.data_u8_bgra().?;
+        }
+
+        var image = try zstbi.Image.loadFromMemory(data, 4);
+        defer image.deinit();
+
+        return try gf.Texture2D.init(
+            .{
+                .width = image.width,
+                .height = image.height,
+                .format = format,
+                .mip_levels = 1,
+                .array_length = 1,
+            },
+            .{ .ShaderResource = true, },
+            .{},
+            image.data,
+            gfx
+        );
+    }
 
     pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path, gfx: *gf.GfxState) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
+
+        var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
+        errdefer alloc.destroy(model_arena_allocator);
+
+        model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
+        errdefer model_arena_allocator.deinit();
+        var model_arena = model_arena_allocator.allocator();
+
+        var local_arena = std.heap.ArenaAllocator.init(alloc);
+        defer local_arena.deinit();
 
         const calc_tangents_flag: u32 = 0x1;
         const triangulate_flag: u32 = 0x8;
@@ -488,28 +366,116 @@ pub const Model = struct {
             &prop_store);
         defer assimp.aiReleaseImport(scene);
 
-        // for (scene.materials(), 0..) |mat, i| {
-        //     for (mat.properties()) |prop| {
-        //         std.log.info("material {d} property [{s}] is {}", .{i, prop.key(), prop.property_type()});
-        //     }
-        //     std.log.info("material diffuse count is {d}", .{
-        //         mat.get_texture_count(assimp.TextureType.Diffuse)
-        //     });
-        //     const props = mat.get_texture_properties(assimp.TextureType.Diffuse, 0);
-        //     if (props != null) {
-        //         std.log.info("material diffuse props are {}", .{props.?});
-        //     }
-        // }
-        //
-        var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
-        errdefer alloc.destroy(model_arena_allocator);
+        // textures
+        const textures = try model_arena.alloc(gf.Texture2D, scene.textures().len);
+        errdefer model_arena.free(textures);
 
-        model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
-        errdefer model_arena_allocator.deinit();
-        var model_arena = model_arena_allocator.allocator();
+        const texture_created = try local_arena.allocator().alloc(bool, scene.textures().len);
+        @memset(texture_created[0..], false);
+        defer local_arena.allocator().free(texture_created);
 
-        var local_arena = std.heap.ArenaAllocator.init(alloc);
-        defer local_arena.deinit();
+        var texture_names_map = std.StringHashMap(usize).init(local_arena.allocator());
+        defer texture_names_map.deinit();
+
+        for (scene.textures(), 0..) |tex, tex_idx| {
+            try texture_names_map.put(tex.filename(), tex_idx);
+        }
+
+        // materials
+        const materials = try model_arena.alloc(MaterialTemplate, scene.materials().len);
+        errdefer model_arena.free(materials);
+        
+        {
+            var material_property_map = std.StringHashMap(assimp.MaterialProperty.Ptr).init(local_arena.allocator());
+            defer material_property_map.deinit();
+
+            for (scene.materials(), 0..) |mat, mat_idx| {
+                // fill property map
+                material_property_map.clearRetainingCapacity();
+                for (mat.properties()) |prop| {
+                    material_property_map.put(prop.key(), prop) catch unreachable;
+                }
+
+                if (false) {
+                    print_material_properties(mat, mat_idx, scene);
+                }
+
+                var material = MaterialTemplate {};
+
+                if (material_property_map.get("$mat.twosided")) |prop| {
+                    material.double_sided = prop.data_bytes()[0] != 0;
+                }
+                if (material_property_map.get("$mat.metallicFactor")) |prop| {
+                    material.metallic_factor = prop.data_f32();
+                }
+                if (material_property_map.get("$mat.roughnessFactor")) |prop| {
+                    material.roughness_factor = prop.data_f32();
+                }
+                if (material_property_map.get("$mat.shininess")) |prop| {
+                    material.shininess = prop.data_f32();
+                }
+                if (material_property_map.get("$mat.emissive")) |prop| {
+                    material.emissiveness = prop.data_f32();
+                }
+                if (material_property_map.get("$mat.opacity")) |prop| {
+                    material.opacity = prop.data_f32();
+                }
+
+                if (mat.get_texture_properties(assimp.TextureType.Diffuse, 0)) |p| {
+                    var tex_idx: ?usize = null;
+                    if (assimp.index_from_embedded_texture_path(p.path())) |idx| {
+                        tex_idx = idx;
+                    } else {
+                        tex_idx = texture_names_map.get(p.path()) orelse unreachable;
+                    }
+                    if (tex_idx) |idx| {
+                        if (texture_created[idx] == false) {
+                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm_Srgb, gfx);
+                            texture_created[idx] = true;
+                        }
+
+                        material.diffuse_map = MaterialTextureMap {
+                            .map = try gf.TextureView2D.init_from_texture2d(&textures[idx], gfx),
+                            .uv_index = p.uvindex,
+                            .sampler = try gf.Sampler.init(
+                                .{
+                                    .filter_min_mag = .Linear,
+                                },
+                                gfx
+                            ),
+                        };
+                    }
+                }
+
+                if (mat.get_texture_properties(assimp.TextureType.Normals, 0)) |p| {
+                    var tex_idx: ?usize = null;
+                    if (assimp.index_from_embedded_texture_path(p.path())) |idx| {
+                        tex_idx = idx;
+                    } else {
+                        tex_idx = texture_names_map.get(p.path()) orelse unreachable;
+                    }
+                    if (tex_idx) |idx| {
+                        if (texture_created[idx] == false) {
+                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm, gfx);
+                            texture_created[idx] = true;
+                        }
+
+                        material.normals_map = MaterialTextureMap {
+                            .map = try gf.TextureView2D.init_from_texture2d(&textures[idx], gfx),
+                            .uv_index = p.uvindex,
+                            .sampler = try gf.Sampler.init(
+                                .{
+                                    .filter_min_mag = .Linear,
+                                },
+                                gfx
+                            ),
+                        };
+                    }
+                }
+
+                materials[mat_idx] = material;
+            }
+        }
 
         // Create a number of array lists to store attribute data of various types.
         // This will later be used to construct model-wide gfx buffers.
@@ -540,16 +506,6 @@ pub const Model = struct {
         // in an array for use later.
         {
             for (scene.meshes(), 0..) |mesh, idx| {
-                var prim_mat = MaterialDescriptor {}; // @TODO
-                prim_mat.double_sided = true;
-                // if (m.primitives[pi].material) |material| {
-                //     prim_mat.double_sided = material.double_sided > 0;
-                //     prim_mat.alpha_mode = alpha_mode_from_zcgltf(material.alpha_mode);
-                //     prim_mat.alpha_cutoff = material.alpha_cutoff;
-                //     prim_mat.unlit = material.unlit > 0;
-                // }
-                //
-
                 var prim = MeshPrimitive {
                     .num_indices = undefined,
                     .num_vertices = undefined,
@@ -559,7 +515,7 @@ pub const Model = struct {
                     .nor_offset = mesh_normals.items.len,
                     .tex_coord_offset = mesh_tex_coords.items.len,
                     .tangents_offset = mesh_tangents.items.len,
-                    .material_descriptor = prim_mat,
+                    .material_template = @intCast(mesh.material_index()),
                     .topology = .Triangles, // @TODO
                 };
 
@@ -770,12 +726,47 @@ pub const Model = struct {
             .nodes_list = model_nodes,
             .root_nodes = root_node,
             .animations = animations,
+            .textures = textures,
+            .materials = materials,
             .arena_allocator = model_arena_allocator,
 
             .global_inverse_transform = zm.inverse(scene.root_node().?.transformation()),
             .bone_mapping = bone_mapping,
             .bone_info = bone_info,
         };
+    }
+
+    fn print_material_properties(mat: assimp.Material.Ptr, mat_idx: usize, scene: assimp.Scene.Ptr) void {
+        for (mat.properties()) |prop| {
+            std.log.info("mat {d} - prop [{s}] is {}", .{mat_idx, prop.key(), prop.property_type()});
+            switch (prop.property_type()) {
+                .Float => std.log.info("\t= {d}", .{prop.data_f32()}),
+                .Double => std.log.info("\t= {d}", .{prop.data_f64()}),
+                .String => std.log.info("\t= \"{s}\"", .{prop.data_bytes()}),
+                .Integer => std.log.info("\t= {}", .{prop.data_i32()}),
+                .Buffer => std.log.info("\t= [data, len={}]", .{prop.data_bytes().len}),
+            }
+        }
+        std.log.info("material diffuse count is {d}", .{
+            mat.get_texture_count(assimp.TextureType.Diffuse)
+        });
+        const props = mat.get_texture_properties(assimp.TextureType.Diffuse, 0);
+        if (props) |p| {
+            std.log.info("material diffuse path is {s}", .{p.path()});
+            std.log.info("material diffuse props are {}", .{props.?});
+            if (assimp.index_from_embedded_texture_path(p.path())) |tex_index| {
+                const texture = scene.textures()[tex_index];
+                std.log.info("is texture compressed: {}", .{texture.is_compressed_data()});
+                std.log.info("texture width and height: {}, {}", .{texture.width(), texture.height()});
+
+                var image = zstbi.Image.loadFromMemory(texture.compressed_data().?, 4) catch unreachable;
+                defer image.deinit();
+
+                std.log.info("texture width and height: {}, {}", .{image.width, image.height});
+            } else {
+                std.log.info("texture is not embedded...", .{});
+            }
+        }
     }
 
     // Recusively loads an assimp node and all it's children into model_nodes_list,
@@ -910,7 +901,7 @@ pub const Model = struct {
             .num_vertices = shape.positions.len,
             .tangents_offset = 0,
             .tex_coord_offset = 0,
-            .material_descriptor = MaterialDescriptor{},
+            .material_template = null,
         };
 
         const mn = try model_arena.alloc(ModelNode, 1);
@@ -935,6 +926,8 @@ pub const Model = struct {
             .nodes_list = mn,
             .root_nodes = rn,
             .animations = &.{},
+            .textures = &.{},
+            .materials = &.{},
             .arena_allocator = model_arena_allocator,
 
             .global_inverse_transform = zm.identity(),

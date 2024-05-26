@@ -30,6 +30,15 @@ pub const GfxState = struct {
 
     tone_mapping_filter: ToneMappingAndBloomFilter,
 
+    default: struct {
+        sampler: Sampler,
+        diffuse: TextureView2D,
+        normals: TextureView2D,
+        metallic_roughness: TextureView2D,
+        ambient_occlusion: TextureView2D,
+        emission: TextureView2D,
+    },
+
     // @TODO: add rasterization state map, blend state map, and sampler map so we can just use them at 
     // draw time instead of creating new objects each time at init. Be aggressive for JIT (Just in Time) gfx object creation
 
@@ -47,6 +56,13 @@ pub const GfxState = struct {
             r.value_ptr.deinit();
         }
         self.rasterization_states_map.deinit();
+
+        self.default.sampler.deinit();
+        self.default.diffuse.deinit();
+        self.default.normals.deinit();
+        self.default.metallic_roughness.deinit();
+        self.default.ambient_occlusion.deinit();
+        self.default.emission.deinit();
 
         self.tone_mapping_filter.deinit();
 
@@ -162,6 +178,14 @@ pub const GfxState = struct {
             .hdr_texture_view = undefined,
             .tone_mapping_filter = undefined,
             .rasterization_states_map = std.AutoHashMap(RasterizationStateDesc, RasterizationState).init(alloc),
+            .default = .{
+                .sampler = undefined,
+                .diffuse = undefined,
+                .normals = undefined,
+                .metallic_roughness = undefined,
+                .ambient_occlusion = undefined,
+                .emission = undefined,
+            },
         };
 
         const framebuffer_texture = try gfx_state.create_texture2d_from_framebuffer();
@@ -182,7 +206,36 @@ pub const GfxState = struct {
         gfx_state.tone_mapping_filter = try ToneMappingAndBloomFilter.init(&gfx_state);
         errdefer gfx_state.tone_mapping_filter.deinit();
 
+        gfx_state.default.sampler = try Sampler.init(.{}, &gfx_state);
+        errdefer gfx_state.default.sampler.deinit();
+        gfx_state.default.diffuse = try init_single_pixel_texture_view([4]u8{255, 255, 255, 255}, &gfx_state);
+        errdefer gfx_state.default.diffuse.deinit();
+        gfx_state.default.normals = try init_single_pixel_texture_view([4]u8{128, 128, 255, 255}, &gfx_state);
+        errdefer gfx_state.default.normals.deinit();
+        gfx_state.default.metallic_roughness = try init_single_pixel_texture_view([4]u8{0, 255, 255, 255}, &gfx_state);
+        errdefer gfx_state.default.metallic_roughness.deinit();
+        gfx_state.default.ambient_occlusion = try init_single_pixel_texture_view([4]u8{255, 255, 255, 255}, &gfx_state);
+        errdefer gfx_state.default.ambient_occlusion.deinit();
+        gfx_state.default.emission = try init_single_pixel_texture_view([4]u8{0, 0, 0, 255}, &gfx_state);
+        errdefer gfx_state.default.emission.deinit();
+
         return gfx_state;
+    }
+
+    fn init_single_pixel_texture_view(colour: [4]u8, gfx_state: *GfxState) !TextureView2D {
+        const texture = try Texture2D.init_colour(
+            .{
+                .width = 1,
+                .height = 1,
+                .format = .Rgba8_Unorm,
+            },
+            .{ .ShaderResource = true, },
+            .{},
+            colour,
+            gfx_state
+        );
+        defer texture.deinit();
+        return try TextureView2D.init_from_texture2d(&texture, gfx_state);
     }
 
     fn attempt_create_device_and_swapchain(
@@ -648,7 +701,7 @@ pub const Texture2D = struct {
 
         @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
 
-        return init(desc, bind_flags, access_flags, data, gfx.device);
+        return init(desc, bind_flags, access_flags, data, gfx);
     }
 
     pub const Descriptor = struct {
@@ -1067,21 +1120,25 @@ const ToneMappingAndBloomFilter = struct {
 \\      float3 bloom_colour = bloom_buffer.Sample(hdr_sampler, input.uv).rgb;
 \\      float3 mixed_colour = lerp(hdr_colour, bloom_colour, 0.04);
 \\      
-\\      bool use_aces = false;
+\\      bool use_aces = true;
+\\      bool use_exposure = false;
+\\
+\\      float4 toned_colour;
 \\      if (use_aces) {
 \\          float3 c = mixed_colour;
 \\          float3 mapped_aces = (c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14);
-\\          return float4(saturate(mapped_aces), 1.0);
-\\      }
-\\      
-\\      bool use_exposure = false;
-\\      if (use_exposure) {
+\\          toned_colour = float4(saturate(mapped_aces), 1.0);
+\\      } 
+\\      else if (use_exposure) {
 \\          float3 mapped = float3(1.0, 1.0, 1.0) - exp(-mixed_colour * exposure);
-\\          return float4(saturate(mapped), 1.0);
+\\          toned_colour = float4(saturate(mapped), 1.0);
+\\      }
+\\      else {
+\\          // otherwise just use LDR clamped
+\\          toned_colour = float4(saturate(mixed_colour), 1.0);
 \\      }
 \\
-\\      // otherwise just use LDR clamped
-\\      return float4(saturate(mixed_colour), 1.0);
+\\      return toned_colour;
 \\  }
 ;
 

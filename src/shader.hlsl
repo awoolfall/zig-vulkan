@@ -14,6 +14,9 @@ cbuffer bone_data : register(b2)
     row_major float4x4 bone_matricies[128];
 }
 
+Texture2D diffuse_texture;
+SamplerState diffuse_sampler;
+
 struct vs_in
 {
     float3 pos : POS;
@@ -27,6 +30,7 @@ struct vs_out
 {
     float4 position : SV_POSITION;
     float4 colour : POS;
+    float2 tex_coord : TEXCOORD0;
 };
 
 // @TODO make a production shader that doesn't inverse matrices
@@ -97,10 +101,17 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
     output.colour = float4(mul(mul(float4(input.normals, 0.0), bone_mat).xyz, normal_matrix), 0.0);
     output.colour = normalize(output.colour);
 
+    output.tex_coord = input.tex_coord;
+    output.tex_coord.y = 1.0 - output.tex_coord.y;
+
     return output;
 }
 
 float4 ps_main(vs_out input) : SV_TARGET
 {
-    return (input.colour / 2.0) + 0.5;
+    float4 diffuse = diffuse_texture.Sample(diffuse_sampler, input.tex_coord);
+    return diffuse;
+
+    // display world normals
+    //return (input.colour / 2.0) + 0.5;
 }

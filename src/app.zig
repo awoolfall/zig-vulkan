@@ -1075,7 +1075,12 @@ pub const App = struct {
                 if (maybe_prim) |prim_idx| {
                     const p = &model.mesh_list[prim_idx];
 
-                    if (p.material_descriptor.double_sided) {
+                    var material = ms.MaterialTemplate {};
+                    if (p.material_template) |m_idx| {
+                        material = model.materials[m_idx];
+                    }
+
+                    if (material.double_sided) {
                         self.engine.gfx.context.RSSetState(self.engine.gfx.rasterization_state(
                             .{ .FillFront = true, .FillBack = true, }
                         ).state);
@@ -1084,6 +1089,15 @@ pub const App = struct {
                             .{ .FillFront = true, .FillBack = false, }
                         ).state);
                     }
+
+                    var diffuse = &self.engine.gfx.default.diffuse;
+                    var diffuse_sampler = &self.engine.gfx.default.sampler;
+                    if (material.diffuse_map) |*d| {
+                        diffuse = &d.map;
+                        if (d.sampler) |*s| { diffuse_sampler = s; }
+                    }
+                    self.engine.gfx.context.PSSetShaderResources(0, 1, @ptrCast(&diffuse.view));
+                    self.engine.gfx.context.PSSetSamplers(0, 1, @ptrCast(&diffuse_sampler.sampler));
 
                     if (p.has_indices()) {
                         self.engine.gfx.context.DrawIndexed(@intCast(p.num_indices), @intCast(p.indices_offset), @intCast(p.pos_offset));
