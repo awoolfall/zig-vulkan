@@ -11,7 +11,7 @@ const zm = @import("zmath");
 const _font = @import("font.zig");
 const path = @import("path.zig");
 
-inline fn srgb_to_rgb(comptime srgb: zm.F32x4) zm.F32x4 {
+inline fn srgb_to_rgb(srgb: zm.F32x4) zm.F32x4 {
     return zm.f32x4(
         std.math.pow(f32, srgb[0], 2.2), 
         std.math.pow(f32, srgb[1], 2.2), 
@@ -1015,6 +1015,44 @@ pub const Imui = struct {
             .border_colour = srgb_to_rgb(zm.f32x4(228.0/255.0, 228.0/255.0, 231.0/255.0, 1.0)),
             .border_width_px = 1,
             .padding_px = .{
+                .left = 16,
+                .right = 16,
+                .top = 8,
+                .bottom = 8,
+            },
+            .corner_radii_px = .{
+                .top_left = 6,
+                .top_right = 6,
+                .bottom_left = 6,
+                .bottom_right = 6,
+            },
+            .flags = .{
+                .clickable = true,
+            },
+        };
+
+        var signals = self.generate_widget_signals(&widget);
+        signals.widget_id = self.add_widget(widget);
+
+        return signals;
+    }
+
+    pub fn badge(self: *Self, text: []const u8, key: Key) WidgetSignal {
+        var widget = Widget {
+            .key = key,
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
+                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
+            },
+            .text_content = .{
+                .font = .Geist,
+                .text = text,
+                .colour = srgb_to_rgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)),
+            },
+            .background_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
+            .border_colour = srgb_to_rgb(zm.f32x4(228.0/255.0, 228.0/255.0, 231.0/255.0, 1.0)),
+            .border_width_px = 1,
+            .padding_px = .{
                 .left = 10,
                 .right = 10,
                 .top = 2,
@@ -1035,5 +1073,66 @@ pub const Imui = struct {
         signals.widget_id = self.add_widget(widget);
 
         return signals;
+    }
+
+    pub fn checkbox(self: *Self, checked: bool, text: []const u8, key0: Key, key1: Key) WidgetSignal {
+        _ = self.push_layout(.X);
+        var box = Widget {
+            .key = key0,
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .Pixels , .value = 16.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            },
+            .text_content = .{
+                .font = .GeistMono,
+                .text = blk: { if (checked) { break :blk "x"; } else { break :blk " "; } },
+                .colour = srgb_to_rgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)),
+            },
+            .background_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, blk: { if (checked) { break :blk 1.0; } else { break :blk 0.0; } })),
+            .border_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
+            .border_width_px = 1,
+            .corner_radii_px = .{
+                .top_left = 4,
+                .top_right = 4,
+                .bottom_left = 4,
+                .bottom_right = 4,
+            },
+            .flags = .{
+                .clickable = true,
+            },
+        };
+        var box_signals = self.generate_widget_signals(&box);
+        box_signals.widget_id = self.add_widget(box);
+
+        var text_w = Widget {
+            .key = key1,
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
+                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
+            },
+            .text_content = .{
+                .font = .Geist,
+                .text = text,
+            },
+            .background_colour = zm.f32x4s(0.0),
+            .border_colour = zm.f32x4s(0.0),
+            .padding_px = .{
+                .left = 8,
+            },
+            .flags = .{ 
+                .clickable = true, 
+            },
+        };
+        var text_signals = self.generate_widget_signals(&text_w);
+        text_signals.widget_id = self.add_widget(text_w);
+
+        self.pop_layout();
+
+        return WidgetSignal {
+            .clicked = box_signals.clicked or text_signals.clicked,
+            .hover = box_signals.hover or text_signals.hover,
+            .dragged = box_signals.dragged or text_signals.dragged,
+            .widget_id = box_signals.widget_id,
+        };
     }
 };

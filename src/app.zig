@@ -77,6 +77,8 @@ pub const App = struct {
     button_2_pos: [2]i32 = .{100,100},
     exposure: f32 = 2.0,
 
+    checkbox_bool: bool = false,
+
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
 
@@ -532,7 +534,7 @@ pub const App = struct {
         _ = self.imui.label("Option 1:");
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
-        const b1 = self.imui.button("Option 1 button", 1);
+        const b1 = self.imui.badge("Option 1 button", 1);
         if (self.imui.get_widget(b1.widget_id)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
@@ -545,7 +547,7 @@ pub const App = struct {
         _ = self.imui.label("Option 2 longlonglong:");
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
-        const b2 = self.imui.button("Option 2 button", 2);
+        const b2 = self.imui.badge("Option 2 button", 2);
         if (self.imui.get_widget(b2.widget_id)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
@@ -556,10 +558,16 @@ pub const App = struct {
         self.imui.pop_layout();
         self.imui.push_layout_id(labels_layout);
         _ = self.imui.label("Option 3:");
+        if (self.imui.checkbox(self.checkbox_bool, "this is a checkbox", 11, 12).clicked) {
+            self.checkbox_bool = !self.checkbox_bool;
+        }
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
-        if (self.imui.button("Option 3 button longlonglong", 3).clicked) {
+        if (self.imui.badge("Option 3 button longlonglong", 3).clicked) {
             std.log.info("b3 clicked!", .{});
+        }
+        if (self.imui.button("Option button", 4).clicked) {
+            std.log.info("button clicked!", .{});
         }
         self.imui.pop_layout();
         self.imui.pop_layout();
@@ -589,7 +597,7 @@ pub const App = struct {
                 .bottom = 10,
             };
         }
-        if (self.imui.button("Set camera pos to scene", 991).clicked) {
+        if (self.imui.badge("Set camera pos to scene", 991).clicked) {
             self.camera.view_matrix = zm.Mat {
                 zm.f32x4(0.7, 0.2, 0.7, 0.0),
                 zm.f32x4(0.0, 1.0, -0.3, 0.0),
@@ -966,42 +974,26 @@ pub const App = struct {
             } else |_| {}
         }
 
-        self.render_text_over_quad(
-            FontEnum.GeistMono,
-            "Hello World.\nThis is the next line.",
-            .{
-                .position = .{ .x = 100, .y = 100, },
-                .pixel_height = 15,
-            }, 
-            .{
-                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-                .border_colour = zm.f32x4(1.0, 0.0, 0.0, 1.0),
-                .corner_radii_px = .{},
-            },
-            rtv,
-        );
-
+        var vel_buf: [128]u8 = [_]u8{0} ** 128;
+        var vel_text: []u8 = vel_buf[0..0];
         if (self.engine.entities.get(self.character_idx)) |character_entity| {
             const character = character_entity.physics.?.CharacterVirtual.virtual;
             const character_velocity = zm.loadArr3(character.getLinearVelocity());
-            const vel_text = std.fmt.allocPrint(self.engine.general_allocator.allocator(), "character speed: {d:.2}\nvelocity: {d:.2}\nis supported: {}", .{
+            vel_text = std.fmt.bufPrint(vel_buf[0..], "character speed: {d:.2}\nvelocity: {d:.2}\nis supported: {}", .{
                 zm.length3(character_velocity)[0],
                 character_velocity,
                 character_is_supported((self.engine.entities.get(self.character_idx) catch unreachable).physics.?.CharacterVirtual.virtual),
             }) catch unreachable;
-            defer self.engine.general_allocator.allocator().free(vel_text);
 
-            self.ui.render_text_2d(
-                FontEnum.GeistMono,
-                vel_text, 
-                .{
-                    .position = .{ .x = 100, .y = 500, },
-                    .pixel_height = 15,
-                    .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-                }, 
-                rtv, 
-                &self.engine.gfx
-            );
+            {
+                _ = self.imui.push_floating_layout(.Y, 100, 500);
+                const l = self.imui.label(vel_text);
+                if (self.imui.get_widget(l.widget_id)) |tw| {
+                    tw.text_content.?.font = .GeistMono;
+                    tw.text_content.?.size = 15;
+                }
+                _ = self.imui.pop_layout();
+            }
         } else |_| {}
 
         var fps_buf: [128]u8 = [_]u8{0} ** 128;
@@ -1012,49 +1004,40 @@ pub const App = struct {
             (self.engine.time.last_frame_wait_time_s / self.engine.time.last_frame_time_s) * 100.0
         }) catch unreachable;
 
-        self.ui.render_text_2d(
-            FontEnum.GeistMono,
-            fps_text, 
-            .{
-                .position = .{
-                    .x = 10,
-                    .y = 
-                        @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)),
-                },
-                .pixel_height = 12,
-                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-            }, 
-            rtv, 
-            &self.engine.gfx
-        );
+        {
+            _ = self.imui.push_floating_layout(.Y, 5, 5 - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)));
+            const l = self.imui.label(fps_text);
+            if (self.imui.get_widget(l.widget_id)) |tw| {
+                tw.text_content.?.font = .GeistMono;
+                tw.text_content.?.size = 12;
+            }
+            _ = self.imui.pop_layout();
+        }
 
         var rev_buf: [64]u8 = [_]u8{0} ** 64;
         const rev_text = std.fmt.bufPrint(rev_buf[0..], "zig-dx11 - {x}{s}", .{
             gitrev,
             blk: { if (gitchanged) { break :blk "*"; } else { break :blk ""; } },
         }) catch unreachable;
-        self.ui.render_text_2d(
-            FontEnum.GeistMono,
-            rev_text, 
-            .{
-                .position = .{
-                    .x = 10,
-                    .y = self.engine.gfx.swapchain_size.height -
-                        @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)),
-                },
-                .pixel_height = 12,
-                .colour = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-            }, 
-            rtv, 
-            &self.engine.gfx
-        );
+        {
+            _ = self.imui.push_floating_layout(.Y, 10, self.engine.gfx.swapchain_size.height - 
+                @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)));
+            const l = self.imui.label(rev_text);
+            if (self.imui.get_widget(l.widget_id)) |tw| {
+                tw.text_content.?.font = .GeistMono;
+                tw.text_content.?.size = 12;
+            }
+            _ = self.imui.pop_layout();
+        }
+
+        self.engine.gfx.tone_mapping_filter.apply_filter(&self.engine.gfx.hdr_texture_view, self.exposure, self.engine.gfx.get_framebuffer(), &self.engine.gfx);
 
         self.imui.compute_widget_rects();
-        self.imui.render_imui(&rtv, &self.engine.gfx);
+        self.imui.render_imui(self.engine.gfx.get_framebuffer(), &self.engine.gfx);
         self.imui.end_frame(&self.engine.gfx);
 
-        self.engine.gfx.end_frame(self.exposure, rtv) catch |err| {
-            std.log.err("unable to end frame: {}", .{err});
+        self.engine.gfx.present() catch |err| {
+            std.log.err("unable to present frame: {}", .{err});
             return;
         };
         return;
@@ -1178,30 +1161,6 @@ pub const App = struct {
             },
             else => {},
         }
-    }
-
-    fn render_text_over_quad(
-        self: *Self,
-        font_: _ui.FontEnum,
-        text: []const u8,
-        text_props: font.Font.FontRenderProperties2D,
-        quad_props: _ui.QuadRenderer.QuadProperties,
-        rtv: gfx.RenderTargetView,
-    ) void {
-        const text_bounds = self.ui.get_font(font_).text_bounds_2d_pixels(text, text_props.pixel_height);
-        self.ui.quad_renderer.render_quad(
-            text_bounds.translate(text_props.position.x, text_props.position.y),
-            quad_props,
-            rtv,
-            &self.engine.gfx
-        );
-        self.ui.render_text_2d(
-            font_,
-            text,
-            text_props,
-            rtv,
-            &self.engine.gfx
-        );
     }
 
     fn character_is_supported(chr: *zphy.CharacterVirtual) bool {

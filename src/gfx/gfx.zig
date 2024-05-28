@@ -301,9 +301,11 @@ pub const GfxState = struct {
         return self.hdr_rtv;
     }
 
-    pub fn end_frame(self: *Self, exposure: f32, rtv: RenderTargetView) !void {
-        _ = rtv;
-        self.tone_mapping_filter.apply_filter(&self.hdr_texture_view, exposure, &self.framebuffer_rtv, self);
+    pub fn get_framebuffer(self: *Self) *RenderTargetView {
+        return &self.framebuffer_rtv;
+    }
+
+    pub fn present(self: *Self) !void {
         try zwin32.hrErrorOnFail(self.swapchain.Present(0, zwin32.dxgi.PRESENT_FLAG {}));
     }
 
