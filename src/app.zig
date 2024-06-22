@@ -535,7 +535,7 @@ pub const App = struct {
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
         const b1 = self.imui.badge("Option 1 button", 1);
-        if (self.imui.get_widget(b1.widget_id)) |w| {
+        if (self.imui.get_widget(b1.id)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
         }
@@ -548,7 +548,7 @@ pub const App = struct {
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
         const b2 = self.imui.badge("Option 2 button", 2);
-        if (self.imui.get_widget(b2.widget_id)) |w| {
+        if (self.imui.get_widget(b2.id)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
         }
@@ -566,7 +566,8 @@ pub const App = struct {
         if (self.imui.badge("Option 3 button longlonglong", 3).clicked) {
             std.log.info("b3 clicked!", .{});
         }
-        if (self.imui.button("Option button", 4).clicked) {
+        const bs = self.imui.button("Option button", 4);
+        if (bs.clicked) {
             std.log.info("button clicked!", .{});
         }
         self.imui.pop_layout();
@@ -615,7 +616,7 @@ pub const App = struct {
             self.camera.view_matrix[3]
         }) catch unreachable;
         const cam_pos_lbl = self.imui.label(camera_pos_text[0..]);
-        if (self.imui.get_widget(cam_pos_lbl.widget_id)) |ww| {
+        if (self.imui.get_widget(cam_pos_lbl.id)) |ww| {
             ww.text_content.?.font = .GeistMono;
         }
         self.imui.pop_layout();
@@ -988,7 +989,7 @@ pub const App = struct {
             {
                 _ = self.imui.push_floating_layout(.Y, 100, 500);
                 const l = self.imui.label(vel_text);
-                if (self.imui.get_widget(l.widget_id)) |tw| {
+                if (self.imui.get_widget(l.id)) |tw| {
                     tw.text_content.?.font = .GeistMono;
                     tw.text_content.?.size = 15;
                 }
@@ -1007,7 +1008,7 @@ pub const App = struct {
         {
             _ = self.imui.push_floating_layout(.Y, 5, 5 - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)));
             const l = self.imui.label(fps_text);
-            if (self.imui.get_widget(l.widget_id)) |tw| {
+            if (self.imui.get_widget(l.id)) |tw| {
                 tw.text_content.?.font = .GeistMono;
                 tw.text_content.?.size = 12;
             }
@@ -1023,7 +1024,7 @@ pub const App = struct {
             _ = self.imui.push_floating_layout(.Y, 10, self.engine.gfx.swapchain_size.height - 
                 @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)));
             const l = self.imui.label(rev_text);
-            if (self.imui.get_widget(l.widget_id)) |tw| {
+            if (self.imui.get_widget(l.id)) |tw| {
                 tw.text_content.?.font = .GeistMono;
                 tw.text_content.?.size = 12;
             }

@@ -84,7 +84,8 @@ pub const QuadBufferVertexBuffer = extern struct {
 };
 
 pub const QuadBufferFlags = packed struct(u32) {
-    __unused: u32 = 0,
+    has_texture: bool = false,
+    __unused: u31 = 0,
 };
 
 pub const CornerRadiiPx = packed struct {
@@ -178,31 +179,6 @@ pub const UiRenderer = struct {
             rect_pixels, props, rtv, gfx
         );
     }
-
-    pub fn render_text_over_quad(
-        self: *UiRenderer,
-        font_: FontEnum,
-        text: []const u8,
-        text_props: _font.Font.FontRenderProperties2D,
-        quad_props: QuadRenderer.QuadProperties,
-        rtv: _gfx.gfx.RenderTargetView,
-        gfx: *_gfx.GfxState,
-    ) void {
-        self.render_quad(
-            self.fonts[@intFromEnum(font_)].text_bounds_2d(text, text_props, rtv.size.width, rtv.size.height),
-            quad_props,
-            rtv,
-            gfx
-        );
-        self.render_text_2d(
-            font_,
-            text,
-            text_props,
-            rtv,
-            gfx
-        );
-    }
-
 };
 
 pub const QuadRenderer = struct {
@@ -300,11 +276,17 @@ pub const QuadRenderer = struct {
         return ui;
     }
 
+    pub const QuadPropertiesTexture = struct {
+        texture_view: _gfx.TextureView2D,
+        sampler: _gfx.Sampler,
+    };
+
     pub const QuadProperties = struct {
         colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
         border_colour: zm.F32x4 = zm.f32x4s(0.0),
         border_width_px: u32 = 0,
-        corner_radii_px: CornerRadiiPx,
+        corner_radii_px: CornerRadiiPx = .{},
+        texture: ?QuadPropertiesTexture = null,
     };
 
     pub fn render_quad(
@@ -333,7 +315,9 @@ pub const QuadRenderer = struct {
                 .quad_width_pixels = @floatFromInt(rect_pixels.width),
                 .quad_height_pixels = @floatFromInt(rect_pixels.height),
                 .corner_radii = props.corner_radii_px,
-                .flags = @bitCast(QuadBufferFlags{}),
+                .flags = @bitCast(QuadBufferFlags{
+                    .has_texture = (props.texture != null),
+                }),
             };
         }
 
@@ -360,7 +344,14 @@ pub const QuadRenderer = struct {
 
         gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_buffer_vertex.buffer));
         gfx.context.PSSetConstantBuffers(1, 1, @ptrCast(&self.quad_buffer_pixel.buffer));
-        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
+
+        if (props.texture) |texture_props| {
+            gfx.context.PSSetSamplers(0, 1, @ptrCast(&texture_props.sampler.sampler));
+            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&texture_props.texture_view.view));
+        } else {
+            gfx.context.PSSetSamplers(0, 1, @ptrCast(&gfx.default.sampler.sampler));
+            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&gfx.default.diffuse.view));
+        }
 
         gfx.context.Draw(6, 0);
     }
@@ -419,6 +410,18 @@ pub const Imui = struct {
         }
     };
 
+    pub const VerticalAlignment = enum {
+        Top,
+        Middle,
+        Bottom,
+    };
+
+    pub const HorizontalAlign = enum {
+        Left,
+        Middle,
+        Right,
+    };
+
     pub const Widget = struct {
         semantic_size: [AxisCount]SemanticSize,
 
@@ -453,11 +456,17 @@ pub const Imui = struct {
             text: []const u8,
             size: u16 = 15,
             colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+            vertical_align: VerticalAlignment = .Middle,
+            horizontal_align: HorizontalAlign = .Middle,
         } = null,
         background_colour: ?zm.F32x4 = null,
         border_colour: ?zm.F32x4 = null,
         border_width_px: u16 = 0,
         corner_radii_px: CornerRadiiPx = .{},
+        texture: ?struct {
+            texture_view: _gfx.TextureView2D,
+            sampler: _gfx.Sampler,
+        } = null,
         padding_px: struct {
             left: u16 = 0,
             right: u16 = 0,
@@ -476,12 +485,14 @@ pub const Imui = struct {
         }
     };
 
-    pub const WidgetSignal = struct {
-        clicked: bool = false,
-        hover: bool = false,
-        dragged: bool = false,
-        widget_id: usize = 0,
-    };
+    pub fn WidgetSignal(comptime T: type) type {
+        return struct {
+            clicked: bool = false,
+            hover: bool = false,
+            dragged: bool = false,
+            id: T,
+        };
+    }
 
     hot_item: ?Key = null,
     active_item: ?Key = null,
@@ -497,15 +508,43 @@ pub const Imui = struct {
     widgets: std.ArrayList(Widget),
     last_frame_widgets: std.AutoHashMap(Key, Widget),
 
+    scuffed_x_checkbox_image: _gfx.TextureView2D,
+    image_sampler: _gfx.Sampler,
+
     pub fn deinit(self: *Self) void {
         self.ui.deinit();
 
         self.parent_stack.deinit();
         self.widgets.deinit();
         self.last_frame_widgets.deinit();
+
+        self.scuffed_x_checkbox_image.deinit();
+        self.image_sampler.deinit();
     }
 
     pub fn init(alloc: std.mem.Allocator, input: *const in.InputState, time: *const tm.TimeState, gfx: *_gfx.GfxState) !Self {
+        var scuffed_x_image = try zstbi.Image.loadFromFile("res/scuffed_x.png", 4);
+        defer scuffed_x_image.deinit();
+
+        var scuffed_x_checkbox_image = try _gfx.Texture2D.init(
+            .{
+                .width = scuffed_x_image.width,
+                .height = scuffed_x_image.height,
+                .format = _gfx.TextureFormat.Rgba8_Unorm_Srgb,
+            },
+            .{ .ShaderResource = true, },
+            .{},
+            scuffed_x_image.data,
+            gfx
+        );
+        defer scuffed_x_checkbox_image.deinit();
+        
+        var scuffed_x_checkbox_image_view = try _gfx.TextureView2D.init_from_texture2d(
+            &scuffed_x_checkbox_image,
+            gfx
+        );
+        errdefer scuffed_x_checkbox_image_view.deinit();
+
         var self = Self {
             .input = input,
             .time = time,
@@ -513,6 +552,8 @@ pub const Imui = struct {
             .parent_stack = std.ArrayList(usize).init(alloc),
             .widgets = std.ArrayList(Widget).init(alloc),
             .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
+            .scuffed_x_checkbox_image = scuffed_x_checkbox_image_view,
+            .image_sampler = try _gfx.Sampler.init(.{}, gfx),
         };
         self.add_root_widget(gfx);
         return self;
@@ -805,9 +846,11 @@ pub const Imui = struct {
         for (self.widgets.items) |*widget| {
             if (widget.flags.render == false) { continue; }
 
+            // render rect
             const render_rect = 
                 widget.background_colour != null or
-                widget.border_colour != null;
+                widget.border_colour != null or
+                widget.texture != null;
 
             if (render_rect) {
                 var background_colour = zm.f32x4s(0.0);
@@ -820,6 +863,17 @@ pub const Imui = struct {
                     border_colour = bc;
                 }
 
+                const quad_texture_props = blk: { 
+                    if (widget.texture) |tex_props| {
+                        break :blk QuadRenderer.QuadPropertiesTexture {
+                            .texture_view = tex_props.texture_view,
+                            .sampler = tex_props.sampler,
+                        };
+                    } else { 
+                        break :blk null;
+                    } 
+                }; 
+
                 self.ui.render_quad(
                     widget.computed.rect,
                     .{
@@ -827,6 +881,7 @@ pub const Imui = struct {
                         .border_colour = border_colour,
                         .border_width_px = widget.border_width_px,
                         .corner_radii_px = widget.corner_radii_px,
+                        .texture = quad_texture_props,
                     },
                     rtv.*,
                     gfx
@@ -837,15 +892,25 @@ pub const Imui = struct {
 
             // render text
             if (widget.text_content) |*text| {
+                const text_size_f32: f32 = @floatFromInt(text.size);
+                const font_metrics = self.ui.get_font(text.font).font_metrics;
+                const text_bounds = self.ui.get_font(text.font).text_bounds_2d_pixels(text.text, text.size);
+                const x: i32 = blk: { switch (text.horizontal_align) {
+                    .Left => break :blk widget_content_rect.left,
+                    .Middle => break :blk widget_content_rect.left + @divTrunc(widget_content_rect.width, 2) - @divTrunc(text_bounds.width, 2),
+                    .Right => break :blk widget_content_rect.left + widget_content_rect.width - text_bounds.width,
+                } };
+                const top: i32 = widget_content_rect.top + @as(i32, @intFromFloat(font_metrics.ascender * text_size_f32));
+                const y: i32 = blk: { switch (text.vertical_align) {
+                    .Top => break :blk top,
+                    .Middle => break :blk top + @divTrunc(widget_content_rect.height, 2) - @divTrunc(text_bounds.height, 2),
+                    .Bottom => break :blk top + widget_content_rect.height - text_bounds.height,
+                } };
                 self.ui.render_text_2d(
                     text.font,
                     text.text,
                     .{
-                        .position = .{ 
-                            .x = widget_content_rect.left, 
-                            .y = widget_content_rect.top +
-                                @as(i32, @intFromFloat(self.ui.get_font(text.font).font_metrics.ascender * @as(f32, @floatFromInt(text.size)))),
-                        },
+                        .position = .{ .x = x, .y = y, },
                         .colour = text.colour,
                         .pixel_height = text.size,
                     },
@@ -867,8 +932,9 @@ pub const Imui = struct {
         self.add_root_widget(gfx);
     }
 
-    fn generate_widget_signals(self: *Self, widget: *Widget) WidgetSignal {
-        var widget_signal = WidgetSignal {};
+    fn generate_widget_signals(self: *Self, widget_id: usize) WidgetSignal(usize) {
+        const widget = self.get_widget(widget_id).?;
+        var widget_signal = WidgetSignal(usize) {.id = widget_id,};
         const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
 
         if (last_frame_widget) |lfw| {
@@ -927,6 +993,15 @@ pub const Imui = struct {
         return widget_signal;
     }
 
+    pub fn combine_signals(signals_1: anytype, signals_2: anytype, id: anytype) WidgetSignal(@TypeOf(id)) {
+        return WidgetSignal(@TypeOf(id)) {
+            .clicked = signals_1.clicked or signals_2.clicked,
+            .hover = signals_1.hover or signals_2.hover,
+            .dragged = signals_1.dragged or signals_2.dragged,
+            .id = id,
+        };
+    }
+
     pub fn push_layout_id(self: *Self, widget_id: usize) void {
         std.debug.assert(widget_id < self.widgets.items.len);
         self.parent_stack.append(widget_id) catch unreachable;
@@ -978,8 +1053,8 @@ pub const Imui = struct {
         _ = self.parent_stack.pop();
     }
 
-    pub fn label(self: *Self, text: []const u8) WidgetSignal {
-        var widget = Widget {
+    pub fn label(self: *Self, text: []const u8) WidgetSignal(usize) {
+        const widget = Widget {
             .key = 0,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -993,14 +1068,12 @@ pub const Imui = struct {
             .border_colour = zm.f32x4s(0.0),
         };
 
-        var signals = self.generate_widget_signals(&widget);
-        signals.widget_id = self.add_widget(widget);
-
-        return signals;
+        const widget_id = self.add_widget(widget);
+        return self.generate_widget_signals(widget_id);
     }
 
-    pub fn button(self: *Self, text: []const u8, key: Key) WidgetSignal {
-        var widget = Widget {
+    pub fn button(self: *Self, text: []const u8, key: Key) WidgetSignal(usize) {
+        const widget = Widget {
             .key = key,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -1031,14 +1104,12 @@ pub const Imui = struct {
             },
         };
 
-        var signals = self.generate_widget_signals(&widget);
-        signals.widget_id = self.add_widget(widget);
-
-        return signals;
+        const widget_id = self.add_widget(widget);
+        return self.generate_widget_signals(widget_id);
     }
 
-    pub fn badge(self: *Self, text: []const u8, key: Key) WidgetSignal {
-        var widget = Widget {
+    pub fn badge(self: *Self, text: []const u8, key: Key) WidgetSignal(usize) {
+        const widget = Widget {
             .key = key,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -1069,24 +1140,21 @@ pub const Imui = struct {
             },
         };
 
-        var signals = self.generate_widget_signals(&widget);
-        signals.widget_id = self.add_widget(widget);
-
-        return signals;
+        const widget_id = self.add_widget(widget);
+        return self.generate_widget_signals(widget_id);
     }
 
-    pub fn checkbox(self: *Self, checked: bool, text: []const u8, key0: Key, key1: Key) WidgetSignal {
+    pub const CheckboxId = struct {
+        box:usize, text:usize
+    };
+
+    pub fn checkbox(self: *Self, checked: bool, text: []const u8, key0: Key, key1: Key) WidgetSignal(CheckboxId) {
         _ = self.push_layout(.X);
-        var box = Widget {
+        const box_widget = Widget {
             .key = key0,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .Pixels , .value = 16.0, .shrinkable_percent = 0.0, },
                 SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
-            },
-            .text_content = .{
-                .font = .GeistMono,
-                .text = blk: { if (checked) { break :blk "x"; } else { break :blk " "; } },
-                .colour = srgb_to_rgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)),
             },
             .background_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, blk: { if (checked) { break :blk 1.0; } else { break :blk 0.0; } })),
             .border_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
@@ -1097,14 +1165,24 @@ pub const Imui = struct {
                 .bottom_left = 4,
                 .bottom_right = 4,
             },
+            .texture = blk: { 
+                if (checked) { 
+                    break :blk .{
+                        .texture_view = self.scuffed_x_checkbox_image,
+                        .sampler = self.image_sampler,
+                    };
+                } else {
+                    break :blk null;
+                }
+            },
             .flags = .{
                 .clickable = true,
             },
         };
-        var box_signals = self.generate_widget_signals(&box);
-        box_signals.widget_id = self.add_widget(box);
+        const box_widget_id = self.add_widget(box_widget);
+        const box_widget_signals = self.generate_widget_signals(box_widget_id);
 
-        var text_w = Widget {
+        const text_widget = Widget {
             .key = key1,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -1123,16 +1201,15 @@ pub const Imui = struct {
                 .clickable = true, 
             },
         };
-        var text_signals = self.generate_widget_signals(&text_w);
-        text_signals.widget_id = self.add_widget(text_w);
+        const text_widget_id = self.add_widget(text_widget);
+        const text_widget_signals = self.generate_widget_signals(text_widget_id);
 
         self.pop_layout();
 
-        return WidgetSignal {
-            .clicked = box_signals.clicked or text_signals.clicked,
-            .hover = box_signals.hover or text_signals.hover,
-            .dragged = box_signals.dragged or text_signals.dragged,
-            .widget_id = box_signals.widget_id,
-        };
+        return combine_signals(
+            box_widget_signals, 
+            text_widget_signals, 
+            CheckboxId{ .box = box_widget_id, .text = text_widget_id, }
+        );
     }
 };

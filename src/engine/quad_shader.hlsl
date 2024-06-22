@@ -13,6 +13,9 @@ cbuffer pixel_buffer : register(b1)
     uint flags;
 }
 
+Texture2D quad_texture;
+SamplerState quad_sampler;
+
 struct vs_out
 {
     float4 position : SV_POSITION;
@@ -85,6 +88,13 @@ float4 ps_main(vs_out input) : SV_TARGET
 
     // background colour
     float4 colour = background_colour;
+
+    // add texture colour before borders
+    bool has_texture = (flags >> 0) & 1;
+    if (has_texture) {
+        float4 texture_colour = quad_texture.Sample(quad_sampler, input.tex_coord.xy);
+        colour = float4(colour.rgb * (1 - texture_colour.a) + texture_colour.rgb * texture_colour.a, colour.a);
+    }
 
     // border colour
     float border_alpha = saturate(border_width_px - min_px_from_border + 1.0);
