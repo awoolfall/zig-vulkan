@@ -69,10 +69,10 @@ pub fn GenerationalList(comptime T: type) type {
             // set data to null indicating item is removed
             item.item_data = null;
             // add index to free list to be reused later
-            self.free_list.append(idx.index);
+            try self.free_list.append(idx.index);
         }
 
-        pub fn get(self: *Self, idx: GenerationalIndex) !*T {
+        pub fn get(self: *const Self, idx: GenerationalIndex) !*T {
             if (idx.index >= self.data.items.len) {
                 return error.OutOfBoundsIndex;
             }
@@ -84,6 +84,14 @@ pub fn GenerationalList(comptime T: type) type {
                 return error.InvalidGeneration;
             }
             return &(item.item_data.?);
+        }
+
+        pub fn item_count(self: *const Self) usize {
+            return self.data.items.len - self.free_list.items.len;
+        }
+
+        pub fn is_empty(self: *const Self) bool {
+            return self.item_count() == 0;
         }
     };
 }

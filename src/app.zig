@@ -18,6 +18,7 @@ const path = @import("engine/path.zig");
 const particle = @import("engine/particles.zig");
 const es = @import("easings.zig");
 const ac = @import("engine/anim_controller.zig");
+const as = @import("asset/asset.zig");
 
 const font = @import("engine/font.zig");
 const _ui = @import("engine/ui.zig");
@@ -61,10 +62,9 @@ pub const App = struct {
 
     bone_matrix_buffer: gfx.Buffer,
 
-    chara_model: *ms.Model,
-    terrain_model: *ms.Model,
-    cone_model: *ms.Model,
-    turntable_model: *ms.Model,
+    asset_manager: as.AssetManager,
+    app_life_asset_pack_id: as.AssetPackId,
+    turntable_model_id: as.ModelAssetId,
 
     anim_controller: ac.AnimController,
 
@@ -88,15 +88,11 @@ pub const App = struct {
         self.zero_particle_system.deinit();
         self.player_attack_particle_system.deinit();
 
-        self.turntable_model.deinit();
-        self.engine.general_allocator.allocator().destroy(self.turntable_model);
-        self.cone_model.deinit();
-        self.engine.general_allocator.allocator().destroy(self.cone_model);
-        self.chara_model.deinit();
-        self.engine.general_allocator.allocator().destroy(self.chara_model);
-        self.terrain_model.deinit();
-        self.engine.general_allocator.allocator().destroy(self.terrain_model);
         self.anim_controller.deinit();
+
+        self.asset_manager.unload_asset_pack(self.app_life_asset_pack_id)
+            catch unreachable;
+        self.asset_manager.deinit();
 
         self.bone_matrix_buffer.deinit();
         self.camera_data_buffer.deinit();
@@ -161,54 +157,34 @@ pub const App = struct {
         );
         errdefer bone_matrix_buffer.deinit();
 
-        // Load model
-        const chara_model = try eng.general_allocator.allocator().create(ms.Model);
-        errdefer eng.general_allocator.allocator().destroy(chara_model);
-        chara_model.* = try ms.Model.init_from_file_assimp(
-            eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/SK_Character_Dummy_Male_01_anim2.glb"},
-            &eng.gfx
-        );
-        errdefer chara_model.deinit();
+        const resources_path = blk: {
+            var buf = [1]u8{0} ** 256;
+            const exe_path = try std.fs.selfExeDirPath(buf[0..]);
+            break :blk try std.fs.path.join(eng.general_allocator.allocator(), &[_][]const u8{exe_path, "../../res"});
+        };
+        defer eng.general_allocator.allocator().free(resources_path);
 
-        // var terrain_model = try ms.Model.init_from_file_assimp(
-        //      eng.general_allocator.allocator(),
-        //      path.Path{.ExeRelative = "../../res/Demonstration.glb"},
-        //      eng.gfx.device
-        // );
-        // errdefer terrain_model.deinit();
-        const terrain_model = try eng.general_allocator.allocator().create(ms.Model);
-        errdefer eng.general_allocator.allocator().destroy(terrain_model);
-        terrain_model.* = try ms.Model.plane(
-            eng.general_allocator.allocator(),
-            1, 1,
-            &eng.gfx
-        );
-        errdefer terrain_model.deinit();
+        var asset_manager = try as.AssetManager.init(eng.general_allocator.allocator(), resources_path);
 
-        const cone_model = try eng.general_allocator.allocator().create(ms.Model);
-        errdefer eng.general_allocator.allocator().destroy(cone_model);
-        cone_model.* = try ms.Model.cone(
-            eng.general_allocator.allocator(), 
-            8, 
-            &eng.gfx
-        );
-        errdefer cone_model.deinit();
+        var asset_pack = as.AssetPack.init(eng.general_allocator.allocator());
+        defer asset_pack.deinit();
 
-        const turntable_model = try eng.general_allocator.allocator().create(ms.Model);
-        errdefer eng.general_allocator.allocator().destroy(turntable_model);
-        turntable_model.* = try ms.Model.init_from_file_assimp(
-            eng.general_allocator.allocator(), 
-            path.Path{.ExeRelative = "../../res/sea_house.glb"},
-            &eng.gfx
-        );
-        errdefer turntable_model.deinit();
+        try asset_pack.add_model("character", as.AssetPack.ModelAsset{ .Path = "SK_Character_Dummy_Male_01_anim2.glb" });
+        try asset_pack.add_model("model", as.AssetPack.ModelAsset{ .Path = "sea_house.glb" });
+        try asset_pack.add_model("terrain", as.AssetPack.ModelAsset{ .Plane = .{ .slices = 1, .stacks = 1, } });
+        try asset_pack.add_model("cone", as.AssetPack.ModelAsset{ .Cone = .{ .slices = 8, } });
+
+        const asset_pack_id = try asset_manager.load_asset_pack(eng.general_allocator.allocator(), &asset_pack, &eng.gfx);
+        
+        const character_model_id = asset_manager.find_model_id("character").?;
+        const terrain_model_id = asset_manager.find_model_id("terrain").?;
+        const turntable_model_id = asset_manager.find_model_id("model").?;
 
         var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator());
         errdefer anim_controller.deinit();
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
-        const demo_compound_shape_settings = try terrain_model.gen_static_compound_physics_shape();
+        const demo_compound_shape_settings = try (try asset_manager.get_model(terrain_model_id)).gen_static_compound_physics_shape();
         defer demo_compound_shape_settings.release();
 
         const scaled_demo_shape = try zphy.DecoratedShapeSettings.createScaled(demo_compound_shape_settings.asShapeSettings(), [3]f32{100.0, 1.0, 100.0});
@@ -219,7 +195,7 @@ pub const App = struct {
 
         _ = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "ground entity",
-            .model = terrain_model,
+            .model = terrain_model_id,
             .physics = .{ .Body = 
                 try eng.physics.zphy.getBodyInterfaceMut().createAndAddBody(zphy.BodyCreationSettings {
                     .position = zm.f32x4(-50.0, -5.0, 50.0, 1.0),
@@ -300,7 +276,7 @@ pub const App = struct {
 
         const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "character entity",
-            .model = chara_model,
+            .model = character_model_id,
             .transform = chara_transform,
             .physics = .{ .CharacterVirtual = .{
                 .virtual = try zphy.CharacterVirtual.create(
@@ -327,7 +303,7 @@ pub const App = struct {
 
         const opponent_idx = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "opponent entity",
-            .model = chara_model,
+            .model = character_model_id,
             .transform = chara_transform,
             .physics = null,
             .app = .{
@@ -462,10 +438,9 @@ pub const App = struct {
 
             .bone_matrix_buffer = bone_matrix_buffer,
 
-            .chara_model = chara_model,
-            .terrain_model = terrain_model,
-            .cone_model = cone_model,
-            .turntable_model = turntable_model,
+            .asset_manager = asset_manager,
+            .app_life_asset_pack_id = asset_pack_id,
+            .turntable_model_id = turntable_model_id,
             .anim_controller = anim_controller,
 
             .ui = ui,
@@ -783,21 +758,22 @@ pub const App = struct {
                 mapped_buffer.data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
 
-            character_entity.model.?.animations[0].set_animation_to_time(self.engine.time.time_since_start_of_app());
-            character_entity.model.?.animations[1].set_animation_to_time(self.engine.time.time_since_start_of_app());
+            const character_model = self.asset_manager.get_model(character_entity.model.?) catch unreachable;
+            character_model.animations[0].set_animation_to_time(self.engine.time.time_since_start_of_app());
+            character_model.animations[1].set_animation_to_time(self.engine.time.time_since_start_of_app());
 
             const anims = [_]ms.Model.AnimationEntry{
                 .{
-                    .animation = &character_entity.model.?.animations[0],
+                    .animation = &character_model.animations[0],
                     .strength = 1.0,
                 },
                 .{
-                    .animation = &character_entity.model.?.animations[1],
+                    .animation = &character_model.animations[1],
                     .strength = 1.0,
                 },
             };
             const bone_transforms = self.anim_controller.calculate_bone_transforms(
-                character_entity.model.?,
+                character_model,
                 anims[0..]
             );
 
@@ -850,7 +826,9 @@ pub const App = struct {
         for (self.engine.entities.data.items) |*it| {
             if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
-                if (entity.model) |m| {
+                if (entity.model) |mid| {
+                    const m = self.asset_manager.get_model(mid) catch unreachable;
+
                     const strides = [_]zwin32.w32.UINT{
                         @truncate(m.buffers.strides.positions),
                         @truncate(m.buffers.strides.normals),
@@ -883,32 +861,34 @@ pub const App = struct {
 
         // render sea house scene
         {
+            const m = self.asset_manager.get_model(self.turntable_model_id) catch unreachable;
+
             const strides = [_]zwin32.w32.UINT{
-                @truncate(self.turntable_model.buffers.strides.positions),
-                @truncate(self.turntable_model.buffers.strides.normals),
-                @truncate(self.turntable_model.buffers.strides.texcoords),
-                @truncate(self.turntable_model.buffers.strides.bone_ids),
-                @truncate(self.turntable_model.buffers.strides.bone_weights),
+                @truncate(m.buffers.strides.positions),
+                @truncate(m.buffers.strides.normals),
+                @truncate(m.buffers.strides.texcoords),
+                @truncate(m.buffers.strides.bone_ids),
+                @truncate(m.buffers.strides.bone_weights),
             };
             const offsets = [_]zwin32.w32.UINT{
-                @truncate(self.turntable_model.buffers.offsets.positions),
-                @truncate(self.turntable_model.buffers.offsets.normals),
-                @truncate(self.turntable_model.buffers.offsets.texcoords),
-                @truncate(self.turntable_model.buffers.offsets.bone_ids),
-                @truncate(self.turntable_model.buffers.offsets.bone_weights),
+                @truncate(m.buffers.offsets.positions),
+                @truncate(m.buffers.offsets.normals),
+                @truncate(m.buffers.offsets.texcoords),
+                @truncate(m.buffers.offsets.bone_ids),
+                @truncate(m.buffers.offsets.bone_weights),
             };
-            self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[0]), @ptrCast(&offsets[0]));
-            self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[1]), @ptrCast(&offsets[1]));
-            self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[2]), @ptrCast(&offsets[2]));
-            self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[3]), @ptrCast(&offsets[3]));
-            self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&self.turntable_model.buffers.vertices.buffer), @ptrCast(&strides[4]), @ptrCast(&offsets[4]));
+            self.engine.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[0]), @ptrCast(&offsets[0]));
+            self.engine.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[1]), @ptrCast(&offsets[1]));
+            self.engine.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[2]), @ptrCast(&offsets[2]));
+            self.engine.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[3]), @ptrCast(&offsets[3]));
+            self.engine.gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&m.buffers.vertices.buffer), @ptrCast(&strides[4]), @ptrCast(&offsets[4]));
 
-            self.engine.gfx.context.IASetIndexBuffer(self.turntable_model.buffers.indices.buffer, zwin32.dxgi.FORMAT.R32_UINT, 0);
+            self.engine.gfx.context.IASetIndexBuffer(m.buffers.indices.buffer, zwin32.dxgi.FORMAT.R32_UINT, 0);
             // Set model constant buffer
             self.engine.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.model_buffer.buffer));
 
             // Finally, render the model
-            self.recursive_render_model(self.turntable_model, &self.turntable_model.nodes_list[self.turntable_model.root_nodes[0]], (Transform{ .scale = zm.f32x4s(0.05) }).generate_model_matrix());
+            self.recursive_render_model(m, &m.nodes_list[m.root_nodes[0]], (Transform{ .scale = zm.f32x4s(0.05) }).generate_model_matrix());
         }
 
         self.zero_particle_system.update(&self.engine.time);

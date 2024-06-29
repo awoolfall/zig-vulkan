@@ -5,6 +5,7 @@ const zm = @import("zmath");
 const hrPanic = zwin32.hrPanicOnFail;
 
 pub const _gfx = @import("gfx/gfx.zig");
+pub const as = @import("asset/asset.zig");
 pub const w32 = @import("platform/windows.zig");
 pub const input = @import("input/input.zig");
 pub const time = @import("engine/time.zig");
@@ -25,7 +26,7 @@ pub fn Engine(comptime App: type) type {
         pub const EntitySuperStruct = struct {
             name: ?[]const u8 = null,
             transform: tf.Transform = tf.Transform.new(),
-            model: ?*const mesh.Model = null,
+            model: ?as.ModelAssetId = null,
             physics: ?PhysicsOptions = null,
             app: App.EntityData = App.EntityData {},
         };
