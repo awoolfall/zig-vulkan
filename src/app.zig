@@ -509,7 +509,7 @@ pub const App = struct {
         _ = self.imui.label("Option 1:");
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
-        const b1 = self.imui.badge("Option 1 button", 1);
+        const b1 = self.imui.badge("Option 1 button", .{@src()});
         if (self.imui.get_widget(b1.id)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
@@ -522,7 +522,7 @@ pub const App = struct {
         _ = self.imui.label("Option 2 longlonglong:");
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
-        const b2 = self.imui.badge("Option 2 button", 2);
+        const b2 = self.imui.badge("Option 2 button", .{@src()});
         if (self.imui.get_widget(b2.id)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
@@ -533,15 +533,15 @@ pub const App = struct {
         self.imui.pop_layout();
         self.imui.push_layout_id(labels_layout);
         _ = self.imui.label("Option 3:");
-        if (self.imui.checkbox(self.checkbox_bool, "this is a checkbox", 11, 12).clicked) {
+        if (self.imui.checkbox(self.checkbox_bool, "this is a checkbox", .{@src()}).clicked) {
             self.checkbox_bool = !self.checkbox_bool;
         }
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
-        if (self.imui.badge("Option 3 button longlonglong", 3).clicked) {
+        if (self.imui.badge("Option 3 button longlonglong", .{@src()}).clicked) {
             std.log.info("b3 clicked!", .{});
         }
-        const bs = self.imui.button("Option button", 4);
+        const bs = self.imui.button("Option button", .{@src()});
         if (bs.clicked) {
             std.log.info("button clicked!", .{});
         }
@@ -573,7 +573,7 @@ pub const App = struct {
                 .bottom = 10,
             };
         }
-        if (self.imui.badge("Set camera pos to scene", 991).clicked) {
+        if (self.imui.badge("Set camera pos to scene", .{@src()}).clicked) {
             self.camera.view_matrix = zm.Mat {
                 zm.f32x4(0.7, 0.2, 0.7, 0.0),
                 zm.f32x4(0.0, 1.0, -0.3, 0.0),

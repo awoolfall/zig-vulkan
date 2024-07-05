@@ -381,12 +381,24 @@ pub const Imui = struct {
     pub const AxisCount = 2;
 
     pub const Key = u64;
+    pub const KeyInputUnion = union {
+        src: std.meta.Tuple(&.{ std.builtin.SourceLocation }),
+        src_index: std.meta.Tuple(&.{ std.builtin.SourceLocation, i64 }),
+    };
 
-    fn gen_key(key_input: anytype) Key {
-        var hasher = std.hash.XxHash64.init(0);
+    fn gen_key(key_input: KeyInputUnion) Key {
         const len = std.meta.fields(@TypeOf(key_input)).len;
-        inline for (0..len) |i| {
-            hasher.update(&std.mem.toBytes(key_input[i]));
+        std.debug.print("src is {s}:{}", .{key_input[0].file, key_input[0].line});
+        if (len > 1) {
+            std.debug.print("#{}", .{key_input[1]});
+        }
+        std.debug.print("\n", .{});
+
+        var hasher = std.hash.XxHash64.init(0);
+        hasher.update(key_input[0].file);
+        hasher.update(&std.mem.toBytes(key_input[0].line));
+        if (len > 1) {
+            hasher.update(&std.mem.toBytes(key_input[1]));
         }
         return hasher.final();
     }
@@ -1081,9 +1093,9 @@ pub const Imui = struct {
         return self.generate_widget_signals(widget_id);
     }
 
-    pub fn button(self: *Self, text: []const u8, key: anytype) WidgetSignal(usize) {
+    pub fn button(self: *Self, text: []const u8, key: Key) WidgetSignal(usize) {
         const widget = Widget {
-            .key = gen_key(key),
+            .key = key,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -1157,10 +1169,10 @@ pub const Imui = struct {
         box:usize, text:usize
     };
 
-    pub fn checkbox(self: *Self, checked: bool, text: []const u8, key: anytype) WidgetSignal(CheckboxId) {
+    pub fn checkbox(self: *Self, checked: bool, text: []const u8, key0: Key, key1: Key) WidgetSignal(CheckboxId) {
         _ = self.push_layout(.X);
         const box_widget = Widget {
-            .key = gen_key(key ++ .{@src().line}),
+            .key = key0,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .Pixels , .value = 16.0, .shrinkable_percent = 0.0, },
                 SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
@@ -1192,7 +1204,7 @@ pub const Imui = struct {
         const box_widget_signals = self.generate_widget_signals(box_widget_id);
 
         const text_widget = Widget {
-            .key = gen_key(key ++ .{@src().line}),
+            .key = key1,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
