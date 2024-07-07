@@ -356,8 +356,8 @@ pub const App = struct {
                     null
                 },
                 .colour = .{
-                    .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 0.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.0, },
-                    .{ .value = srgb_to_rgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 1.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.05, },
+                    .{ .value = zm.srgbToRgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 0.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.0, },
+                    .{ .value = zm.srgbToRgb(zm.f32x4(90.0/255.0, 195.0/255.0, 232.0/255.0, 1.0)) * zm.f32x4(10.0, 10.0, 10.0, 1.0), .key_time = 0.05, },
                     null,
                     null,
                 },
@@ -393,8 +393,8 @@ pub const App = struct {
                     null,
                 },
                 .colour = .{
-                    .{ .value = srgb_to_rgb(zm.f32x4(0.0, 0.0, 0.0, 1.0)), .key_time = 0.0, },
-                    .{ .value = srgb_to_rgb(zm.f32x4(0.0, 0.0, 0.0, 0.0)), .key_time = 1.0, .easing_into = .OutLinear },
+                    .{ .value = zm.srgbToRgb(zm.f32x4(0.0, 0.0, 0.0, 1.0)), .key_time = 0.0, },
+                    .{ .value = zm.srgbToRgb(zm.f32x4(0.0, 0.0, 0.0, 0.0)), .key_time = 1.0, .easing_into = .OutLinear },
                     null,
                     null,
                     // .{ .value = zm.hsvToRgb(zm.f32x4(0.0, 1.0, 1.0, 1.0)), .key_time = 0.0, },
@@ -450,15 +450,6 @@ pub const App = struct {
         };
     }
 
-    inline fn srgb_to_rgb(srgb: zm.F32x4) zm.F32x4 {
-        return zm.f32x4(
-            std.math.pow(f32, srgb[0], 2.2), 
-            std.math.pow(f32, srgb[1], 2.2), 
-            std.math.pow(f32, srgb[2], 2.2), 
-            srgb[3]
-        );
-    }
-
     fn vecAngle(v0: zm.F32x4, v1: zm.F32x4) f32 {
         const angle = std.math.acos(zm.dot3(v0, v1)[0] / (zm.length3(v0)[0] * zm.length3(v1)[0]));
         if (std.math.isNan(angle)) {
@@ -481,8 +472,8 @@ pub const App = struct {
         const top_layout = self.imui.push_floating_layout(.X, 500, 100);
         if (self.imui.get_widget(top_layout)) |top_widget| {
             top_widget.flags.render = true;
-            top_widget.background_colour = zm.f32x4(1.0, 1.0, 1.0, 1.0);
-            top_widget.border_colour = zm.f32x4(0.5, 0.5, 0.5, 1.0);
+            top_widget.background_colour = self.imui.palette().background;
+            top_widget.border_colour = self.imui.palette().border;
             top_widget.border_width_px = 2;
             top_widget.padding_px = .{
                 .left = 10,
@@ -556,8 +547,8 @@ pub const App = struct {
         );
         if (self.imui.get_widget(exposure_float_layout_id)) |ex_w| {
             ex_w.flags.render = true;
-            ex_w.background_colour = zm.f32x4s(1.0);
-            ex_w.border_colour = zm.f32x4(0.2, 0.2, 0.2, 1.0);
+            ex_w.background_colour = self.imui.palette().background;
+            ex_w.border_colour = self.imui.palette().border;
             ex_w.border_width_px = 1;
             ex_w.corner_radii_px = .{
                 .top_left = 10,
@@ -704,19 +695,12 @@ pub const App = struct {
 
                     const user_data = ph.PhysicsSystem.extract_entity_from_user_data(read_lock.body.getUserData());
                     if (self.engine.entities.get(user_data.entity)) |entity| {
-                        const unnamed_name = "unnamed";
-                        var entity_name: []const u8 = unnamed_name;
-                        if (entity.name) |name| {
-                            std.log.info("- {s}", .{name});
-                            entity_name = name;
-                        } else {
-                            std.log.info("- unnamed", .{});
-                        }
+                        std.log.info("- {s}", .{entity.name orelse "unnamed"});
 
                         if (entity.app.health_points) |*hp| {
                             hp.* -= 10;
                             if (hp.* < 0) {
-                                std.log.info("'{s}' fainted!", .{entity_name});
+                                std.log.info("'{s}' fainted!", .{entity.name orelse "unnamed"});
                             }
                         }
                     } else |e| { std.log.warn("{}", .{e}); }
@@ -791,7 +775,7 @@ pub const App = struct {
             std.log.err("unable to begin frame: {}", .{err});
             return;
         };
-        self.engine.gfx.context.ClearRenderTargetView(rtv.view, &zm.vecToArr4(srgb_to_rgb(zm.f32x4(
+        self.engine.gfx.context.ClearRenderTargetView(rtv.view, &zm.vecToArr4(zm.srgbToRgb(zm.f32x4(
             133.0/255.0, 
             193.0/255.0, 
             233.0/255.0, 

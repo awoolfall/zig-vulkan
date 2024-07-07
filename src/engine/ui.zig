@@ -11,15 +11,6 @@ const zm = @import("zmath");
 const _font = @import("font.zig");
 const path = @import("path.zig");
 
-inline fn srgb_to_rgb(srgb: zm.F32x4) zm.F32x4 {
-    return zm.f32x4(
-        std.math.pow(f32, srgb[0], 2.2), 
-        std.math.pow(f32, srgb[1], 2.2), 
-        std.math.pow(f32, srgb[2], 2.2), 
-        srgb[3]
-    );
-}
-
 // pixels, top left of screen is 0, 0. moving down and right increases
 pub const RectPixels = struct {
     left: i32,
@@ -503,6 +494,55 @@ pub const Imui = struct {
         };
     }
 
+    pub const Palette = struct {
+        pub const default_palette = slate();
+
+        background: zm.F32x4,
+        foreground: zm.F32x4,
+        primary: zm.F32x4,
+        secondary: zm.F32x4,
+        accent: zm.F32x4,
+        text_dark: zm.F32x4,
+        text_light: zm.F32x4,
+        border: zm.F32x4,
+
+        pub fn slate() Palette {
+            @setEvalBranchQuota(10000);
+            return Palette {
+               .text_light = zm.srgbToRgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)), 
+               .text_dark = zm.srgbToRgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
+               .primary = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(222.2/360.0, 0.474, 0.112, 1.0))),
+               .border = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(214.3/360.0, 0.318, 0.914, 1.0))),
+               .background = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(0.0/360.0, 0.0, 1.0, 1.0))),
+               .foreground = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(222.2/360.0, 0.84, 0.049, 1.0))),
+               .secondary = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(210.0/360.0, 0.4, 0.961, 1.0))),
+               .accent = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(210.0/360.0, 0.4, 0.961, 1.0))),
+            };
+            // .theme-slate {
+            //     --background:0 0% 100%;
+            //     --foreground:222.2 84% 4.9%;
+            //     --muted:210 40% 96.1%;
+            //     --muted-foreground:215.4 16.3% 46.9%;
+            //     --popover:0 0% 100%;
+            //     --popover-foreground:222.2 84% 4.9%;
+            //     --card:0 0% 100%;
+            //     --card-foreground:222.2 84% 4.9%;
+            //     --border:214.3 31.8% 91.4%;
+            //     --input:214.3 31.8% 91.4%;
+            //     --primary:222.2 47.4% 11.2%;
+            //     --primary-foreground:210 40% 98%;
+            //     --secondary:210 40% 96.1%;
+            //     --secondary-foreground:222.2 47.4% 11.2%;
+            //     --accent:210 40% 96.1%;
+            //     --accent-foreground:222.2 47.4% 11.2%;
+            //     --destructive:0 84.2% 60.2%;
+            //     --destructive-foreground:210 40% 98%;
+            //     --ring:222.2 84% 4.9%;
+            //     --radius:0.5rem
+            // }
+        }
+    };
+
     hot_item: ?Key = null,
     active_item: ?Key = null,
 
@@ -513,6 +553,7 @@ pub const Imui = struct {
     ui: UiRenderer,
 
     parent_stack: std.ArrayList(usize),
+    palette_stack: std.ArrayList(Palette),
 
     widgets: std.ArrayList(Widget),
     last_frame_widgets: std.AutoHashMap(Key, Widget),
@@ -523,6 +564,7 @@ pub const Imui = struct {
     pub fn deinit(self: *Self) void {
         self.ui.deinit();
 
+        self.palette_stack.deinit();
         self.parent_stack.deinit();
         self.widgets.deinit();
         self.last_frame_widgets.deinit();
@@ -559,6 +601,7 @@ pub const Imui = struct {
             .time = time,
             .ui = try UiRenderer.init(alloc, gfx),
             .parent_stack = std.ArrayList(usize).init(alloc),
+            .palette_stack = std.ArrayList(Palette).init(alloc),
             .widgets = std.ArrayList(Widget).init(alloc),
             .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
             .scuffed_x_checkbox_image = scuffed_x_checkbox_image_view,
@@ -566,6 +609,10 @@ pub const Imui = struct {
         };
         self.add_root_widget(gfx);
         return self;
+    }
+
+    pub fn palette(self: *const Self) Palette {
+        return self.palette_stack.getLastOrNull() orelse Palette.default_palette;
     }
 
     fn add_heirarchy_links(self: *Self, parent_id: usize, widget_id: usize) void {
@@ -1011,6 +1058,14 @@ pub const Imui = struct {
         };
     }
 
+    pub fn push_pallete(self: *Self, p: Palette) void {
+        self.palette_stack.append(p);
+    }
+
+    pub fn pop_pallete(self: *Self) void {
+        _ = self.palette_stack.pop();
+    }
+
     pub fn push_layout_id(self: *Self, widget_id: usize) void {
         std.debug.assert(widget_id < self.widgets.items.len);
         self.parent_stack.append(widget_id) catch unreachable;
@@ -1072,6 +1127,7 @@ pub const Imui = struct {
             .text_content = .{
                 .font = .Geist,
                 .text = text,
+                .colour = self.palette().text_dark,
             },
             .background_colour = zm.f32x4s(0.0),
             .border_colour = zm.f32x4s(0.0),
@@ -1091,10 +1147,10 @@ pub const Imui = struct {
             .text_content = .{
                 .font = .Geist,
                 .text = text,
-                .colour = srgb_to_rgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)),
+                .colour = self.palette().text_light,
             },
-            .background_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
-            .border_colour = srgb_to_rgb(zm.f32x4(228.0/255.0, 228.0/255.0, 231.0/255.0, 1.0)),
+            .background_colour = self.palette().primary,
+            .border_colour = self.palette().border,
             .border_width_px = 1,
             .padding_px = .{
                 .left = 16,
@@ -1127,10 +1183,10 @@ pub const Imui = struct {
             .text_content = .{
                 .font = .Geist,
                 .text = text,
-                .colour = srgb_to_rgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)),
+                .colour = self.palette().text_light,
             },
-            .background_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
-            .border_colour = srgb_to_rgb(zm.f32x4(228.0/255.0, 228.0/255.0, 231.0/255.0, 1.0)),
+            .background_colour = self.palette().primary,
+            .border_colour = self.palette().border,
             .border_width_px = 1,
             .padding_px = .{
                 .left = 10,
@@ -1165,8 +1221,8 @@ pub const Imui = struct {
                 SemanticSize{ .kind = .Pixels , .value = 16.0, .shrinkable_percent = 0.0, },
                 SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
             },
-            .background_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, blk: { if (checked) { break :blk 1.0; } else { break :blk 0.0; } })),
-            .border_colour = srgb_to_rgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
+            .background_colour = blk: {if (checked) { break :blk self.palette().primary; } else { break :blk zm.f32x4s(0.0); }},
+            .border_colour = self.palette().primary,
             .border_width_px = 1,
             .corner_radii_px = .{
                 .top_left = 4,
@@ -1200,6 +1256,7 @@ pub const Imui = struct {
             .text_content = .{
                 .font = .Geist,
                 .text = text,
+                .colour = self.palette().text_dark,
             },
             .background_colour = zm.f32x4s(0.0),
             .border_colour = zm.f32x4s(0.0),
