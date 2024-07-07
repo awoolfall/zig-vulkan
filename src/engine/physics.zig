@@ -114,13 +114,17 @@ pub const PhysicsSystem = struct {
                                         1.0 / UpdateRateHz,
                                         self.zphy.getGravity(),
                                         ext,
-                                        .{}
+                                        .{
+                                            .body_filter = character.body_filter,
+                                        }
                                     );
                                 } else {
                                     character.virtual.update(
                                         1.0 / UpdateRateHz,
                                         self.zphy.getGravity(),
-                                        .{}
+                                        .{
+                                            .body_filter = character.body_filter,
+                                        }
                                     );
                                 }
 
@@ -343,6 +347,42 @@ const ContactListener = extern struct {
         _ = base_offset;
         _ = collision_result;
         return .accept_all_contacts;
+    }
+};
+
+pub const IgnoreIdsBodyFilter = extern struct { 
+    usingnamespace zphy.BodyFilter.Methods(@This());
+
+    __v: *const zphy.BodyFilter.VTable = &vtable,
+    body_ids_to_ignore: [IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE]zphy.BodyId,
+    length: usize = 0,
+
+    const vtable = zphy.BodyFilter.VTable{
+        .shouldCollide = _shouldCollide,
+        .shouldCollideLocked = _shouldCollideLocked,
+    };
+    const MAX_BODY_IDS_TO_IGNORE = 8;
+
+    pub fn init(body_ids_to_ignore: []const zphy.BodyId) IgnoreIdsBodyFilter {
+        std.debug.assert(body_ids_to_ignore.len <= IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE);
+        var biti = [_]zphy.BodyId{0} ** IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE;
+        @memcpy(biti[0..body_ids_to_ignore.len], body_ids_to_ignore[0..]);
+        return IgnoreIdsBodyFilter {
+            .body_ids_to_ignore = biti,
+            .length = body_ids_to_ignore.len,
+        };
+    }
+
+    fn _shouldCollide(self: *const zphy.BodyFilter, body_id: *const BodyId) callconv(.C) bool {
+        const pself: *const IgnoreIdsBodyFilter = @ptrCast(self);
+        for (0..pself.length) |i| {
+            if (body_id.* == pself.body_ids_to_ignore[i]) { return false; }
+        }
+        return true;
+    }
+
+    fn _shouldCollideLocked(self: *const zphy.BodyFilter, body: *const zphy.Body) callconv(.C) bool {
+        return self.shouldCollide(&body.getId());
     }
 };
 

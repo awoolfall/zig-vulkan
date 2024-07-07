@@ -40,6 +40,7 @@ pub fn Engine(comptime App: type) type {
                 virtual: *physics.zphy.CharacterVirtual,
                 character: ?*physics.zphy.Character,
                 extended_update_settings: ?physics.zphy.CharacterVirtual.ExtendedUpdateSettings = null,
+                body_filter: ?*const physics.zphy.BodyFilter = null,
             },
 
             pub fn deinit(self: *PhysicsOptions, engine: *Self) void {

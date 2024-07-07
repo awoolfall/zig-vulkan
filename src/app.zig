@@ -59,6 +59,7 @@ pub const App = struct {
 
     model_buffer: gfx.Buffer,
     character_idx: ent.GenerationalIndex,
+    character_ignore_self_filter: *ph.IgnoreIdsBodyFilter,
 
     bone_matrix_buffer: gfx.Buffer,
 
@@ -81,6 +82,8 @@ pub const App = struct {
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
+
+        self.engine.general_allocator.allocator().destroy(self.character_ignore_self_filter);
 
         self.engine.gfx.context.Flush();
         self.ui.deinit();
@@ -211,7 +214,7 @@ pub const App = struct {
         });
 
         const chara_transform = Transform {
-            .position = zm.f32x4(-0.5, 0.0, 0.5, 1.0),
+            .position = zm.f32x4(-0.5, -3.0, 0.5, 1.0),
         };
 
         const chara_shape_settings = try zphy.CapsuleShapeSettings.create(0.7, 0.2);
@@ -226,19 +229,6 @@ pub const App = struct {
 
         const chara_shape = try chara_offset_shape_settings.createShape();
         defer chara_shape.release();
-
-        const chara_smaller_settings = try zphy.DecoratedShapeSettings.createScaled(chara_offset_shape_settings.asShapeSettings(), [3]f32{0.9, 0.9, 0.9});
-        defer chara_smaller_settings.release();
-
-        const chara_smaller_offset_settings = try zphy.DecoratedShapeSettings.createRotatedTranslated(
-            @ptrCast(chara_smaller_settings), 
-            zm.qidentity(), 
-            [3]f32{0.0, 0.1, 0.0}
-        );
-        defer chara_smaller_offset_settings.release();
-
-        const chara_smaller_shape = try chara_smaller_offset_settings.createShape();
-        defer chara_smaller_shape.release();
 
         // if (eng.physics.init_body_write_lock(chara_ent.physics..?)) |write_lock| {
         //     defer write_lock.deinit();
@@ -267,8 +257,8 @@ pub const App = struct {
 
         character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
         character_settings.base.max_slope_angle = 70.0;
-        character_settings.base.shape = chara_smaller_shape;
-        chara_smaller_shape.addRef();
+        character_settings.base.shape = chara_shape;
+        chara_shape.addRef();
         character_settings.layer = ph.object_layers.moving;
         character_settings.mass = 70.0;
         character_settings.friction = 1.0; // will handle manually
@@ -300,6 +290,13 @@ pub const App = struct {
             eng.physics.zphy
         );
         (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character.?.addToPhysicsSystem(.{});
+        const chara_body_id_character = (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character.?.getBodyId();
+
+        // @TODO this body filter needs to be stored on the entity alongside character/virtual character...
+        const character_ignore_self_filter = try eng.general_allocator.allocator().create(ph.IgnoreIdsBodyFilter);
+        errdefer eng.general_allocator.allocator().destroy(character_ignore_self_filter);
+        character_ignore_self_filter.* = ph.IgnoreIdsBodyFilter.init(&[1]zphy.BodyId{chara_body_id_character});
+        (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.body_filter = @ptrCast(character_ignore_self_filter);
 
         const opponent_idx = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "opponent entity",
@@ -435,6 +432,8 @@ pub const App = struct {
 
             .character_idx = chara_root_idx,
             .model_buffer = model_buffer,
+
+            .character_ignore_self_filter = character_ignore_self_filter,
 
             .bone_matrix_buffer = bone_matrix_buffer,
 
