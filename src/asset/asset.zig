@@ -31,7 +31,7 @@ pub const AssetManager = struct {
         const asset_pack_id = try self.loaded_asset_packs.insert(LoadedAssetPack{
             .models = std.AutoHashMap(u64, ms.Model).init(alloc),
         });
-        const loaded_asset_pack = try self.loaded_asset_packs.get(asset_pack_id);
+        const loaded_asset_pack = self.loaded_asset_packs.get(asset_pack_id) orelse return error.AssetPackNotLoaded;
 
         for (asset_pack.model_assets.items) |path| {
             const name_hash = std.hash_map.hashString(path.unique_name);
@@ -66,7 +66,7 @@ pub const AssetManager = struct {
     }
 
     pub fn unload_asset_pack(self: *Self, asset_pack_id: AssetPackId) !void {
-        const asset_pack = try self.loaded_asset_packs.get(asset_pack_id);
+        const asset_pack = self.loaded_asset_packs.get(asset_pack_id) orelse return error.AssetPackNotLoaded;
         asset_pack.deinit();
         try self.loaded_asset_packs.remove(asset_pack_id);
     }
@@ -92,8 +92,8 @@ pub const AssetManager = struct {
     }
 
     pub fn get_model(self: *const Self, model_id: ModelAssetId) !*ms.Model {
-        const pack = try self.loaded_asset_packs.get(model_id.asset_id.asset_pack_id);
         return (pack.models.getPtr(model_id.asset_id.id) orelse error.ModelDoesNotExistInPack);
+        const pack = self.loaded_asset_packs.get(model_id.asset_id.asset_pack_id) orelse return error.AssetPackNotLoaded;
     }
 
     pub fn num_loaded_asset_packs(self: *const Self) usize {

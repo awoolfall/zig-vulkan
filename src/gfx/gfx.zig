@@ -71,26 +71,26 @@ pub const GfxState = struct {
 
         self.framebuffer_rtv.deinit();
         _ = self.swapchain.Release();
-        self.context.ClearState();
+        // self.context.ClearState();
         self.context.Flush();
         _ = self.context.Release();
         _ = self.device.Release();
 
-        var debug: *zwin32.dxgi.IDebug1 = undefined;
-        if (zwin32.hrErrorOnFail(zwin32.dxgi.GetDebugInterface1(0, &zwin32.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
-            zwin32.hrErrorOnFail(debug.ReportLiveObjects(
-                zwin32.dxgi.DXGI_DEBUG_ALL,
-                zwin32.dxgi.RLO_FLAGS{ 
-                    .DETAIL = true,
-                    .IGNORE_INTERNAL = true,
-                }
-            )) catch |err| {
-                std.log.warn("Dxgi debug failed to report live objects: {}", .{err});
-            };
-            _ = debug.Release();
-        } else |err| {
-            std.log.warn("Unable to get dxgi debug interface: {}", .{err});
-        }
+        // var debug: *zwin32.dxgi.IDebug1 = undefined;
+        // if (zwin32.hrErrorOnFail(zwin32.dxgi.GetDebugInterface1(0, &zwin32.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
+        //     zwin32.hrErrorOnFail(debug.ReportLiveObjects(
+        //         zwin32.dxgi.DXGI_DEBUG_ALL,
+        //         zwin32.dxgi.RLO_FLAGS{ 
+        //             .DETAIL = true,
+        //             .IGNORE_INTERNAL = true,
+        //         }
+        //     )) catch |err| {
+        //         std.log.warn("Dxgi debug failed to report live objects: {}", .{err});
+        //     };
+        //     _ = debug.Release();
+        // } else |err| {
+        //     std.log.warn("Unable to get dxgi debug interface: {}", .{err});
+        // }
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *win32window.Win32Window) !Self {
@@ -330,7 +330,7 @@ pub const GfxState = struct {
         self.hdr_texture_view.deinit();
         self.framebuffer_rtv.deinit();
 
-        self.context.ClearState();
+        // self.context.ClearState();
         self.context.Flush();
         zwin32.hrPanicOnFail(self.swapchain.ResizeBuffers(
                 0, 0, 0, zwin32.dxgi.FORMAT.UNKNOWN, // automatic

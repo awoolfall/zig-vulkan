@@ -69,13 +69,11 @@ pub const App = struct {
 
     anim_controller: ac.AnimController,
 
-    ui: _ui.UiRenderer,
     imui: _ui.Imui,
 
     zero_particle_system: particle.ParticleSystem,
     player_attack_particle_system: particle.ParticleSystem,
 
-    button_2_pos: [2]i32 = .{100,100},
     exposure: f32 = 2.0,
 
     checkbox_bool: bool = false,
@@ -86,7 +84,6 @@ pub const App = struct {
         self.engine.general_allocator.allocator().destroy(self.character_ignore_self_filter);
 
         self.engine.gfx.context.Flush();
-        self.ui.deinit();
         self.imui.deinit();
         self.zero_particle_system.deinit();
         self.player_attack_particle_system.deinit();
@@ -149,7 +146,7 @@ pub const App = struct {
 
         // Create the camera entity
         const camera_transform_idx = try eng.entities.insert(.{});
-        (try eng.entities.get(camera_transform_idx)).transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
+        eng.entities.get(camera_transform_idx).?.transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
         // Create bone matrix constant buffer
         const bone_matrix_buffer = try gfx.Buffer.init(
@@ -282,21 +279,21 @@ pub const App = struct {
                 .health_points = 100,
             },
         });
-        (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character = try zphy.Character.create(
+        eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.character = try zphy.Character.create(
             character_settings,
             [3]f32{0.0, 0.0, 0.0},
             zm.qidentity(),
             ph.PhysicsSystem.construct_entity_user_data(chara_root_idx, 0),
             eng.physics.zphy
         );
-        (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character.?.addToPhysicsSystem(.{});
-        const chara_body_id_character = (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.character.?.getBodyId();
+        eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.character.?.addToPhysicsSystem(.{});
+        const chara_body_id_character = eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.character.?.getBodyId();
 
         // @TODO this body filter needs to be stored on the entity alongside character/virtual character...
         const character_ignore_self_filter = try eng.general_allocator.allocator().create(ph.IgnoreIdsBodyFilter);
         errdefer eng.general_allocator.allocator().destroy(character_ignore_self_filter);
         character_ignore_self_filter.* = ph.IgnoreIdsBodyFilter.init(&[1]zphy.BodyId{chara_body_id_character});
-        (eng.entities.get(chara_root_idx) catch unreachable).physics.?.CharacterVirtual.body_filter = @ptrCast(character_ignore_self_filter);
+        eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.body_filter = @ptrCast(character_ignore_self_filter);
 
         const opponent_idx = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "opponent entity",
@@ -307,14 +304,14 @@ pub const App = struct {
                 .health_points = 100,
             },
         });
-        (eng.entities.get(opponent_idx) catch unreachable).physics = .{ .Character = try zphy.Character.create(
+        eng.entities.get(opponent_idx).?.physics = .{ .Character = try zphy.Character.create(
             character_settings,
             [3]f32{0.0, 0.0, 0.0},
             zm.qidentity(),
             ph.PhysicsSystem.construct_entity_user_data(opponent_idx, 0),
             eng.physics.zphy
         ) };
-        (eng.entities.get(opponent_idx) catch unreachable).physics.?.Character.addToPhysicsSystem(.{});
+        eng.entities.get(opponent_idx).?.physics.?.Character.addToPhysicsSystem(.{});
 
         const model_buffer = try gfx.Buffer.init(
             @sizeOf(zm.Mat),
@@ -325,9 +322,6 @@ pub const App = struct {
         errdefer model_buffer.deinit();
 
         eng.physics.zphy.optimizeBroadPhase();
-
-        var ui = try _ui.UiRenderer.init(eng.general_allocator.allocator(), &eng.gfx);
-        errdefer ui.deinit();
 
         var imui = try _ui.Imui.init(eng.general_allocator.allocator(), &eng.input, &eng.time, &eng.gfx);
         errdefer imui.deinit();
@@ -442,7 +436,6 @@ pub const App = struct {
             .turntable_model_id = turntable_model_id,
             .anim_controller = anim_controller,
 
-            .ui = ui,
             .imui = imui,
             .zero_particle_system = zero_particle_system,
             .player_attack_particle_system = player_attack_particle_system,
@@ -702,10 +695,10 @@ pub const App = struct {
                                 std.log.info("'{s}' fainted!", .{entity.name orelse "unnamed"});
                             }
                         }
-                    } else |e| { std.log.warn("{}", .{e}); }
+                    } else { std.log.warn("Failed to get entity!", .{}); }
                 }
             }
-        } else |_| {}
+        }
 
         // // Cast ray from camera
         // if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
@@ -716,7 +709,7 @@ pub const App = struct {
         //     if (raycast_result.has_hit) {
         //         std.log.info("  raycast hit! id:{}", .{raycast_result.hit.body_id});
         //     }
-        // } else |_| {}
+        // }
 
         // Update physics. If frame time is greater than 1 second then skip physics for this frame.
         // @TODO: It is most likely we loaded something in and caused a spike... Fix this permanently 
@@ -766,8 +759,8 @@ pub const App = struct {
 
                 @memcpy(mapped_buffer.data.*[0..], bone_transforms[0..]);
             }
-        } else |_| {}
-        } else |_| {}
+        }
+        }
 
         // Draw frame
         var rtv = self.engine.gfx.begin_frame() catch |err| {
@@ -921,7 +914,7 @@ pub const App = struct {
         //         chara.model.?, 
         //         chara.transform.generate_model_matrix(),
         //     );
-        // } else |_| {}
+        // }
 
         // Draw Physics Debug Wireframes
         if (self.engine.input.get_key(kc.KeyCode.C)) {
@@ -935,7 +928,7 @@ pub const App = struct {
                     zm.matToArr(self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())),
                     zm.matToArr(self.camera.view_matrix),
                 );
-            } else |_| {}
+            }
         }
 
         var vel_buf: [128]u8 = [_]u8{0} ** 128;
@@ -946,7 +939,7 @@ pub const App = struct {
             vel_text = std.fmt.bufPrint(vel_buf[0..], "character speed: {d:.2}\nvelocity: {d:.2}\nis supported: {}", .{
                 zm.length3(character_velocity)[0],
                 character_velocity,
-                character_is_supported((self.engine.entities.get(self.character_idx) catch unreachable).physics.?.CharacterVirtual.virtual),
+                character_is_supported(character_entity.physics.?.CharacterVirtual.virtual),
             }) catch unreachable;
 
             {
@@ -958,7 +951,7 @@ pub const App = struct {
                 }
                 _ = self.imui.pop_layout();
             }
-        } else |_| {}
+        }
 
         var fps_buf: [128]u8 = [_]u8{0} ** 128;
         const fps_text = std.fmt.bufPrint(fps_buf[0..], "fps: {d:0.1}\nframe time: {d:2.3}ms\nwait time: {d:2.3}ms\nwait %: {d:0.0}", .{
@@ -969,7 +962,7 @@ pub const App = struct {
         }) catch unreachable;
 
         {
-            _ = self.imui.push_floating_layout(.Y, 5, 5 - @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)));
+            _ = self.imui.push_floating_layout(.Y, 5, 5 - @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)));
             const l = self.imui.label(fps_text);
             if (self.imui.get_widget(l.id)) |tw| {
                 tw.text_content.?.font = .GeistMono;
@@ -985,7 +978,7 @@ pub const App = struct {
         }) catch unreachable;
         {
             _ = self.imui.push_floating_layout(.Y, 10, self.engine.gfx.swapchain_size.height - 
-                @as(i32, @intFromFloat(self.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)));
+                @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)));
             const l = self.imui.label(rev_text);
             if (self.imui.get_widget(l.id)) |tw| {
                 tw.text_content.?.font = .GeistMono;

@@ -72,16 +72,16 @@ pub fn GenerationalList(comptime T: type) type {
             try self.free_list.append(idx.index);
         }
 
-        pub fn get(self: *const Self, idx: GenerationalIndex) !*T {
+        pub fn get(self: *const Self, idx: GenerationalIndex) ?*T {
             if (idx.index >= self.data.items.len) {
-                return error.OutOfBoundsIndex;
+                return null;
             }
             const item: *ItemType = &self.data.items[idx.index];
             if (item.item_data == null) {
-                return error.ItemIsNull;
+                return null;
             }
             if (item.generation != idx.generation) {
-                return error.InvalidGeneration;
+                return null;
             }
             return &(item.item_data.?);
         }
