@@ -475,7 +475,7 @@ pub const Imui = struct {
         } = .{},
         children_gap: f32 = 0.0,
 
-        fn content_rect(self: *const Widget) RectPixels {
+        pub fn content_rect(self: *const Widget) RectPixels {
             return RectPixels {
                 .left = self.computed.rect.left + self.padding_px.left,
                 .top = self.computed.rect.top + self.padding_px.top,
@@ -542,6 +542,8 @@ pub const Imui = struct {
             // }
         }
     };
+
+    const LabelKey: Key = std.hash.XxHash64.hash(0, "Imuilabel");
 
     hot_item: ?Key = null,
     active_item: ?Key = null,
@@ -687,11 +689,16 @@ pub const Imui = struct {
         return &self.widgets.items[widget_id];
     }
 
+    pub fn get_widget_from_last_frame(self: *Self, widget_id: usize) ?*const Widget {
+        if (widget_id >= self.widgets.items.len) { return null; }
+        return self.last_frame_widgets.getPtr(self.widgets.items[widget_id].key);
+    }
+
     fn add_root_widget(self: *Self, gfx: *const _gfx.GfxState) void {
         std.debug.assert(self.widgets.items.len == 0);
         self.widgets.append(Widget {
             .semantic_size = [_]SemanticSize{.{.kind = .None, .value = 0.0, }} ** 2,
-            .key = 0,
+            .key = gen_key(.{@src()}),
             .computed = .{
                 .relative_position = .{0.0, 0.0},
                 .size = .{
@@ -980,6 +987,9 @@ pub const Imui = struct {
     pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {
         self.last_frame_widgets.clearRetainingCapacity();
         for (self.widgets.items) |w| {
+            if (w.key != Self.LabelKey) {
+                std.debug.assert(!self.last_frame_widgets.contains(w.key));
+            }
             self.last_frame_widgets.put(w.key, w) catch unreachable;
         }
         self.widgets.clearRetainingCapacity();
@@ -1077,9 +1087,9 @@ pub const Imui = struct {
         return widget_id;
     }
 
-    pub fn push_layout(self: *Self, layout_axis: Axis) usize {
+    pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) usize {
         return self.push_layout_widget(Widget {
-            .key = 0,
+            .key = gen_key(key),
             .layout_axis = layout_axis,
             .semantic_size = [2]SemanticSize {
                 SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
@@ -1091,9 +1101,9 @@ pub const Imui = struct {
         });
     }
 
-    pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: i32, floating_y: i32) usize {
+    pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: i32, floating_y: i32, key: anytype) usize {
         return self.push_layout_widget(Widget {
-            .key = 0,
+            .key = gen_key(key),
             .layout_axis = layout_axis,
             .semantic_size = [2]SemanticSize {
                 SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
@@ -1119,7 +1129,7 @@ pub const Imui = struct {
 
     pub fn label(self: *Self, text: []const u8) WidgetSignal(usize) {
         const widget = Widget {
-            .key = 0,
+            .key = Self.LabelKey,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -1214,7 +1224,7 @@ pub const Imui = struct {
     };
 
     pub fn checkbox(self: *Self, checked: bool, text: []const u8, key: anytype) WidgetSignal(CheckboxId) {
-        _ = self.push_layout(.X);
+        _ = self.push_layout(.X, key ++ .{@src().line});
         const box_widget = Widget {
             .key = gen_key(key ++ .{@src().line}),
             .semantic_size = [2]SemanticSize{
@@ -1276,6 +1286,72 @@ pub const Imui = struct {
             box_widget_signals, 
             text_widget_signals, 
             CheckboxId{ .box = box_widget_id, .text = text_widget_id, }
+        );
+    }
+
+    pub const SliderId = struct {
+        filled_bar:usize, 
+        background_bar:usize
+    };
+
+    pub fn slider(self: *Self, value: f32, min: f32, max: f32, key: anytype) WidgetSignal(SliderId) {
+        const complete_percent = std.math.clamp((value - min) / (max - min), 0.0, 1.0);
+        const box = self.push_layout(.X, key ++ .{@src().line});
+        self.get_widget(box).?.semantic_size[0].kind = .ParentPercentage;
+        self.get_widget(box).?.semantic_size[0].value = 1.0;
+        self.get_widget(box).?.flags.render = true;
+        self.get_widget(box).?.background_colour = self.palette().secondary;
+        self.get_widget(box).?.border_colour = self.palette().border;
+        self.get_widget(box).?.border_width_px = 1;
+        self.get_widget(box).?.corner_radii_px = .{
+            .top_left = 4,
+            .top_right = 4,
+            .bottom_left = 4,
+            .bottom_right = 4,
+        };
+
+        const filled_bar_widget = Widget {
+            .key = gen_key(key ++ .{@src().line}),
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .ParentPercentage, .value = complete_percent, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            },
+            .background_colour = self.palette().primary,
+            .border_colour = self.palette().border,
+            .border_width_px = 1,
+            .corner_radii_px = .{
+                .top_left = 4,
+                .top_right = 4,
+                .bottom_left = 4,
+                .bottom_right = 4,
+            },
+            .flags = .{
+                .clickable = true,
+            },
+        };
+        const filled_bar_widget_id = self.add_widget(filled_bar_widget);
+        const filled_bar_widget_signals = self.generate_widget_signals(filled_bar_widget_id);
+
+        const empty_bar_widget = Widget {
+            .key = gen_key(key ++ .{@src().line}),
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .ParentPercentage, .value = (1.0 - complete_percent), .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            },
+            .flags = .{
+                .render = false,
+                .clickable = true,
+            },
+        };
+        const empty_bar_widget_id = self.add_widget(empty_bar_widget);
+        const empty_bar_widget_signals = self.generate_widget_signals(empty_bar_widget_id);
+
+        self.pop_layout();
+
+        return combine_signals(
+            filled_bar_widget_signals, 
+            empty_bar_widget_signals, 
+            SliderId{ .filled_bar = filled_bar_widget_id, .background_bar = box, }
         );
     }
 };

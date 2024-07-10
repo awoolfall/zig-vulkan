@@ -77,6 +77,7 @@ pub const App = struct {
     exposure: f32 = 2.0,
 
     checkbox_bool: bool = false,
+    slider_float: f32 = 0.0,
 
     pub fn deinit(self: *Self) void {
         std.log.info("App deinit!", .{});
@@ -461,7 +462,7 @@ pub const App = struct {
     }
 
     fn update(self: *Self) void {
-        const top_layout = self.imui.push_floating_layout(.X, 500, 100);
+        const top_layout = self.imui.push_floating_layout(.X, 500, 100, .{@src()});
         if (self.imui.get_widget(top_layout)) |top_widget| {
             top_widget.flags.render = true;
             top_widget.background_colour = self.imui.palette().background;
@@ -482,10 +483,10 @@ pub const App = struct {
             top_widget.children_gap = 20.0;
         }
 
-        const labels_layout = self.imui.push_layout(.Y);
+        const labels_layout = self.imui.push_layout(.Y, .{@src()});
         self.imui.get_widget(labels_layout).?.children_gap = 5.0;
         self.imui.pop_layout();
-        const buttons_layout = self.imui.push_layout(.Y);
+        const buttons_layout = self.imui.push_layout(.Y, .{@src()});
         self.imui.get_widget(buttons_layout).?.children_gap = 5.0;
         self.imui.pop_layout();
         self.imui.push_layout_id(labels_layout);
@@ -502,7 +503,7 @@ pub const App = struct {
         }
         self.imui.pop_layout();
         self.imui.push_layout_id(labels_layout);
-        _ = self.imui.label("Option 2 longlonglong:");
+        _ = self.imui.label("Option 2 longlonglonglonglonglonglonglong:");
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
         const b2 = self.imui.badge("Option 2 button", .{@src()});
@@ -518,6 +519,14 @@ pub const App = struct {
         _ = self.imui.label("Option 3:");
         if (self.imui.checkbox(self.checkbox_bool, "this is a checkbox", .{@src()}).clicked) {
             self.checkbox_bool = !self.checkbox_bool;
+        }
+        const slider = self.imui.slider(self.slider_float, 0.0, 1.0, .{@src()});
+        if (slider.dragged) {
+            if (self.imui.get_widget_from_last_frame(slider.id.background_bar)) |b| {
+                const pixel_width = b.content_rect().width;
+                self.slider_float += self.engine.input.mouse_delta[0] / @as(f32, @floatFromInt(pixel_width));
+                self.slider_float = std.math.clamp(self.slider_float, 0.0, 1.0);
+            }
         }
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
@@ -536,6 +545,7 @@ pub const App = struct {
             .Y, 
             self.engine.gfx.swapchain_size.width - 250,
             self.engine.gfx.swapchain_size.height - 200,
+            .{@src()}
         );
         if (self.imui.get_widget(exposure_float_layout_id)) |ex_w| {
             ex_w.flags.render = true;
@@ -565,7 +575,7 @@ pub const App = struct {
             };
         }
         _ = self.imui.label("Camera view matrix:");
-        _ = self.imui.push_layout(.X);
+        _ = self.imui.push_layout(.X, .{@src()});
         var camera_pos_text: [256]u8 = [_]u8{0} ** 256;
         _ = std.fmt.bufPrint(camera_pos_text[0..], "{d:.1}\n{d:.1}\n{d:.1}\n{d:.1}", .{
             self.camera.view_matrix[0],
@@ -943,7 +953,7 @@ pub const App = struct {
             }) catch unreachable;
 
             {
-                _ = self.imui.push_floating_layout(.Y, 100, 500);
+                _ = self.imui.push_floating_layout(.Y, 100, 500, .{@src()});
                 const l = self.imui.label(vel_text);
                 if (self.imui.get_widget(l.id)) |tw| {
                     tw.text_content.?.font = .GeistMono;
@@ -962,7 +972,12 @@ pub const App = struct {
         }) catch unreachable;
 
         {
-            _ = self.imui.push_floating_layout(.Y, 5, 5 - @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)));
+            _ = self.imui.push_floating_layout(
+                .Y, 
+                5, 
+                5 - @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)), 
+                .{@src()}
+            );
             const l = self.imui.label(fps_text);
             if (self.imui.get_widget(l.id)) |tw| {
                 tw.text_content.?.font = .GeistMono;
@@ -978,7 +993,7 @@ pub const App = struct {
         }) catch unreachable;
         {
             _ = self.imui.push_floating_layout(.Y, 10, self.engine.gfx.swapchain_size.height - 
-                @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)));
+                @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)), .{@src()});
             const l = self.imui.label(rev_text);
             if (self.imui.get_widget(l.id)) |tw| {
                 tw.text_content.?.font = .GeistMono;
