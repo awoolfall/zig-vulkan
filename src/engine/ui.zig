@@ -441,7 +441,14 @@ pub const Imui = struct {
         computed: struct {
             relative_position: [2]f32 = .{0.0, 0.0},
             size: [2]f32 = .{0.0, 0.0},
-            rect: RectPixels = .{.left = 0, .top = 0, .width = 0, .height = 0,},
+            pub fn rect(self: *const @This()) RectPixels {
+                return RectPixels {
+                    .left = @intFromFloat(self.relative_position[0]),
+                    .top = @intFromFloat(self.relative_position[1]),
+                    .width = @intFromFloat(self.size[0]),
+                    .height = @intFromFloat(self.size[1])
+                };
+            }
         } = .{},
 
         active_t: f32 = 0.0,
@@ -476,11 +483,12 @@ pub const Imui = struct {
         children_gap: f32 = 0.0,
 
         pub fn content_rect(self: *const Widget) RectPixels {
+            const rect = self.computed.rect();
             return RectPixels {
-                .left = self.computed.rect.left + self.padding_px.left,
-                .top = self.computed.rect.top + self.padding_px.top,
-                .width = self.computed.rect.width - self.padding_px.left - self.padding_px.right,
-                .height = self.computed.rect.height - self.padding_px.top - self.padding_px.bottom,
+                .left = rect.left + self.padding_px.left,
+                .top = rect.top + self.padding_px.top,
+                .width = rect.width - self.padding_px.left - self.padding_px.right,
+                .height = rect.height - self.padding_px.top - self.padding_px.bottom,
             };
         }
     };
@@ -705,12 +713,6 @@ pub const Imui = struct {
                     @floatFromInt(gfx.swapchain_size.width), 
                     @floatFromInt(gfx.swapchain_size.height)
                 },
-                .rect = RectPixels {
-                    .left = 0,
-                    .top = 0,
-                    .width = gfx.swapchain_size.width,
-                    .height = gfx.swapchain_size.height,
-                },
             },
             .flags = .{
                 .render = false,
@@ -726,7 +728,11 @@ pub const Imui = struct {
         for (widget.semantic_size, 0..) |s, axis| {
             switch (s.kind) {
                 .ParentPercentage => {
-                    widget.computed.size[axis] = parent.computed.size[axis] * s.value;
+                    switch (axis) {
+                        @intFromEnum(Axis.X) => widget.computed.size[axis] = @as(f32, @floatFromInt(parent.content_rect().width)) * s.value,
+                        @intFromEnum(Axis.Y) => widget.computed.size[axis] = @as(f32, @floatFromInt(parent.content_rect().height)) * s.value,
+                        else => {unreachable;},
+                    }
                 },
                 else => {},
             }
@@ -892,14 +898,6 @@ pub const Imui = struct {
                 // }
             }
 
-            // store found rect in widget
-            widget.computed.rect = .{
-                .left = @intFromFloat(widget.computed.relative_position[0]),
-                .top = @intFromFloat(widget.computed.relative_position[1]),
-                .width = @intFromFloat(widget.computed.size[0]),
-                .height = @intFromFloat(widget.computed.size[1])
-            };
-
             // go to next widget
             widget_id += 1;
         }
@@ -938,7 +936,7 @@ pub const Imui = struct {
                 }; 
 
                 self.ui.render_quad(
-                    widget.computed.rect,
+                    widget.computed.rect(),
                     .{
                         .colour = background_colour + zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)),
                         .border_colour = border_colour,
@@ -1004,7 +1002,7 @@ pub const Imui = struct {
         const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
 
         if (last_frame_widget) |lfw| {
-            const lfw_contains_cursor = lfw.computed.rect.contains(self.input.cursor_position);
+            const lfw_contains_cursor = lfw.computed.rect().contains(self.input.cursor_position);
             if (lfw_contains_cursor) {
                 widget_signal.hover = true;
                 if (self.hot_item == widget.key) {

@@ -540,6 +540,29 @@ pub const App = struct {
         self.imui.pop_layout();
         self.imui.pop_layout();
 
+        const anim_debug_layout = self.imui.push_floating_layout(.Y, 10.0, 100.0, .{@src()});
+        if (self.imui.get_widget(anim_debug_layout)) |w| {
+            w.flags.render = true;
+            w.background_colour = self.imui.palette().background;
+            w.border_colour = self.imui.palette().border;
+            w.border_width_px = 1;
+            w.corner_radii_px = .{
+                .top_left = 10,
+                .top_right = 10,
+                .bottom_left = 10,
+                .bottom_right = 10,
+            };
+            w.children_gap = 5;
+            w.padding_px = .{
+                .left = 10,
+                .right = 10,
+                .top = 10,
+                .bottom = 10,
+            };
+        }
+        _ = self.imui.label("Anim debug:");
+        self.imui.pop_layout();
+
         // exposure panel
         const exposure_float_layout_id = self.imui.push_floating_layout(
             .Y, 
@@ -745,8 +768,19 @@ pub const App = struct {
             }
 
             const character_model = self.asset_manager.get_model(character_entity.model.?) catch unreachable;
-            character_model.animations[0].set_animation_to_time(self.engine.time.time_since_start_of_app());
-            character_model.animations[1].set_animation_to_time(self.engine.time.time_since_start_of_app());
+            const idle_animation = &character_model.animations[0];
+            const run_animation = &character_model.animations[1];
+            idle_animation.set_animation_to_time(self.engine.time.time_since_start_of_app());
+            run_animation.set_animation_to_time(self.engine.time.time_since_start_of_app());
+
+            {
+                self.imui.push_layout_id(anim_debug_layout);
+                defer self.imui.pop_layout();
+                _ = self.imui.label("Idle:");
+                _ = self.imui.slider(@floatCast(idle_animation.current_tick / idle_animation.duration), 0.0, 1.0, .{@src()});
+                _ = self.imui.label("Running:");
+                _ = self.imui.slider(@floatCast(run_animation.current_tick / run_animation.duration), 0.0, 1.0, .{@src()});
+            }
 
             const anims = [_]ms.Model.AnimationEntry{
                 .{

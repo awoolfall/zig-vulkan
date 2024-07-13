@@ -92,6 +92,7 @@ pub const BoneAnimation = struct {
     duration: f64,
     ticks_per_second: f64,
     channels: []BoneAnimationChannel,
+    current_tick: f64,
 
     pub fn find_node_anim(self: *const BoneAnimation, name: []const u8) ?*const BoneAnimationChannel {
         for (self.channels) |*channel| {
@@ -102,20 +103,23 @@ pub const BoneAnimation = struct {
         return null;
     }
 
+    pub fn time_to_ticks(self: *const BoneAnimation, time_in_seconds: f64) f64 {
+        var ticks_per_second = self.ticks_per_second;
+        if (ticks_per_second == 0.0) { ticks_per_second = 25.0; }
+
+        return time_in_seconds * ticks_per_second;
+    }
+
     pub fn set_animation_to_time(
         self: *BoneAnimation,
         time_in_seconds: f64
     ) void {
-        // calculate animation time
-        var ticks_per_second = self.ticks_per_second;
-        if (ticks_per_second == 0.0) { ticks_per_second = 25.0; }
-
-        const time_in_ticks = time_in_seconds * ticks_per_second;
-        const animation_time = @mod(time_in_ticks, self.duration);
+        const time_in_ticks = time_to_ticks(self, time_in_seconds);
+        self.current_tick = @mod(time_in_ticks, self.duration);
 
         // set all channels to the specified animation time
         for (self.channels) |*c| {
-            c.select(animation_time);
+            c.select(self.current_tick);
         }
     }
 };

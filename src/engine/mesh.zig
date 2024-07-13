@@ -682,6 +682,7 @@ pub const Model = struct {
                 .duration = anim.duration(),
                 .ticks_per_second = anim.ticks_per_second(),
                 .channels = try model_arena.alloc(an.BoneAnimationChannel, anim.channels().len),
+                .current_tick = 0.0,
             };
             for (anim.channels(), 0..) |ch, ch_id| {
                 const node_id = nodes_name_map.get(ch.node_name()).?;
