@@ -175,13 +175,46 @@ pub const App = struct {
         try asset_pack.add_model("terrain", as.AssetPack.ModelAsset{ .Plane = .{ .slices = 1, .stacks = 1, } });
         try asset_pack.add_model("cone", as.AssetPack.ModelAsset{ .Cone = .{ .slices = 8, } });
 
+        try asset_pack.define_animation("character idle", "character", 0);
+        try asset_pack.define_animation("character run", "character", 1);
+
         const asset_pack_id = try asset_manager.load_asset_pack(eng.general_allocator.allocator(), &asset_pack, &eng.gfx);
         
         const character_model_id = asset_manager.find_model_id("character").?;
         const terrain_model_id = asset_manager.find_model_id("terrain").?;
         const turntable_model_id = asset_manager.find_model_id("model").?;
 
-        var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator());
+        const character_animation_idle_id = asset_manager.find_animation_id("character idle").?;
+        const character_animation_run_id = asset_manager.find_animation_id("character run").?;
+
+        var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator(), ([_]ac.Node {
+            .{ .animation = character_animation_idle_id, .next = [4]?ac.NodeTransition {
+                ac.NodeTransition { 
+                    .node = 1, 
+                    .condition = ac.TransitionCondition { .variable = .{
+                        .variable_id = ac.AnimController.hash_variable("character speed"),
+                        .comparison = .GreaterThan,
+                        .value = 0.05,
+                    }, },
+                },
+                null,
+                null,
+                null,
+            }, },
+            .{ .animation = character_animation_run_id, .next = [4]?ac.NodeTransition {
+                ac.NodeTransition { 
+                    .node = 0, 
+                    .condition = ac.TransitionCondition { .variable = .{
+                        .variable_id = ac.AnimController.hash_variable("character speed"),
+                        .comparison = .LessThan,
+                        .value = 0.05,
+                    }, },
+                },
+                null,
+                null,
+                null,
+            }, },
+        })[0..]);
         errdefer anim_controller.deinit();
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
@@ -776,25 +809,23 @@ pub const App = struct {
             {
                 self.imui.push_layout_id(anim_debug_layout);
                 defer self.imui.pop_layout();
+                var anim_name: [128]u8 = [_]u8{0} ** 128;
+                _ = std.fmt.bufPrint(anim_name[0..], "Active: {d}", .{self.anim_controller.active_node}) catch unreachable;
+                _ = self.imui.label(anim_name[0..]);
                 _ = self.imui.label("Idle:");
                 _ = self.imui.slider(@floatCast(idle_animation.current_tick / idle_animation.duration), 0.0, 1.0, .{@src()});
                 _ = self.imui.label("Running:");
                 _ = self.imui.slider(@floatCast(run_animation.current_tick / run_animation.duration), 0.0, 1.0, .{@src()});
             }
 
-            const anims = [_]ms.Model.AnimationEntry{
-                .{
-                    .animation = &character_model.animations[0],
-                    .strength = 1.0,
-                },
-                .{
-                    .animation = &character_model.animations[1],
-                    .strength = 1.0,
-                },
-            };
+            const character_velocity = zm.loadArr3(character_entity.physics.?.CharacterVirtual.virtual.getLinearVelocity());
+            self.anim_controller.set_variable(ac.AnimController.hash_variable("character speed"), zm.length3(character_velocity)[0]);
+
+            self.anim_controller.update(&self.engine.time);
+
             const bone_transforms = self.anim_controller.calculate_bone_transforms(
-                character_model,
-                anims[0..]
+                &self.asset_manager,
+                character_model
             );
 
             { // Update bone matrix buffer
