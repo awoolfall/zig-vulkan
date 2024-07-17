@@ -997,10 +997,9 @@ pub const Model = struct {
         var anims_transform = node.transform;
         for (animations) |entry| {
             if (entry.animation.find_node_anim(node_name)) |anim_channel| {
-                // @TODO apply animation strengths
-                anims_transform.position = anim_channel.selected_transform.position;
-                anims_transform.rotation = anim_channel.selected_transform.rotation;
-                anims_transform.scale = anim_channel.selected_transform.scale;
+                anims_transform.position = zm.lerp(anims_transform.position, anim_channel.selected_transform.position, entry.strength);
+                anims_transform.rotation = zm.slerp(anims_transform.rotation, anim_channel.selected_transform.rotation, entry.strength);
+                anims_transform.scale = zm.lerp(anims_transform.scale, anim_channel.selected_transform.scale, entry.strength);
             }
         }
         const node_transform = anims_transform.generate_model_matrix();

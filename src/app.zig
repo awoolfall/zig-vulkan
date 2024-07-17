@@ -187,34 +187,39 @@ pub const App = struct {
         const character_animation_idle_id = asset_manager.find_animation_id("character idle").?;
         const character_animation_run_id = asset_manager.find_animation_id("character run").?;
 
-        var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator(), ([_]ac.Node {
-            .{ .animation = character_animation_idle_id, .next = [4]?ac.NodeTransition {
-                ac.NodeTransition { 
-                    .node = 1, 
-                    .condition = ac.TransitionCondition { .variable = .{
-                        .variable_id = ac.AnimController.hash_variable("character speed"),
-                        .comparison = .GreaterThan,
-                        .value = 0.05,
-                    }, },
+        var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator(), &[_]ac.Node{
+            .{
+                .animation = character_animation_idle_id,
+                .next = &[_]ac.NodeTransition{
+                    ac.NodeTransition{
+                        .node = 1,
+                        .condition = ac.TransitionCondition{
+                            .variable = .{
+                                .variable_id = ac.AnimController.hash_variable("character speed"),
+                                .comparison = .GreaterThan,
+                                .value = 0.05,
+                            },
+                        },
+                    },
                 },
-                null,
-                null,
-                null,
-            }, },
-            .{ .animation = character_animation_run_id, .next = [4]?ac.NodeTransition {
-                ac.NodeTransition { 
-                    .node = 0, 
-                    .condition = ac.TransitionCondition { .variable = .{
-                        .variable_id = ac.AnimController.hash_variable("character speed"),
-                        .comparison = .LessThan,
-                        .value = 0.05,
-                    }, },
+            },
+            .{
+                .animation = character_animation_run_id,
+                .next = &[_]ac.NodeTransition{
+                    ac.NodeTransition{
+                        .node = 0,
+                        .condition = ac.TransitionCondition{
+                            .variable = .{
+                                .variable_id = ac.AnimController.hash_variable("character speed"),
+                                .comparison = .LessThan,
+                                .value = 0.05,
+                            },
+                        },
+                    },
                 },
-                null,
-                null,
-                null,
-            }, },
-        })[0..]);
+                .strength_variable = ac.AnimController.hash_variable("character speed norm"),
+            },
+        });
         errdefer anim_controller.deinit();
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
@@ -803,8 +808,6 @@ pub const App = struct {
             const character_model = self.asset_manager.get_model(character_entity.model.?) catch unreachable;
             const idle_animation = &character_model.animations[0];
             const run_animation = &character_model.animations[1];
-            idle_animation.set_animation_to_time(self.engine.time.time_since_start_of_app());
-            run_animation.set_animation_to_time(self.engine.time.time_since_start_of_app());
 
             {
                 self.imui.push_layout_id(anim_debug_layout);
@@ -820,6 +823,7 @@ pub const App = struct {
 
             const character_velocity = zm.loadArr3(character_entity.physics.?.CharacterVirtual.virtual.getLinearVelocity());
             self.anim_controller.set_variable(ac.AnimController.hash_variable("character speed"), zm.length3(character_velocity)[0]);
+            self.anim_controller.set_variable(ac.AnimController.hash_variable("character speed norm"), zm.length3(character_velocity)[0] / 8.0);
 
             self.anim_controller.update(&self.engine.time);
 
