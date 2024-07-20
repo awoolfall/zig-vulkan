@@ -259,6 +259,10 @@ pub const LoadedAssetPack = struct {
 pub const AssetId = struct {
     asset_pack_id: gen.GenerationalIndex,
     id: u64,
+
+    pub fn eql(self: AssetId, other: AssetId) bool {
+        return self.asset_pack_id.eql(other.asset_pack_id) and self.id == other.id;
+    }
 };
 
 pub const ModelAssetId = struct {

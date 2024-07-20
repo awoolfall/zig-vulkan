@@ -273,7 +273,7 @@ pub const Buffers = struct {
     }
 };
 
-pub const MAX_BONES: usize = 128;
+pub const MAX_BONES: usize = 256;
 pub const Model = struct {
     const Self = @This();
     buffers: Buffers,
@@ -571,20 +571,18 @@ pub const Model = struct {
                 try mesh_weights.appendNTimes([4]f32{1.0, 0.0, 0.0, 0.0}, prim.num_vertices);
 
                 for (mesh.bones()) |bn| {
-                    var bone_id: i32 = undefined;
                     const bone_name = bn.name();
 
+                    // Find bone id
+                    var bone_id: i32 = undefined;
                     if (bone_mapping.get(bone_name)) |id| {
                         bone_id = id;
                     } else {
                         bone_id = num_bones;
                         num_bones += 1;
 
-                        var bone_name_alloc = try model_arena.alloc(u8, bone_name.len);
-                        @memcpy(bone_name_alloc[0..], bone_name[0..]);
-
                         const bi = BoneInfo {
-                            .bone_name = bone_name_alloc,
+                            .bone_name = try model_arena.dupe(u8, bone_name),
                         };
 
                         try bone_mapping.put(bi.bone_name, bone_id);
@@ -597,16 +595,18 @@ pub const Model = struct {
                         const vertId = prim.pos_offset + wg.mVertexId;
                         const weight = wg.mWeight;
 
-                        var filled_bone_data = false;
+                        var was_able_to_find_a_free_vertex_place = false;
                         for (mesh_bone_ids.items[vertId], 0..) |mesh_bone_id, i| {
+                            std.debug.assert(mesh_bone_id != bone_id);
+
                             if (mesh_bone_id == MAX_BONES - 1) { 
                                 mesh_bone_ids.items[vertId][i] = bone_id;
                                 mesh_weights.items[vertId][i] = weight;
-                                filled_bone_data = true;
+                                was_able_to_find_a_free_vertex_place = true;
                                 break;
                             }
                         }
-                        std.debug.assert(filled_bone_data);
+                        std.debug.assert(was_able_to_find_a_free_vertex_place);
                     }
                 }
             }

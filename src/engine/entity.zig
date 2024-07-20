@@ -3,6 +3,10 @@ const std = @import("std");
 pub const GenerationalIndex = struct {
     index: usize,
     generation: u16,
+
+    pub fn eql(self: GenerationalIndex, other: GenerationalIndex) bool {
+        return self.index == other.index and self.generation == other.generation;
+    }
 };
 
 pub fn GenerationalList(comptime T: type) type {

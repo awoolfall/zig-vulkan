@@ -5,6 +5,7 @@ const tm = @import("time.zig");
 const tf = @import("transform.zig");
 const an = @import("animation.zig");
 const as = @import("../asset/asset.zig");
+const es = @import("../easings.zig");
 
 pub const AnimController = struct {
     const Self = @This();
@@ -13,6 +14,16 @@ pub const AnimController = struct {
     variables: std.AutoHashMap(u32, f32),
     nodes: []Node,
     active_node: usize = 0,
+    base_animation: ?as.AnimationAssetId = null,
+    base_animation_time: f64 = 0.0,
+
+    current_transition: ?struct {
+        node_0: usize,
+        node_1: usize,
+        time_since_start: f64,
+        transition_duration: f64,
+        transition_easing: es.Easing,
+    } = null,
 
     pub fn deinit(self: *Self) void {
         self.variables.deinit();
@@ -48,34 +59,72 @@ pub const AnimController = struct {
     }
 
     pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model) []const zm.Mat {
-        if (asset_manager.get_animation(self.nodes[0].animation)) |base_animation| {
-            if (asset_manager.get_animation(self.nodes[self.active_node].animation)) |animation| {
-                base_animation.set_animation_to_time(self.nodes[0].time);
-                if (self.active_node != 0) {
-                    animation.set_animation_to_time(self.nodes[self.active_node].time);
-                }
+        var animation_entries = [1]ms.Model.AnimationEntry{
+            .{
+                .animation = undefined,
+                .strength = 1.0,
+            },
+        } ** 3;
+        var num_animation_entries: usize = 0;
 
-                var strength: f32 = 1.0;
-                if (self.nodes[self.active_node].strength_variable) |variable| {
-                    strength = self.variables.get(variable) orelse 1.0;
-                }
+        if (self.base_animation) |base_animation_id| {
+            if (asset_manager.get_animation(base_animation_id)) |base_animation| {
+                base_animation.set_animation_to_time(self.base_animation_time);
+                animation_entries[num_animation_entries] = .{
+                    .animation = base_animation,
+                    .strength = 1.0,
+                };
+                num_animation_entries += 1;
+            } else |_| {}
+        }
 
-                model.generate_bone_transforms_for_animation_pose(&[_]ms.Model.AnimationEntry{
-                    .{
-                        .animation = base_animation,
-                        .strength = 1.0,
-                    },
-                    .{
+        switch (self.nodes[self.active_node].node) {
+            .Basic => |basic| {
+                if (asset_manager.get_animation(basic.animation)) |animation| {
+                    if (self.base_animation == null or !basic.animation.asset_id.eql(self.base_animation.?.asset_id)) {
+                        animation.set_animation_to_time(self.nodes[self.active_node].time);
+                    }
+
+                    animation_entries[num_animation_entries] = .{
                         .animation = animation,
-                        .strength = strength,
-                    },
-                }, self.bone_transforms[0..]);
-            } else |e| {
-                std.log.err("Failed to get animation for anim controller node: {}", .{e});
-                @memset(self.bone_transforms[0..], zm.identity());
-            }
-        } else |_| {}
+                        .strength = 1.0,
+                    };
+                    num_animation_entries += 1;
+                } else |_| {}
+            },
+            .Blend1D => |blend| {
+                var blend_variable: f32 = 0.0;
+                if (blend.variable) |variable| {
+                    blend_variable = self.variables.get(variable) orelse 0.0;
+                }
+                std.debug.assert(blend.left_value <= blend.right_value);
+                const blend_value = std.math.clamp((blend_variable - blend.left_value) / (blend.right_value - blend.left_value), 0.0, 1.0);
 
+                if (asset_manager.get_animation(blend.left_animation)) |animation| {
+                    if (self.base_animation == null or !blend.left_animation.asset_id.eql(self.base_animation.?.asset_id)) {
+                        animation.set_animation_to_time(self.nodes[self.active_node].time);
+                    }
+                    animation_entries[num_animation_entries] = .{
+                        .animation = animation,
+                        .strength = 1.0,
+                    };
+                    num_animation_entries += 1;
+                } else |_| {}
+
+                if (asset_manager.get_animation(blend.right_animation)) |animation| {
+                    if (self.base_animation == null or !blend.right_animation.asset_id.eql(self.base_animation.?.asset_id)) {
+                        animation.set_animation_to_time(self.nodes[self.active_node].time);
+                    }
+                    animation_entries[num_animation_entries] = .{
+                        .animation = animation,
+                        .strength = blend_value,
+                    };
+                    num_animation_entries += 1;
+                } else |_| {}
+            },
+        }
+
+        model.generate_bone_transforms_for_animation_pose(animation_entries[0..num_animation_entries], self.bone_transforms[0..]);
         return self.bone_transforms[0..];
     }
 
@@ -95,8 +144,8 @@ pub const AnimController = struct {
         // check if we should transition to a new node
         forblk: for (self.nodes[self.active_node].next) |t| {
             switch (t.condition) {
-                .always => unreachable, // TODO transition at end of animation
-                .variable => |v| {
+                .Always => {}, // TODO transition at end of animation
+                .Variable => |v| {
                     const value = self.get_variable(v.variable_id) orelse continue :forblk;
 
                     const should_transition = cblk: {
@@ -108,42 +157,58 @@ pub const AnimController = struct {
                         }
                     };
                     if (should_transition) {
+                        self.current_transition = .{
+                            .node_0 = self.active_node,
+                            .node_1 = t.node,
+                            .time_since_start = 0.0,
+                            .transition_duration = t.transition_duration,
+                            .transition_easing = t.transition_easing,
+                        };
                         self.active_node = t.node;
-                        if (self.active_node != 0) {
-                            self.nodes[self.active_node].time = 0.0;
-                        }
                         break :forblk;
                     }
                 },
             }
         }
-
-        // update active animation
+        
+        // update active animation time
         self.nodes[self.active_node].time += time.delta_time();
 
-        // update base animation if it is not the active node
-        if (self.active_node != 0) {
-            self.nodes[0].time += time.delta_time();
+        // update transition timings
+        if (self.current_transition) |*transition| {
+            transition.time_since_start += time.delta_time();
+            self.nodes[transition.node_0].time += time.delta_time();
+
+            // conclude transition if finished
+            if (transition.time_since_start >= transition.transition_duration) {
+                self.current_transition = null;
+            }
         }
+
+        // update base animation time
+        self.base_animation_time += time.delta_time();
     }
 };
 
 pub const Node = struct {
-    const Self = @This();
-    animation: as.AnimationAssetId,
+    node: union(enum) {
+        Basic: BasicNode,
+        Blend1D: BlendNode1D,
+    },
     next: []const NodeTransition,
-    strength_variable: ?u32 = null,
     time: f64 = 0.0,
 };
 
 pub const NodeTransition = struct {
     node: usize,
     condition: TransitionCondition,
+    transition_duration: f32 = 0.0,
+    transition_easing: es.Easing = .OutLinear,
 };
 
 pub const TransitionCondition = union(enum) {
-    always: void,
-    variable: struct {
+    Always: void,
+    Variable: struct {
         variable_id: u32,
         comparison: enum {
             Equal,
@@ -153,4 +218,17 @@ pub const TransitionCondition = union(enum) {
         },
         value: f32,
     },
+};
+
+pub const BasicNode = struct {
+    animation: as.AnimationAssetId,
+    strength_variable: ?u32 = null,
+};
+
+pub const BlendNode1D = struct {
+    left_animation: as.AnimationAssetId,
+    right_animation: as.AnimationAssetId,
+    variable: ?u32 = null,
+    left_value: f32,
+    right_value: f32,
 };

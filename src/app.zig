@@ -170,13 +170,14 @@ pub const App = struct {
         var asset_pack = as.AssetPack.init(eng.general_allocator.allocator());
         defer asset_pack.deinit();
 
-        try asset_pack.add_model("character", as.AssetPack.ModelAsset{ .Path = "SK_Character_Dummy_Male_01_anim2.glb" });
+        try asset_pack.add_model("character", as.AssetPack.ModelAsset{ .Path = "character rigify.glb" });
         try asset_pack.add_model("model", as.AssetPack.ModelAsset{ .Path = "sea_house.glb" });
         try asset_pack.add_model("terrain", as.AssetPack.ModelAsset{ .Plane = .{ .slices = 1, .stacks = 1, } });
         try asset_pack.add_model("cone", as.AssetPack.ModelAsset{ .Cone = .{ .slices = 8, } });
 
         try asset_pack.define_animation("character idle", "character", 0);
         try asset_pack.define_animation("character run", "character", 1);
+        try asset_pack.define_animation("character walk", "character", 2);
 
         const asset_pack_id = try asset_manager.load_asset_pack(eng.general_allocator.allocator(), &asset_pack, &eng.gfx);
         
@@ -185,41 +186,46 @@ pub const App = struct {
         const turntable_model_id = asset_manager.find_model_id("model").?;
 
         const character_animation_idle_id = asset_manager.find_animation_id("character idle").?;
+        const character_animation_walk_id = asset_manager.find_animation_id("character walk").?;
         const character_animation_run_id = asset_manager.find_animation_id("character run").?;
 
         var anim_controller = try ac.AnimController.init(eng.general_allocator.allocator(), &[_]ac.Node{
             .{
-                .animation = character_animation_idle_id,
+                .node = .{ .Basic = .{
+                    .animation = character_animation_idle_id,
+                } },
                 .next = &[_]ac.NodeTransition{
                     ac.NodeTransition{
                         .node = 1,
-                        .condition = ac.TransitionCondition{
-                            .variable = .{
-                                .variable_id = ac.AnimController.hash_variable("character speed"),
-                                .comparison = .GreaterThan,
-                                .value = 0.05,
-                            },
-                        },
+                        .condition = ac.TransitionCondition{ .Variable = .{
+                            .variable_id = ac.AnimController.hash_variable("character speed"),
+                            .comparison = .GreaterThan,
+                            .value = 0.05,
+                        } },
                     },
                 },
             },
             .{
-                .animation = character_animation_run_id,
+                .node = .{ .Blend1D = .{
+                    .left_animation = character_animation_walk_id,
+                    .right_animation = character_animation_run_id,
+                    .variable = ac.AnimController.hash_variable("character speed norm"),
+                    .left_value = 0.0,
+                    .right_value = 1.0,
+                } },
                 .next = &[_]ac.NodeTransition{
                     ac.NodeTransition{
                         .node = 0,
-                        .condition = ac.TransitionCondition{
-                            .variable = .{
-                                .variable_id = ac.AnimController.hash_variable("character speed"),
-                                .comparison = .LessThan,
-                                .value = 0.05,
-                            },
-                        },
+                        .condition = ac.TransitionCondition{ .Variable = .{
+                            .variable_id = ac.AnimController.hash_variable("character speed"),
+                            .comparison = .LessThan,
+                            .value = 0.05,
+                        } },
                     },
                 },
-                .strength_variable = ac.AnimController.hash_variable("character speed norm"),
             },
         });
+        anim_controller.base_animation = character_animation_idle_id;
         errdefer anim_controller.deinit();
 
         // Use the model as a 'prefab' of sorts and create a number of entities from its nodes
@@ -677,6 +683,9 @@ pub const App = struct {
             if (@reduce(.Add, @abs(movement_direction)) != 0.0) {
                 movement_direction = zm.normalize3(movement_direction);
             }
+            if (self.engine.input.get_key(kc.KeyCode.Shift)) {
+                movement_direction *= zm.f32x4s(2.0);
+            }
 
             const character = character_entity.physics.?.CharacterVirtual.virtual;
             var current_movement = zm.loadArr3(character.getLinearVelocity());
@@ -688,7 +697,7 @@ pub const App = struct {
                 // remove any gravity
                 current_movement[1] = 0.0;
 
-                const character_movement_speed = 8.0;
+                const character_movement_speed = 4.0;
                 const ramp_speed = 10.0;
 
                 // apply supported movement
@@ -806,8 +815,6 @@ pub const App = struct {
             }
 
             const character_model = self.asset_manager.get_model(character_entity.model.?) catch unreachable;
-            const idle_animation = &character_model.animations[0];
-            const run_animation = &character_model.animations[1];
 
             {
                 self.imui.push_layout_id(anim_debug_layout);
@@ -815,15 +822,15 @@ pub const App = struct {
                 var anim_name: [128]u8 = [_]u8{0} ** 128;
                 _ = std.fmt.bufPrint(anim_name[0..], "Active: {d}", .{self.anim_controller.active_node}) catch unreachable;
                 _ = self.imui.label(anim_name[0..]);
-                _ = self.imui.label("Idle:");
-                _ = self.imui.slider(@floatCast(idle_animation.current_tick / idle_animation.duration), 0.0, 1.0, .{@src()});
-                _ = self.imui.label("Running:");
-                _ = self.imui.slider(@floatCast(run_animation.current_tick / run_animation.duration), 0.0, 1.0, .{@src()});
+                for (character_model.animations, 0..) |*anim, i| {
+                    _ = self.imui.label(anim.name);
+                    _ = self.imui.slider(@floatCast(anim.current_tick / anim.duration), 0.0, 1.0, .{@src(), i});
+                }
             }
 
             const character_velocity = zm.loadArr3(character_entity.physics.?.CharacterVirtual.virtual.getLinearVelocity());
             self.anim_controller.set_variable(ac.AnimController.hash_variable("character speed"), zm.length3(character_velocity)[0]);
-            self.anim_controller.set_variable(ac.AnimController.hash_variable("character speed norm"), zm.length3(character_velocity)[0] / 8.0);
+            self.anim_controller.set_variable(ac.AnimController.hash_variable("character speed norm"), std.math.clamp(zm.length3(character_velocity)[0] / 8.0, 0.0, 1.0));
 
             self.anim_controller.update(&self.engine.time);
 
