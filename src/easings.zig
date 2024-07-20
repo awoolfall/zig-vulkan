@@ -50,4 +50,8 @@ pub const Easing = union(enum) {
             .Custom => |f| return f,
         }
     }
+
+    pub fn ease(self: Easing, t: f32) f32 {
+        return self.func()(t);
+    }
 };

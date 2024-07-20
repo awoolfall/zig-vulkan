@@ -58,38 +58,29 @@ pub const AnimController = struct {
         };
     }
 
-    pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model) []const zm.Mat {
-        var animation_entries = [1]ms.Model.AnimationEntry{
-            .{
-                .animation = undefined,
-                .strength = 1.0,
-            },
-        } ** 3;
-        var num_animation_entries: usize = 0;
+    fn calculate_bone_transforms_for_node(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, node: *const Node, out_transforms: []tf.Transform) void {
+        @memset(out_transforms[0..], tf.Transform{});
 
         if (self.base_animation) |base_animation_id| {
             if (asset_manager.get_animation(base_animation_id)) |base_animation| {
                 base_animation.set_animation_to_time(self.base_animation_time);
-                animation_entries[num_animation_entries] = .{
-                    .animation = base_animation,
-                    .strength = 1.0,
-                };
-                num_animation_entries += 1;
+                model.blend_animation_bone_transforms(base_animation, 1.0, out_transforms[0..]);
             } else |_| {}
         }
 
-        switch (self.nodes[self.active_node].node) {
+        switch (node.node) {
             .Basic => |basic| {
                 if (asset_manager.get_animation(basic.animation)) |animation| {
                     if (self.base_animation == null or !basic.animation.asset_id.eql(self.base_animation.?.asset_id)) {
-                        animation.set_animation_to_time(self.nodes[self.active_node].time);
+                        animation.set_animation_to_time(node.time);
                     }
 
-                    animation_entries[num_animation_entries] = .{
-                        .animation = animation,
-                        .strength = 1.0,
-                    };
-                    num_animation_entries += 1;
+                    var strength: f32 = 1.0;
+                    if (basic.strength_variable) |strength_variable| {
+                        strength = self.variables.get(strength_variable) orelse 1.0;
+                    }
+
+                    model.blend_animation_bone_transforms(animation, strength, out_transforms[0..]);
                 } else |_| {}
             },
             .Blend1D => |blend| {
@@ -102,29 +93,39 @@ pub const AnimController = struct {
 
                 if (asset_manager.get_animation(blend.left_animation)) |animation| {
                     if (self.base_animation == null or !blend.left_animation.asset_id.eql(self.base_animation.?.asset_id)) {
-                        animation.set_animation_to_time(self.nodes[self.active_node].time);
+                        animation.set_animation_to_time(node.time);
                     }
-                    animation_entries[num_animation_entries] = .{
-                        .animation = animation,
-                        .strength = 1.0,
-                    };
-                    num_animation_entries += 1;
+
+                    model.blend_animation_bone_transforms(animation, 1.0, out_transforms[0..]);
                 } else |_| {}
 
                 if (asset_manager.get_animation(blend.right_animation)) |animation| {
                     if (self.base_animation == null or !blend.right_animation.asset_id.eql(self.base_animation.?.asset_id)) {
-                        animation.set_animation_to_time(self.nodes[self.active_node].time);
+                        animation.set_animation_to_time(node.time);
                     }
-                    animation_entries[num_animation_entries] = .{
-                        .animation = animation,
-                        .strength = blend_value,
-                    };
-                    num_animation_entries += 1;
+
+                    model.blend_animation_bone_transforms(animation, blend_value, out_transforms[0..]);
                 } else |_| {}
             },
         }
+    }
 
-        model.generate_bone_transforms_for_animation_pose(animation_entries[0..num_animation_entries], self.bone_transforms[0..]);
+    pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model) []const zm.Mat {
+        var active_node_transforms = [_]tf.Transform{.{}} ** ms.MAX_BONES;
+        self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[self.active_node], active_node_transforms[0..]);
+
+        if (self.current_transition) |transition| {
+            var transition_node_transforms = [_]tf.Transform{.{}} ** ms.MAX_BONES;
+            self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[transition.node_0], transition_node_transforms[0..]);
+
+            for (0..active_node_transforms.len) |i| {
+                const t: f32 = @floatCast(transition.time_since_start / transition.transition_duration);
+                const eased_t = transition.transition_easing.ease(t);
+                active_node_transforms[i] = transition_node_transforms[i].lerp(&active_node_transforms[i], eased_t);
+            }
+        }
+        
+        model.generate_bone_transforms_for_pose(active_node_transforms[0..], self.bone_transforms[0..]);
         return self.bone_transforms[0..];
     }
 
@@ -165,6 +166,7 @@ pub const AnimController = struct {
                             .transition_easing = t.transition_easing,
                         };
                         self.active_node = t.node;
+                        self.nodes[self.active_node].time = 0.0;
                         break :forblk;
                     }
                 },

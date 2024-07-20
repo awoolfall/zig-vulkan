@@ -967,55 +967,58 @@ pub const Model = struct {
         strength: f32,
     };
 
-    pub fn generate_bone_transforms_for_animation_pose(
-        self: *const Self, 
-        animations: []const AnimationEntry,
-        out_bone_transforms: []zm.Mat,
-    ) void {
-        std.debug.assert(out_bone_transforms.len >= MAX_BONES);
+    pub fn blend_animation_bone_transforms(self: *const Self, animation: *const an.BoneAnimation, strength: f32, io_bone_transforms: []tm.Transform) void {
+        for (self.bone_info.items) |*bone_info| {
+            if (animation.find_node_anim(bone_info.bone_name)) |anim_channel| {
+                if (self.bone_mapping.get(bone_info.bone_name)) |bone_id| {
+                    io_bone_transforms[@intCast(bone_id)] = io_bone_transforms[@intCast(bone_id)].lerp(&anim_channel.selected_transform, strength);
+                }
+            }
+        }
+    }
 
-        // recurse heirarchy inserting bone transforms into transforms array
-        self.recurse_calculate_animation_bone_transforms(
-            animations, 
-            out_bone_transforms, 
-            &self.nodes_list[self.root_nodes[0]], 
+    pub fn generate_bone_transforms_for_pose(self: *const Self, in_bone_pose_transforms: []const tm.Transform, out_bone_matrix_transforms: []zm.Mat) void {
+        std.debug.assert(in_bone_pose_transforms.len >= MAX_BONES);
+        std.debug.assert(out_bone_matrix_transforms.len >= MAX_BONES);
+
+        self.recurse_generate_bone_transforms_for_pose(
+            in_bone_pose_transforms,
+            out_bone_matrix_transforms,
+            &self.nodes_list[self.root_nodes[0]],
             zm.identity()
         );
     }
 
-    fn recurse_calculate_animation_bone_transforms(
+    fn recurse_generate_bone_transforms_for_pose(
         self: *const Self, 
-        animations: []const AnimationEntry,
-        final_transforms: []zm.Mat,
+        in_bone_pose_transforms: []const tm.Transform, 
+        out_bone_matrix_transforms: []zm.Mat, 
         node: *const ModelNode, 
         parent_mat: zm.Mat
     ) void {
         if (node.name == null) { std.log.warn("node name was null in animation", .{}); return; }
 
         const node_name = node.name.?;
+        const maybe_bone_id = self.bone_mapping.get(node_name);
 
         var anims_transform = node.transform;
-        for (animations) |entry| {
-            if (entry.animation.find_node_anim(node_name)) |anim_channel| {
-                anims_transform.position = zm.lerp(anims_transform.position, anim_channel.selected_transform.position, entry.strength);
-                anims_transform.rotation = zm.slerp(anims_transform.rotation, anim_channel.selected_transform.rotation, entry.strength);
-                anims_transform.scale = zm.lerp(anims_transform.scale, anim_channel.selected_transform.scale, entry.strength);
-            }
+        if (maybe_bone_id) |bone_id| {
+            anims_transform = in_bone_pose_transforms[@intCast(bone_id)];
         }
-        const node_transform = anims_transform.generate_model_matrix();
 
+        const node_transform = anims_transform.generate_model_matrix();
         const global_transform = zm.mul(node_transform, parent_mat);
 
-        if (self.bone_mapping.get(node_name)) |bone_id| {
+        if (maybe_bone_id) |bone_id| {
             const bone_info = &self.bone_info.items[@intCast(bone_id)];
             const final_transform = zm.mul(bone_info.bone_offset, zm.mul(global_transform, self.global_inverse_transform));
-            final_transforms[@intCast(bone_id)] = final_transform;
+            out_bone_matrix_transforms[@intCast(bone_id)] = final_transform;
         }
 
         for (node.children) |child_idx| {
-            self.recurse_calculate_animation_bone_transforms(
-                animations,
-                final_transforms,
+            self.recurse_generate_bone_transforms_for_pose(
+                in_bone_pose_transforms,
+                out_bone_matrix_transforms,
                 &self.nodes_list[child_idx],
                 global_transform
             );
