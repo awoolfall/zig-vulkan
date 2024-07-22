@@ -53,6 +53,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const zlib_conf_step = b.addConfigHeader(.{ 
+        .style = .{ .cmake = .{
+            .path = "libs/assimp/contrib/zlib/zconf.h.in",
+        } },
+    }, .{});
+    unzip.addConfigHeader(zlib_conf_step);
+    unzip.installConfigHeader(zlib_conf_step);
+
     unzip.addIncludePath(.{ .path = "libs/assimp/contrib/unzip" });
     unzip.addIncludePath(.{ .path = "libs/assimp/contrib/zlib" });
     unzip.linkLibC();
@@ -199,6 +207,35 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     b.installArtifact(assimp);
+
+    const assimp_conf_step = b.addConfigHeader(.{ 
+        .style = .{ .cmake = .{
+            .path = "libs/assimp/include/assimp/config.h.in",
+        } },
+        .include_path = "assimp/config.h",
+    }, .{});
+    assimp.addConfigHeader(assimp_conf_step);
+    assimp_module.addConfigHeader(assimp_conf_step);
+
+    const assimp_rev_step = b.addConfigHeader(
+        .{ 
+            .style = .{ .cmake = .{
+                .path = "libs/assimp/revision.h.in",
+            } },
+        }, 
+        .{
+            .GIT_COMMIT_HASH = 0,
+            .GIT_BRANCH = "",
+            .ASSIMP_VERSION_MAJOR = 5,
+            .ASSIMP_VERSION_MINOR = 3,
+            .ASSIMP_VERSION_PATCH = 0,
+            .ASSIMP_PACKAGE_VERSION = 0,
+            .CMAKE_SHARED_LIBRARY_PREFIX = "",
+            .LIBRARY_SUFFIX = "",
+            .CMAKE_DEBUG_POSTFIX = "",
+        }
+    );
+    assimp.addConfigHeader(assimp_rev_step);
 
     assimp.linkLibrary(unzip);
     assimp.linkLibrary(zip);

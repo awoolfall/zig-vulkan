@@ -1,8 +1,8 @@
 pub const c = @cImport({
+    @cInclude("assimp/config.h");
     @cInclude("assimp/cimport.h");
     @cInclude("assimp/scene.h");
     @cInclude("assimp/material.h");
-    @cInclude("assimp/config.h");
 });
 
 pub inline fn aiBoolFromBool(b: bool) c.aiBool {
