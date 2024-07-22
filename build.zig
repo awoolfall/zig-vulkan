@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const assimp = @import("libs/assimp/build.zig");
-
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -84,8 +82,11 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("znoise", znoise.module("root"));
     exe.linkLibrary(znoise.artifact("FastNoiseLite"));
 
-    const assimp_pkg = assimp.package(b, target, optimize, .{});
-    assimp_pkg.link(exe);
+    const assimp_module = b.dependency("assimp", .{
+        .no_export = true,
+    });
+    exe.root_module.addImport("assimp", assimp_module.module("root"));
+    exe.linkLibrary(assimp_module.artifact("assimp"));
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`

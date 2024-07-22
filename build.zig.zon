@@ -8,6 +8,7 @@
         .zphysics = .{ .path = "libs/zig-gamedev/libs/zphysics" },
         .zstbi = .{ .path = "libs/zig-gamedev/libs/zstbi" },
         .znoise = .{ .path = "libs/zig-gamedev/libs/znoise" },
+        .assimp = .{ .path = "libs/assimp" },
     },
     .paths = .{
         "build.zig",
