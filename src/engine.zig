@@ -14,6 +14,7 @@ pub const gen = @import("engine/gen_list.zig");
 pub const mesh = @import("engine/mesh.zig");
 pub const physics = @import("engine/physics.zig");
 pub const image = @import("engine/image.zig");
+pub const en = @import("engine/entity.zig");
 pub const Transform = tf.Transform;
 
 const wb = @import("window.zig");
@@ -23,45 +24,9 @@ pub fn Engine(comptime App: type) type {
         const Self = @This();
         const Log = std.log.scoped(.Engine);
 
-        pub const EntitySuperStruct = struct {
-            name: ?[]const u8 = null,
-            transform: tf.Transform = tf.Transform.new(),
-            model: ?as.ModelAssetId = null,
-            physics: ?PhysicsOptions = null,
-            app: App.EntityData = App.EntityData {},
-        };
-
-        pub const EntityList = gen.GenerationalList(EntitySuperStruct);
-
-        pub const PhysicsOptions = union(enum) {
-            Body: physics.zphy.BodyId,
-            Character: *physics.zphy.Character,
-            CharacterVirtual: struct {
-                virtual: *physics.zphy.CharacterVirtual,
-                character: ?*physics.zphy.Character,
-                extended_update_settings: ?physics.zphy.CharacterVirtual.ExtendedUpdateSettings = null,
-                body_filter: ?*const physics.zphy.BodyFilter = null,
-            },
-
-            pub fn deinit(self: *PhysicsOptions, engine: *Self) void {
-                switch (self.*) {
-                    .Body => |body_id| {
-                        engine.physics.zphy.getBodyInterfaceMut().removeAndDestroyBody(body_id);
-                    },
-                    .Character => |character| {
-                        character.removeFromPhysicsSystem(.{});
-                        character.destroy();
-                    },
-                    .CharacterVirtual => |character| {
-                        character.virtual.destroy();
-                        if (character.character) |c| {
-                            c.removeFromPhysicsSystem(.{});
-                            c.destroy();
-                        }
-                    },
-                }
-            }
-        };
+        pub const EntitySuperStruct = en.EntitySuperStruct(App);
+        pub const EntityDescriptor = en.EntityDescriptor(App);
+        pub const EntityList = en.EntityList(App);
 
         window: w32.Win32Window,
         gfx: _gfx.GfxState,
@@ -128,20 +93,8 @@ pub fn Engine(comptime App: type) type {
             engine.physics = try physics.PhysicsSystem.init(alloc, &engine.gfx);
             defer engine.physics.deinit();
 
-            engine.entities = try EntityList.init(alloc);
-            defer {
-                for (engine.entities.data.items) |*it| {
-                    if (it.item_data) |*en| {
-                        en.app.deinit();
-
-                        if (en.physics) |*phys| {
-                            phys.deinit(&engine);
-                            en.physics = null;
-                        }
-                    }
-                }
-                engine.entities.deinit();
-            }
+            engine.entities = try EntityList.init(alloc, &engine);
+            defer engine.entities.deinit(&engine);
 
             Log.debug("Calling app init!", .{});
             engine.app = try App.init(&engine);

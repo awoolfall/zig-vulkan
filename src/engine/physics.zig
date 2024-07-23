@@ -4,6 +4,7 @@ const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
 const en = @import("../engine.zig");
 const tm = @import("../engine/time.zig");
+const tf = @import("../engine/transform.zig");
 const _gfx = @import("../gfx/gfx.zig");
 const debug = @import("physics_debug_renderer.zig");
 
@@ -91,7 +92,7 @@ pub const PhysicsSystem = struct {
 
             // After physics update set all entity transforms to match physics bodies
             const body_interface = self.zphy.getBodyInterface();
-            for (entity_list.data.items) |*it| {
+            for (entity_list.list.data.items) |*it| {
                 if (it.item_data) |*e| {
                     if (e.physics) |phys| {
                         switch (phys) {
@@ -196,7 +197,7 @@ pub const PhysicsSystem = struct {
 
             if (write_lock.body) |locked_body| {
                 return BodyWriteLock {
-                    .lock_interface = lock_interface,
+                    .lock_interface = @constCast(lock_interface),
                     .write_lock = write_lock,
                     .body = locked_body,
                 };
@@ -208,6 +209,13 @@ pub const PhysicsSystem = struct {
 
     pub fn init_body_write_lock(self: *Self, body_id: BodyId) !BodyWriteLock {
         return BodyWriteLock.init(body_id, self);
+    }
+
+    pub fn construct_entity_user_data_raw(old_user_data: u64, additional_data: u16) u64 {
+        var ret: u64 = 0x00;
+        ret |= @as(u64, @intCast(old_user_data & 0xffffffffffff)); // keep generational index entity id
+        ret |= @as(u64, @intCast(additional_data)) << (32 + 16);
+        return ret;
     }
 
     pub fn construct_entity_user_data(generational_idx: en.gen.GenerationalIndex, additional_data: u16) u64 {
@@ -419,6 +427,19 @@ pub const CharacterSettings = struct {
 
         return ret;
     }
+
+    pub fn create_character(self: CharacterSettings, transform: tf.Transform, phys: *PhysicsSystem) !*zphy.Character {
+        const settings = try self.create_zphy();
+        defer settings.release();
+
+        return try zphy.Character.create(
+            settings,
+            zm.vecToArr3(transform.position),
+            transform.rotation,
+            0,
+            phys.zphy 
+        );
+    }
 };
 
 pub const CharacterVirtualSettings = struct {
@@ -464,6 +485,18 @@ pub const CharacterVirtualSettings = struct {
         ret.penetration_recovery_speed = self.penetration_recovery_speed;
 
         return ret;
+    }
+
+    pub fn create_character_virtual(self: CharacterVirtualSettings, transform: tf.Transform, phys: *PhysicsSystem) !*zphy.CharacterVirtual {
+        const settings = try self.create_zphy();
+        defer settings.release();
+
+        return try zphy.CharacterVirtual.create(
+            settings,
+            zm.vecToArr3(transform.position),
+            transform.rotation,
+            phys.zphy 
+        );
     }
 };
 

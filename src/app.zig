@@ -146,7 +146,7 @@ pub const App = struct {
         errdefer camera_constant_buffer.deinit();
 
         // Create the camera entity
-        const camera_transform_idx = try eng.entities.insert(.{});
+        const camera_transform_idx = try eng.entities.new_entity(Engine.EntityDescriptor {});
         eng.entities.get(camera_transform_idx).?.transform.position = zm.f32x4(0.0, 1.0, -1.0, 0.0);
 
         // Create bone matrix constant buffer
@@ -242,7 +242,7 @@ pub const App = struct {
         const demo_compound_shape = try scaled_demo_shape.createShape();
         defer demo_compound_shape.release();
 
-        _ = try eng.entities.insert(Engine.EntitySuperStruct {
+        _ = try eng.entities.new_entity(Engine.EntityDescriptor {
             .name = "ground entity",
             .model = terrain_model_id,
             .physics = .{ .Body = 
@@ -297,8 +297,28 @@ pub const App = struct {
             .mass = 70.0,
             .character_padding = 0.02,
         };
-        const character_virtual_settings_zphy = try character_virtual_settings.create_zphy();
-        defer character_virtual_settings_zphy.release();
+
+        const chara_root_idx = try eng.entities.new_entity(Engine.EntityDescriptor {
+            .name = "character entity",
+            .model = character_model_id,
+            .transform = chara_transform,
+            .physics = .{ .CharacterVirtual = .{
+                .settings = character_virtual_settings,
+                .transform = chara_transform,
+                .create_character = true,
+                .extended_update_settings = .{},
+            } },
+            .app = .{
+                .health_points = 100,
+            },
+        });
+        const chara_body_id_character = eng.entities.list.get(chara_root_idx).?.physics.?.CharacterVirtual.character.?.getBodyId();
+
+        // @TODO this body filter needs to be stored on the entity alongside character/virtual character...
+        const character_ignore_self_filter = try eng.general_allocator.allocator().create(ph.IgnoreIdsBodyFilter);
+        errdefer eng.general_allocator.allocator().destroy(character_ignore_self_filter);
+        character_ignore_self_filter.* = ph.IgnoreIdsBodyFilter.init(&[1]zphy.BodyId{chara_body_id_character});
+        eng.entities.list.get(chara_root_idx).?.physics.?.CharacterVirtual.body_filter = @ptrCast(character_ignore_self_filter);
 
         const character_settings = ph.CharacterSettings {
             .base = ph.CharacterBaseSettings {
@@ -311,60 +331,22 @@ pub const App = struct {
             .friction = 1.0,
             .gravity_factor = 1.0,
         };
-        const character_settings_zphy = try character_settings.create_zphy();
-        defer character_settings_zphy.release();
 
-        const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
-            .name = "character entity",
+        _ = try eng.entities.new_entity(Engine.EntityDescriptor {
+            .name = "opponent entity",
             .model = character_model_id,
             .transform = chara_transform,
-            .physics = .{ .CharacterVirtual = .{
-                .virtual = try zphy.CharacterVirtual.create(
-                    character_virtual_settings_zphy,
-                    zm.vecToArr3(chara_transform.position),
-                    chara_transform.rotation,
-                    eng.physics.zphy
-                ),
-                .character = null,
-                .extended_update_settings = .{},
+            .physics = .{ .Character = .{
+                .settings = character_settings,
+                .transform = Transform {
+                    .position = zm.f32x4(0.0, 0.0, 0.0, 0.0),
+                    .rotation = zm.qidentity(),
+                },
             } },
             .app = .{
                 .health_points = 100,
             },
         });
-        eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.character = try zphy.Character.create(
-            character_settings_zphy,
-            [3]f32{0.0, 0.0, 0.0},
-            zm.qidentity(),
-            ph.PhysicsSystem.construct_entity_user_data(chara_root_idx, 0),
-            eng.physics.zphy
-        );
-        eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.character.?.addToPhysicsSystem(.{});
-        const chara_body_id_character = eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.character.?.getBodyId();
-
-        // @TODO this body filter needs to be stored on the entity alongside character/virtual character...
-        const character_ignore_self_filter = try eng.general_allocator.allocator().create(ph.IgnoreIdsBodyFilter);
-        errdefer eng.general_allocator.allocator().destroy(character_ignore_self_filter);
-        character_ignore_self_filter.* = ph.IgnoreIdsBodyFilter.init(&[1]zphy.BodyId{chara_body_id_character});
-        eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.body_filter = @ptrCast(character_ignore_self_filter);
-
-        const opponent_idx = try eng.entities.insert(Engine.EntitySuperStruct {
-            .name = "opponent entity",
-            .model = character_model_id,
-            .transform = chara_transform,
-            .physics = null,
-            .app = .{
-                .health_points = 100,
-            },
-        });
-        eng.entities.get(opponent_idx).?.physics = .{ .Character = try zphy.Character.create(
-            character_settings_zphy,
-            [3]f32{0.0, 0.0, 0.0},
-            zm.qidentity(),
-            ph.PhysicsSystem.construct_entity_user_data(opponent_idx, 0),
-            eng.physics.zphy
-        ) };
-        eng.entities.get(opponent_idx).?.physics.?.Character.addToPhysicsSystem(.{});
 
         const model_buffer = try gfx.Buffer.init(
             @sizeOf(zm.Mat),
@@ -893,7 +875,7 @@ pub const App = struct {
         self.engine.gfx.context.IASetInputLayout(self.vertex_shader.layout);
 
         // Iterate through all entities finding those which contain a mesh to be rendered
-        for (self.engine.entities.data.items) |*it| {
+        for (self.engine.entities.list.data.items) |*it| {
             if (it.item_data) |*entity| {
                 // Find the transform of the entity to be rendered taking into account it's parent
                 if (entity.model) |mid| {

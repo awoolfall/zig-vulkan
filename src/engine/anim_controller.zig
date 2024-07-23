@@ -7,6 +7,8 @@ const an = @import("animation.zig");
 const as = @import("../asset/asset.zig");
 const es = @import("../easings.zig");
 
+/// Animation Controller provides a state machine for controlling skeletal animations. 
+/// It provides functionality to blend between animations based on variable values and node transitions.
 pub const AnimController = struct {
     const Self = @This();
     arena: std.heap.ArenaAllocator,
@@ -58,9 +60,12 @@ pub const AnimController = struct {
         };
     }
 
+    /// Calculates the bone transforms for a given node.
+    /// This function will blend between the base animation and the animation specified in the node.
     fn calculate_bone_transforms_for_node(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, node: *const Node, out_transforms: []tf.Transform) void {
         @memset(out_transforms[0..], tf.Transform{});
 
+        // calcualte base animation transforms at full strength
         if (self.base_animation) |base_animation_id| {
             if (asset_manager.get_animation(base_animation_id)) |base_animation| {
                 base_animation.set_animation_to_time(self.base_animation_time);
@@ -68,8 +73,10 @@ pub const AnimController = struct {
             } else |_| {}
         }
 
+        // blend in node animations
         switch (node.node) {
             .Basic => |basic| {
+                // blend in the single basic animation based on the provided strength variable
                 if (asset_manager.get_animation(basic.animation)) |animation| {
                     if (self.base_animation == null or !basic.animation.asset_id.eql(self.base_animation.?.asset_id)) {
                         animation.set_animation_to_time(node.time);
@@ -84,13 +91,16 @@ pub const AnimController = struct {
                 } else |_| {}
             },
             .Blend1D => |blend| {
+                // replace base animation with blended animation between two animations based on the provided blend variable
                 var blend_variable: f32 = 0.0;
                 if (blend.variable) |variable| {
                     blend_variable = self.variables.get(variable) orelse 0.0;
                 }
+
                 std.debug.assert(blend.left_value <= blend.right_value);
                 const blend_value = std.math.clamp((blend_variable - blend.left_value) / (blend.right_value - blend.left_value), 0.0, 1.0);
 
+                // replace base animation with left animation at full strength
                 if (asset_manager.get_animation(blend.left_animation)) |animation| {
                     if (self.base_animation == null or !blend.left_animation.asset_id.eql(self.base_animation.?.asset_id)) {
                         animation.set_animation_to_time(node.time);
@@ -99,6 +109,7 @@ pub const AnimController = struct {
                     model.blend_animation_bone_transforms(animation, 1.0, out_transforms[0..]);
                 } else |_| {}
 
+                // blend in right animation based on blend variable
                 if (asset_manager.get_animation(blend.right_animation)) |animation| {
                     if (self.base_animation == null or !blend.right_animation.asset_id.eql(self.base_animation.?.asset_id)) {
                         animation.set_animation_to_time(node.time);
@@ -110,10 +121,13 @@ pub const AnimController = struct {
         }
     }
 
+    /// Generates the bone transform matricies for the current active node and any transitioning nodes.
     pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model) []const zm.Mat {
+        // calculate the transforms for the current active node
         var active_node_transforms = [_]tf.Transform{.{}} ** ms.MAX_BONES;
         self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[self.active_node], active_node_transforms[0..]);
 
+        // calculate and blend the transforms for any transitioning nodes based on the transition timings and easing
         if (self.current_transition) |transition| {
             var transition_node_transforms = [_]tf.Transform{.{}} ** ms.MAX_BONES;
             self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[transition.node_0], transition_node_transforms[0..]);
@@ -125,51 +139,55 @@ pub const AnimController = struct {
             }
         }
         
+        // generate and return the final bone transforms
         model.generate_bone_transforms_for_pose(active_node_transforms[0..], self.bone_transforms[0..]);
         return self.bone_transforms[0..];
     }
 
+    /// Hashes a variable id for future use.
     pub fn hash_variable(variable_id: anytype) u32 {
         return std.hash.XxHash32.hash(0, variable_id);
     }
 
+    /// Sets a variable specified by the hashed variable id to the given value.
     pub fn set_variable(self: *Self, variable_id: u32, value: f32) void {
         self.variables.put(variable_id, value) catch unreachable;
     }
 
+    /// Gets the value of a variable specified by the hashed variable id.
     pub fn get_variable(self: *const Self, variable_id: u32) ?f32 {
         return self.variables.get(variable_id);
     }
 
+    /// Updates the animation controller state and transitions to a new node if necessary.
     pub fn update(self: *Self, time: *const tm.TimeState) void {
         // check if we should transition to a new node
         forblk: for (self.nodes[self.active_node].next) |t| {
-            switch (t.condition) {
-                .Always => {}, // TODO transition at end of animation
+            const should_transition = cblk: { switch (t.condition) {
+                .Always => { break :cblk false; }, // TODO transition at end of animation
                 .Variable => |v| {
                     const value = self.get_variable(v.variable_id) orelse continue :forblk;
 
-                    const should_transition = cblk: {
-                        switch (v.comparison) {
-                            .Equal => break :cblk std.math.approxEqRel(f32, value, v.value, std.math.floatEps(f32)),
-                            .NotEqual => break :cblk !std.math.approxEqRel(f32, value, v.value, std.math.floatEps(f32)),
-                            .LessThan => break :cblk (value < v.value),
-                            .GreaterThan => break :cblk (value > v.value),
-                        }
-                    };
-                    if (should_transition) {
-                        self.current_transition = .{
-                            .node_0 = self.active_node,
-                            .node_1 = t.node,
-                            .time_since_start = 0.0,
-                            .transition_duration = t.transition_duration,
-                            .transition_easing = t.transition_easing,
-                        };
-                        self.active_node = t.node;
-                        self.nodes[self.active_node].time = 0.0;
-                        break :forblk;
+                    switch (v.comparison) {
+                        .Equal => break :cblk std.math.approxEqRel(f32, value, v.value, std.math.floatEps(f32)),
+                        .NotEqual => break :cblk !std.math.approxEqRel(f32, value, v.value, std.math.floatEps(f32)),
+                        .LessThan => break :cblk (value < v.value),
+                        .GreaterThan => break :cblk (value > v.value),
                     }
                 },
+            } };
+
+            if (should_transition) {
+                self.current_transition = .{
+                    .node_0 = self.active_node,
+                    .node_1 = t.node,
+                    .time_since_start = 0.0,
+                    .transition_duration = t.transition_duration,
+                    .transition_easing = t.transition_easing,
+                };
+                self.active_node = t.node;
+                self.nodes[self.active_node].time = 0.0;
+                break :forblk;
             }
         }
         
@@ -192,6 +210,7 @@ pub const AnimController = struct {
     }
 };
 
+/// A node in the animation controller state machine.
 pub const Node = struct {
     node: union(enum) {
         Basic: BasicNode,
@@ -201,6 +220,7 @@ pub const Node = struct {
     time: f64 = 0.0,
 };
 
+/// A transition specification between two nodes in the animation controller state machine.
 pub const NodeTransition = struct {
     node: usize,
     condition: TransitionCondition,
@@ -208,6 +228,7 @@ pub const NodeTransition = struct {
     transition_easing: es.Easing = .OutLinear,
 };
 
+/// A transition condition that can be used to specify when a transition should occur.
 pub const TransitionCondition = union(enum) {
     Always: void,
     Variable: struct {
@@ -222,11 +243,15 @@ pub const TransitionCondition = union(enum) {
     },
 };
 
+/// A basic node in the animation controller state machine which runs a single 
+/// animation with optional strength value.
 pub const BasicNode = struct {
     animation: as.AnimationAssetId,
     strength_variable: ?u32 = null,
 };
 
+/// A blend node in the animation controller state machine allowing the blending
+/// of animations based on a single variable value.
 pub const BlendNode1D = struct {
     left_animation: as.AnimationAssetId,
     right_animation: as.AnimationAssetId,
