@@ -386,3 +386,84 @@ pub const IgnoreIdsBodyFilter = extern struct {
     }
 };
 
+pub const CharacterBaseSettings = struct {
+    up: [4]f32 align(16) = [4]f32{ 0.0, 1.0, 0.0, 0.0 },
+    supporting_volume: [4]f32 align(16) = [4]f32{ 0.0, 1.0, 0.0, -1.0e10 },
+    max_slope_angle: f32 = std.math.degreesToRadians(50.0),
+    shape: *zphy.Shape,
+};
+
+pub const CharacterSettings = struct {
+    base: CharacterBaseSettings,
+
+    layer: zphy.ObjectLayer,
+    mass: f32 = 80.0,
+    friction: f32 = 0.2,
+    gravity_factor: f32 = 1.0,
+
+    pub fn create_zphy(self: CharacterSettings) !*zphy.CharacterSettings {
+        var ret = try zphy.CharacterSettings.create();
+        errdefer ret.release();
+
+        self.base.shape.addRef();
+
+        ret.base.up = self.base.up;
+        ret.base.supporting_volume = self.base.supporting_volume;
+        ret.base.max_slope_angle = self.base.max_slope_angle;
+        ret.base.shape = self.base.shape;
+
+        ret.layer = self.layer;
+        ret.mass = self.mass;
+        ret.friction = self.friction;
+        ret.gravity_factor = self.gravity_factor;
+
+        return ret;
+    }
+};
+
+pub const CharacterVirtualSettings = struct {
+    base: CharacterBaseSettings,
+
+    mass: f32 = 70.0,
+    max_strength: f32 = 100.0,
+    shape_offset: [4]f32 align(16) = [4]f32{ 0.0, 0.0, 0.0, 0.0 },
+    back_face_mode: zphy.BackFaceMode = .collide_with_back_faces,
+    predictive_contact_distance: f32 = 0.1,
+    max_collision_iterations: u32 = 5,
+    max_constraint_iterations: u32 = 15,
+    min_time_remaining: f32 = 1.0e-4,
+    collision_tolerance: f32 = 1.0e-3,
+    character_padding: f32 = 0.02,
+    max_num_hits: u32 = 256,
+    hit_reduction_cos_max_angle: f32 = 0.999,
+    penetration_recovery_speed: f32 = 1.0,
+
+    pub fn create_zphy(self: CharacterVirtualSettings) !*zphy.CharacterVirtualSettings {
+        var ret = try zphy.CharacterVirtualSettings.create();
+        errdefer ret.release();
+
+        self.base.shape.addRef();
+
+        ret.base.up = self.base.up;
+        ret.base.supporting_volume = self.base.supporting_volume;
+        ret.base.max_slope_angle = self.base.max_slope_angle;
+        ret.base.shape = self.base.shape;
+
+        ret.mass = self.mass;
+        ret.max_strength = self.max_strength;
+        ret.shape_offset = self.shape_offset;
+        ret.back_face_mode = self.back_face_mode;
+        ret.predictive_contact_distance = self.predictive_contact_distance;
+        ret.max_collision_iterations = self.max_collision_iterations;
+        ret.max_constraint_iterations = self.max_constraint_iterations;
+        ret.min_time_remaining = self.min_time_remaining;
+        ret.collision_tolerance = self.collision_tolerance;
+        ret.character_padding = self.character_padding;
+        ret.max_num_hits = self.max_num_hits;
+        ret.hit_reduction_cos_max_angle = self.hit_reduction_cos_max_angle;
+        ret.penetration_recovery_speed = self.penetration_recovery_speed;
+
+        return ret;
+    }
+};
+

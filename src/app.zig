@@ -12,7 +12,7 @@ const window = @import("window.zig");
 const kc = @import("input/keycode.zig");
 const cm = @import("engine/camera.zig");
 const ms = @import("engine/mesh.zig");
-const ent = @import("engine/entity.zig");
+const gen = @import("engine/gen_list.zig");
 const ph = @import("engine/physics.zig");
 const path = @import("engine/path.zig");
 const particle = @import("engine/particles.zig");
@@ -55,10 +55,10 @@ pub const App = struct {
     camera_data_buffer: gfx.Buffer,
     camera: cm.Camera,
     target_old_pos: zm.F32x4 = zm.f32x4s(0.0),
-    camera_idx: ent.GenerationalIndex,
+    camera_idx: gen.GenerationalIndex,
 
     model_buffer: gfx.Buffer,
-    character_idx: ent.GenerationalIndex,
+    character_idx: gen.GenerationalIndex,
     character_ignore_self_filter: *ph.IgnoreIdsBodyFilter,
 
     bone_matrix_buffer: gfx.Buffer,
@@ -288,27 +288,31 @@ pub const App = struct {
         var zphy_character_settings = try zphy.CharacterVirtualSettings.create(); 
         defer zphy_character_settings.release();
 
-        zphy_character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
-        zphy_character_settings.base.max_slope_angle = 70.0;
-        zphy_character_settings.base.shape = chara_shape;
-        chara_shape.addRef();
-        zphy_character_settings.character_padding = 0.02;
-        //zphy_character_settings.layer = ph.object_layers.moving;
-        zphy_character_settings.mass = 70.0;
-        //zphy_character_settings.friction = 0.0; // will handle manually
-        //zphy_character_settings.gravity_factor = 0.0; // will handle manually
+        const character_virtual_settings = ph.CharacterVirtualSettings {
+            .base = ph.CharacterBaseSettings {
+                .up = [4]f32{0.0, 1.0, 0.0, 0.0},
+                .max_slope_angle = 70.0,
+                .shape = chara_shape,
+            },
+            .mass = 70.0,
+            .character_padding = 0.02,
+        };
+        const character_virtual_settings_zphy = try character_virtual_settings.create_zphy();
+        defer character_virtual_settings_zphy.release();
 
-        var character_settings = try zphy.CharacterSettings.create();
-        defer character_settings.release();
-
-        character_settings.base.up = [4]f32{0.0, 1.0, 0.0, 0.0};
-        character_settings.base.max_slope_angle = 70.0;
-        character_settings.base.shape = chara_shape;
-        chara_shape.addRef();
-        character_settings.layer = ph.object_layers.moving;
-        character_settings.mass = 70.0;
-        character_settings.friction = 1.0; // will handle manually
-        character_settings.gravity_factor = 1.0; // will handle manually
+        const character_settings = ph.CharacterSettings {
+            .base = ph.CharacterBaseSettings {
+                .up = [4]f32{0.0, 1.0, 0.0, 0.0},
+                .max_slope_angle = 70.0,
+                .shape = chara_shape,
+            },
+            .layer = ph.object_layers.moving,
+            .mass = 70.0,
+            .friction = 1.0,
+            .gravity_factor = 1.0,
+        };
+        const character_settings_zphy = try character_settings.create_zphy();
+        defer character_settings_zphy.release();
 
         const chara_root_idx = try eng.entities.insert(Engine.EntitySuperStruct {
             .name = "character entity",
@@ -316,7 +320,7 @@ pub const App = struct {
             .transform = chara_transform,
             .physics = .{ .CharacterVirtual = .{
                 .virtual = try zphy.CharacterVirtual.create(
-                    zphy_character_settings,
+                    character_virtual_settings_zphy,
                     zm.vecToArr3(chara_transform.position),
                     chara_transform.rotation,
                     eng.physics.zphy
@@ -329,7 +333,7 @@ pub const App = struct {
             },
         });
         eng.entities.get(chara_root_idx).?.physics.?.CharacterVirtual.character = try zphy.Character.create(
-            character_settings,
+            character_settings_zphy,
             [3]f32{0.0, 0.0, 0.0},
             zm.qidentity(),
             ph.PhysicsSystem.construct_entity_user_data(chara_root_idx, 0),
@@ -354,7 +358,7 @@ pub const App = struct {
             },
         });
         eng.entities.get(opponent_idx).?.physics = .{ .Character = try zphy.Character.create(
-            character_settings,
+            character_settings_zphy,
             [3]f32{0.0, 0.0, 0.0},
             zm.qidentity(),
             ph.PhysicsSystem.construct_entity_user_data(opponent_idx, 0),

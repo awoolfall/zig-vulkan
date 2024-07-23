@@ -3,7 +3,7 @@ const ms = @import("../engine/mesh.zig");
 const an = @import("../engine/animation.zig");
 const pt = @import("../engine/path.zig");
 const gf = @import("../gfx/gfx.zig");
-const gen = @import("../engine/entity.zig");
+const gen = @import("../engine/gen_list.zig");
 
 pub const AssetManager = struct {
     const Self = @This();
