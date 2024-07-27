@@ -3,11 +3,11 @@ const builtin = @import("builtin");
 const zwin32 = @import("zwin32");
 const d3d11 = zwin32.d3d11;
 const zm = @import("zmath");
-const gf = @import("../gfx/gfx.zig");
-const wb = @import("../window.zig");
-const win32window = @import("../platform/windows.zig");
-const path = @import("../engine/path.zig");
-const bloom = @import("bloom.zig");
+const gf = @import("../gfx.zig");
+const wb = @import("../../window.zig");
+const win32window = @import("../../platform/windows.zig");
+const path = @import("../../engine/path.zig");
+const bloom = @import("../bloom.zig");
 
 inline fn is_dbg() bool {
     return (builtin.mode == std.builtin.Mode.Debug);
