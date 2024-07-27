@@ -116,7 +116,7 @@ pub const D3D11DebugRenderer = extern struct {
         defer _ = vs_blob.Release();
 
         var vso: *d3d11.IVertexShader = undefined;
-        try zwin32.hrErrorOnFail(gfx.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
         errdefer _ = vso.Release();
 
         var ps_blob: *zwin32.d3d.IBlob = undefined;
@@ -125,7 +125,7 @@ pub const D3D11DebugRenderer = extern struct {
 
         // Create vertex and pixel shaders
         var pso: *d3d11.IPixelShader = undefined;
-        try zwin32.hrErrorOnFail(gfx.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
         errdefer _ = pso.Release();
 
         const vso_input_layout_desc = [_]d3d11.INPUT_ELEMENT_DESC {
@@ -167,7 +167,7 @@ pub const D3D11DebugRenderer = extern struct {
             },
         };
         var vso_input_layout: *d3d11.IInputLayout = undefined;
-        try zwin32.hrErrorOnFail(gfx.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
         errdefer _ = vso_input_layout.Release();
 
         // Define rasterizer state
@@ -176,7 +176,7 @@ pub const D3D11DebugRenderer = extern struct {
             .FillMode = d3d11.FILL_MODE.WIREFRAME,
             .CullMode = d3d11.CULL_MODE.BACK,
         };
-        try zwin32.hrErrorOnFail(gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
         errdefer _ = rasterization_state.Release();
 
         // Create model constant buffer
@@ -187,7 +187,7 @@ pub const D3D11DebugRenderer = extern struct {
             .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
         };
         var model_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx.device.CreateBuffer(&model_constant_buffer_desc, null, @ptrCast(&model_buffer)));
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBuffer(&model_constant_buffer_desc, null, @ptrCast(&model_buffer)));
         errdefer _ = model_buffer.Release();
 
         // Create camera constant buffer
@@ -198,7 +198,7 @@ pub const D3D11DebugRenderer = extern struct {
             .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
         };
         var camera_data_buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
         errdefer _ = camera_data_buffer.Release();
 
         return D3D11DebugRenderer{
@@ -225,8 +225,8 @@ pub const D3D11DebugRenderer = extern struct {
     ) void {
         { // Update camera buffer
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-            zwin32.hrPanicOnFail(self.gfx.context.Map(@ptrCast(self.gfx_data.camera_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-            defer self.gfx.context.Unmap(@ptrCast(self.gfx_data.camera_buffer), 0);
+            zwin32.hrPanicOnFail(self.gfx.platform.context.Map(@ptrCast(self.gfx_data.camera_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+            defer self.gfx.platform.context.Unmap(@ptrCast(self.gfx_data.camera_buffer), 0);
 
             var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
             buffer_data.view = view;
@@ -241,20 +241,20 @@ pub const D3D11DebugRenderer = extern struct {
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         };
-        self.gfx.context.RSSetViewports(1, @ptrCast(&viewport));
+        self.gfx.platform.context.RSSetViewports(1, @ptrCast(&viewport));
 
-        self.gfx.context.PSSetShader(self.gfx_data.pso, null, 0);
+        self.gfx.platform.context.PSSetShader(self.gfx_data.pso, null, 0);
 
-        self.gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
-        self.gfx.context.OMSetBlendState(null, null, 0xffffffff);
+        self.gfx.platform.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
+        self.gfx.platform.context.OMSetBlendState(null, null, 0xffffffff);
 
-        self.gfx.context.VSSetShader(self.gfx_data.vso, null, 0);
-        self.gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.gfx_data.camera_buffer));
+        self.gfx.platform.context.VSSetShader(self.gfx_data.vso, null, 0);
+        self.gfx.platform.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.gfx_data.camera_buffer));
 
-        self.gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        self.gfx.context.IASetInputLayout(self.gfx_data.vso_input_layout);
+        self.gfx.platform.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        self.gfx.platform.context.IASetInputLayout(self.gfx_data.vso_input_layout);
 
-        self.gfx.context.RSSetState(self.gfx_data.rasterization_state);
+        self.gfx.platform.context.RSSetState(self.gfx_data.rasterization_state);
 
         // Issue debug draw command to physics system
         phys.drawBodies(&.{}, null);
@@ -312,7 +312,7 @@ pub const D3D11DebugRenderer = extern struct {
             .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, .INDEX_BUFFER = true },
         };
         var buffer: *d3d11.IBuffer = undefined;
-        zwin32.hrErrorOnFail(self.gfx.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(buffer_data), }, @ptrCast(&buffer)))
+        zwin32.hrErrorOnFail(self.gfx.platform.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(buffer_data), }, @ptrCast(&buffer)))
             catch |err| {
                 std.log.warn("Unable to create buffer in physics debug renderer: {}", .{err});
                 return zphy.DebugRenderer.createTriangleBatch(prim);
@@ -354,7 +354,7 @@ pub const D3D11DebugRenderer = extern struct {
             .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, .INDEX_BUFFER = true },
         };
         var buffer: *d3d11.IBuffer = undefined;
-        zwin32.hrErrorOnFail(self.gfx.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(buffer_data), }, @ptrCast(&buffer)))
+        zwin32.hrErrorOnFail(self.gfx.platform.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(buffer_data), }, @ptrCast(&buffer)))
             catch |err| {
                 std.log.warn("Unable to create indexed buffer in physics debug renderer: {}", .{err});
                 return zphy.DebugRenderer.createTriangleBatch(prim);
@@ -394,8 +394,8 @@ pub const D3D11DebugRenderer = extern struct {
 
         { // Setup model buffer from transform
             var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-            zwin32.hrPanicOnFail(self.gfx.context.Map(@ptrCast(self.gfx_data.model_matrix_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-            defer self.gfx.context.Unmap(@ptrCast(self.gfx_data.model_matrix_buffer), 0);
+            zwin32.hrPanicOnFail(self.gfx.platform.context.Map(@ptrCast(self.gfx_data.model_matrix_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+            defer self.gfx.platform.context.Unmap(@ptrCast(self.gfx_data.model_matrix_buffer), 0);
 
             var buffer_data: *MaterialStruct = @ptrCast(@alignCast(mapped_subresource.pData));
             for (model_matrix, 0..) |v, idx| {
@@ -406,26 +406,26 @@ pub const D3D11DebugRenderer = extern struct {
             buffer_data.material_color[2] = (@as(f32, @floatFromInt(color.comp.b)) / 255.0);
             buffer_data.material_color[3] = (@as(f32, @floatFromInt(color.comp.a)) / 255.0);
         }
-        self.gfx.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.gfx_data.model_matrix_buffer));
+        self.gfx.platform.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.gfx_data.model_matrix_buffer));
 
         const render_data: *const MyRenderPrimitive = @ptrCast(@alignCast(zphy.DebugRenderer.getPrimitiveFromBatch(geometry.LODs[0].batch)));
         std.debug.assert(render_data.buffer != null);
 
         const stride: c_uint = @sizeOf(zphy.DebugRenderer.Vertex);
         const pos_offset: c_uint = 0;
-        self.gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&pos_offset));
+        self.gfx.platform.context.IASetVertexBuffers(0, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&pos_offset));
         const norm_offset: c_uint = @sizeOf(f32) * 3;
-        self.gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&norm_offset));
+        self.gfx.platform.context.IASetVertexBuffers(1, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&norm_offset));
         const uv_offset: c_uint = @sizeOf(f32) * 3 + @sizeOf(f32) * 3;
-        self.gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&uv_offset));
+        self.gfx.platform.context.IASetVertexBuffers(2, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&uv_offset));
         const col_offset: c_uint = @sizeOf(f32) * 3 + @sizeOf(f32) * 3 + @sizeOf(f32) * 2;
-        self.gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&col_offset));
+        self.gfx.platform.context.IASetVertexBuffers(3, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&col_offset));
 
         if (render_data.has_indices()) {
-            self.gfx.context.IASetIndexBuffer(render_data.buffer, zwin32.dxgi.FORMAT.R32_UINT, render_data.indices_offset);
-            self.gfx.context.DrawIndexed(@intCast(render_data.num_indices), @intCast(0), @intCast(0));
+            self.gfx.platform.context.IASetIndexBuffer(render_data.buffer, zwin32.dxgi.FORMAT.R32_UINT, render_data.indices_offset);
+            self.gfx.platform.context.DrawIndexed(@intCast(render_data.num_indices), @intCast(0), @intCast(0));
         } else {
-            self.gfx.context.Draw(@intCast(render_data.num_vertices), @intCast(0));
+            self.gfx.platform.context.Draw(@intCast(render_data.num_vertices), @intCast(0));
         }
     }
 

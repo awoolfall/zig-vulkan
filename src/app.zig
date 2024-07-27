@@ -80,7 +80,7 @@ pub const App = struct {
 
         self.engine.general_allocator.allocator().destroy(self.character_ignore_self_filter);
 
-        self.engine.gfx.context.Flush();
+        self.engine.gfx.flush();
         self.imui.deinit();
         self.zero_particle_system.deinit();
         self.player_attack_particle_system.deinit();
@@ -801,8 +801,8 @@ pub const App = struct {
                 const mapped_buffer = self.camera_data_buffer.map(CameraStruct, &self.engine.gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
-                mapped_buffer.data.view = self.camera.view_matrix;
-                mapped_buffer.data.projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
+                mapped_buffer.data().view = self.camera.view_matrix;
+                mapped_buffer.data().projection = self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect());
             }
 
             const character_model = self.engine.asset_manager.get_model(character_entity.model.?) catch unreachable;
@@ -834,7 +834,7 @@ pub const App = struct {
                 const mapped_buffer = self.bone_matrix_buffer.map([ms.MAX_BONES]zm.Mat, &self.engine.gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
-                @memcpy(mapped_buffer.data.*[0..], bone_transforms[0..]);
+                @memcpy(mapped_buffer.data().*[0..], bone_transforms[0..]);
             }
         }
         }
@@ -879,7 +879,7 @@ pub const App = struct {
                 if (entity.model) |mid| {
                     const m = self.engine.asset_manager.get_model(mid) catch unreachable;
 
-                    self.engine.gfx.cmd_set_vertex_buffers(0, &[_]gfx.GfxState.VertexBufferInput{
+                    self.engine.gfx.cmd_set_vertex_buffers(0, &[_]gfx.VertexBufferInput{
                         .{ .buffer = &m.buffers.vertices, .stride = @truncate(m.buffers.strides.positions), .offset = @truncate(m.buffers.offsets.positions), },
                         .{ .buffer = &m.buffers.vertices, .stride = @truncate(m.buffers.strides.normals), .offset = @truncate(m.buffers.offsets.normals), },
                         .{ .buffer = &m.buffers.vertices, .stride = @truncate(m.buffers.strides.texcoords), .offset = @truncate(m.buffers.offsets.texcoords), },
@@ -902,7 +902,7 @@ pub const App = struct {
         {
             const m = self.engine.asset_manager.get_model(self.turntable_model_id) catch unreachable;
 
-            self.engine.gfx.cmd_set_vertex_buffers(0, &[_]gfx.GfxState.VertexBufferInput{
+            self.engine.gfx.cmd_set_vertex_buffers(0, &[_]gfx.VertexBufferInput{
                 .{ .buffer = &m.buffers.vertices, .stride = @truncate(m.buffers.strides.positions), .offset = @truncate(m.buffers.offsets.positions), },
                 .{ .buffer = &m.buffers.vertices, .stride = @truncate(m.buffers.strides.normals), .offset = @truncate(m.buffers.offsets.normals), },
                 .{ .buffer = &m.buffers.vertices, .stride = @truncate(m.buffers.strides.texcoords), .offset = @truncate(m.buffers.offsets.texcoords), },
@@ -974,7 +974,7 @@ pub const App = struct {
                 _ = camera_entity;
                 self.engine.physics._debug_renderer.draw_bodies(
                     self.engine.physics.zphy, 
-                    rtv.view, 
+                    rtv.platform.view, 
                     self.engine.gfx.swapchain_size.width,
                     self.engine.gfx.swapchain_size.height,
                     zm.matToArr(self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())),
@@ -1065,7 +1065,7 @@ pub const App = struct {
                 const mapped_buffer = self.model_buffer.map(zm.Mat, &self.engine.gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
-                mapped_buffer.data.* = node_model_matrix;
+                mapped_buffer.data().* = node_model_matrix;
             }
 
             for (mesh_set.primitives) |maybe_prim| {

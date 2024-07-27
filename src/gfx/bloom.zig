@@ -154,9 +154,9 @@ pub const BloomFilter = struct {
             {
                 var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx) catch unreachable;
                 defer mapped_buffer.unmap();
-                mapped_buffer.data.resolution_or_radius[0] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.width));
-                mapped_buffer.data.resolution_or_radius[1] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.height));
-                mapped_buffer.data.resolution_or_radius[2] = @floatFromInt(mip_level_minus_one);
+                mapped_buffer.data().resolution_or_radius[0] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.width));
+                mapped_buffer.data().resolution_or_radius[1] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.height));
+                mapped_buffer.data().resolution_or_radius[2] = @floatFromInt(mip_level_minus_one);
             }
 
             const viewport = gf.Viewport {
@@ -208,9 +208,9 @@ pub const BloomFilter = struct {
             {
                 var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx) catch unreachable;
                 defer mapped_buffer.unmap();
-                mapped_buffer.data.resolution_or_radius[0] = filter_radius;
-                mapped_buffer.data.resolution_or_radius[1] = @floatFromInt(mip_level + 1);
-                mapped_buffer.data.resolution_or_radius[2] = viewport.width / viewport.height;
+                mapped_buffer.data().resolution_or_radius[0] = filter_radius;
+                mapped_buffer.data().resolution_or_radius[1] = @floatFromInt(mip_level + 1);
+                mapped_buffer.data().resolution_or_radius[2] = viewport.width / viewport.height;
             }
 
             gfx.cmd_set_render_target(&rtv[mip_level], null);

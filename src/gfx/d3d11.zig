@@ -1,0 +1,903 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const zwin32 = @import("zwin32");
+const d3d11 = zwin32.d3d11;
+const zm = @import("zmath");
+const gf = @import("../gfx/gfx.zig");
+const wb = @import("../window.zig");
+const win32window = @import("../platform/windows.zig");
+const path = @import("../engine/path.zig");
+const bloom = @import("bloom.zig");
+
+inline fn is_dbg() bool {
+    return (builtin.mode == std.builtin.Mode.Debug);
+}
+
+pub const GfxStateD3D11 = struct {
+    const Self = @This();
+
+    pub const VertexShader = VertexShaderD3D11;
+    pub const PixelShader = PixelShaderD3D11;
+    pub const Buffer = BufferD3D11;
+    pub const Texture2D = Texture2DD3D11;
+    pub const TextureView2D = TextureView2DD3D11;
+    pub const RenderTargetView = RenderTargetViewD3D11;
+    pub const DepthStencilView = DepthStencilViewD3D11;
+    pub const RasterizationState = RasterizationStateD3D11;
+    pub const Sampler = SamplerD3D11;
+    pub const BlendState = BlendStateD3D11;
+
+    device: *d3d11.IDevice,
+    swapchain: *zwin32.dxgi.ISwapChain,
+    context: *d3d11.IDeviceContext,
+
+    swapchain_flags: zwin32.dxgi.SWAP_CHAIN_FLAG,
+
+    const enable_debug_layers = true;
+    const swapchain_buffer_count: u32 = 3;
+    const hdr_format = gf.TextureFormat.Rgba16_Float;
+    const ldr_format = gf.TextureFormat.Rgba8_Unorm;
+    const swapchain_format = ldr_format;
+
+    pub fn deinit(self: *Self) void {
+        std.log.debug("D3D11 deinit", .{});
+
+        _ = self.swapchain.Release();
+        self.context.Flush();
+        _ = self.context.Release();
+        _ = self.device.Release();
+
+        // var debug: *zwin32.dxgi.IDebug1 = undefined;
+        // if (zwin32.hrErrorOnFail(zwin32.dxgi.GetDebugInterface1(0, &zwin32.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
+        //     zwin32.hrErrorOnFail(debug.ReportLiveObjects(
+        //         zwin32.dxgi.DXGI_DEBUG_ALL,
+        //         zwin32.dxgi.RLO_FLAGS{ 
+        //             .DETAIL = true,
+        //             .IGNORE_INTERNAL = true,
+        //         }
+        //     )) catch |err| {
+        //         std.log.warn("Dxgi debug failed to report live objects: {}", .{err});
+        //     };
+        //     _ = debug.Release();
+        // } else |err| {
+        //     std.log.warn("Unable to get dxgi debug interface: {}", .{err});
+        // }
+    }
+
+    pub fn init(alloc: std.mem.Allocator, window: *win32window.Win32Window) !Self {
+        _ = alloc;
+        const accepted_feature_levels = [_]zwin32.d3d.FEATURE_LEVEL{
+            .@"11_0", 
+            .@"10_1" 
+        };
+
+        const window_size = try window.get_client_size();
+
+        const swapchain_flags = zwin32.dxgi.SWAP_CHAIN_FLAG {
+            .ALLOW_MODE_SWITCH = true,
+            .ALLOW_TEARING = true,
+        };
+
+        const swapchain_desc = zwin32.dxgi.SWAP_CHAIN_DESC {
+            .BufferDesc = zwin32.dxgi.MODE_DESC {
+                .Width = @intCast(window_size.width),
+                .Height = @intCast(window_size.height),
+                .Format = texture_format_to_d3d11(swapchain_format),
+                .Scaling = zwin32.dxgi.MODE_SCALING.STRETCHED,
+                .RefreshRate = zwin32.dxgi.RATIONAL{
+                    .Numerator = 0,
+                    .Denominator = 1,
+                },
+                .ScanlineOrdering = zwin32.dxgi.MODE_SCANLINE_ORDER.UNSPECIFIED,
+            },
+            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+                .Count = 1,
+                .Quality = 0,
+            },
+            .BufferUsage = zwin32.dxgi.USAGE {
+                .RENDER_TARGET_OUTPUT = true,
+            },
+            .BufferCount = swapchain_buffer_count,
+            .OutputWindow = window.hwnd,
+            .Windowed = zwin32.w32.TRUE,
+            .SwapEffect = zwin32.dxgi.SWAP_EFFECT.FLIP_DISCARD,
+            .Flags = swapchain_flags,
+        };
+
+        var device: *d3d11.IDevice = undefined;
+        var swapchain: *zwin32.dxgi.ISwapChain = undefined;
+        var feature_level = zwin32.d3d.FEATURE_LEVEL.@"1_0_CORE";
+        var context: *d3d11.IDeviceContext = undefined;
+
+        // Attempt to create the device and swapchain with feature level 11_1.
+        attempt_create_device_and_swapchain(
+            &[_]zwin32.d3d.FEATURE_LEVEL{ .@"11_1" },
+            swapchain_desc,
+            @ptrCast(&swapchain),
+            @ptrCast(&device),
+            @ptrCast(&feature_level),
+            @ptrCast(&context)
+        ) catch |err| {
+            std.log.warn("Failed to create at feature level 11_1", .{});
+            // If 11_1 is not available the above call will fail, then try creating at other levels
+            if (err == zwin32.w32.Error.INVALIDARG) {
+                std.log.warn("Recreating at a lower level", .{});
+                try attempt_create_device_and_swapchain(
+                    accepted_feature_levels[0..], 
+                    swapchain_desc,
+                    @ptrCast(&swapchain),
+                    @ptrCast(&device),
+                    @ptrCast(&feature_level),
+                    @ptrCast(&context)); 
+            } else {
+                return err;
+            }
+        };
+
+        std.log.info("Swapchain, device, context created! at level: {}", .{feature_level});
+
+        return Self {
+            .device = device,
+            .swapchain = swapchain,
+            .swapchain_flags = swapchain_flags,
+            .context = context,
+        };
+    }
+
+    fn attempt_create_device_and_swapchain(
+        accepted_feature_levels: []const zwin32.d3d.FEATURE_LEVEL,
+        swapchain_desc: zwin32.dxgi.SWAP_CHAIN_DESC,
+        swapchain: ?*?*zwin32.dxgi.ISwapChain,
+        device: ?*?*d3d11.IDevice,
+        feature_level: ?*zwin32.d3d.FEATURE_LEVEL,
+        context: ?*?*d3d11.IDeviceContext,
+    ) !void {
+        if (is_dbg() and enable_debug_layers) {
+            std.log.debug("enabling d3d11 debug layers", .{});
+        }
+        try zwin32.hrErrorOnFail(d3d11.D3D11CreateDeviceAndSwapChain(
+                null,
+                zwin32.d3d.DRIVER_TYPE.HARDWARE, 
+                null,
+                zwin32.d3d11.CREATE_DEVICE_FLAG {
+                    .DEBUG = (is_dbg() and enable_debug_layers),
+                    .BGRA_SUPPORT = true,
+                    .PREVENT_ALTERING_LAYER_SETTINGS_FROM_REGISTRY = !is_dbg(),
+                }, 
+                accepted_feature_levels.ptr,
+                @intCast(accepted_feature_levels.len),
+                d3d11.SDK_VERSION,
+                &swapchain_desc, 
+                swapchain,
+                device,
+                feature_level,
+                context
+        ));
+    }
+
+    pub fn create_texture2d_from_framebuffer(self: *Self, gfx: *gf.GfxState) !gf.Texture2D {
+        var framebuffer: *d3d11.ITexture2D = undefined;
+        zwin32.hrPanicOnFail(self.swapchain.GetBuffer(0, &d3d11.IID_ITexture2D, @ptrCast(&framebuffer)));
+
+        return gf.Texture2D {
+            .platform = Self.Texture2D {
+                .texture = framebuffer,
+            },
+            .desc = gf.Texture2D.Descriptor {
+                .width = @intCast(gfx.swapchain_size.width),
+                .height = @intCast(gfx.swapchain_size.height),
+                .format = gf.TextureFormat.Rgba8_Unorm_Srgb,
+            },
+        };
+    }
+
+    fn create_hdr_rtv_texture2d_from_framebuffer(self: *Self) !gf.Texture2D {
+        return try gf.Texture2D.init(
+            .{ 
+                .height = @intCast(self.swapchain_size.height),
+                .width = @intCast(self.swapchain_size.width),
+                .format = hdr_format,
+            },
+            .{ .RenderTarget = true, .ShaderResource = true, },
+            .{ .GpuWrite = true, },
+            null,
+            self
+        );
+    }
+
+    pub inline fn begin_frame(self: *Self) !gf.RenderTargetView {
+        return self.hdr_rtv;
+    }
+
+    pub inline fn get_framebuffer(self: *Self) *gf.RenderTargetView {
+        return &self.framebuffer_rtv;
+    }
+
+    pub inline fn present(self: *Self) !void {
+        try zwin32.hrErrorOnFail(self.swapchain.Present(0, zwin32.dxgi.PRESENT_FLAG {}));
+    }
+
+    pub inline fn flush(self: *Self) void {
+        self.context.Flush();
+    }
+    
+    pub inline fn resize_swapchain(self: *Self, new_width: i32, new_height: i32) void {
+        _ = new_width;
+        _ = new_height;
+
+        self.context.Flush();
+        zwin32.hrPanicOnFail(self.swapchain.ResizeBuffers(
+                0, 0, 0, zwin32.dxgi.FORMAT.UNKNOWN, // automatic
+                self.swapchain_flags)); 
+    }
+
+    pub inline fn cmd_clear_render_target(self: *Self, rt: *const gf.RenderTargetView, color: zm.F32x4) void {
+        self.context.ClearRenderTargetView(@ptrCast(rt.platform.view), &color);
+    }
+
+    pub inline fn cmd_clear_depth_stencil_view(self: *Self, dsv: *const gf.DepthStencilView, depth: ?f32, stencil: ?u8) void {
+        self.context.ClearDepthStencilView(
+            @ptrCast(dsv.platform.view), 
+            d3d11.CLEAR_FLAG {
+                .CLEAR_DEPTH = (depth != null),
+                .CLEAR_STENCIL = (stencil != null),
+            }, 
+            if (depth) |d| d else 0.0,
+            if (stencil) |s| s else 0
+        );
+    }
+
+    pub inline fn cmd_set_viewport(self: *Self, viewport: gf.Viewport) void {
+        const d3d11_viewport = d3d11.VIEWPORT {
+            .Width = viewport.width,
+            .Height = viewport.height,
+            .TopLeftX = viewport.top_left_x,
+            .TopLeftY = viewport.top_left_y,
+            .MinDepth = viewport.min_depth,
+            .MaxDepth = viewport.max_depth,
+        };
+        self.context.RSSetViewports(1, @ptrCast(&d3d11_viewport));
+    }
+
+    pub inline fn cmd_set_render_target(self: *Self, rt: *const gf.RenderTargetView, depth_stencil_view: ?*const gf.DepthStencilView) void {
+        self.context.OMSetRenderTargets(1, @ptrCast(&rt.platform.view),
+            if (depth_stencil_view) |dsv| @ptrCast(dsv.platform.view) else null);
+    }
+
+    pub inline fn cmd_set_vertex_shader(self: *Self, vs: *const gf.VertexShader) void {
+        self.context.VSSetShader(@ptrCast(vs.platform.vso), null, 0);
+        self.context.IASetInputLayout(vs.platform.layout);
+    }
+
+    pub inline fn cmd_set_pixel_shader(self: *Self, ps: *const gf.PixelShader) void {
+        self.context.PSSetShader(@ptrCast(ps.platform.pso), null, 0);
+    }
+
+    pub inline fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const gf.VertexBufferInput) void {
+        var d3d11_buffers: [8]*d3d11.IBuffer = undefined;
+        var d3d11_strides: [8]u32 = undefined;
+        var d3d11_offsets: [8]u32 = undefined;
+        for (buffers, 0..) |b, i| {
+            d3d11_buffers[i] = @ptrCast(b.buffer.platform.buffer);
+            d3d11_strides[i] = b.stride;
+            d3d11_offsets[i] = b.offset;
+        }
+        self.context.IASetVertexBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers), @ptrCast(&d3d11_strides), @ptrCast(&d3d11_offsets));
+    }
+
+    pub inline fn cmd_set_index_buffer(self: *Self, buffer: *gf.Buffer, format: gf.IndexFormat, offset: u32) void {
+        const d3d11_format = switch (format) {
+            .U16 => zwin32.dxgi.FORMAT.R16_UINT,
+            .U32 => zwin32.dxgi.FORMAT.R32_UINT,
+        };
+        self.context.IASetIndexBuffer(buffer.platform.buffer, d3d11_format, offset);
+    }
+
+    pub inline fn cmd_set_constant_buffers(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, buffers: []const *const gf.Buffer) void {
+        var d3d11_buffers: [8]*d3d11.IBuffer = undefined;
+        for (buffers, 0..) |b, i| {
+            d3d11_buffers[i] = @ptrCast(b.platform.buffer);
+        }
+        switch (shader_stage) {
+            .Vertex => self.context.VSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+            .Pixel => self.context.PSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+        }
+    }
+
+    pub inline fn cmd_set_rasterizer_state(self: *Self, rs: *gf.RasterizationState) void {
+        self.context.RSSetState(@ptrCast(rs.platform.state));
+    }
+
+    pub inline fn cmd_set_blend_state(self: *Self, blend_state: ?*const gf.BlendState) void {
+        self.context.OMSetBlendState(if (blend_state) |b| @ptrCast(b.platform.state) else null, null, 0xffffffff);
+    }
+
+    pub inline fn cmd_set_shader_resources(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?*const gf.TextureView2D) void {
+        var d3d11_views: [8]?*d3d11.IShaderResourceView = undefined;
+        for (views, 0..) |v, i| {
+            d3d11_views[i] = if (v) |r| @ptrCast(r.platform.view) else null;
+        }
+        switch (shader_stage) {
+            .Vertex => self.context.VSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
+            .Pixel => self.context.PSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
+        }
+    }
+
+    pub inline fn cmd_set_samplers(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, sampler: []const *const gf.Sampler) void {
+        var d3d11_samplers: [8]*d3d11.ISamplerState = undefined;
+        for (sampler, 0..) |s, i| {
+            d3d11_samplers[i] = @ptrCast(s.platform.sampler);
+        }
+        switch (shader_stage) {
+            .Vertex => unreachable,// self.context.VSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+            .Pixel => self.context.PSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+        }
+    }
+
+    pub inline fn cmd_draw(self: *Self, vertex_count: u32, start_vertex: u32) void {
+        self.context.Draw(@intCast(vertex_count), @intCast(start_vertex));
+    }
+
+    pub inline fn cmd_draw_indexed(self: *Self, index_count: u32, start_index: u32, base_vertex: i32) void {
+        self.context.DrawIndexed(@intCast(index_count), @intCast(start_index), @intCast(base_vertex));
+    }
+
+    pub inline fn cmd_draw_instanced(self: *Self, vertex_count: u32, instance_count: u32, start_vertex: u32, start_instance: u32) void {
+        self.context.DrawInstanced(@intCast(vertex_count), @intCast(instance_count), @intCast(start_vertex), @intCast(start_instance));
+    }
+
+    pub inline fn cmd_set_topology(self: *Self, topology: gf.Topology) void {
+        const d3d11_topology = switch (topology) {
+            .PointList => d3d11.PRIMITIVE_TOPOLOGY.POINTLIST,
+            .LineList => d3d11.PRIMITIVE_TOPOLOGY.LINELIST,
+            .LineStrip => d3d11.PRIMITIVE_TOPOLOGY.LINESTRIP,
+            .TriangleList => d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST,
+            .TriangleStrip => d3d11.PRIMITIVE_TOPOLOGY.TRIANGLESTRIP,
+        };
+        self.context.IASetPrimitiveTopology(d3d11_topology);
+    }
+};
+
+fn vertex_input_layout_format_to_dxgi(self: gf.VertexInputLayoutFormat) zwin32.dxgi.FORMAT {
+    return switch (self) {
+        .F32x1 => zwin32.dxgi.FORMAT.R32_FLOAT,
+        .F32x2 => zwin32.dxgi.FORMAT.R32G32_FLOAT,
+        .F32x3 => zwin32.dxgi.FORMAT.R32G32B32_FLOAT,
+        .F32x4 => zwin32.dxgi.FORMAT.R32G32B32A32_FLOAT,
+        .I32x4 => zwin32.dxgi.FORMAT.R32G32B32A32_SINT,
+        .U8x4 => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM,
+    };
+}
+
+fn vertex_input_layout_iterate_per_to_d3d11(self: gf.VertexInputLayoutIteratePer) d3d11.INPUT_CLASSIFICATION {
+    return switch (self) {
+        .Vertex => d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
+        .Instance => d3d11.INPUT_CLASSIFICATION.INPUT_PER_INSTANCE_DATA,
+    };
+}
+
+fn texture_format_to_d3d11(self: gf.TextureFormat) zwin32.dxgi.FORMAT {
+    return switch (self) {
+        .Rgba8_Unorm_Srgb => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
+        .Rgba8_Unorm => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM,
+        .Bgra8_Unorm => zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
+        .Rgba16_Float => zwin32.dxgi.FORMAT.R16G16B16A16_FLOAT,
+        .Rg11b10_Float => zwin32.dxgi.FORMAT.R11G11B10_FLOAT,
+        .D24S8_Unorm_Uint => zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT,
+    };
+}
+
+fn bind_flag_to_d3d11(self: gf.BindFlag) d3d11.BIND_FLAG {
+    return d3d11.BIND_FLAG {
+        .VERTEX_BUFFER = self.VertexBuffer,
+        .INDEX_BUFFER = self.IndexBuffer,
+        .CONSTANT_BUFFER = self.ConstantBuffer,
+        .SHADER_RESOURCE = self.ShaderResource,
+        .STREAM_OUTPUT = self.StreamOutput,
+        .RENDER_TARGET = self.RenderTarget,
+        .DEPTH_STENCIL = self.DepthStencil,
+        .UNORDERED_ACCESS = self.UnorderedAccess,
+        .DECODER = self.Decoder,
+        .VIDEO_ENCODER = self.VideoEncoder,
+    };
+}
+
+fn access_flags_to_d3d11_usage(self: gf.AccessFlags) d3d11.USAGE {
+    if (self.CpuWrite and self.GpuWrite) {
+        return d3d11.USAGE.STAGING;
+    } else if (self.CpuWrite and !self.GpuWrite) {
+        return d3d11.USAGE.DYNAMIC;
+    } else if (!self.CpuWrite and self.GpuWrite) {
+        return d3d11.USAGE.DEFAULT;
+    } else {
+        return d3d11.USAGE.IMMUTABLE;
+    }
+}
+
+fn access_flags_to_d3d11_cpu_access(self: gf.AccessFlags) d3d11.CPU_ACCCESS_FLAG {
+    return d3d11.CPU_ACCCESS_FLAG {
+        .READ = self.CpuRead,
+        .WRITE = self.CpuWrite,
+    };
+}
+
+fn sampler_border_mode_to_d3d11(self: gf.SamplerBorderMode) d3d11.TEXTURE_ADDRESS_MODE {
+    return switch (self) {
+        .Wrap => d3d11.TEXTURE_ADDRESS_MODE.WRAP,
+        .Mirror => d3d11.TEXTURE_ADDRESS_MODE.MIRROR,
+        .Clamp => d3d11.TEXTURE_ADDRESS_MODE.CLAMP,
+        .BorderColour => d3d11.TEXTURE_ADDRESS_MODE.BORDER,
+    };
+}
+
+fn blend_type_to_d3d11(self: gf.BlendType) d3d11.RENDER_TARGET_BLEND_DESC {
+    switch (self) {
+        .None => return d3d11.RENDER_TARGET_BLEND_DESC {
+            .BlendEnable = 0,
+            .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
+            .SrcBlend = d3d11.BLEND.ONE,
+            .DestBlend = d3d11.BLEND.ZERO,
+            .BlendOp = d3d11.BLEND_OP.ADD,
+            .SrcBlendAlpha = d3d11.BLEND.ONE,
+            .DestBlendAlpha = d3d11.BLEND.ZERO,
+            .BlendOpAlpha = d3d11.BLEND_OP.ADD,
+        },
+        .Simple => return d3d11.RENDER_TARGET_BLEND_DESC {
+            .BlendEnable = 1,
+            .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
+            .SrcBlend = d3d11.BLEND.SRC_ALPHA,
+            .DestBlend = d3d11.BLEND.INV_SRC_ALPHA,
+            .BlendOp = d3d11.BLEND_OP.ADD,
+            .SrcBlendAlpha = d3d11.BLEND.ONE,
+            .DestBlendAlpha = d3d11.BLEND.ZERO,
+            .BlendOpAlpha = d3d11.BLEND_OP.ADD,
+        },
+    }
+}
+
+pub const VertexShaderD3D11 = struct {
+    const Self = @This();
+    vso: *d3d11.IVertexShader,
+    layout: *d3d11.IInputLayout,
+    
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.vso.Release();
+        _ = self.layout.Release();
+    }
+
+    pub inline fn init_buffer(
+        vs_data: []const u8, 
+        vs_func: []const u8, 
+        vs_layout: []const gf.VertexInputLayoutEntry,
+        gfx: *gf.GfxState,
+    ) !Self {
+        const vs_func_c = try std.heap.page_allocator.dupeZ(u8, vs_func);
+        defer std.heap.page_allocator.free(vs_func_c);
+
+        var vs_blob: *zwin32.d3d.IBlob = undefined;
+        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&vs_data[0], vs_data.len, null, null, null, vs_func_c, "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
+        defer _ = vs_blob.Release();
+
+        var vso: *d3d11.IVertexShader = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
+        errdefer _ = vso.Release();
+
+        var d3d11_layout_desc = try std.BoundedArray(d3d11.INPUT_ELEMENT_DESC, 32).init(0);
+
+        var name_arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer name_arena_allocator.deinit();
+
+        const name_arena = name_arena_allocator.allocator();
+
+        for (vs_layout) |*entry| {
+            const name_c = try name_arena.dupeZ(u8, entry.name);
+
+            try d3d11_layout_desc.append(d3d11.INPUT_ELEMENT_DESC {
+                .SemanticName = name_c,
+                .SemanticIndex = entry.index,
+                .Format = vertex_input_layout_format_to_dxgi(entry.format),
+                .InputSlot = @intCast(entry.slot),
+                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
+                .InputSlotClass = vertex_input_layout_iterate_per_to_d3d11(entry.per),
+                .InstanceDataStepRate = @intFromBool(entry.per == .Instance),
+            });
+        }
+
+        var vso_input_layout: *d3d11.IInputLayout = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateInputLayout(@ptrCast(&d3d11_layout_desc.buffer[0]), d3d11_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
+        errdefer _ = vso_input_layout.Release();
+
+        return Self {
+            .vso = vso,
+            .layout = vso_input_layout,
+        };
+    }
+};
+
+pub const PixelShaderD3D11 = struct {
+    const Self = @This();
+    pso: *d3d11.IPixelShader,
+    
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.pso.Release();
+    }
+    
+    pub inline fn init_buffer(
+        ps_data: []const u8, 
+        ps_func: []const u8, 
+        gfx: *gf.GfxState,
+    ) !Self {
+        const ps_func_c = try std.heap.page_allocator.dupeZ(u8, ps_func);
+        defer std.heap.page_allocator.free(ps_func_c);
+
+        var ps_blob: *zwin32.d3d.IBlob = undefined;
+        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&ps_data[0], ps_data.len, null, null, null, ps_func_c, "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
+        defer _ = ps_blob.Release();
+
+        var pso: *d3d11.IPixelShader = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
+        errdefer _ = pso.Release();
+
+        return Self {
+            .pso = pso,
+        };
+    }
+};
+
+pub const BufferD3D11 = struct {
+    const Self = @This();
+    buffer: *d3d11.IBuffer,  
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.buffer.Release();
+    }
+
+    pub inline fn init(
+        byte_size: u32,
+        bind_flags: gf.BindFlag,
+        access_flags: gf.AccessFlags,
+        gfx: *gf.GfxState,
+    ) !Self {
+        const buffer_desc = d3d11.BUFFER_DESC {
+            .Usage = access_flags_to_d3d11_usage(access_flags),
+            .ByteWidth = @intCast(byte_size),
+            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
+        };
+        var buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBuffer(&buffer_desc, null, @ptrCast(&buffer)));
+        errdefer _ = buffer.Release();
+        
+        return Self {
+            .buffer = buffer,
+        };
+    }
+    
+    pub inline fn init_with_data(
+        data: []const u8,
+        bind_flags: gf.BindFlag,
+        access_flags: gf.AccessFlags,
+        gfx: *gf.GfxState,
+    ) !Self {
+        const buffer_desc = d3d11.BUFFER_DESC {
+            .Usage = access_flags_to_d3d11_usage(access_flags),
+            .ByteWidth = @intCast(data.len),
+            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
+        };
+        var buffer: *d3d11.IBuffer = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &data[0], }, @ptrCast(&buffer)));
+        errdefer _ = buffer.Release();
+        
+        return Self {
+            .buffer = buffer,
+        };
+    }
+
+    pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedBuffer(OutType) {
+        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+        return MappedBuffer(OutType) {
+            .context = gfx.platform.context,
+            .buffer = self.buffer,
+            .data_ptr = @ptrCast(@alignCast(mapped_subresource.pData)),
+        };
+    }
+
+    pub fn MappedBuffer(comptime T: type) type {
+        return struct {
+            data_ptr: *T,
+            buffer: *d3d11.IBuffer,
+            context: *d3d11.IDeviceContext,
+
+            pub inline fn unmap(self: *const MappedBuffer(T)) void {
+                self.context.Unmap(@ptrCast(self.buffer), 0);
+            }
+            
+            pub inline fn data(self: *const MappedBuffer(T)) *T {
+                return self.data_ptr;
+            }
+        };
+    }
+
+};
+
+pub const Texture2DD3D11 = struct {
+    const Self = @This();
+    texture: *d3d11.ITexture2D,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.texture.Release();
+    }
+
+    pub inline fn init(
+        desc: gf.Texture2D.Descriptor,
+        bind_flags: gf.BindFlag,
+        access_flags: gf.AccessFlags,
+        data: ?[]const u8,
+        gfx: *gf.GfxState
+    ) !Self {
+        const texture_desc = d3d11.TEXTURE2D_DESC {
+            .Width = @intCast(desc.width),
+            .Height = @intCast(desc.height),
+            .MipLevels = @intCast(desc.mip_levels),
+            .ArraySize = @intCast(desc.array_length),
+            .Format = texture_format_to_d3d11(desc.format),
+            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+                .Count = 1,
+                .Quality = 0,
+            },
+            .Usage = access_flags_to_d3d11_usage(access_flags),
+            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
+            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
+        };
+        var texture: *d3d11.ITexture2D = undefined;
+        if (data) |d| {
+            try zwin32.hrErrorOnFail(gfx.platform.device.CreateTexture2D(
+                    &texture_desc, 
+                    &d3d11.SUBRESOURCE_DATA {
+                        .pSysMem = @ptrCast(d), 
+                        .SysMemPitch = @intCast(desc.width * desc.format.byte_width()),
+                    }, 
+                    @ptrCast(&texture)
+            ));
+        } else {
+            try zwin32.hrErrorOnFail(gfx.platform.device.CreateTexture2D(
+                    &texture_desc, 
+                    null,
+                    @ptrCast(&texture)
+            ));
+        }
+        errdefer _ = texture.Release();
+
+        return Self {
+            .texture = texture,
+        };
+    }
+};
+
+pub const TextureView2DD3D11 = struct {
+    const Self = @This();
+    view: *d3d11.IShaderResourceView,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.view.Release();
+    }
+
+    pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
+        const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
+            .Format = texture_format_to_d3d11(texture.desc.format),
+            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
+            .u = .{
+                .Texture2D = d3d11.TEX2D_SRV {
+                    .MostDetailedMip = 0,
+                    .MipLevels = texture.desc.mip_levels,
+                },
+            },
+        };
+        var texture_view: *d3d11.IShaderResourceView = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
+                @ptrCast(texture.platform.texture), 
+                &texture_resource_view_desc, 
+                @ptrCast(&texture_view)
+        ));
+        errdefer _ = texture_view.Release();
+
+        return Self {
+            .view = texture_view,
+        };
+    }
+};
+
+pub const RenderTargetViewD3D11 = struct {
+    const Self = @This();
+    view: *d3d11.IRenderTargetView,
+    size: struct { width: u32, height: u32, },
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.view.Release();
+    }
+
+    pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
+        return init_from_texture2d_mip(texture, 0, gfx);
+    }
+
+    pub inline fn init_from_texture2d_mip(texture: *const gf.Texture2D, mip_level: u32, gfx: *gf.GfxState) !Self {
+        var rtv: *d3d11.IRenderTargetView = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateRenderTargetView(
+                @ptrCast(texture.platform.texture), 
+                &d3d11.RENDER_TARGET_VIEW_DESC{
+                    .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
+                    .Format = texture_format_to_d3d11(texture.desc.format),
+                    .u = .{.Texture2D = d3d11.TEX2D_RTV {
+                        .MipSlice = mip_level,
+                    }},
+                }, 
+                @ptrCast(&rtv)
+        ));
+
+        return Self {
+            .view = rtv,
+            .size = .{
+                .width = texture.desc.width / std.math.pow(u32, 2, mip_level),
+                .height = texture.desc.height / std.math.pow(u32, 2, mip_level),
+            },
+        };
+    }
+};
+
+pub const DepthStencilViewD3D11 = struct {
+    const Self = @This();
+    view: *d3d11.IDepthStencilView,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.view.Release();
+    }
+
+    pub inline fn init_from_texture2d(
+        texture: *const gf.Texture2D, 
+        flags: gf.DepthStencilView.Flags,
+        gfx: *gf.GfxState
+    ) !Self {
+        const depth_stencil_desc = d3d11.DEPTH_STENCIL_VIEW_DESC {
+            .Format = texture_format_to_d3d11(texture.desc.format),
+            .ViewDimension = d3d11.DSV_DIMENSION.TEXTURE2D,
+            .u = .{
+                .Texture2D = d3d11.TEX2D_DSV {
+                    .MipSlice = 0,
+                },
+            },
+            .Flags = d3d11.DSV_FLAGS {
+                .READ_ONLY_DEPTH = flags.read_only_depth,
+                .READ_ONLY_STENCIL = flags.read_only_stencil,
+            },
+        };
+        var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateDepthStencilView(@ptrCast(texture.platform.texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
+        errdefer _ = depth_stencil_view.Release();
+
+        return Self {
+            .view = depth_stencil_view,
+        };
+    }
+};
+
+pub const RasterizationStateD3D11 = struct {
+    const Self = @This();
+    state: *d3d11.IRasterizerState,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.state.Release();
+    }
+
+    pub inline fn init(desc: gf.RasterizationStateDesc, gfx: *gf.GfxState) !Self {
+        var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
+            .FillMode = blk: {
+                if (!desc.FillBack and !desc.FillFront) {
+                    break :blk d3d11.FILL_MODE.WIREFRAME;
+                } else {
+                    break :blk d3d11.FILL_MODE.SOLID;
+                }
+            },
+            .CullMode = blk: {
+                if (desc.FillBack == desc.FillFront) {
+                    break :blk d3d11.CULL_MODE.NONE;
+                } else if (!desc.FillBack) {
+                    break :blk d3d11.CULL_MODE.BACK;
+                } else {
+                    break :blk d3d11.CULL_MODE.FRONT;
+                }
+            },
+            .FrontCounterClockwise = @intFromBool(desc.FrontCounterClockwise),
+        };
+
+        var rasterization_state: *d3d11.IRasterizerState = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
+        errdefer _ = rasterization_state.Release();
+
+        return Self {
+            .state = rasterization_state,
+        };
+    }
+};
+
+pub const SamplerD3D11 = struct {
+    const Self = @This();
+    sampler: *d3d11.ISamplerState,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.sampler.Release();
+    }
+
+    pub inline fn init(desc: gf.SamplerDescriptor, gfx: *gf.GfxState) !Self {
+        const d3d11_filter = blk: {
+            if (desc.anisotropic_filter) {
+                break :blk d3d11.FILTER.ANISOTROPIC;
+            }
+            switch (desc.filter_min_mag) {
+                .Point => {
+                    switch (desc.filter_mip) {
+                        .Point => break :blk d3d11.FILTER.MIN_MAG_MIP_POINT,
+                        .Linear => break :blk d3d11.FILTER.MIN_MAG_POINT_MIP_LINEAR,
+                    }
+                },
+                .Linear => {
+                    switch (desc.filter_mip) {
+                        .Point => break :blk d3d11.FILTER.MIN_MAG_LINEAR_MIP_POINT,
+                        .Linear => break :blk d3d11.FILTER.MIN_MAG_MIP_LINEAR,
+                    }
+                },
+            }
+        };
+
+        const sampler_desc = d3d11.SAMPLER_DESC {
+            .Filter = d3d11_filter,
+            .AddressU = sampler_border_mode_to_d3d11(desc.border_mode),
+            .AddressV = sampler_border_mode_to_d3d11(desc.border_mode),
+            .AddressW = sampler_border_mode_to_d3d11(desc.border_mode),
+            .MaxAnisotropy = 1, // @TODO: setting from gfx?
+            .BorderColor = desc.border_colour,
+            .MipLODBias = 0.0,
+            .ComparisonFunc = .NEVER,
+            .MinLOD = desc.min_lod,
+            .MaxLOD = desc.max_lod,
+        };
+        var sampler: *d3d11.ISamplerState = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateSamplerState(&sampler_desc, @ptrCast(&sampler)));
+        errdefer _ = sampler.Release();
+
+        return Self {
+            .sampler = sampler,
+        };
+    }
+};
+
+pub const BlendStateD3D11 = struct {
+    const Self = @This();
+    state: *d3d11.IBlendState,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.state.Release();
+    }
+
+    pub inline fn init(render_target_blend_types: []const gf.BlendType, gfx: *const gf.GfxState) !Self {
+        var blend_state_desc = d3d11.BLEND_DESC {
+            .AlphaToCoverageEnable = 0,
+            .IndependentBlendEnable = 0,
+            .RenderTarget = [_]d3d11.RENDER_TARGET_BLEND_DESC {blend_type_to_d3d11(gf.BlendType.None)} ** 8,
+        };
+        for (render_target_blend_types, 0..) |t, i| {
+            blend_state_desc.RenderTarget[i] = blend_type_to_d3d11(t);
+        }
+
+        var blend_state: *d3d11.IBlendState = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBlendState(&blend_state_desc, @ptrCast(&blend_state)));
+        errdefer _ = blend_state.Release();
+
+        return Self {
+            .state = blend_state,
+        };
+    }
+};
+

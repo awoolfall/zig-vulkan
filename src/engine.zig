@@ -2,9 +2,9 @@ const std = @import("std");
 const zmesh = @import("zmesh");
 const zm = @import("zmath");
 
+pub const pl = @import("platform/platform.zig");
 pub const _gfx = @import("gfx/gfx.zig");
 pub const as = @import("asset/asset.zig");
-pub const w32 = @import("platform/windows.zig");
 pub const input = @import("input/input.zig");
 pub const time = @import("engine/time.zig");
 pub const tf = @import("engine/transform.zig");
@@ -26,7 +26,7 @@ pub fn Engine(comptime App: type) type {
         pub const EntityDescriptor = en.EntityDescriptor(App);
         pub const EntityList = en.EntityList(App);
 
-        window: w32.Win32Window,
+        window: pl.Window,
         gfx: _gfx.GfxState,
         image: image.ImageLoader,
         physics: physics.PhysicsSystem,
@@ -82,7 +82,7 @@ pub fn Engine(comptime App: type) type {
             defer engine.image.deinit();
 
             Log.debug("Calling Window init!", .{});
-            engine.window = try w32.Win32Window.init();
+            engine.window = try pl.Window.init();
             defer engine.window.deinit();
 
             Log.debug("Calling GFX init!", .{});

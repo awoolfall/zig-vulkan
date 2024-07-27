@@ -133,7 +133,7 @@ pub const Win32Window = struct {
         return self.hwnd;
     }
 
-    pub fn get_client_size(self: *Win32Window) !wb.WindowSize {
+    pub fn get_client_size(self: *const Win32Window) !wb.WindowSize {
         var rect: w32.RECT = undefined;
         if (w32.GetClientRect(self.hwnd, &rect) == w32.FALSE) {
             return error.FailedToGetClientRect;

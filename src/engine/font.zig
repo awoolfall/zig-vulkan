@@ -316,7 +316,7 @@ pub const Font = struct {
             const mapped_buffer = self.font_text_buffer.map(FontConstantBuffer, gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data.* = FontConstantBuffer {
+            mapped_buffer.data().* = FontConstantBuffer {
                 .msdf_unit_range = zm.f32x4s(self.atlas_details.distance_range) 
                     / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),
                 .fg_colour = props.colour,
@@ -335,8 +335,8 @@ pub const Font = struct {
                     const c = text[text_offset + instance_count];
 
                     // reset data in this instance
-                    mapped_buffer.data[instance_count].quad_bounds = .{};
-                    mapped_buffer.data[instance_count].atlas_bounds = .{};
+                    mapped_buffer.data()[instance_count].quad_bounds = .{};
+                    mapped_buffer.data()[instance_count].atlas_bounds = .{};
 
                     // handle newline character
                     switch (c) {
@@ -355,8 +355,8 @@ pub const Font = struct {
                             };
 
                             // Setup character info buffer
-                            mapped_buffer.data[instance_count].quad_bounds = quad_bounds;
-                            mapped_buffer.data[instance_count].atlas_bounds = char_info.atlas_bounds;
+                            mapped_buffer.data()[instance_count].quad_bounds = quad_bounds;
+                            mapped_buffer.data()[instance_count].atlas_bounds = char_info.atlas_bounds;
 
                             x_loc += (char_info.advance / aspect) * screen_size;
                         },

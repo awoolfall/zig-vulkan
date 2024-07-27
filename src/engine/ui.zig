@@ -279,7 +279,7 @@ pub const QuadRenderer = struct {
             const mapped_buffer = self.quad_buffer_vertex.map(QuadBufferVertexBuffer, gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data.* = QuadBufferVertexBuffer {
+            mapped_buffer.data().* = QuadBufferVertexBuffer {
                 .quad_bounds = rect_pixels.to_screen_bounds(rtv.size.width, rtv.size.height),
             };
         }
@@ -287,7 +287,7 @@ pub const QuadRenderer = struct {
             const mapped_buffer = self.quad_buffer_pixel.map(QuadBufferPixelBuffer, gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data.* = QuadBufferPixelBuffer {
+            mapped_buffer.data().* = QuadBufferPixelBuffer {
                 .bg_colour = props.colour,
                 .border_colour = props.border_colour,
                 .border_width_px = @floatFromInt(props.border_width_px),

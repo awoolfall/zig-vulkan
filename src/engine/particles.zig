@@ -290,7 +290,7 @@ pub const ParticleSystem = struct {
             defer mapped_buffer.unmap();
 
             for (self.sort_particles, 0..) |*p, i| {
-                @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data))[i] = p.dat;
+                @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data()))[i] = p.dat;
             }
         } else |_| {}
 
@@ -298,7 +298,7 @@ pub const ParticleSystem = struct {
         if (self.constant_buffer.map(ConstantBuffer, gfx)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data.* = ConstantBuffer {
+            mapped_buffer.data().* = ConstantBuffer {
                 .view_matrix = view_matrix,
                 .proj_matrix = proj_matrix,
                 .flags = @bitCast(ConstantBufferFlags { 
