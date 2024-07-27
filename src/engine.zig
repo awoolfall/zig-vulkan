@@ -1,8 +1,6 @@
 const std = @import("std");
-const zwin32 = @import("zwin32");
 const zmesh = @import("zmesh");
 const zm = @import("zmath");
-const hrPanic = zwin32.hrPanicOnFail;
 
 pub const _gfx = @import("gfx/gfx.zig");
 pub const as = @import("asset/asset.zig");
@@ -34,6 +32,7 @@ pub fn Engine(comptime App: type) type {
         physics: physics.PhysicsSystem,
         input: input.InputState,
         time: time.TimeState,
+        asset_manager: as.AssetManager,
         app: App,
         entities: EntityList,
         exe_path: []u8,
@@ -50,6 +49,7 @@ pub fn Engine(comptime App: type) type {
                 .physics = undefined,
                 .input = undefined,
                 .time = undefined,
+                .asset_manager = undefined,
                 .app = undefined,
                 .entities = undefined,
                 .exe_path = undefined,
@@ -89,8 +89,16 @@ pub fn Engine(comptime App: type) type {
             engine.gfx = try _gfx.GfxState.init(alloc, &engine.window);
             defer engine.gfx.deinit();
 
+            engine.asset_manager = blk: {
+                const resources_path = try std.fs.path.join(engine.general_allocator.allocator(), &[_][]const u8{engine.exe_path, "../../res"});
+                defer engine.general_allocator.allocator().free(resources_path);
+
+                break :blk try as.AssetManager.init(alloc, resources_path);
+            };
+
+            defer engine.asset_manager.deinit();
             Log.debug("Calling physics init", .{});
-            engine.physics = try physics.PhysicsSystem.init(alloc, &engine.gfx);
+            engine.physics = try physics.PhysicsSystem.init(alloc, &engine.asset_manager, &engine.gfx);
             defer engine.physics.deinit();
 
             engine.entities = try EntityList.init(alloc, &engine);

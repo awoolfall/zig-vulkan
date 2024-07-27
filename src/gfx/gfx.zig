@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zwin32 = @import("zwin32");
 const d3d11 = zwin32.d3d11;
+const zm = @import("zmath");
 const wb = @import("../window.zig");
 const win32window = @import("../platform/windows.zig");
 const path = @import("../engine/path.zig");
@@ -26,7 +27,7 @@ pub const GfxState = struct {
     swapchain_flags: zwin32.dxgi.SWAP_CHAIN_FLAG,
     swapchain_size: struct{width: i32, height: i32},
 
-    rasterization_states_map: std.AutoHashMap(RasterizationStateDesc, RasterizationState),
+    rasterization_states_array: [8]?RasterizationState = [_]?RasterizationState{null} ** 8,
 
     tone_mapping_filter: ToneMappingAndBloomFilter,
 
@@ -51,11 +52,11 @@ pub const GfxState = struct {
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
 
-        var rast_iterator = self.rasterization_states_map.iterator();
-        while (rast_iterator.next()) |r| {
-            r.value_ptr.deinit();
+        for (self.rasterization_states_array) |r| {
+            if (r) |*rs| {
+                rs.deinit();
+            }
         }
-        self.rasterization_states_map.deinit();
 
         self.default.sampler.deinit();
         self.default.diffuse.deinit();
@@ -94,6 +95,7 @@ pub const GfxState = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *win32window.Win32Window) !Self {
+        _ = alloc;
         const accepted_feature_levels = [_]zwin32.d3d.FEATURE_LEVEL{
             .@"11_0", 
             .@"10_1" 
@@ -177,7 +179,6 @@ pub const GfxState = struct {
             .hdr_rtv = undefined,
             .hdr_texture_view = undefined,
             .tone_mapping_filter = undefined,
-            .rasterization_states_map = std.AutoHashMap(RasterizationStateDesc, RasterizationState).init(alloc),
             .default = .{
                 .sampler = undefined,
                 .diffuse = undefined,
@@ -313,12 +314,13 @@ pub const GfxState = struct {
         return @as(f32, @floatFromInt(self.swapchain_size.width)) / @as(f32, @floatFromInt(self.swapchain_size.height));
     }
 
-    pub fn rasterization_state(self: *Self, desc: RasterizationStateDesc) RasterizationState {
-        if (self.rasterization_states_map.get(desc)) |r| {
+    fn get_rasterization_state(self: *Self, desc: RasterizationStateDesc) RasterizationState {
+        const index: usize = @intCast(@as(u3, @bitCast(desc)));
+        if (self.rasterization_states_array[index]) |r| {
             return r;
         } else {
             const r = RasterizationState.init(desc, self) catch unreachable;
-            self.rasterization_states_map.put(desc, r) catch unreachable;
+            self.rasterization_states_array[index] = r;
             return r;
         }
     }
@@ -368,6 +370,166 @@ pub const GfxState = struct {
             else => {},
         }
     }
+
+
+    pub fn cmd_clear_render_target(self: *Self, rt: *const RenderTargetView, color: zm.F32x4) void {
+        self.context.ClearRenderTargetView(@ptrCast(rt.view), &color);
+    }
+
+    pub fn cmd_clear_depth_stencil_view(self: *Self, dsv: *const DepthStencilView, depth: ?f32, stencil: ?u8) void {
+        self.context.ClearDepthStencilView(
+            @ptrCast(dsv.view), 
+            d3d11.CLEAR_FLAG {
+                .CLEAR_DEPTH = (depth != null),
+                .CLEAR_STENCIL = (stencil != null),
+            }, 
+            if (depth) |d| d else 0.0,
+            if (stencil) |s| s else 0
+        );
+    }
+
+    pub fn cmd_set_viewport(self: *Self, viewport: Viewport) void {
+        const d3d11_viewport = d3d11.VIEWPORT {
+            .Width = viewport.width,
+            .Height = viewport.height,
+            .TopLeftX = viewport.top_left_x,
+            .TopLeftY = viewport.top_left_y,
+            .MinDepth = viewport.min_depth,
+            .MaxDepth = viewport.max_depth,
+        };
+        self.context.RSSetViewports(1, @ptrCast(&d3d11_viewport));
+    }
+
+    pub fn cmd_set_render_target(self: *Self, rt: *const RenderTargetView, depth_stencil_view: ?*const DepthStencilView) void {
+        self.context.OMSetRenderTargets(1, @ptrCast(&rt.view),
+            if (depth_stencil_view) |dsv| @ptrCast(dsv.view) else null);
+    }
+
+    pub fn cmd_set_vertex_shader(self: *Self, vs: *const VertexShader) void {
+        self.context.VSSetShader(@ptrCast(vs.vso), null, 0);
+        self.context.IASetInputLayout(vs.layout);
+    }
+
+    pub fn cmd_set_pixel_shader(self: *Self, ps: *const PixelShader) void {
+        self.context.PSSetShader(@ptrCast(ps.pso), null, 0);
+    }
+
+    pub const VertexBufferInput = struct {
+        buffer: *Buffer,
+        stride: u32,
+        offset: u32,
+    };
+
+    pub fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const VertexBufferInput) void {
+        var d3d11_buffers: [8]*d3d11.IBuffer = undefined;
+        var d3d11_strides: [8]u32 = undefined;
+        var d3d11_offsets: [8]u32 = undefined;
+        for (buffers, 0..) |b, i| {
+            d3d11_buffers[i] = @ptrCast(b.buffer.buffer);
+            d3d11_strides[i] = b.stride;
+            d3d11_offsets[i] = b.offset;
+        }
+        self.context.IASetVertexBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers), @ptrCast(&d3d11_strides), @ptrCast(&d3d11_offsets));
+    }
+
+    pub fn cmd_set_index_buffer(self: *Self, buffer: *Buffer, format: IndexFormat, offset: u32) void {
+        const d3d11_format = switch (format) {
+            .U16 => zwin32.dxgi.FORMAT.R16_UINT,
+            .U32 => zwin32.dxgi.FORMAT.R32_UINT,
+        };
+        self.context.IASetIndexBuffer(buffer.buffer, d3d11_format, offset);
+    }
+
+    pub fn cmd_set_constant_buffers(self: *Self, shader_stage: ShaderStage, start_slot: u32, buffers: []const *const Buffer) void {
+        var d3d11_buffers: [8]*d3d11.IBuffer = undefined;
+        for (buffers, 0..) |b, i| {
+            d3d11_buffers[i] = @ptrCast(b.buffer);
+        }
+        switch (shader_stage) {
+            .Vertex => self.context.VSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+            .Pixel => self.context.PSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+        }
+    }
+
+    pub fn cmd_set_rasterizer_state(self: *Self, rs: RasterizationStateDesc) void {
+        self.context.RSSetState(@ptrCast(self.get_rasterization_state(rs).state));
+    }
+
+    pub fn cmd_set_blend_state(self: *Self, blend_state: ?*const BlendState) void {
+        self.context.OMSetBlendState(if (blend_state) |b| @ptrCast(b.state) else null, null, 0xffffffff);
+    }
+
+    pub fn cmd_set_shader_resources(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: []const ?*const TextureView2D) void {
+        var d3d11_views: [8]?*d3d11.IShaderResourceView = undefined;
+        for (views, 0..) |v, i| {
+            d3d11_views[i] = if (v) |r| @ptrCast(r.view) else null;
+        }
+        switch (shader_stage) {
+            .Vertex => self.context.VSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
+            .Pixel => self.context.PSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
+        }
+    }
+
+    pub fn cmd_set_samplers(self: *Self, shader_stage: ShaderStage, start_slot: u32, sampler: []const *const Sampler) void {
+        var d3d11_samplers: [8]*d3d11.ISamplerState = undefined;
+        for (sampler, 0..) |s, i| {
+            d3d11_samplers[i] = @ptrCast(s.sampler);
+        }
+        switch (shader_stage) {
+            .Vertex => unreachable,// self.context.VSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+            .Pixel => self.context.PSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+        }
+    }
+
+    pub fn cmd_draw(self: *Self, vertex_count: u32, start_vertex: u32) void {
+        self.context.Draw(@intCast(vertex_count), @intCast(start_vertex));
+    }
+
+    pub fn cmd_draw_indexed(self: *Self, index_count: u32, start_index: u32, base_vertex: i32) void {
+        self.context.DrawIndexed(@intCast(index_count), @intCast(start_index), @intCast(base_vertex));
+    }
+
+    pub fn cmd_draw_instanced(self: *Self, vertex_count: u32, instance_count: u32, start_vertex: u32, start_instance: u32) void {
+        self.context.DrawInstanced(@intCast(vertex_count), @intCast(instance_count), @intCast(start_vertex), @intCast(start_instance));
+    }
+
+    pub fn cmd_set_topology(self: *Self, topology: Topology) void {
+        const d3d11_topology = switch (topology) {
+            .PointList => d3d11.PRIMITIVE_TOPOLOGY.POINTLIST,
+            .LineList => d3d11.PRIMITIVE_TOPOLOGY.LINELIST,
+            .LineStrip => d3d11.PRIMITIVE_TOPOLOGY.LINESTRIP,
+            .TriangleList => d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST,
+            .TriangleStrip => d3d11.PRIMITIVE_TOPOLOGY.TRIANGLESTRIP,
+        };
+        self.context.IASetPrimitiveTopology(d3d11_topology);
+    }
+};
+
+pub const IndexFormat = enum {
+    U16,
+    U32,
+};
+
+pub const ShaderStage = enum {
+    Vertex,
+    Pixel,
+};
+
+pub const Topology = enum {
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip,
+};
+
+pub const Viewport = struct {
+    width: f32,
+    height: f32,
+    top_left_x: f32,
+    top_left_y: f32,
+    min_depth: f32,
+    max_depth: f32,
 };
 
 pub const VertexShader = struct {
@@ -394,7 +556,7 @@ pub const VertexShader = struct {
 
         const vs_file_len = try vs_file.getEndPos();
 
-        const vs_buf: []u8 = try alloc.alloc(u8, vs_file_len);
+        const vs_buf: []u8 = try alloc.alloc(u8, @intCast(vs_file_len));
         defer alloc.free(vs_buf);
 
         if (try vs_file.readAll(vs_buf) != vs_file_len) {
@@ -514,7 +676,7 @@ pub const PixelShader = struct {
 
         const ps_file_len = try ps_file.getEndPos();
 
-        const ps_buf: []u8 = try alloc.alloc(u8, ps_file_len);
+        const ps_buf: []u8 = try alloc.alloc(u8, @intCast(ps_file_len));
         defer alloc.free(ps_buf);
 
         if (try ps_file.readAll(ps_buf) != ps_file_len) {
@@ -914,11 +1076,10 @@ pub const AccessFlags = packed struct(u32) {
     }
 };
 
-pub const RasterizationStateDesc = packed struct(u32) {
+pub const RasterizationStateDesc = packed struct(u3) {
     FillBack: bool = true,
     FillFront: bool = true,
     FrontCounterClockwise: bool = false,
-    __unused: u29 = 0,
 };
 
 pub const RasterizationState = struct {
@@ -1222,37 +1383,34 @@ const ToneMappingAndBloomFilter = struct {
             mapped_buffer.data.exposure = exposure;
         } else |_| {}
 
-        const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(rtv.size.width),
-            .Height = @floatFromInt(rtv.size.height),
-            .TopLeftX = 0.0,
-            .TopLeftY = 0.0,
-            .MinDepth = 0.0,
-            .MaxDepth = 0.0,
+        const viewport = Viewport {
+            .width = @floatFromInt(rtv.size.width),
+            .height = @floatFromInt(rtv.size.height),
+            .top_left_x = 0,
+            .top_left_y = 0,
+            .min_depth = 0,
+            .max_depth = 0,
         };
 
-        gfx.context.OMSetBlendState(null, null, 0xffffffff);
-        gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), null);
+        gfx.cmd_set_blend_state(null);
+        gfx.cmd_set_render_target(rtv, null);
 
-        gfx.context.RSSetViewports(1, @ptrCast(&viewport));
-        gfx.context.RSSetState(@ptrCast(gfx.rasterization_state(.{ .FillBack = false, .FrontCounterClockwise = true, }).state));
+        gfx.cmd_set_viewport(viewport);
+        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
 
-        gfx.context.VSSetShader(@ptrCast(self.vertex_shader.vso), null, 0);
+        gfx.cmd_set_vertex_shader(&self.vertex_shader);
 
-        gfx.context.PSSetShader(@ptrCast(self.pixel_shader.pso), null, 0);
-        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
-        gfx.context.PSSetShaderResources(0, 2, @ptrCast(&([2]*d3d11.IShaderResourceView{
-            hdr_buffer.view, 
-            self.bloom_filter.get_bloom_view().view
-        })));
-        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.buffer.buffer));
+        gfx.cmd_set_pixel_shader(&self.pixel_shader);
+        gfx.cmd_set_samplers(.Pixel, 0, &.{&self.sampler});
+        gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_buffer, self.bloom_filter.get_bloom_view()});
+        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.buffer});
 
-        gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        gfx.cmd_set_topology(.TriangleList);
 
-        gfx.context.Draw(6, 0);
+        gfx.cmd_draw(6, 0);
         
         // unset hdr texture so it can be used as rtv again
-        gfx.context.PSSetShaderResources(0, 2, @ptrCast(&([2]?*d3d11.IShaderResourceView{null, null})));
+        gfx.cmd_set_shader_resources(.Pixel, 0, &.{null, null});
     }
 
     pub fn framebuffer_resized(self: *ToneMappingAndBloomFilter, gfx: *GfxState) !void {

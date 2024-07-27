@@ -1,5 +1,4 @@
 const std = @import("std");
-const zwin32 = @import("zwin32");
 const gf = @import("gfx.zig");
 
 // Implements COD: Advanced warfare physically based bloom
@@ -142,13 +141,14 @@ pub const BloomFilter = struct {
         var rtv: *const [MIP_LEVELS]gf.RenderTargetView = &self.bloom_mip_textures[0].rtv;
 
         // Downsample
-        gfx.context.OMSetBlendState(null, null, 0xffffffff);
-        gfx.context.RSSetState(@ptrCast(gfx.rasterization_state(.{ .FillBack = false, .FrontCounterClockwise = true, }).state));
-        gfx.context.VSSetShader(@ptrCast(self.full_screen_quad_vertex_shader.vso), null, 0);
-        gfx.context.PSSetShader(@ptrCast(self.downsample_pixel_shader.pso), null, 0);
-        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
-        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.constant_buffer.buffer));
-        gfx.context.IASetPrimitiveTopology(zwin32.d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        gfx.cmd_set_blend_state(null);
+        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+        gfx.cmd_set_vertex_shader(&self.full_screen_quad_vertex_shader);
+        gfx.cmd_set_pixel_shader(&self.downsample_pixel_shader);
+        gfx.cmd_set_samplers(.Pixel, 0, &.{&self.sampler});
+        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.constant_buffer});
+        gfx.cmd_set_topology(.TriangleList);
+
         for (0..MIP_LEVELS) |mip_level| {
             const mip_level_minus_one = @max(@as(i32, @intCast(mip_level)) - 1, 0);
             {
@@ -159,49 +159,50 @@ pub const BloomFilter = struct {
                 mapped_buffer.data.resolution_or_radius[2] = @floatFromInt(mip_level_minus_one);
             }
 
-            const viewport = zwin32.d3d11.VIEWPORT {
-                .Width = @floatFromInt(rtv[mip_level].size.width),
-                .Height = @floatFromInt(rtv[mip_level].size.height),
-                .TopLeftX = 0.0,
-                .TopLeftY = 0.0,
-                .MinDepth = 0.0,
-                .MaxDepth = 0.0,
+            const viewport = gf.Viewport {
+                .width = @floatFromInt(rtv[mip_level].size.width),
+                .height = @floatFromInt(rtv[mip_level].size.height),
+                .top_left_x = 0.0,
+                .top_left_y = 0.0,
+                .min_depth = 0.0,
+                .max_depth = 0.0,
             };
 
-            gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv[mip_level].view), null);
-            gfx.context.RSSetViewports(1, @ptrCast(&viewport));
-            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&hdr_source.view));
+            gfx.cmd_set_render_target(&rtv[mip_level], null);
+            gfx.cmd_set_viewport(viewport);
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_source});
 
-            gfx.context.Draw(6, 0);
+            gfx.cmd_draw(6, 0);
 
             // unset hdr texture so it can be used as rtv again
-            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&([1]?*zwin32.d3d11.IShaderResourceView{null})));
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{null});
 
             hdr_source = &self.bloom_mip_textures[mip_level % 2].view;
             rtv = &self.bloom_mip_textures[(mip_level + 1) % 2].rtv;
         }
 
         // Upsample
-        gfx.context.OMSetBlendState(null, null, 0xffffffff);
-        gfx.context.RSSetState(@ptrCast(gfx.rasterization_state(.{ .FillBack = false, .FrontCounterClockwise = true, }).state));
-        gfx.context.VSSetShader(@ptrCast(self.full_screen_quad_vertex_shader.vso), null, 0);
-        gfx.context.PSSetShader(@ptrCast(self.upsample_pixel_shader.pso), null, 0);
-        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
-        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.constant_buffer.buffer));
-        gfx.context.IASetPrimitiveTopology(zwin32.d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
+        gfx.cmd_set_blend_state(null);
+        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+        gfx.cmd_set_vertex_shader(&self.full_screen_quad_vertex_shader);
+        gfx.cmd_set_pixel_shader(&self.upsample_pixel_shader);
+        gfx.cmd_set_samplers(.Pixel, 0, &.{&self.sampler});
+        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.constant_buffer});
+        gfx.cmd_set_topology(.TriangleList);
+
         for (1..MIP_LEVELS) |inv_mip_level| {
             const mip_level = MIP_LEVELS - inv_mip_level - 1;
 
             hdr_source = &self.bloom_mip_textures[(mip_level + 1) % 2].view;
             rtv = &self.bloom_mip_textures[mip_level % 2].rtv;
 
-            const viewport = zwin32.d3d11.VIEWPORT {
-                .Width = @floatFromInt(rtv[mip_level].size.width),
-                .Height = @floatFromInt(rtv[mip_level].size.height),
-                .TopLeftX = 0.0,
-                .TopLeftY = 0.0,
-                .MinDepth = 0.0,
-                .MaxDepth = 0.0,
+            const viewport = gf.Viewport {
+                .width = @floatFromInt(rtv[mip_level].size.width),
+                .height = @floatFromInt(rtv[mip_level].size.height),
+                .top_left_x = 0.0,
+                .top_left_y = 0.0,
+                .min_depth = 0.0,
+                .max_depth = 0.0,
             };
             
             {
@@ -209,17 +210,17 @@ pub const BloomFilter = struct {
                 defer mapped_buffer.unmap();
                 mapped_buffer.data.resolution_or_radius[0] = filter_radius;
                 mapped_buffer.data.resolution_or_radius[1] = @floatFromInt(mip_level + 1);
-                mapped_buffer.data.resolution_or_radius[2] = viewport.Width / viewport.Height;
+                mapped_buffer.data.resolution_or_radius[2] = viewport.width / viewport.height;
             }
 
-            gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv[mip_level].view), null);
-            gfx.context.RSSetViewports(1, @ptrCast(&viewport));
-            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&hdr_source.view));
+            gfx.cmd_set_render_target(&rtv[mip_level], null);
+            gfx.cmd_set_viewport(viewport);
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_source});
 
-            gfx.context.Draw(6, 0);
+            gfx.cmd_draw(6, 0);
 
             // unset hdr texture so it can be used as rtv again
-            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&([1]?*zwin32.d3d11.IShaderResourceView{null})));
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{null});
         }
     }
 };

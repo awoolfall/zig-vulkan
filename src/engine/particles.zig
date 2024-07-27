@@ -1,6 +1,5 @@
 const std = @import("std");
 const zm = @import("zmath");
-const w32 = @import("zwin32");
 const zn = @import("znoise");
 const tf = @import("transform.zig");
 const tm = @import("time.zig");
@@ -309,36 +308,30 @@ pub const ParticleSystem = struct {
             };
         } else |_| {}
 
-        gfx.context.RSSetState(gfx.rasterization_state(.{ .FillBack = true, }).state);
-        gfx.context.PSSetShader(self.pixel_shader.pso, null, 0);
+        gfx.cmd_set_rasterizer_state(.{ .FillBack = true, });
+        gfx.cmd_set_pixel_shader(&self.pixel_shader);
 
-        gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), depth_view.view);
-        gfx.context.OMSetBlendState(self.blend_state.state, null, 0xffffffff);
+        gfx.cmd_set_render_target(rtv, depth_view);
+        gfx.cmd_set_blend_state(&self.blend_state);
 
-        gfx.context.VSSetShader(self.vertex_shader.vso, null, 0);
-        gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.constant_buffer.buffer));
-        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.constant_buffer.buffer));
+        gfx.cmd_set_vertex_shader(&self.vertex_shader);
+        gfx.cmd_set_constant_buffers(.Vertex, 0, &.{&self.constant_buffer});
+        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.constant_buffer});
 
-        gfx.context.IASetPrimitiveTopology(w32.d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);//
-        gfx.context.IASetInputLayout(self.vertex_shader.layout);
+        gfx.cmd_set_topology(.TriangleList);
 
         const model_matrix_stride: c_uint = @sizeOf(VertexBufferData);
-        var offset: c_uint = 0;
-        gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
-        offset = 1 * @sizeOf([4]f32);
-        gfx.context.IASetVertexBuffers(1, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
-        offset = 2 * @sizeOf([4]f32);
-        gfx.context.IASetVertexBuffers(2, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
-        offset = 3 * @sizeOf([4]f32);
-        gfx.context.IASetVertexBuffers(3, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
-        offset = 4 * @sizeOf([4]f32);
-        gfx.context.IASetVertexBuffers(4, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
-        offset = 5 * @sizeOf([4]f32);
-        gfx.context.IASetVertexBuffers(5, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
-        offset = 6 * @sizeOf([4]f32);
-        gfx.context.IASetVertexBuffers(6, 1, @ptrCast(&self.model_matrix_vertex_buffer.buffer), @ptrCast(&model_matrix_stride), @ptrCast(&offset));
+        gfx.cmd_set_vertex_buffers(0, &.{
+            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 0 * @sizeOf([4]f32) },
+            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 1 * @sizeOf([4]f32) },
+            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 2 * @sizeOf([4]f32) },
+            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 3 * @sizeOf([4]f32) },
+            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 4 * @sizeOf([4]f32) },
+            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 5 * @sizeOf([4]f32) },
+            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 6 * @sizeOf([4]f32) },
+        });
 
-        gfx.context.DrawInstanced(6, @intCast(self.particles.len), 0, 0);
+        gfx.cmd_draw_instanced(6, @intCast(self.particles.len), 0, 0);
     }
 
     fn random_v(rand: std.rand.Random) zm.F32x4 {

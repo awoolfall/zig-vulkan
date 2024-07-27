@@ -3,6 +3,8 @@ pub const zphy = @import("zphysics");
 const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
 const en = @import("../engine.zig");
+const ms = @import("../engine/mesh.zig");
+const as = @import("../asset/asset.zig");
 const tm = @import("../engine/time.zig");
 const tf = @import("../engine/transform.zig");
 const _gfx = @import("../gfx/gfx.zig");
@@ -18,12 +20,13 @@ pub const PhysicsSystem = struct {
         broad_phase_layer_interface: *BroadPhaseLayerInterface,
         object_vs_broad_phase_layer_filter: *ObjectVsBroadPhaseLayerFilter,
         object_layer_pair_filter: *ObjectLayerPairFilter,
-        debug_renderer: *debug.D3D11DebugRenderer,
     },
+    _debug_renderer: *debug.D3D11DebugRenderer,
+    asset_manager: *as.AssetManager,
     zphy: *zphy.PhysicsSystem, 
     next_update_time: i128 = 0,
 
-    pub fn init(alloc: std.mem.Allocator, gfx: *_gfx.GfxState) !Self {
+    pub fn init(alloc: std.mem.Allocator, asset_manager: *as.AssetManager, gfx: *_gfx.GfxState) !Self {
         try zphy.init(alloc, .{});
         errdefer zphy.deinit();
 
@@ -65,8 +68,9 @@ pub const PhysicsSystem = struct {
                 .broad_phase_layer_interface = broad_phase_layer_interface,
                 .object_vs_broad_phase_layer_filter = object_vs_broad_phase_layer_filter,
                 .object_layer_pair_filter = object_layer_pair_filter,
-                .debug_renderer = debug_renderer,
             },
+            ._debug_renderer = debug_renderer,
+            .asset_manager = asset_manager,
             .zphy = physics_system,
             .next_update_time = std.time.nanoTimestamp() + UpdateRateNs,
         };
@@ -75,11 +79,11 @@ pub const PhysicsSystem = struct {
     pub fn deinit(self: *Self) void {
         zphy.DebugRenderer.destroySingleton();
         self.zphy.destroy();
-        self._interfaces.debug_renderer.deinit();
+        self._debug_renderer.deinit();
         self._allocator.destroy(self._interfaces.broad_phase_layer_interface);
         self._allocator.destroy(self._interfaces.object_vs_broad_phase_layer_filter);
         self._allocator.destroy(self._interfaces.object_layer_pair_filter);
-        self._allocator.destroy(self._interfaces.debug_renderer);
+        self._allocator.destroy(self._debug_renderer);
         zphy.deinit();
     }
 
@@ -145,6 +149,40 @@ pub const PhysicsSystem = struct {
 
             self.next_update_time += UpdateRateNs;
         }
+    }
+
+    pub fn create_shape(self: *const Self, shape: ShapeSettings) !*zphy.Shape {
+        var shape_settings = switch (shape.shape) {
+            .Capsule => |*c| 
+                (try zphy.CapsuleShapeSettings.create(c.half_height, c.radius)).asShapeSettingsMut(),
+            .Sphere => |*s| 
+                (try zphy.SphereShapeSettings.create(s.radius)).asShapeSettingsMut(),
+            .Box => |*b| 
+                (try zphy.BoxShapeSettings.create([3]f32{b.width/2.0, b.height/2.0, b.depth/2.0})).asShapeSettingsMut(),
+            .ModelCompoundConvexHull => |m|
+                (try (try self.asset_manager.get_model(m)).gen_static_compound_physics_shape()).asShapeSettingsMut(),
+            };
+        defer shape_settings.release();
+
+        if (zm.any(shape.offset_transform.scale != zm.f32x4s(1.0), 3)) {
+            const scale_shape = try zphy.DecoratedShapeSettings.createScaled(shape_settings, zm.vecToArr3(shape.offset_transform.scale));
+
+            shape_settings.release();
+            shape_settings = scale_shape.asShapeSettingsMut();
+        }
+
+        if (zm.any(shape.offset_transform.position != zm.f32x4s(0.0), 3) or zm.any(shape.offset_transform.rotation != zm.qidentity(), 4)) {
+            const decorated_shape = try zphy.DecoratedShapeSettings.createRotatedTranslated(
+                shape_settings, 
+                shape.offset_transform.rotation, 
+                zm.vecToArr3(shape.offset_transform.position)
+            );
+
+            shape_settings.release();
+            shape_settings = decorated_shape.asShapeSettingsMut();
+        }
+
+        return try shape_settings.createShape();
     }
 
     pub const BodyReadLock = struct {
@@ -392,6 +430,25 @@ pub const IgnoreIdsBodyFilter = extern struct {
     fn _shouldCollideLocked(self: *const zphy.BodyFilter, body: *const zphy.Body) callconv(.C) bool {
         return self.shouldCollide(&body.getId());
     }
+};
+
+pub const ShapeSettings = struct {
+    shape: union(enum) {
+        Capsule: struct {
+            half_height: f32,
+            radius: f32,
+        },
+        Sphere: struct {
+            radius: f32,
+        },
+        Box: struct {
+            width: f32,
+            height: f32,
+            depth: f32,
+        },
+        ModelCompoundConvexHull: as.ModelAssetId,
+    },
+    offset_transform: tf.Transform = .{},
 };
 
 pub const CharacterBaseSettings = struct {

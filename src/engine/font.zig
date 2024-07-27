@@ -1,6 +1,4 @@
 const std = @import("std");
-const win32 = @import("zwin32");
-const d3d11 = win32.d3d11;
 const zstbi = @import("zstbi");
 const _gfx = @import("../gfx/gfx.zig");
 const zm = @import("zmath");
@@ -89,7 +87,7 @@ pub const Font = struct {
         }
 
         // read json file into memory
-        const font_json_data = try std.fs.cwd().readFileAlloc(alloc, font_json_path, font_json_file_size);
+        const font_json_data = try std.fs.cwd().readFileAlloc(alloc, font_json_path, @intCast(font_json_file_size));
         defer alloc.free(font_json_data);
 
         const FontJson = struct {
@@ -286,36 +284,33 @@ pub const Font = struct {
         const percpx = @as(f32, @floatFromInt(props.pixel_height)) / @as(f32, @floatFromInt(rtv.size.height));
         const screen_size = (percpx * 2.0);
 
-        const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(rtv.size.width),
-            .Height = @floatFromInt(rtv.size.height),
-            .TopLeftX = 0,
-            .TopLeftY = 0,
-            .MinDepth = 0.0,
-            .MaxDepth = 1.0,
+        const viewport = _gfx.Viewport {
+            .width = @floatFromInt(rtv.size.width),
+            .height = @floatFromInt(rtv.size.height),
+            .min_depth = 0.0,
+            .max_depth = 1.0,
+            .top_left_x = 0,
+            .top_left_y = 0,
         };
-        gfx.context.RSSetViewports(1, @ptrCast(&viewport));
+        gfx.cmd_set_viewport(viewport);
 
-        gfx.context.PSSetShader(self.font_pso.pso, null, 0);
-        gfx.context.PSSetShaderResources(0, 1, @ptrCast(&self.msdf_texture_view.view));
+        gfx.cmd_set_pixel_shader(&self.font_pso);
+        gfx.cmd_set_shader_resources(.Pixel, 0, &.{&self.msdf_texture_view});
 
-        gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv.view), null);
-        gfx.context.OMSetBlendState(@ptrCast(self.blend_state.state), null, 0xffffffff);
+        gfx.cmd_set_render_target(&rtv, null);
+        gfx.cmd_set_blend_state(&self.blend_state);
 
-        gfx.context.VSSetShader(self.font_vso.vso, null, 0);
+        gfx.cmd_set_vertex_shader(&self.font_vso);
 
-        gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        gfx.context.RSSetState(gfx.rasterization_state(
-            .{ .FillBack = false, .FrontCounterClockwise = true, },
-        ).state);
+        gfx.cmd_set_topology(.TriangleList);
+        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
 
-        gfx.context.PSSetConstantBuffers(0, 1, @ptrCast(&self.font_text_buffer.buffer));
-        gfx.context.PSSetSamplers(0, 1, @ptrCast(&self.sampler.sampler));
+        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.font_text_buffer});
+        gfx.cmd_set_samplers(.Pixel, 0, &.{&self.sampler});
 
-        gfx.context.IASetInputLayout(self.font_vso.layout);
-        const stride: c_uint = @sizeOf(CharacterInfoConstantBuffer);
-        var offset: c_uint = 0;
-        gfx.context.IASetVertexBuffers(0, 1, @ptrCast(&self.character_buffer.buffer), @ptrCast(&stride), @ptrCast(&offset));
+        gfx.cmd_set_vertex_buffers(0, &.{
+            .{ .buffer = &self.character_buffer, .stride = @sizeOf(CharacterInfoConstantBuffer), .offset = 0, },
+        });
 
         { // Setup font text info buffer
             const mapped_buffer = self.font_text_buffer.map(FontConstantBuffer, gfx) catch unreachable;
@@ -371,7 +366,7 @@ pub const Font = struct {
                 }
             }
 
-            gfx.context.DrawInstanced(6, instance_count, 0, 0);
+            gfx.cmd_draw_instanced(6, instance_count, 0, 0);
             text_offset += instance_count;
         }
     }

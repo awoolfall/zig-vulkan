@@ -1,6 +1,4 @@
 const std = @import("std");
-const win32 = @import("zwin32");
-const d3d11 = win32.d3d11;
 const zstbi = @import("zstbi");
 const _gfx = @import("../gfx/gfx.zig");
 const tm = @import("../engine/time.zig");
@@ -174,7 +172,6 @@ pub const UiRenderer = struct {
 
 pub const QuadRenderer = struct {
     sampler: _gfx.Sampler,
-    rasterizer_state: _gfx.RasterizationState,
     blend_state: _gfx.BlendState,
 
     quad_vso: _gfx.VertexShader,
@@ -186,7 +183,6 @@ pub const QuadRenderer = struct {
 
     pub fn deinit(self: *QuadRenderer) void {
         self.blend_state.deinit();
-        self.rasterizer_state.deinit();
         self.sampler.deinit();
 
         self.quad_vso.deinit();
@@ -199,7 +195,6 @@ pub const QuadRenderer = struct {
         // construct ui object
         var ui = QuadRenderer {
             .sampler = undefined,
-            .rasterizer_state = undefined,
             .blend_state = undefined,
 
             .quad_vso = undefined,
@@ -251,13 +246,6 @@ pub const QuadRenderer = struct {
             gfx
         );
         errdefer ui.sampler.deinit();
-
-        // create rasterizer state
-        ui.rasterizer_state = try _gfx.RasterizationState.init(
-            .{ .FillBack = false, .FrontCounterClockwise = true, },
-            gfx
-        );
-        errdefer ui.rasterizer_state.deinit();
 
         // create blend state
         ui.blend_state = try _gfx.BlendState.init(([_]_gfx.BlendType{.Simple})[0..], gfx);
@@ -312,39 +300,38 @@ pub const QuadRenderer = struct {
             };
         }
 
-        const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(rtv.size.width),
-            .Height = @floatFromInt(rtv.size.height),
-            .TopLeftX = 0,
-            .TopLeftY = 0,
-            .MinDepth = 0.0,
-            .MaxDepth = 1.0,
+        const viewport = _gfx.Viewport {
+            .width = @floatFromInt(rtv.size.width),
+            .height = @floatFromInt(rtv.size.height),
+            .min_depth = 0.0,
+            .max_depth = 1.0,
+            .top_left_x = 0,
+            .top_left_y = 0,
         };
-        gfx.context.RSSetViewports(1, @ptrCast(&viewport));
+        gfx.cmd_set_viewport(viewport);
 
-        gfx.context.PSSetShader(self.quad_pso.pso, null, 0);
+        gfx.cmd_set_pixel_shader(&self.quad_pso);
 
-        gfx.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
-        gfx.context.OMSetBlendState(@ptrCast(self.blend_state.state), null, 0xffffffff);
+        gfx.cmd_set_render_target(&rtv, null);
+        gfx.cmd_set_blend_state(&self.blend_state);
 
-        gfx.context.VSSetShader(self.quad_vso.vso, null, 0);
-        gfx.context.IASetInputLayout(self.quad_vso.layout);
+        gfx.cmd_set_vertex_shader(&self.quad_vso);
 
-        gfx.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        gfx.context.RSSetState(self.rasterizer_state.state);
+        gfx.cmd_set_topology(.TriangleList);
+        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
 
-        gfx.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.quad_buffer_vertex.buffer));
-        gfx.context.PSSetConstantBuffers(1, 1, @ptrCast(&self.quad_buffer_pixel.buffer));
+        gfx.cmd_set_constant_buffers(.Vertex, 0, &.{&self.quad_buffer_vertex});
+        gfx.cmd_set_constant_buffers(.Pixel, 1, &.{&self.quad_buffer_pixel});
 
         if (props.texture) |texture_props| {
-            gfx.context.PSSetSamplers(0, 1, @ptrCast(&texture_props.sampler.sampler));
-            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&texture_props.texture_view.view));
+            gfx.cmd_set_samplers(.Pixel, 0, &.{&texture_props.sampler});
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{&texture_props.texture_view});
         } else {
-            gfx.context.PSSetSamplers(0, 1, @ptrCast(&gfx.default.sampler.sampler));
-            gfx.context.PSSetShaderResources(0, 1, @ptrCast(&gfx.default.diffuse.view));
+            gfx.cmd_set_samplers(.Pixel, 0, &.{&gfx.default.sampler});
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{&gfx.default.diffuse});
         }
 
-        gfx.context.Draw(6, 0);
+        gfx.cmd_draw(6, 0);
     }
 };
 
