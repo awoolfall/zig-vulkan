@@ -1,4 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+pub const GraphicsBackend = enum {
+    Direct3D11,
+    OpenGL,
+    Noop,
+};
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -29,9 +36,23 @@ pub fn build(b: *std.Build) void {
     // step when running `zig build`).
     b.installArtifact(exe);
 
+    const os = if (target.query.os_tag) |t| t else builtin.target.os.tag;
+    std.log.info("Target OS: {s}", .{@tagName(os)});
+
+    const default_backend: GraphicsBackend = switch (os) {
+        .windows => .Direct3D11,
+        else => .Noop,
+    };
+    std.log.info("Defaulting to {} backend", .{default_backend});
+
     const options = b.addOptions();
     options.addOption(u32, "gitrev", find_git_revision());
     options.addOption(bool, "gitchanged", find_git_changed());
+    options.addOption(GraphicsBackend, "graphics_backend", b.option(
+        GraphicsBackend,
+        "graphics_backend", 
+        "Graphics backend to use",
+    ) orelse default_backend);
 
     exe.root_module.addOptions("build_options", options);
 
@@ -52,12 +73,17 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    const zwin32 = b.dependency("zwin32", .{});
-    exe.root_module.addImport("zwin32", zwin32.module("root"));
-    // const zwin32_path = zwin32.path("").getPath(b);
-    // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
-    // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
-    // try @import("zwin32").install_directml(&tests.step, .bin, zwin32_path);
+    if (os == .windows) {
+        const zwin32 = b.dependency("zwin32", .{});
+        exe.root_module.addImport("zwin32", zwin32.module("root"));
+        // const zwin32_path = zwin32.path("").getPath(b);
+        // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
+        // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
+        // try @import("zwin32").install_directml(&tests.step, .bin, zwin32_path);
+    } else {
+        const zopengl = b.dependency("zopengl", .{});
+        exe.root_module.addImport("zopengl", zopengl.module("root"));
+    }
 
     const zmath = b.dependency("zmath", .{});
     exe.root_module.addImport("zmath", zmath.module("root"));

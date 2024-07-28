@@ -495,6 +495,10 @@ pub const Buffer = struct {
             pub fn data(self: *const MappedBuffer(T)) *T {
                 return self.platform.data();
             }
+
+            pub fn data_array(self: *const MappedBuffer(T), length: usize) [*]align(1)T {
+                return self.platform.data_array(length);
+            }
         };
     }
 

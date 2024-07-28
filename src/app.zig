@@ -972,9 +972,8 @@ pub const App = struct {
         if (self.engine.input.get_key(kc.KeyCode.C)) {
             if (self.engine.entities.get(self.camera_idx)) |camera_entity| {
                 _ = camera_entity;
-                self.engine.physics._debug_renderer.draw_bodies(
-                    self.engine.physics.zphy, 
-                    rtv.platform.view, 
+                self.engine.physics.debug_draw_bodies(
+                    &rtv, 
                     self.engine.gfx.swapchain_size.width,
                     self.engine.gfx.swapchain_size.height,
                     zm.matToArr(self.camera.generate_perspective_matrix(self.engine.gfx.swapchain_aspect())),

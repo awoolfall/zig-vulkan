@@ -3,6 +3,7 @@
     .version = "0.0.1",
     .dependencies = .{
         .zwin32 = .{ .path = "libs/zig-gamedev/libs/zwin32" },
+        .zopengl = .{ .path = "libs/zig-gamedev/libs/zopengl" },
         .zmath = .{ .path = "libs/zig-gamedev/libs/zmath" },
         .zmesh = .{ .path = "libs/zig-gamedev/libs/zmesh" },
         .zphysics = .{ .path = "libs/zig-gamedev/libs/zphysics" },

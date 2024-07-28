@@ -289,8 +289,9 @@ pub const ParticleSystem = struct {
         if (self.model_matrix_vertex_buffer.map(VertexBufferData, gfx)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
+            const data = mapped_buffer.data_array(self.sort_particles.len);
             for (self.sort_particles, 0..) |*p, i| {
-                @as([*c]VertexBufferData, @ptrCast(mapped_buffer.data()))[i] = p.dat;
+                data[i] = p.dat;
             }
         } else |_| {}
 

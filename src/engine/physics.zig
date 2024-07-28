@@ -8,7 +8,11 @@ const as = @import("../asset/asset.zig");
 const tm = @import("../engine/time.zig");
 const tf = @import("../engine/transform.zig");
 const _gfx = @import("../gfx/gfx.zig");
-const debug = @import("physics_debug_renderer.zig");
+
+inline fn debug_renderer_enabled() bool {
+    return @import("../platform/platform.zig").GfxPlatform == @import("../gfx/platform/d3d11.zig").GfxStateD3D11;
+}
+const DebugRenderer = if (debug_renderer_enabled()) @import("physics_debug_renderer.zig").D3D11DebugRenderer else void;
 
 pub const PhysicsSystem = struct {
     const Self = @This();
@@ -21,7 +25,7 @@ pub const PhysicsSystem = struct {
         object_vs_broad_phase_layer_filter: *ObjectVsBroadPhaseLayerFilter,
         object_layer_pair_filter: *ObjectLayerPairFilter,
     },
-    _debug_renderer: *debug.D3D11DebugRenderer,
+    _debug_renderer: if (debug_renderer_enabled()) *DebugRenderer else void,
     asset_manager: *as.AssetManager,
     zphy: *zphy.PhysicsSystem, 
     next_update_time: i128 = 0,
@@ -55,12 +59,15 @@ pub const PhysicsSystem = struct {
         );
         errdefer physics_system.destroy();
 
-        const debug_renderer = try alloc.create(debug.D3D11DebugRenderer);
-        errdefer alloc.destroy(debug_renderer);
-        debug_renderer.* = try debug.D3D11DebugRenderer.init(gfx);
+        var debug_renderer: ?*DebugRenderer = null;
+        if (debug_renderer_enabled()) {
+            debug_renderer = try alloc.create(DebugRenderer);
+            debug_renderer.?.* = try DebugRenderer.init(gfx);
 
-        try zphy.DebugRenderer.createSingleton(debug_renderer);
-        errdefer zphy.DebugRenderer.destroySingleton();
+            try zphy.DebugRenderer.createSingleton(debug_renderer.?);
+            errdefer zphy.DebugRenderer.destroySingleton();
+        }
+        errdefer if (debug_renderer) |r| alloc.destroy(r);
 
         return Self {
             ._allocator = alloc,
@@ -69,7 +76,7 @@ pub const PhysicsSystem = struct {
                 .object_vs_broad_phase_layer_filter = object_vs_broad_phase_layer_filter,
                 .object_layer_pair_filter = object_layer_pair_filter,
             },
-            ._debug_renderer = debug_renderer,
+            ._debug_renderer = if (debug_renderer_enabled()) debug_renderer.? else undefined,
             .asset_manager = asset_manager,
             .zphy = physics_system,
             .next_update_time = std.time.nanoTimestamp() + UpdateRateNs,
@@ -77,13 +84,15 @@ pub const PhysicsSystem = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        zphy.DebugRenderer.destroySingleton();
         self.zphy.destroy();
-        self._debug_renderer.deinit();
+        if (debug_renderer_enabled()) {
+            zphy.DebugRenderer.destroySingleton();
+            self._debug_renderer.deinit();
+            self._allocator.destroy(self._debug_renderer);
+        }
         self._allocator.destroy(self._interfaces.broad_phase_layer_interface);
         self._allocator.destroy(self._interfaces.object_vs_broad_phase_layer_filter);
         self._allocator.destroy(self._interfaces.object_layer_pair_filter);
-        self._allocator.destroy(self._debug_renderer);
         zphy.deinit();
     }
 
@@ -148,6 +157,12 @@ pub const PhysicsSystem = struct {
             }
 
             self.next_update_time += UpdateRateNs;
+        }
+    }
+
+    pub fn debug_draw_bodies(self: *Self, rtv: *_gfx.RenderTargetView, width: i32, height: i32, projection: [16]f32, view: [16]f32) void {
+        if (debug_renderer_enabled()) {
+            self._debug_renderer.draw_bodies(self.zphy, rtv.platform.view, width, height, projection, view);
         }
     }
 

@@ -617,6 +617,11 @@ pub const BufferD3D11 = struct {
             pub inline fn data(self: *const MappedBuffer(T)) *T {
                 return self.data_ptr;
             }
+
+            pub inline fn data_array(self: *const MappedBuffer(T), length: usize) [*]align(1)T {
+                _ = length;
+                return @as([*]align(1)T, @ptrCast(self.data()));
+            }
         };
     }
 
