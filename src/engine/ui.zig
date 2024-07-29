@@ -555,6 +555,9 @@ pub const Imui = struct {
     widgets: std.ArrayList(Widget),
     last_frame_widgets: std.AutoHashMap(Key, Widget),
 
+    last_frame_arena: u8,
+    arenas: [2]std.heap.ArenaAllocator,
+
     scuffed_x_checkbox_image: _gfx.TextureView2D,
     image_sampler: _gfx.Sampler,
 
@@ -568,6 +571,10 @@ pub const Imui = struct {
 
         self.scuffed_x_checkbox_image.deinit();
         self.image_sampler.deinit();
+
+        for (self.arenas) |a| {
+            a.deinit();
+        }
     }
 
     pub fn init(alloc: std.mem.Allocator, input: *const in.InputState, time: *const tm.TimeState, gfx: *_gfx.GfxState) !Self {
@@ -603,9 +610,18 @@ pub const Imui = struct {
             .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
             .scuffed_x_checkbox_image = scuffed_x_checkbox_image_view,
             .image_sampler = try _gfx.Sampler.init(.{}, gfx),
+            .last_frame_arena = 0,
+            .arenas = [_]std.heap.ArenaAllocator{
+                std.heap.ArenaAllocator.init(alloc),
+                std.heap.ArenaAllocator.init(alloc),
+            },
         };
         self.add_root_widget(gfx);
         return self;
+    }
+
+    fn arena(self: *Self) *std.heap.ArenaAllocator {
+        return &self.arenas[(@as(usize, @intCast(self.last_frame_arena)) + 1) % 2];
     }
 
     pub fn palette(self: *const Self) Palette {
@@ -670,8 +686,14 @@ pub const Imui = struct {
     }
 
     pub fn add_widget(self: *Self, widget: Widget) usize {
+        var widget_to_add = widget;
+        // we need to own the text content so duplicate it using this frame's arena before adding the widget
+        if (widget_to_add.text_content) |*text| {
+            text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
+        }
+
         const widget_id = self.widgets.items.len;
-        self.widgets.append(widget) catch unreachable;
+        self.widgets.append(widget_to_add) catch unreachable;
 
         const parent_id = self.parent_stack.getLast();
 
@@ -979,6 +1001,9 @@ pub const Imui = struct {
         }
         self.widgets.clearRetainingCapacity();
         self.parent_stack.clearRetainingCapacity();
+
+        self.last_frame_arena = (self.last_frame_arena + 1) % 2;
+        _ = self.arena().reset(.free_all);
 
         self.add_root_widget(gfx);
     }

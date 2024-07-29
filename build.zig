@@ -74,25 +74,40 @@ pub fn build(b: *std.Build) void {
     }
 
     if (os == .windows) {
-        const zwin32 = b.dependency("zwin32", .{});
+        const zwin32 = b.dependency("zwin32", .{
+            .target = target,
+            .optimize = optimize,
+        });
         exe.root_module.addImport("zwin32", zwin32.module("root"));
         // const zwin32_path = zwin32.path("").getPath(b);
         // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
         // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
         // try @import("zwin32").install_directml(&tests.step, .bin, zwin32_path);
     } else {
-        const zopengl = b.dependency("zopengl", .{});
+        const zopengl = b.dependency("zopengl", .{
+            .target = target,
+            .optimize = optimize,
+        });
         exe.root_module.addImport("zopengl", zopengl.module("root"));
     }
 
-    const zmath = b.dependency("zmath", .{});
+    const zmath = b.dependency("zmath", .{
+        .target = target,
+        .optimize = optimize,
+    });
     exe.root_module.addImport("zmath", zmath.module("root"));
 
-    const zmesh = b.dependency("zmesh", .{});
+    const zmesh = b.dependency("zmesh", .{
+        .target = target,
+        .optimize = optimize,
+    });
     exe.root_module.addImport("zmesh", zmesh.module("root"));
     exe.linkLibrary(zmesh.artifact("zmesh"));
 
     const zphysics = b.dependency("zphysics", .{
+        .target = target,
+        .optimize = optimize,
+
         .use_double_precision = false,
         .enable_cross_platform_determinism = true,
         .enable_debug_renderer = true,
@@ -100,15 +115,24 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("zphysics", zphysics.module("root"));
     exe.linkLibrary(zphysics.artifact("joltc"));
 
-    const zstbi = b.dependency("zstbi", .{});
+    const zstbi = b.dependency("zstbi", .{
+        .target = target,
+        .optimize = optimize,
+    });
     exe.root_module.addImport("zstbi", zstbi.module("root"));
     exe.linkLibrary(zstbi.artifact("zstbi"));
 
-    const znoise = b.dependency("znoise", .{});
+    const znoise = b.dependency("znoise", .{
+        .target = target,
+        .optimize = optimize,
+    });
     exe.root_module.addImport("znoise", znoise.module("root"));
     exe.linkLibrary(znoise.artifact("FastNoiseLite"));
 
     const assimp_module = b.dependency("assimp", .{
+        .target = target,
+        .optimize = optimize,
+        
         .no_export = true,
     });
     exe.root_module.addImport("assimp", assimp_module.module("root"));
