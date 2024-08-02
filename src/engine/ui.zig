@@ -420,18 +420,20 @@ pub const Imui = struct {
         parent: usize = 0,
 
         // parent data
-        layout_axis: Axis = .Y,
+        layout_axis: ?Axis = null,
         first_child: ?usize = null,
         last_child: ?usize = null,
         num_children: usize = 0,
 
         computed: struct {
             relative_position: [2]f32 = .{0.0, 0.0},
+            offset_position: [2]f32 = .{0.0, 0.0},
             size: [2]f32 = .{0.0, 0.0},
+            children_size: [2]f32 = .{0.0, 0.0},
             pub fn rect(self: *const @This()) RectPixels {
                 return RectPixels {
-                    .left = @intFromFloat(self.relative_position[0]),
-                    .top = @intFromFloat(self.relative_position[1]),
+                    .left = @intFromFloat(self.offset_position[0]),
+                    .top = @intFromFloat(self.offset_position[1]),
                     .width = @intFromFloat(self.size[0]),
                     .height = @intFromFloat(self.size[1])
                 };
@@ -450,8 +452,6 @@ pub const Imui = struct {
             text: []const u8,
             size: u16 = 15,
             colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-            vertical_align: VerticalAlignment = .Middle,
-            horizontal_align: HorizontalAlign = .Middle,
         } = null,
         background_colour: ?zm.F32x4 = null,
         border_colour: ?zm.F32x4 = null,
@@ -467,6 +467,10 @@ pub const Imui = struct {
             top: u16 = 0,
             bottom: u16 = 0,
         } = .{},
+        // anchor determines the position within the potential space allowed by the layout
+        anchor: [2]f32 = .{0.0, 0.0},
+        // pivot determines the coordinate on the widget's box that sticks to the anchor
+        pivot: [2]f32 = .{0.0, 0.0},
         children_gap: f32 = 0.0,
 
         pub fn content_rect(self: *const Widget) RectPixels {
@@ -750,27 +754,26 @@ pub const Imui = struct {
 
     fn solve_downward_dependant_sizes(self: *Self, widget: *Widget) void {
         for (widget.semantic_size, 0..) |s, axis| {
+            var total_size: f32 = -widget.children_gap;
+            var top_size: f32 = 0.0;
+            var child_id = widget.first_child;
+            while (child_id != null) {
+                const child = &self.widgets.items[child_id.?];
+                top_size = @max(child.computed.size[axis], top_size);
+                total_size += child.computed.size[axis] + widget.children_gap;
+                child_id = child.next_sibling;
+            }
+
+            widget.computed.children_size[axis] = top_size;
+            if (widget.layout_axis) |layout_axis| {
+                if (@intFromEnum(layout_axis) == axis) {
+                    widget.computed.children_size[axis] = @max(total_size, 0.0);
+                }
+            }
+
             switch (s.kind) {
                 .ChildrenSize => {
-                    if (@intFromEnum(widget.layout_axis) == axis) {
-                        var size: f32 = -widget.children_gap;
-                        var child_id = widget.first_child;
-                        while (child_id != null) {
-                            const child = &self.widgets.items[child_id.?];
-                            size += child.computed.size[axis] + widget.children_gap;
-                            child_id = child.next_sibling;
-                        }
-                        widget.computed.size[axis] = @max(size, 0.0);
-                    } else {
-                        var max_size: f32 = 0.0;
-                        var child_id = widget.first_child;
-                        while (child_id != null) {
-                            const child = &self.widgets.items[child_id.?];
-                            max_size = @max(child.computed.size[axis], max_size);
-                            child_id = child.next_sibling;
-                        }
-                        widget.computed.size[axis] = max_size;
-                    }
+                    widget.computed.size[axis] = widget.computed.children_size[axis];
                     apply_padding(widget, axis);
                 },
                 else => {},
@@ -854,6 +857,13 @@ pub const Imui = struct {
             self.solve_upward_dependant_sizes(widget);
         }
 
+        // downward solve again to resolve any ParentPercentage under ChildrenSize
+        for (0..self.widgets.items.len) |inv_id| {
+            const id = self.widgets.items.len - inv_id - 1;
+            const widget = &self.widgets.items[id];
+            self.solve_downward_dependant_sizes(widget);
+        }
+
         // calculate relative positions and rects
         // step through all widgets top down, if violations occur then we 
         // re-calculate relative positions from parent
@@ -864,10 +874,6 @@ pub const Imui = struct {
             if (widget.parent == widget_id) { widget_id += 1; continue;}
             const parent = &self.widgets.items[widget.parent];
             const parent_content_rect = parent.content_rect();
-            const parent_content_rel_pos = [2]f32{
-                @floatFromInt(parent_content_rect.left), 
-                @floatFromInt(parent_content_rect.top)
-            };
 
             // calculate relative position of widget on each axis
             for (0..AxisCount) |axis| {
@@ -885,15 +891,45 @@ pub const Imui = struct {
                         prev = &self.widgets.items[prev.prev_sibling.?];
                     }
 
-                    if (@intFromEnum(parent.layout_axis) == axis) {
-                        widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.size[axis] + parent.children_gap;
-                    } else {
-                        widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
+                    if (parent.layout_axis) |layout_axis| {
+                        if (@intFromEnum(layout_axis) == axis) {
+                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.size[axis] + parent.children_gap;
+                        } else {
+                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
+                        }
                     }
                 } else {
                     // if no previous siblings then set to parent's relative position
-                    widget.computed.relative_position[axis] = parent_content_rel_pos[axis];
+                    const parent_content_anchor_pos = [2]f32{
+                        @floatFromInt(parent_content_rect.left),
+                        @floatFromInt(parent_content_rect.top)
+                    };
+                    widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
                 }
+
+                // adjust relative position to account for anchor and pivot
+                const parent_content_size = [2]f32{
+                    @floatFromInt(parent_content_rect.width),
+                    @floatFromInt(parent_content_rect.height)
+                };
+                // find the potential space that the widget can take up according to the layout .
+                // This contains a compromise which allows a widget to wiggle a bit inside its allowed space 
+                // but overall positioning is still ultimately controlled by the layout.
+                const potential_space_size = blk: {
+                    var p = parent_content_size[axis];
+                    if (parent.layout_axis) |layout_axis| {
+                        if (@intFromEnum(layout_axis) == axis) {
+                            p = widget.computed.size[axis];
+                        }
+                    }
+                    break :blk p;
+                };
+                // apply anchor and pivot.
+                // anchor determines the position within the potential space allowed by the layout
+                // pivot determines the coordinate on the widget's box that sticks to the anchor
+                widget.computed.offset_position[axis] = widget.computed.relative_position[axis] 
+                    - (widget.pivot[axis] * widget.computed.size[axis]) 
+                    + (widget.anchor[axis] * potential_space_size);
             }
 
             // solve violations in parent if this is the last sibling
@@ -958,24 +994,13 @@ pub const Imui = struct {
                 );
             }
             
-            const widget_content_rect = widget.content_rect();
-
             // render text
             if (widget.text_content) |*text| {
                 const text_size_f32: f32 = @floatFromInt(text.size);
                 const font_metrics = self.ui.get_font(text.font).font_metrics;
-                const text_bounds = self.ui.get_font(text.font).text_bounds_2d_pixels(text.text, text.size);
-                const x: i32 = blk: { switch (text.horizontal_align) {
-                    .Left => break :blk widget_content_rect.left,
-                    .Middle => break :blk widget_content_rect.left + @divTrunc(widget_content_rect.width, 2) - @divTrunc(text_bounds.width, 2),
-                    .Right => break :blk widget_content_rect.left + widget_content_rect.width - text_bounds.width,
-                } };
-                const top: i32 = widget_content_rect.top + @as(i32, @intFromFloat(font_metrics.ascender * text_size_f32));
-                const y: i32 = blk: { switch (text.vertical_align) {
-                    .Top => break :blk top,
-                    .Middle => break :blk top + @divTrunc(widget_content_rect.height, 2) - @divTrunc(text_bounds.height, 2),
-                    .Bottom => break :blk top + widget_content_rect.height - text_bounds.height,
-                } };
+                const x: i32 = @intFromFloat(widget.computed.offset_position[0]);
+                const top: i32 = @as(i32, @intFromFloat(widget.computed.offset_position[1] + (font_metrics.ascender * text_size_f32)));
+                const y: i32 = top;
                 self.ui.render_text_2d(
                     text.font,
                     text.text,
@@ -1111,7 +1136,7 @@ pub const Imui = struct {
         });
     }
 
-    pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: i32, floating_y: i32, key: anytype) usize {
+    pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) usize {
         return self.push_layout_widget(Widget {
             .key = gen_key(key),
             .layout_axis = layout_axis,
@@ -1121,8 +1146,8 @@ pub const Imui = struct {
             },
             .computed = .{
                 .relative_position = .{
-                    @floatFromInt(floating_x),
-                    @floatFromInt(floating_y)
+                    floating_x,
+                    floating_y
                 },
             },
             .flags = .{
@@ -1157,45 +1182,38 @@ pub const Imui = struct {
         return self.generate_widget_signals(widget_id);
     }
 
-    pub fn button(self: *Self, text: []const u8, key: anytype) WidgetSignal(usize) {
-        const widget = Widget {
-            .key = gen_key(key),
-            .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
-                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
-            },
-            .text_content = .{
-                .font = .Geist,
-                .text = text,
-                .colour = self.palette().text_light,
-            },
-            .background_colour = self.palette().primary,
-            .border_colour = self.palette().border,
-            .border_width_px = 1,
-            .padding_px = .{
+    pub const ButtonId = struct {
+        box: usize,
+        text: usize,
+    };
+
+    pub fn button(self: *Self, text: []const u8, key: anytype) WidgetSignal(ButtonId) {
+        const box_layout = self.push_layout(.X, key ++ .{@src().line});
+        defer self.pop_layout();
+
+        if (self.get_widget(box_layout)) |w| {
+            w.layout_axis = null;
+            w.background_colour = self.palette().primary;
+            w.border_colour = self.palette().border;
+            w.border_width_px = 1;
+            w.padding_px = .{
                 .left = 16,
                 .right = 16,
                 .top = 8,
                 .bottom = 8,
-            },
-            .corner_radii_px = .{
+            };
+            w.corner_radii_px = .{
                 .top_left = 6,
                 .top_right = 6,
                 .bottom_left = 6,
                 .bottom_right = 6,
-            },
-            .flags = .{
-                .clickable = true,
-            },
-        };
+            };
+            w.flags.clickable = true;
+            w.flags.render = true;
+        }
 
-        const widget_id = self.add_widget(widget);
-        return self.generate_widget_signals(widget_id);
-    }
-
-    pub fn badge(self: *Self, text: []const u8, key: anytype) WidgetSignal(usize) {
-        const widget = Widget {
-            .key = gen_key(key),
+        const text_widget = Widget {
+            .key = gen_key(key ++ .{@src().line}),
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -1205,28 +1223,32 @@ pub const Imui = struct {
                 .text = text,
                 .colour = self.palette().text_light,
             },
-            .background_colour = self.palette().primary,
-            .border_colour = self.palette().border,
-            .border_width_px = 1,
-            .padding_px = .{
-                .left = 10,
-                .right = 10,
-                .top = 2,
-                .bottom = 2,
-            },
-            .corner_radii_px = .{
-                .top_left = 6,
-                .top_right = 6,
-                .bottom_left = 6,
-                .bottom_right = 6,
-            },
+            .anchor = .{ 0.5, 0.5 },
+            .pivot = .{ 0.5, 0.5 },
             .flags = .{
                 .clickable = true,
             },
         };
 
-        const widget_id = self.add_widget(widget);
-        return self.generate_widget_signals(widget_id);
+        const text_widget_id = self.add_widget(text_widget);
+        return combine_signals(
+            self.generate_widget_signals(box_layout),
+            self.generate_widget_signals(text_widget_id),
+            ButtonId{ .box = box_layout, .text = text_widget_id, }
+        );
+    }
+
+    pub fn badge(self: *Self, text: []const u8, key: anytype) WidgetSignal(ButtonId) {
+        const button_sig = self.button(text, key);
+        if (self.get_widget(button_sig.id.box)) |w| {
+            w.padding_px = .{
+                .left = 10,
+                .right = 10,
+                .top = 2,
+                .bottom = 2,
+            };
+        }
+        return button_sig;
     }
 
     pub const CheckboxId = struct {
