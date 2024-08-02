@@ -529,7 +529,7 @@ pub const App = struct {
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
         const b1 = self.imui.badge("Option 1 button", .{@src()});
-        if (self.imui.get_widget(b1.id)) |w| {
+        if (self.imui.get_widget(b1.id.box)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
         }
@@ -542,7 +542,7 @@ pub const App = struct {
         self.imui.pop_layout();
         self.imui.push_layout_id(buttons_layout);
         const b2 = self.imui.badge("Option 2 button", .{@src()});
-        if (self.imui.get_widget(b2.id)) |w| {
+        if (self.imui.get_widget(b2.id.box)) |w| {
             w.semantic_size[0].kind = .ParentPercentage;
             w.semantic_size[0].value = 1.0;
         }
@@ -601,8 +601,8 @@ pub const App = struct {
         // exposure panel
         const exposure_float_layout_id = self.imui.push_floating_layout(
             .Y, 
-            self.engine.gfx.swapchain_size.width - 250,
-            self.engine.gfx.swapchain_size.height - 200,
+            @floatFromInt(self.engine.gfx.swapchain_size.width - 250),
+            @floatFromInt(self.engine.gfx.swapchain_size.height - 200),
             .{@src()}
         );
         if (self.imui.get_widget(exposure_float_layout_id)) |ex_w| {
@@ -1015,8 +1015,8 @@ pub const App = struct {
         {
             _ = self.imui.push_floating_layout(
                 .Y, 
-                5, 
-                5 - @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0)), 
+                5.0, 
+                5.0 - self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.descender * 12.0, 
                 .{@src()}
             );
             const l = self.imui.label(fps_text);
@@ -1033,8 +1033,8 @@ pub const App = struct {
             blk: { if (gitchanged) { break :blk "*"; } else { break :blk ""; } },
         }) catch unreachable;
         {
-            _ = self.imui.push_floating_layout(.Y, 10, self.engine.gfx.swapchain_size.height - 
-                @as(i32, @intFromFloat(self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0)), .{@src()});
+            _ = self.imui.push_floating_layout(.Y, 10.0, @as(f32, @floatFromInt(self.engine.gfx.swapchain_size.height)) - 
+                self.imui.ui.fonts[@intFromEnum(FontEnum.GeistMono)].font_metrics.line_height * 12.0, .{@src()});
             const l = self.imui.label(rev_text);
             if (self.imui.get_widget(l.id)) |tw| {
                 tw.text_content.?.font = .GeistMono;

@@ -878,33 +878,32 @@ pub const Imui = struct {
             // calculate relative position of widget on each axis
             for (0..AxisCount) |axis| {
                 // if floating on this axis then the relative position has been manually applied, skip
-                if (widget.flags.get_floating_flag(@enumFromInt(axis))) {
-                    continue;
-                }
+                if (!widget.flags.get_floating_flag(@enumFromInt(axis))) {
 
-                // look at previous siblings to determine relative position
-                if (widget.prev_sibling) |sib_id| {
-                    var prev = &self.widgets.items[sib_id];
+                    // look at previous siblings to determine relative position
+                    if (widget.prev_sibling) |sib_id| {
+                        var prev = &self.widgets.items[sib_id];
 
-                    // skip all previous siblings who are floating on this axis
-                    while (prev.flags.get_floating_flag(@enumFromInt(axis)) and prev.prev_sibling != null) {
-                        prev = &self.widgets.items[prev.prev_sibling.?];
-                    }
-
-                    if (parent.layout_axis) |layout_axis| {
-                        if (@intFromEnum(layout_axis) == axis) {
-                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.size[axis] + parent.children_gap;
-                        } else {
-                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
+                        // skip all previous siblings who are floating on this axis
+                        while (prev.flags.get_floating_flag(@enumFromInt(axis)) and prev.prev_sibling != null) {
+                            prev = &self.widgets.items[prev.prev_sibling.?];
                         }
+
+                        if (parent.layout_axis) |layout_axis| {
+                            if (@intFromEnum(layout_axis) == axis) {
+                                widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.size[axis] + parent.children_gap;
+                            } else {
+                                widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
+                            }
+                        }
+                    } else {
+                        // if no previous siblings then set to parent's relative position
+                        const parent_content_anchor_pos = [2]f32{
+                            @floatFromInt(parent_content_rect.left),
+                            @floatFromInt(parent_content_rect.top)
+                        };
+                        widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
                     }
-                } else {
-                    // if no previous siblings then set to parent's relative position
-                    const parent_content_anchor_pos = [2]f32{
-                        @floatFromInt(parent_content_rect.left),
-                        @floatFromInt(parent_content_rect.top)
-                    };
-                    widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
                 }
 
                 // adjust relative position to account for anchor and pivot
@@ -1256,7 +1255,11 @@ pub const Imui = struct {
     };
 
     pub fn checkbox(self: *Self, checked: bool, text: []const u8, key: anytype) WidgetSignal(CheckboxId) {
-        _ = self.push_layout(.X, key ++ .{@src().line});
+        const l = self.push_layout(.X, key ++ .{@src().line});
+        if (self.get_widget(l)) |lw| {
+            lw.children_gap = 8;
+        }
+
         const box_widget = Widget {
             .key = gen_key(key ++ .{@src().line}),
             .semantic_size = [2]SemanticSize{
@@ -1302,9 +1305,6 @@ pub const Imui = struct {
             },
             .background_colour = zm.f32x4s(0.0),
             .border_colour = zm.f32x4s(0.0),
-            .padding_px = .{
-                .left = 8,
-            },
             .flags = .{ 
                 .clickable = true, 
             },
