@@ -21,8 +21,8 @@ const font = @import("engine/font.zig");
 const _ui = @import("engine/ui.zig");
 const FontEnum = _ui.FontEnum;
 
-const gitrev = @import("build_options").gitrev;
-const gitchanged = @import("build_options").gitchanged;
+const gitrev = @import("build_options").engine_gitrev;
+const gitchanged = @import("build_options").engine_gitchanged;
 
 const CameraStruct = extern struct {
     projection: [4]zm.F32x4,

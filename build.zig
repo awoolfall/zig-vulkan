@@ -22,20 +22,6 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "zig_dx11",
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // This declares intent for the executable to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
-    b.installArtifact(exe);
-
     const os = if (target.query.os_tag) |t| t else builtin.target.os.tag;
     std.log.info("Target OS: {s}", .{@tagName(os)});
 
@@ -46,39 +32,27 @@ pub fn build(b: *std.Build) void {
     std.log.info("Defaulting to {} backend", .{default_backend});
 
     const options = b.addOptions();
-    options.addOption(u32, "gitrev", find_git_revision());
-    options.addOption(bool, "gitchanged", find_git_changed());
+    options.addOption(u32, "engine_gitrev", find_git_revision((std.Build.LazyPath { .path = ".", }).getPath(b)));
+    options.addOption(bool, "engine_gitchanged", find_git_changed((std.Build.LazyPath { .path = ".", }).getPath(b)));
     options.addOption(GraphicsBackend, "graphics_backend", b.option(
         GraphicsBackend,
         "graphics_backend", 
         "Graphics backend to use",
     ) orelse default_backend);
 
-    exe.root_module.addOptions("build_options", options);
-
-    // This *creates* a RunStep in the build graph, to be executed when another
-    // step is evaluated that depends on it. The next line below will establish
-    // such a dependency.
-    const run_cmd = b.addRunArtifact(exe);
-
-    // By making the run step depend on the install step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    // This is not necessary, however, if the application depends on other installed
-    // files, this ensures they will be present and in the expected location.
-    run_cmd.step.dependOn(b.getInstallStep());
-
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    const engine = b.addModule("root", .{
+        .root_source_file = .{ .path = "src/engine.zig" },
+        .imports = &.{
+            .{ .name = "build_options", .module = options.createModule() },
+        },
+    });
 
     if (os == .windows) {
         const zwin32 = b.dependency("zwin32", .{
             .target = target,
             .optimize = optimize,
         });
-        exe.root_module.addImport("zwin32", zwin32.module("root"));
+        engine.addImport("zwin32", zwin32.module("root"));
         // const zwin32_path = zwin32.path("").getPath(b);
         // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
         // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
@@ -88,21 +62,21 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        exe.root_module.addImport("zopengl", zopengl.module("root"));
+        engine.addImport("zopengl", zopengl.module("root"));
     }
 
     const zmath = b.dependency("zmath", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("zmath", zmath.module("root"));
+    engine.addImport("zmath", zmath.module("root"));
 
     const zmesh = b.dependency("zmesh", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("zmesh", zmesh.module("root"));
-    exe.linkLibrary(zmesh.artifact("zmesh"));
+    engine.addImport("zmesh", zmesh.module("root"));
+    engine.linkLibrary(zmesh.artifact("zmesh"));
 
     const zphysics = b.dependency("zphysics", .{
         .target = target,
@@ -112,22 +86,22 @@ pub fn build(b: *std.Build) void {
         .enable_cross_platform_determinism = true,
         .enable_debug_renderer = true,
     });
-    exe.root_module.addImport("zphysics", zphysics.module("root"));
-    exe.linkLibrary(zphysics.artifact("joltc"));
+    engine.addImport("zphysics", zphysics.module("root"));
+    engine.linkLibrary(zphysics.artifact("joltc"));
 
     const zstbi = b.dependency("zstbi", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("zstbi", zstbi.module("root"));
-    exe.linkLibrary(zstbi.artifact("zstbi"));
+    engine.addImport("zstbi", zstbi.module("root"));
+    engine.linkLibrary(zstbi.artifact("zstbi"));
 
     const znoise = b.dependency("znoise", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("znoise", znoise.module("root"));
-    exe.linkLibrary(znoise.artifact("FastNoiseLite"));
+    engine.addImport("znoise", znoise.module("root"));
+    engine.linkLibrary(znoise.artifact("FastNoiseLite"));
 
     const assimp_module = b.dependency("assimp", .{
         .target = target,
@@ -135,14 +109,8 @@ pub fn build(b: *std.Build) void {
         
         .no_export = true,
     });
-    exe.root_module.addImport("assimp", assimp_module.module("root"));
-    exe.linkLibrary(assimp_module.artifact("assimp"));
-
-    // This creates a build step. It will be visible in the `zig build --help` menu,
-    // and can be selected like this: `zig build run`
-    // This will evaluate the `run` step rather than the default, which is "install".
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
+    engine.addImport("assimp", assimp_module.module("root"));
+    engine.linkLibrary(assimp_module.artifact("assimp"));
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
@@ -161,13 +129,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
 }
 
-fn find_git_revision() u32 {
+fn find_git_revision(cwd: []const u8) u32 {
     const gitrev_s = blk: {
         const argv = [_][]const u8{ "git", "rev-parse", "--short", "HEAD" };
 
         if (std.ChildProcess.run(.{
             .allocator = std.heap.page_allocator,
             .argv = argv[0..],
+            .cwd = cwd,
         })) |res| {
             break :blk res.stdout;
         } else |_| {
@@ -184,12 +153,13 @@ fn find_git_revision() u32 {
     return gitrev;
 }
 
-fn find_git_changed() bool {
+fn find_git_changed(cwd: []const u8) bool {
     const argv = [_][]const u8{ "git", "diff", "--exit-code", "--quiet" };
 
     if (std.ChildProcess.run(.{
         .allocator = std.heap.page_allocator,
         .argv = argv[0..],
+        .cwd = cwd,
     })) |res| {
         switch (res.term) {
             .Exited => |v| { return v == 1; },

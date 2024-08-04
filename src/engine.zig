@@ -1,6 +1,9 @@
 const std = @import("std");
 const zmesh = @import("zmesh");
-const zm = @import("zmath");
+pub const zm = @import("zmath");
+
+pub const gitrev = @import("build_options").engine_gitrev;
+pub const gitchanged = @import("build_options").engine_gitchanged;
 
 pub const pl = @import("platform/platform.zig");
 pub const _gfx = @import("gfx/gfx.zig");
@@ -15,7 +18,7 @@ pub const image = @import("engine/image.zig");
 pub const en = @import("engine/entity.zig");
 pub const Transform = tf.Transform;
 
-const wb = @import("window.zig");
+pub const window = @import("window.zig");
 
 pub fn Engine(comptime App: type) type {
     return struct {
@@ -112,7 +115,7 @@ pub fn Engine(comptime App: type) type {
             engine.window.run(@ptrCast(&engine), &Self.window_event_received);
         }
 
-        fn window_event_received(engine_void_ptr: *anyopaque, event: wb.WindowEvent) void {
+        fn window_event_received(engine_void_ptr: *anyopaque, event: window.WindowEvent) void {
             const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
             
             // Timing needs to be updated at the very beginning of a frame
