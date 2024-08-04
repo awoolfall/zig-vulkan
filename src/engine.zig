@@ -1,22 +1,30 @@
 const std = @import("std");
 const zmesh = @import("zmesh");
-pub const zm = @import("zmath");
+
+pub const zmath = @import("zmath");
 
 pub const gitrev = @import("build_options").engine_gitrev;
 pub const gitchanged = @import("build_options").engine_gitchanged;
 
-pub const pl = @import("platform/platform.zig");
-pub const _gfx = @import("gfx/gfx.zig");
-pub const as = @import("asset/asset.zig");
+pub const platform = @import("platform/platform.zig");
+pub const gfx = @import("gfx/gfx.zig");
+pub const assets = @import("asset/asset.zig");
 pub const input = @import("input/input.zig");
 pub const time = @import("engine/time.zig");
-pub const tf = @import("engine/transform.zig");
-pub const gen = @import("engine/gen_list.zig");
 pub const mesh = @import("engine/mesh.zig");
 pub const physics = @import("engine/physics.zig");
 pub const image = @import("engine/image.zig");
-pub const en = @import("engine/entity.zig");
-pub const Transform = tf.Transform;
+pub const entity = @import("engine/entity.zig");
+pub const gen = @import("engine/gen_list.zig");
+const transform = @import("engine/transform.zig");
+pub const Transform = transform.Transform;
+
+pub const camera = @import("engine/camera.zig");
+pub const path = @import("engine/path.zig");
+pub const particles = @import("engine/particles.zig");
+pub const easings = @import("easings.zig");
+pub const animation = @import("engine/anim_controller.zig");
+pub const ui = @import("engine/ui.zig");
 
 pub const window = @import("window.zig");
 
@@ -25,17 +33,17 @@ pub fn Engine(comptime App: type) type {
         const Self = @This();
         const Log = std.log.scoped(.Engine);
 
-        pub const EntitySuperStruct = en.EntitySuperStruct(App);
-        pub const EntityDescriptor = en.EntityDescriptor(App);
-        pub const EntityList = en.EntityList(App);
+        pub const EntitySuperStruct = entity.EntitySuperStruct(App);
+        pub const EntityDescriptor = entity.EntityDescriptor(App);
+        pub const EntityList = entity.EntityList(App);
 
-        window: pl.Window,
-        gfx: _gfx.GfxState,
+        window: platform.Window,
+        gfx: gfx.GfxState,
         image: image.ImageLoader,
         physics: physics.PhysicsSystem,
         input: input.InputState,
         time: time.TimeState,
-        asset_manager: as.AssetManager,
+        asset_manager: assets.AssetManager,
         app: App,
         entities: EntityList,
         exe_path: []u8,
@@ -85,18 +93,18 @@ pub fn Engine(comptime App: type) type {
             defer engine.image.deinit();
 
             Log.debug("Calling Window init!", .{});
-            engine.window = try pl.Window.init();
+            engine.window = try platform.Window.init();
             defer engine.window.deinit();
 
             Log.debug("Calling GFX init!", .{});
-            engine.gfx = try _gfx.GfxState.init(alloc, &engine.window);
+            engine.gfx = try gfx.GfxState.init(alloc, &engine.window);
             defer engine.gfx.deinit();
 
             engine.asset_manager = blk: {
                 const resources_path = try std.fs.path.join(engine.general_allocator.allocator(), &[_][]const u8{engine.exe_path, "../../res"});
                 defer engine.general_allocator.allocator().free(resources_path);
 
-                break :blk try as.AssetManager.init(alloc, resources_path);
+                break :blk try assets.AssetManager.init(alloc, resources_path);
             };
 
             defer engine.asset_manager.deinit();

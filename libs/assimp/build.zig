@@ -215,6 +215,7 @@ pub fn build(b: *std.Build) void {
         .include_path = "assimp/config.h",
     }, .{});
     assimp.addConfigHeader(assimp_conf_step);
+    assimp_module.addConfigHeader(assimp_conf_step);
 
     const assimp_rev_step = b.addConfigHeader(
         .{ 

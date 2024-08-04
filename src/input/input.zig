@@ -1,5 +1,6 @@
 const std = @import("std");
 const kc = @import("keycode.zig");
+pub const KeyCode = kc.KeyCode;
 const wb = @import("../window.zig");
 
 pub const KeyState = enum {

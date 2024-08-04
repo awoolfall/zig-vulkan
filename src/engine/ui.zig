@@ -6,8 +6,9 @@ const in = @import("../input/input.zig");
 const kc = @import("../input/keycode.zig");
 const es = @import("../easings.zig");
 const zm = @import("zmath");
-const _font = @import("font.zig");
 const path = @import("path.zig");
+
+pub const font = @import("font.zig");
 
 // pixels, top left of screen is 0, 0. moving down and right increases
 pub const RectPixels = struct {
@@ -109,7 +110,7 @@ pub const FontEnum = enum(usize) {
 pub const UiRenderer = struct {
     _allocator: std.mem.Allocator,
     quad_renderer: QuadRenderer,
-    fonts: [@intFromEnum(FontEnum.Count)]_font.Font,
+    fonts: [@intFromEnum(FontEnum.Count)]font.Font,
 
     pub fn deinit(self: *UiRenderer) void {
         self.quad_renderer.deinit();
@@ -123,14 +124,14 @@ pub const UiRenderer = struct {
         return UiRenderer {
             ._allocator = alloc,
             .quad_renderer = try QuadRenderer.init(gfx),
-            .fonts = [_]_font.Font {
-                try _font.Font.init(
+            .fonts = [_]font.Font {
+                try font.Font.init(
                     alloc,
                     path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
                     path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
                     gfx
                 ),
-                try _font.Font.init(
+                try font.Font.init(
                     alloc,
                     path.Path{.ExeRelative = "../../res/Geist-Regular.json"},
                     path.Path{.ExeRelative = "../../res/Geist-Regular.png"},
@@ -140,19 +141,19 @@ pub const UiRenderer = struct {
         };
     }
 
-    pub fn get_font(self: *UiRenderer, font_enum: FontEnum) *_font.Font {
+    pub fn get_font(self: *UiRenderer, font_enum: FontEnum) *font.Font {
         return &self.fonts[@intFromEnum(font_enum)];
     }
 
     pub fn render_text_2d(
         self: *UiRenderer, 
-        font: FontEnum,
+        font_enum: FontEnum,
         text: []const u8,
-        props: _font.Font.FontRenderProperties2D,
+        props: font.Font.FontRenderProperties2D,
         rtv: _gfx.RenderTargetView, 
         gfx: *_gfx.GfxState,
     ) void {
-        self.fonts[@intFromEnum(font)].render_text_2d(
+        self.fonts[@intFromEnum(font_enum)].render_text_2d(
             text, props, rtv, gfx
         );
     }
