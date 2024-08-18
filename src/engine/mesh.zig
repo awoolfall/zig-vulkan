@@ -679,7 +679,7 @@ pub const Model = struct {
         for (scene.animations(), 0..) |anim, anim_id| {
             animations[anim_id] = an.BoneAnimation {
                 .name = try std.fmt.allocPrint(model_arena, "{s}", .{anim.name()}),
-                .duration = anim.duration(),
+                .duration_ticks = anim.duration(),
                 .ticks_per_second = anim.ticks_per_second(),
                 .channels = try model_arena.alloc(an.BoneAnimationChannel, anim.channels().len),
                 .current_tick = 0.0,

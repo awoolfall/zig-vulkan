@@ -578,10 +578,9 @@ const SHADER_HLSL = \\
 \\
 \\          distance = uv.x * uv.x + uv.y * uv.y;
 \\          distance = sqrt(distance);
-\\          distance = smoothstep(0.99, 1.00, distance);
+\\          distance = smoothstep(0.0, 1.00, distance);
 \\      }
 \\  
-\\      //distance = smoothstep(0.29, 0.31, distance);
 \\      return input.colour * float4(1.0, 1.0, 1.0, 1.0 - distance);
 \\  }
 ;

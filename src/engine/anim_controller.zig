@@ -14,6 +14,7 @@ pub const AnimController = struct {
     arena: std.heap.ArenaAllocator,
     bone_transforms: []zm.Mat,
     variables: std.AutoHashMap(u32, f32),
+    triggered_events: std.ArrayList(u32),
     nodes: []Node,
     active_node: usize = 0,
     base_animation: ?as.AnimationAssetId = null,
@@ -29,6 +30,7 @@ pub const AnimController = struct {
 
     pub fn deinit(self: *Self) void {
         self.variables.deinit();
+        self.triggered_events.deinit();
         self.arena.deinit();
     }
 
@@ -49,13 +51,14 @@ pub const AnimController = struct {
             node.next = try arena_alloc.dupe(NodeTransition, node.next);
         }
 
-        const variables = std.AutoHashMap(u32, f32).init(alloc);
+        var variables = std.AutoHashMap(u32, f32).init(alloc);
         errdefer variables.deinit();
 
         return AnimController{
             .arena = arena,
             .bone_transforms = bone_transforms,
             .variables = variables,
+            .triggered_events = try std.ArrayList(u32).initCapacity(alloc, 4),
             .nodes = owned_nodes,
         };
     }
@@ -84,7 +87,7 @@ pub const AnimController = struct {
 
                     var strength: f32 = 1.0;
                     if (basic.strength_variable) |strength_variable| {
-                        strength = self.variables.get(strength_variable) orelse 1.0;
+                        strength = self.get_variable_by_id(strength_variable) orelse 1.0;
                     }
 
                     model.blend_animation_bone_transforms(animation, strength, out_transforms[0..]);
@@ -94,7 +97,7 @@ pub const AnimController = struct {
                 // replace base animation with blended animation between two animations based on the provided blend variable
                 var blend_variable: f32 = 0.0;
                 if (blend.variable) |variable| {
-                    blend_variable = self.variables.get(variable) orelse 0.0;
+                    blend_variable = self.get_variable_by_id(variable) orelse 0.0;
                 }
 
                 std.debug.assert(blend.left_value <= blend.right_value);
@@ -106,7 +109,12 @@ pub const AnimController = struct {
                         animation.set_animation_to_time(node.time);
                     }
 
-                    model.blend_animation_bone_transforms(animation, 1.0, out_transforms[0..]);
+                    var strength: f32 = 1.0;
+                    if (blend.left_strength_variable) |strength_variable| {
+                        strength = self.get_variable_by_id(strength_variable) orelse 1.0;
+                    }
+
+                    model.blend_animation_bone_transforms(animation, 1.0 * strength, out_transforms[0..]);
                 } else |_| {}
 
                 // blend in right animation based on blend variable
@@ -115,7 +123,12 @@ pub const AnimController = struct {
                         animation.set_animation_to_time(node.time);
                     }
 
-                    model.blend_animation_bone_transforms(animation, blend_value, out_transforms[0..]);
+                    var strength: f32 = 1.0;
+                    if (blend.right_strength_variable) |strength_variable| {
+                        strength = self.get_variable_by_id(strength_variable) orelse 1.0;
+                    }
+
+                    model.blend_animation_bone_transforms(animation, blend_value * strength, out_transforms[0..]);
                 } else |_| {}
             },
         }
@@ -150,23 +163,51 @@ pub const AnimController = struct {
     }
 
     /// Sets a variable specified by the hashed variable id to the given value.
-    pub fn set_variable(self: *Self, variable_id: u32, value: f32) void {
+    pub fn set_variable_by_id(self: *Self, variable_id: u32, value: f32) void {
         self.variables.put(variable_id, value) catch unreachable;
     }
 
     /// Gets the value of a variable specified by the hashed variable id.
-    pub fn get_variable(self: *const Self, variable_id: u32) ?f32 {
+    pub fn get_variable_by_id(self: *const Self, variable_id: u32) ?f32 {
         return self.variables.get(variable_id);
     }
 
+    /// Sets a variable specified by the variable name to the given value.
+    pub fn set_variable(self: *Self, variable_name: []const u8, value: f32) void {
+        self.set_variable_by_id(Self.hash_variable(variable_name), value);
+    }
+
+    /// Gets the value of a variable specified by the variable name.
+    pub fn get_variable(self: *const Self, variable_name: []const u8) ?f32 {
+        return self.get_variable_by_id(Self.hash_variable(variable_name));
+    }
+
+    /// Triggers an event specified by the hashed event id.
+    pub fn trigger_event_by_id(self: *Self, event_id: u32) void {
+        self.triggered_events.append(event_id) catch unreachable;
+    }
+
+    /// Triggers an event specified by the event name.
+    pub fn trigger_event(self: *Self, event_name: []const u8) void {
+        self.trigger_event_by_id(Self.hash_variable(event_name));
+    }
+
     /// Updates the animation controller state and transitions to a new node if necessary.
-    pub fn update(self: *Self, time: *const tm.TimeState) void {
+    pub fn update(self: *Self, asset_manager: *const as.AssetManager, time: *const tm.TimeState) void {
         // check if we should transition to a new node
         forblk: for (self.nodes[self.active_node].next) |t| {
             const should_transition = cblk: { switch (t.condition) {
-                .Always => { break :cblk false; }, // TODO transition at end of animation
-                .Variable => |v| {
-                    const value = self.get_variable(v.variable_id) orelse continue :forblk;
+                .Always => {
+                    const animation_asset = switch (self.nodes[self.active_node].node) {
+                        .Basic => |basic| basic.animation,
+                        .Blend1D => |blend| blend.left_animation,
+                    };
+                    const animation = asset_manager.get_animation(animation_asset) catch break :cblk false;
+                    const transition_start_tick = animation.duration_ticks - animation.ticks_per_second * t.transition_duration;
+                    break :cblk animation.current_tick >= transition_start_tick;
+                },
+                .Float => |v| {
+                    const value = self.get_variable_by_id(v.variable_id) orelse continue :forblk;
 
                     switch (v.comparison) {
                         .Equal => break :cblk std.math.approxEqRel(f32, value, v.value, std.math.floatEps(f32)),
@@ -174,6 +215,14 @@ pub const AnimController = struct {
                         .LessThan => break :cblk (value < v.value),
                         .GreaterThan => break :cblk (value > v.value),
                     }
+                },
+                .Event => |e| {
+                    for (self.triggered_events.items) |triggered_event| {
+                        if (triggered_event == e.variable_id) {
+                            break :cblk true;
+                        }
+                    }
+                    break :cblk false;
                 },
             } };
 
@@ -207,6 +256,9 @@ pub const AnimController = struct {
 
         // update base animation time
         self.base_animation_time += time.delta_time();
+
+        // clear triggered events
+        self.triggered_events.clearRetainingCapacity();
     }
 };
 
@@ -231,7 +283,7 @@ pub const NodeTransition = struct {
 /// A transition condition that can be used to specify when a transition should occur.
 pub const TransitionCondition = union(enum) {
     Always: void,
-    Variable: struct {
+    Float: struct {
         variable_id: u32,
         comparison: enum {
             Equal,
@@ -240,6 +292,9 @@ pub const TransitionCondition = union(enum) {
             GreaterThan,
         },
         value: f32,
+    },
+    Event: struct {
+        variable_id: u32,
     },
 };
 
@@ -258,4 +313,6 @@ pub const BlendNode1D = struct {
     variable: ?u32 = null,
     left_value: f32,
     right_value: f32,
+    left_strength_variable: ?u32 = null,
+    right_strength_variable: ?u32 = null,
 };
