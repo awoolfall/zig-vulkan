@@ -568,7 +568,7 @@ pub const Model = struct {
 
                 // Fill bones data
                 try mesh_bone_ids.appendNTimes([_]i32{MAX_BONES - 1} ** 4, prim.num_vertices);
-                try mesh_weights.appendNTimes([4]f32{1.0, 0.0, 0.0, 0.0}, prim.num_vertices);
+                try mesh_weights.appendNTimes([4]f32{0.0, 0.0, 0.0, 0.0}, prim.num_vertices);
 
                 for (mesh.bones()) |bn| {
                     const bone_name = bn.name();
@@ -594,19 +594,27 @@ pub const Model = struct {
                     for (bn.weights()) |*wg| {
                         const vertId = prim.pos_offset + wg.mVertexId;
                         const weight = wg.mWeight;
+                        std.debug.assert(weight >= 0.0);
 
                         var was_able_to_find_a_free_vertex_place = false;
                         for (mesh_bone_ids.items[vertId], 0..) |mesh_bone_id, i| {
                             std.debug.assert(mesh_bone_id != bone_id);
 
-                            if (mesh_bone_id == MAX_BONES - 1) { 
+                            if (weight > mesh_weights.items[vertId][i]) {
+                                for (i..(mesh_bone_ids.items[vertId].len-1)) |j| {
+                                    mesh_bone_ids.items[vertId][j+1] = mesh_bone_ids.items[vertId][j];
+                                    mesh_weights.items[vertId][j+1] = mesh_weights.items[vertId][j];
+                                }
                                 mesh_bone_ids.items[vertId][i] = bone_id;
                                 mesh_weights.items[vertId][i] = weight;
                                 was_able_to_find_a_free_vertex_place = true;
                                 break;
                             }
                         }
-                        std.debug.assert(was_able_to_find_a_free_vertex_place);
+                        if (!was_able_to_find_a_free_vertex_place) {
+                            std.debug.print("was able to find a free vertex place: {}\n", .{vertId});
+                        }
+                        //std.debug.assert(was_able_to_find_a_free_vertex_place);
                     }
                 }
             }
@@ -615,10 +623,17 @@ pub const Model = struct {
         // Normalise bone weights
         for (mesh_weights.items) |*w| {
             const sum = w[0] + w[1] + w[2] + w[3];
-            w[0] /= sum;
-            w[1] /= sum;
-            w[2] /= sum;
-            w[3] /= sum;
+            if (sum != 0.0) {
+                w[0] /= sum;
+                w[1] /= sum;
+                w[2] /= sum;
+                w[3] /= sum;
+            } else {
+                w[0] = 1.0;
+                w[1] = 0.0;
+                w[2] = 0.0;
+                w[3] = 0.0;
+            }
         }
 
         // create gfx buffers from vertex data
@@ -686,10 +701,6 @@ pub const Model = struct {
             };
             for (anim.channels(), 0..) |ch, ch_id| {
                 const node_id = nodes_name_map.get(ch.node_name()).?;
-
-                std.debug.assert(ch.position_keys().len >= 2);
-                std.debug.assert(ch.rotation_keys().len >= 2);
-                std.debug.assert(ch.scale_keys().len >= 2);
 
                 animations[anim_id].channels[ch_id] = an.BoneAnimationChannel {
                     .node_name = model_nodes[node_id].name.?,

@@ -12,7 +12,6 @@ const es = @import("../easings.zig");
 pub const AnimController = struct {
     const Self = @This();
     arena: std.heap.ArenaAllocator,
-    bone_transforms: []zm.Mat,
     variables: std.AutoHashMap(u32, f32),
     triggered_events: std.ArrayList(u32),
     nodes: []Node,
@@ -40,10 +39,6 @@ pub const AnimController = struct {
 
         var arena_alloc = arena.allocator();
 
-        const bone_transforms = try arena_alloc.alloc(zm.Mat, ms.MAX_BONES);
-        errdefer arena_alloc.free(bone_transforms);
-        @memset(bone_transforms[0..], zm.identity());
-
         const owned_nodes = try arena_alloc.dupe(Node, nodes);
         errdefer arena_alloc.free(owned_nodes);
 
@@ -56,11 +51,14 @@ pub const AnimController = struct {
 
         return AnimController{
             .arena = arena,
-            .bone_transforms = bone_transforms,
             .variables = variables,
             .triggered_events = try std.ArrayList(u32).initCapacity(alloc, 4),
             .nodes = owned_nodes,
         };
+    }
+
+    pub fn clone(self: *const Self, alloc: std.mem.Allocator) !AnimController {
+        return try Self.init(alloc, self.nodes);
     }
 
     /// Calculates the bone transforms for a given node.
@@ -135,7 +133,7 @@ pub const AnimController = struct {
     }
 
     /// Generates the bone transform matricies for the current active node and any transitioning nodes.
-    pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model) []const zm.Mat {
+    pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, out_transforms: []zm.Mat) void {
         // calculate the transforms for the current active node
         var active_node_transforms = [_]tf.Transform{.{}} ** ms.MAX_BONES;
         self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[self.active_node], active_node_transforms[0..]);
@@ -153,8 +151,8 @@ pub const AnimController = struct {
         }
         
         // generate and return the final bone transforms
-        model.generate_bone_transforms_for_pose(active_node_transforms[0..], self.bone_transforms[0..]);
-        return self.bone_transforms[0..];
+        @memset(out_transforms[0..], zm.identity());
+        model.generate_bone_transforms_for_pose(active_node_transforms[0..], out_transforms[0..]);
     }
 
     /// Hashes a variable id for future use.
@@ -203,8 +201,9 @@ pub const AnimController = struct {
                         .Blend1D => |blend| blend.left_animation,
                     };
                     const animation = asset_manager.get_animation(animation_asset) catch break :cblk false;
-                    const transition_start_tick = animation.duration_ticks - animation.ticks_per_second * t.transition_duration;
-                    break :cblk animation.current_tick >= transition_start_tick;
+                    const current_ticks = animation.time_to_ticks(self.nodes[self.active_node].time);
+                    const transition_start_ticks = animation.time_to_ticks(t.transition_duration);
+                    break :cblk (current_ticks >= animation.duration_ticks - transition_start_ticks);
                 },
                 .Float => |v| {
                     const value = self.get_variable_by_id(v.variable_id) orelse continue :forblk;
