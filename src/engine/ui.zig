@@ -875,6 +875,10 @@ pub const Imui = struct {
             if (widget.parent == widget_id) { widget_id += 1; continue;}
             const parent = &self.widgets.items[widget.parent];
             const parent_content_rect = parent.content_rect();
+            const parent_content_anchor_pos = [2]f32{
+                @floatFromInt(parent_content_rect.left),
+                @floatFromInt(parent_content_rect.top)
+            };
 
             // calculate relative position of widget on each axis
             for (0..AxisCount) |axis| {
@@ -896,13 +900,11 @@ pub const Imui = struct {
                             } else {
                                 widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
                             }
+                        } else {
+                            widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
                         }
                     } else {
                         // if no previous siblings then set to parent's relative position
-                        const parent_content_anchor_pos = [2]f32{
-                            @floatFromInt(parent_content_rect.left),
-                            @floatFromInt(parent_content_rect.top)
-                        };
                         widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
                     }
                 }
@@ -1385,6 +1387,183 @@ pub const Imui = struct {
             filled_bar_widget_signals, 
             empty_bar_widget_signals, 
             SliderId{ .filled_bar = filled_bar_widget_id, .background_bar = box, }
+        );
+    }
+
+    pub const TextInputState = struct {
+        cursor: usize = 0,
+        mark: usize = 0,
+        text: std.ArrayList(u8),
+
+        pub fn deinit(self: *TextInputState) void {
+            self.text.deinit();
+        }
+
+        pub fn init(allocator: std.mem.Allocator) TextInputState {
+            return TextInputState {
+                .text = std.ArrayList(u8).init(allocator),
+            };
+        }
+    };
+
+    pub const TextInputId = struct {
+        box: usize,
+        text: usize,
+    };
+
+    pub fn text_input(self: *Self, state: *TextInputState, input: *const in.InputState, key: anytype) WidgetSignal(TextInputId) {
+        const l = self.push_layout(.X, key ++ .{@src()});
+        if (self.get_widget(l)) |lw| {
+            lw.flags.render = true;
+            lw.flags.clickable = true;
+            lw.layout_axis = null;
+            lw.semantic_size[0].kind = .ParentPercentage;
+            lw.semantic_size[0].value = 1.0;
+            lw.semantic_size[1].kind = .Pixels;
+            lw.semantic_size[1].value = 16.0;
+            lw.background_colour = self.palette().primary;
+            lw.border_colour = self.palette().border;
+            lw.border_width_px = 1;
+            lw.padding_px = .{
+                .left = 4,
+                .right = 4,
+                .top = 4,
+                .bottom = 4,
+            };
+            lw.corner_radii_px = .{
+                .top_left = 4,
+                .top_right = 4,
+                .bottom_left = 4,
+                .bottom_right = 4,
+            };
+        }
+        const text_input_widget = Widget {
+            .key = gen_key(key ++ .{@src()}),
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .TextContent, .value = 1.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .TextContent, .value = 1.0, .shrinkable_percent = 0.0, },
+            },
+            .text_content = .{
+                .font = .Geist,
+                .text = state.text.items,
+                .colour = self.palette().text_light,
+            },
+            .background_colour = zm.f32x4s(0.0),
+            .border_colour = zm.f32x4s(0.0),
+            .border_width_px = 1,
+            .corner_radii_px = .{
+                .top_left = 4,
+                .top_right = 4,
+                .bottom_left = 4,
+                .bottom_right = 4,
+            },
+            .flags = .{
+                .clickable = true,
+            },
+        };
+        const text_input_widget_id = self.add_widget(text_input_widget);
+
+        _ = self.push_layout(.X, key ++ .{@src()});
+        var l_sel = @min(state.cursor, state.mark);
+        const r_sel = @max(state.cursor, state.mark);
+        var phantom_text = text_input_widget;
+        phantom_text.key = gen_key(key ++ .{@src()});
+        phantom_text.flags.render = false;
+        phantom_text.text_content.?.text = state.text.items[0..l_sel];
+        _ = self.add_widget(phantom_text);
+
+        const bounds = self.ui.get_font(text_input_widget.text_content.?.font).text_bounds_2d_pixels(
+            state.text.items[l_sel..r_sel],
+            text_input_widget.text_content.?.size
+        );
+        const cursor = Widget {
+            .key = gen_key(key ++ .{@src()}),
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(bounds.width)) + 1.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            },
+            .background_colour = zm.f32x4(1.0, 0.0, 0.0, 0.4 + 0.4 * 
+                (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
+            .border_colour = zm.f32x4s(0.0),
+            .anchor = .{ 0.0, 0.5 },
+            .pivot = .{ 0.0, 0.5 },
+            .flags = .{
+                .render = true,
+            },
+        };
+        _ = self.add_widget(cursor);
+        self.pop_layout();
+
+        self.pop_layout();
+
+        const box_signals = self.generate_widget_signals(l);
+        const text_signals = self.generate_widget_signals(text_input_widget_id);
+
+        if (self.hot_item == self.get_widget(l).?.key or self.hot_item == text_input_widget.key) {
+            for (input.char_events) |c| {
+                if (c != null) {
+                    switch (c.?[0]) {
+                        8 => {
+                            if (state.text.items.len > 0) {
+                                if (l_sel == r_sel) {
+                                    if (input.get_key(kc.KeyCode.Shift)) {
+                                        l_sel = std.mem.lastIndexOfAny(u8, state.text.items[0..l_sel], "\n\t ") orelse 0;
+                                    } else {
+                                        l_sel -= 1;
+                                    }
+                                }
+                                for (l_sel..r_sel) |_| {
+                                    _ = state.text.orderedRemove(l_sel);
+                                }
+                                state.cursor = l_sel;
+                                state.mark = state.cursor;
+                            }
+                        },
+                        13 => {
+                            // single line input so ignore newline
+                            // state.text.append('\n') catch {};
+                        },
+                        32...126 => {
+                            if (c.?[1] == 0) {
+                                state.text.insert(state.cursor, c.?[0]) catch {};
+                                state.cursor += 1;
+                                state.mark = state.cursor;
+                            } else {
+                                state.text.insertSlice(state.cursor, c.?[0..2]) catch {};
+                                state.cursor += 2;
+                                state.mark = state.cursor;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+
+            if (input.get_key_down(kc.KeyCode.Escape)) {
+                state.mark = state.cursor;
+            }
+            if (input.get_key_down_repeat(kc.KeyCode.ArrowLeft)) {
+                if (state.cursor > 0) {
+                    state.cursor = state.cursor - 1;
+                }
+                if (!input.get_key(kc.KeyCode.Shift)) {
+                    state.mark = state.cursor;
+                }
+            }
+            if (input.get_key_down_repeat(kc.KeyCode.ArrowRight)) {
+                if (state.cursor < state.text.items.len) {
+                    state.cursor = state.cursor + 1;
+                }
+                if (!input.get_key(kc.KeyCode.Shift)) {
+                    state.mark = state.cursor;
+                }
+            }
+        }
+
+        return combine_signals(
+            box_signals,
+            text_signals,
+            TextInputId{ .text = text_input_widget_id, .box = l, }
         );
     }
 };

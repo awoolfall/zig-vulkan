@@ -377,12 +377,6 @@ pub const Font = struct {
         pixel_height: u32,
     ) ui.RectPixels {
         const pixel_height_f32: f32 = @floatFromInt(pixel_height);
-        if (text.len == 0) { return ui.RectPixels{
-            .left = 0,
-            .top = 0,
-            .width = 0,
-            .height = 0,
-        }; }
         
         var line_count: f32 = 0.0;
         var x_loc: f32 = 0.0;
