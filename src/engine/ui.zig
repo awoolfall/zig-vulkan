@@ -1411,7 +1411,18 @@ pub const Imui = struct {
         text: usize,
     };
 
+    fn character_advance_at_cursor(self: *Self, text_input_widget: *const Widget, text_input_state: *const TextInputState) i32 {
+        const f = self.ui.get_font(text_input_widget.text_content.?.font);
+        return @intFromFloat(
+            f.ascii_character_map[text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]].advance * 
+            @as(f32, @floatFromInt(text_input_widget.text_content.?.size))
+        );
+    }
+
     pub fn text_input(self: *Self, state: *TextInputState, input: *const in.InputState, key: anytype) WidgetSignal(TextInputId) {
+        const font_to_use = FontEnum.GeistMono;
+
+        // Background box, stack children
         const l = self.push_layout(.X, key ++ .{@src()});
         if (self.get_widget(l)) |lw| {
             lw.flags.render = true;
@@ -1421,7 +1432,7 @@ pub const Imui = struct {
             lw.semantic_size[0].value = 1.0;
             lw.semantic_size[1].kind = .Pixels;
             lw.semantic_size[1].value = 16.0;
-            lw.background_colour = self.palette().primary;
+            lw.background_colour = self.palette().secondary;
             lw.border_colour = self.palette().border;
             lw.border_width_px = 1;
             lw.padding_px = .{
@@ -1437,6 +1448,7 @@ pub const Imui = struct {
                 .bottom_right = 4,
             };
         }
+        // Text to render
         const text_input_widget = Widget {
             .key = gen_key(key ++ .{@src()}),
             .semantic_size = [2]SemanticSize{
@@ -1444,9 +1456,9 @@ pub const Imui = struct {
                 SemanticSize{ .kind = .TextContent, .value = 1.0, .shrinkable_percent = 0.0, },
             },
             .text_content = .{
-                .font = .Geist,
+                .font = font_to_use,
                 .text = state.text.items,
-                .colour = self.palette().text_light,
+                .colour = self.palette().text_dark,
             },
             .background_colour = zm.f32x4s(0.0),
             .border_colour = zm.f32x4s(0.0),
@@ -1463,6 +1475,7 @@ pub const Imui = struct {
         };
         const text_input_widget_id = self.add_widget(text_input_widget);
 
+        // Push invisible spacer box to until start of selection
         _ = self.push_layout(.X, key ++ .{@src()});
         var l_sel = @min(state.cursor, state.mark);
         const r_sel = @max(state.cursor, state.mark);
@@ -1472,43 +1485,87 @@ pub const Imui = struct {
         phantom_text.text_content.?.text = state.text.items[0..l_sel];
         _ = self.add_widget(phantom_text);
 
-        const bounds = self.ui.get_font(text_input_widget.text_content.?.font).text_bounds_2d_pixels(
+        // Cursor (and selection box)
+        const f = self.ui.get_font(text_input_widget.text_content.?.font);
+        const selection_bounds = f.text_bounds_2d_pixels(
             state.text.items[l_sel..r_sel],
             text_input_widget.text_content.?.size
         );
         const cursor = Widget {
             .key = gen_key(key ++ .{@src()}),
             .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(bounds.width)) + 1.0, .shrinkable_percent = 0.0, },
-                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.width)) + 1.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.height)), .shrinkable_percent = 0.0, },
             },
             .background_colour = zm.f32x4(1.0, 0.0, 0.0, 0.4 + 0.4 * 
                 (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
             .border_colour = zm.f32x4s(0.0),
-            .anchor = .{ 0.0, 0.5 },
-            .pivot = .{ 0.0, 0.5 },
             .flags = .{
                 .render = true,
             },
         };
         _ = self.add_widget(cursor);
-        self.pop_layout();
+        self.pop_layout(); // phantom and cursor
 
-        self.pop_layout();
+        self.pop_layout(); // background box
 
+        // Generate signals
         const box_signals = self.generate_widget_signals(l);
         const text_signals = self.generate_widget_signals(text_input_widget_id);
 
-        if (self.hot_item == self.get_widget(l).?.key or self.hot_item == text_input_widget.key) {
+        // Handle mouse input, click and drag
+        if (box_signals.dragged or text_signals.dragged or box_signals.clicked or text_signals.clicked) {
+            const cursor_pos = [2]i32{self.input.cursor_position[0], self.input.cursor_position[1]};
+            const text_rel_pos = self.get_widget_from_last_frame(text_input_widget_id).?.computed.relative_position;
+            const cursor_in_box_pos = [2]i32 {
+                cursor_pos[0] - @as(i32, @intFromFloat(text_rel_pos[0])),
+                cursor_pos[1] - @as(i32, @intFromFloat(text_rel_pos[1]))
+            };
+
+            // Set cursor to closest character to mouse position
+            // by shifting state cursor back and forth
+            while (f.text_bounds_2d_pixels(
+                state.text.items[0..state.cursor],
+                text_input_widget.text_content.?.size
+            ).width - @divTrunc(self.character_advance_at_cursor(&text_input_widget, state), 2) < cursor_in_box_pos[0]) {
+                if (state.cursor == state.text.items.len) {
+                    break;
+                }
+                state.cursor += 1;
+            }
+            while (self.ui.get_font(text_input_widget.text_content.?.font).text_bounds_2d_pixels(
+                state.text.items[0..state.cursor],
+                text_input_widget.text_content.?.size
+            ).width - @divTrunc(self.character_advance_at_cursor(&text_input_widget, state), 2) > cursor_in_box_pos[0]) {
+                if (state.cursor == 0) {
+                    break;
+                }
+                state.cursor -= 1;
+            }
+        }
+        // if clicked then we set mark to equal cursor instead of manipulating selection
+        if (box_signals.clicked or text_signals.clicked) {
+            state.mark = state.cursor;
+        }
+
+        // Handle keyboard input if hovering
+        // @TODO: handle keyboard input if _focused_, not hovering
+        if (box_signals.hover or text_signals.hover) {
             for (input.char_events) |c| {
                 if (c != null) {
                     switch (c.?[0]) {
-                        8 => {
+                        // Backspace (word or character)
+                        8, 127 => {
                             if (state.text.items.len > 0) {
                                 if (l_sel == r_sel) {
-                                    if (input.get_key(kc.KeyCode.Shift)) {
-                                        l_sel = std.mem.lastIndexOfAny(u8, state.text.items[0..l_sel], "\n\t ") orelse 0;
+                                    if (c.?[0] == 127) {
+                                        // word backspace
+                                        l_sel = std.mem.lastIndexOfAny(u8, state.text.items[0..(r_sel-1)], "\n\t ") orelse 0;
+                                        if (l_sel != 0) {
+                                            l_sel = @min(l_sel + 1, state.text.items.len);
+                                        }
                                     } else {
+                                        // single char backspace
                                         l_sel -= 1;
                                     }
                                 }
@@ -1519,10 +1576,12 @@ pub const Imui = struct {
                                 state.mark = state.cursor;
                             }
                         },
+                        // Enter
                         13 => {
                             // single line input so ignore newline
                             // state.text.append('\n') catch {};
                         },
+                        // Characters
                         32...126 => {
                             if (c.?[1] == 0) {
                                 state.text.insert(state.cursor, c.?[0]) catch {};
@@ -1539,14 +1598,18 @@ pub const Imui = struct {
                 }
             }
 
+            // Remove selection if escape pressed
             if (input.get_key_down(kc.KeyCode.Escape)) {
                 state.mark = state.cursor;
             }
+
+            // Handle arrow keys
             if (input.get_key_down_repeat(kc.KeyCode.ArrowLeft)) {
                 if (state.cursor > 0) {
                     state.cursor = state.cursor - 1;
                 }
                 if (!input.get_key(kc.KeyCode.Shift)) {
+                    state.cursor = @min(state.cursor, state.mark);
                     state.mark = state.cursor;
                 }
             }
@@ -1555,6 +1618,7 @@ pub const Imui = struct {
                     state.cursor = state.cursor + 1;
                 }
                 if (!input.get_key(kc.KeyCode.Shift)) {
+                    state.cursor = @max(state.cursor, state.mark);
                     state.mark = state.cursor;
                 }
             }
