@@ -5,6 +5,7 @@ const tm = @import("../engine/time.zig");
 const in = @import("../input/input.zig");
 const kc = @import("../input/keycode.zig");
 const es = @import("../easings.zig");
+const platform = @import("../platform/platform.zig");
 const zm = @import("zmath");
 const path = @import("path.zig");
 
@@ -550,6 +551,7 @@ pub const Imui = struct {
 
     input: *const in.InputState,
     time: *const tm.TimeState,
+    window: *const platform.Window,
 
     primary_interact_key: kc.KeyCode = kc.KeyCode.MouseLeft,
     ui: UiRenderer,
@@ -582,7 +584,7 @@ pub const Imui = struct {
         }
     }
 
-    pub fn init(alloc: std.mem.Allocator, input: *const in.InputState, time: *const tm.TimeState, gfx: *_gfx.GfxState) !Self {
+    pub fn init(alloc: std.mem.Allocator, input: *const in.InputState, time: *const tm.TimeState, window: *const platform.Window, gfx: *_gfx.GfxState) !Self {
         var scuffed_x_image = try zstbi.Image.loadFromFile("res/scuffed_x.png", 4);
         defer scuffed_x_image.deinit();
 
@@ -608,6 +610,7 @@ pub const Imui = struct {
         var self = Self {
             .input = input,
             .time = time,
+            .window = window,
             .ui = try UiRenderer.init(alloc, gfx),
             .parent_stack = std.ArrayList(usize).init(alloc),
             .palette_stack = std.ArrayList(Palette).init(alloc),
@@ -1412,6 +1415,7 @@ pub const Imui = struct {
     };
 
     fn character_advance_at_cursor(self: *Self, text_input_widget: *const Widget, text_input_state: *const TextInputState) i32 {
+        if (text_input_state.cursor == 0) { return 0; }
         const f = self.ui.get_font(text_input_widget.text_content.?.font);
         return @intFromFloat(
             f.ascii_character_map[text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]].advance * 
@@ -1419,7 +1423,7 @@ pub const Imui = struct {
         );
     }
 
-    pub fn text_input(self: *Self, state: *TextInputState, input: *const in.InputState, key: anytype) WidgetSignal(TextInputId) {
+    pub fn line_edit(self: *Self, state: *TextInputState, key: anytype) WidgetSignal(TextInputId) {
         const font_to_use = FontEnum.GeistMono;
 
         // Background box, stack children
@@ -1497,7 +1501,7 @@ pub const Imui = struct {
                 SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.width)) + 1.0, .shrinkable_percent = 0.0, },
                 SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.height)), .shrinkable_percent = 0.0, },
             },
-            .background_colour = zm.f32x4(1.0, 0.0, 0.0, 0.4 + 0.4 * 
+            .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
                 (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
             .border_colour = zm.f32x4s(0.0),
             .flags = .{
@@ -1551,7 +1555,7 @@ pub const Imui = struct {
         // Handle keyboard input if hovering
         // @TODO: handle keyboard input if _focused_, not hovering
         if (box_signals.hover or text_signals.hover) {
-            for (input.char_events) |c| {
+            for (self.input.char_events) |c| {
                 if (c != null) {
                     switch (c.?[0]) {
                         // Backspace (word or character)
@@ -1599,27 +1603,64 @@ pub const Imui = struct {
             }
 
             // Remove selection if escape pressed
-            if (input.get_key_down(kc.KeyCode.Escape)) {
+            if (self.input.get_key_down(kc.KeyCode.Escape)) {
                 state.mark = state.cursor;
             }
 
             // Handle arrow keys
-            if (input.get_key_down_repeat(kc.KeyCode.ArrowLeft)) {
+            if (self.input.get_key_down_repeat(kc.KeyCode.ArrowLeft)) {
                 if (state.cursor > 0) {
                     state.cursor = state.cursor - 1;
                 }
-                if (!input.get_key(kc.KeyCode.Shift)) {
+                if (!self.input.get_key(kc.KeyCode.Shift)) {
                     state.cursor = @min(state.cursor, state.mark);
                     state.mark = state.cursor;
                 }
             }
-            if (input.get_key_down_repeat(kc.KeyCode.ArrowRight)) {
+            if (self.input.get_key_down_repeat(kc.KeyCode.ArrowRight)) {
                 if (state.cursor < state.text.items.len) {
                     state.cursor = state.cursor + 1;
                 }
-                if (!input.get_key(kc.KeyCode.Shift)) {
+                if (!self.input.get_key(kc.KeyCode.Shift)) {
                     state.cursor = @max(state.cursor, state.mark);
                     state.mark = state.cursor;
+                }
+            }
+
+            // Handle copy
+            if (self.input.get_key_down(kc.KeyCode.C) and self.input.get_key(kc.KeyCode.Control)) {
+                if (state.cursor != state.mark) {
+                    self.window.copy_string_to_clipboard(state.text.items[@min(state.mark, state.cursor)..@max(state.mark, state.cursor)])
+                        catch |err| std.log.err("Failed to copy string to clipboard: {}", .{err});
+                }
+            }
+            // Handle paste
+            if (self.input.get_key_down(kc.KeyCode.V) and self.input.get_key(kc.KeyCode.Control)) {
+                if (self.window.get_string_from_clipboard(std.heap.page_allocator)) |clipboard_str| {
+                    defer std.heap.page_allocator.free(clipboard_str);
+
+                    // sanitize incoming clipboard string
+                    var sanitized = std.heap.page_allocator.dupe(u8, clipboard_str) catch unreachable;
+                    defer std.heap.page_allocator.free(sanitized);
+
+                    var sanitized_cursor: usize = 0;
+                    for (clipboard_str) |c| {
+                        // only allow ascii printable characters
+                        if (c >= 32 and c < 127) {
+                            sanitized[sanitized_cursor] = c;
+                            sanitized_cursor += 1;
+                        }
+                    }
+
+                    std.log.info("clipboard string: {s}", .{clipboard_str});
+                    std.log.info("sanitized string: {s}", .{sanitized});
+
+                    // insert sanitized string into text input
+                    state.text.insertSlice(state.cursor, sanitized[0..sanitized_cursor]) catch {};
+                    state.cursor += sanitized_cursor;
+                    state.mark = state.cursor;
+                } else |err| {
+                    std.log.err("Failed to get clipboard string {}", .{err});
                 }
             }
         }

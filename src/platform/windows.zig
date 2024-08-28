@@ -170,6 +170,82 @@ pub const Win32Window = struct {
         _ = w32.ClipCursor(&w32rect);
     }
 
+    pub fn copy_string_to_clipboard(self: *const Win32Window, str: []const u8) !void {
+        const handle = w32.GlobalAlloc(w32.GHND, str.len + 1) orelse {
+            return error.FailedToAllocateClipboardData;
+        };
+        var we_own_handle = true;
+        errdefer {
+            if (we_own_handle) {
+                _ = w32.GlobalFree(handle);
+            }
+        }
+
+        {
+            const ptr = w32.GlobalLock(handle) orelse {
+                return error.FailedToLockClipboardData;
+            };
+            defer _ = w32.GlobalUnlock(handle);
+
+            const str_ptr = @as([*]u8, @ptrCast(ptr));
+            @memcpy(str_ptr[0..], str[0..]);
+            str_ptr[str.len] = 0;
+        }
+
+        if (w32.OpenClipboard(self.hwnd) == w32.FALSE) {
+            return error.FailedToOpenClipboard;
+        }
+        defer _ = w32.CloseClipboard();
+
+        if (w32.EmptyClipboard() == w32.FALSE) {
+            return error.FailedToEmptyClipboard;
+        }
+
+        if (w32.SetClipboardData(w32.CF_TEXT, handle) == null) {
+            return error.FailedToSetClipboardData;
+        }
+        we_own_handle = false;
+    }
+
+    pub fn get_string_from_clipboard(self: *const Win32Window, alloc: std.mem.Allocator) ![]u8 {
+        if (w32.OpenClipboard(self.hwnd) == w32.FALSE) {
+            return error.FailedToOpenClipboard;
+        }
+        defer _ = w32.CloseClipboard();
+
+        if (w32.IsClipboardFormatAvailable(w32.CF_TEXT) == w32.FALSE) {
+            return error.ClipboardDoesNotContainText;
+        }
+
+        const handle = w32.GetClipboardData(w32.CF_TEXT) orelse {
+            return error.FailedToGetClipboardData;
+        };
+
+        const size = w32.GlobalSize(handle);
+        if (size == 0) {
+            return error.ClipboardIsEmpty;
+        }
+        if (size > (1024 * 1024)) {
+            return error.ClipboardIsTooBig;
+        }
+
+        const str = alloc.alloc(u8, size - 1) catch {
+            return error.FailedToAllocateMemoryForClipboardData;
+        };
+        errdefer alloc.free(str);
+
+        const ptr = w32.GlobalLock(handle) orelse {
+            return error.FailedToLockClipboardData;
+        };
+        defer _ = w32.GlobalUnlock(handle);
+
+        const ptr_slice = @as([*]const u8, @ptrCast(ptr))[0..(size - 1)];
+
+        @memcpy(str[0..], ptr_slice[0..]);
+
+        return str;
+    }
+
     pub fn confine_cursor_to_current_pos(self: *Win32Window) void {
         var cursor_pos: w32.POINT = undefined;
         if (w32.GetCursorPos(&cursor_pos) == 0) { return; }
