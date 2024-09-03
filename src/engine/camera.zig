@@ -134,7 +134,7 @@ pub const Camera = struct {
         // translate orbit distance by input
         const orbit_distance_change = float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) 
             - float_from_bool(input.get_key(kc.KeyCode.ArrowUp));
-        self.orbit_distance = self.orbit_distance + (orbit_distance_change * time.delta_time_f32());
+        self.orbit_distance = self.orbit_distance + self.orbit_distance * (orbit_distance_change * 0.5 * time.delta_time_f32());
         self.orbit_distance = @max(@min(self.orbit_distance, self.max_orbit_distance), self.min_orbit_distance);
 
         // Reset view matrix translation then set it to be orbit_distance from target in camera dir

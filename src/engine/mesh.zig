@@ -891,7 +891,7 @@ pub const Model = struct {
             shape.indices,
             shape.positions,
             shape.normals,
-            null,
+            shape.texcoords,
             null,
             bone_ids,
             bone_weights,
@@ -969,6 +969,20 @@ pub const Model = struct {
 
         // rotate to point upwards
         shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
+        shape.translate(-0.5, 0.0, 0.5);
+
+        return try init_from_shape(alloc, &shape, gfx);
+
+    }
+
+    pub fn sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *gf.GfxState) !Model {
+        _ = stacks;
+        // Generate sphere shape
+        var shape = zmesh.Shape.initSubdividedSphere(slices);
+        defer shape.deinit();
+
+        // flat shaded
+        //shape.unweld();
 
         return try init_from_shape(alloc, &shape, gfx);
     }

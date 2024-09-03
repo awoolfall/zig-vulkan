@@ -62,6 +62,12 @@ pub const AssetManager = struct {
                         try ms.Model.cone(alloc, d.slices, gfx)
                     );
                 },
+                .Sphere => |s| {
+                    try loaded_asset_pack.models.put(
+                        name_hash, 
+                        try ms.Model.sphere(alloc, s.slices, s.stacks, gfx)
+                    );
+                },
             }
         }
 
@@ -190,6 +196,10 @@ pub const AssetPack = struct {
         },
         Cone: struct {
             slices: i32,
+        },
+        Sphere: struct {
+            slices: i32,
+            stacks: i32,
         },
     };
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const zmesh = @import("zmesh");
 
 pub const zmath = @import("zmath");
+pub const znoise = @import("znoise");
 
 pub const gitrev = @import("build_options").engine_gitrev;
 pub const gitchanged = @import("build_options").engine_gitchanged;

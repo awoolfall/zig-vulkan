@@ -631,12 +631,14 @@ pub const TextureFormat = enum {
     Rgba8_Unorm_Srgb,
     Rgba8_Unorm,
     Bgra8_Unorm,
+    R32_Float,
     Rgba16_Float,
     Rg11b10_Float,
     D24S8_Unorm_Uint,
 
     pub fn byte_width(self: TextureFormat) usize {
         switch (self) {
+            .R32_Float => return 4,
             .Rgba8_Unorm_Srgb => return 4,
             .Rgba8_Unorm => return 4,
             .Bgra8_Unorm => return 4,

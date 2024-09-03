@@ -105,6 +105,16 @@ pub fn EntityList(comptime App: type) type {
             return inserted_entity_id;
         }
 
+        /// Removes the entity with the given id
+        pub fn remove_entity(self: *EntityList(App), entity_id: gen.GenerationalIndex) !void {
+            if (self.get(entity_id)) |entity| {
+                entity.deinit(self.engine);
+            } else {
+                return error.EntityDoesNotExist;
+            }
+            self.list.remove(entity_id) catch return error.EntityDoesNotExist;
+        }
+
         /// Gets the entity with the given id if it exists
         pub fn get(self: *EntityList(App), entity_id: gen.GenerationalIndex) ?*EntitySuperStruct(App) {
             return self.list.get(entity_id);

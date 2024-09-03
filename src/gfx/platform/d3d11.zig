@@ -381,6 +381,7 @@ fn texture_format_to_d3d11(self: gf.TextureFormat) zwin32.dxgi.FORMAT {
         .Rgba8_Unorm_Srgb => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
         .Rgba8_Unorm => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM,
         .Bgra8_Unorm => zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
+        .R32_Float => zwin32.dxgi.FORMAT.R32_FLOAT,
         .Rgba16_Float => zwin32.dxgi.FORMAT.R16G16B16A16_FLOAT,
         .Rg11b10_Float => zwin32.dxgi.FORMAT.R11G11B10_FLOAT,
         .D24S8_Unorm_Uint => zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT,
