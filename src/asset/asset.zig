@@ -56,6 +56,12 @@ pub const AssetManager = struct {
                         try ms.Model.plane(alloc, d.slices, d.stacks, gfx)
                     );
                 },
+                .PlaneOnSphere => |d| {
+                    try loaded_asset_pack.models.put(
+                        name_hash, 
+                        try ms.Model.plane_on_sphere(alloc, d.slices, d.stacks, d.plane_extent_radians, gfx)
+                    );
+                },
                 .Cone => |d| {
                     try loaded_asset_pack.models.put(
                         name_hash, 
@@ -193,6 +199,11 @@ pub const AssetPack = struct {
         Plane: struct {
             slices: i32,
             stacks: i32,
+        },
+        PlaneOnSphere: struct {
+            slices: i32,
+            stacks: i32,
+            plane_extent_radians: f32,
         },
         Cone: struct {
             slices: i32,

@@ -972,7 +972,29 @@ pub const Model = struct {
         shape.translate(-0.5, 0.0, 0.5);
 
         return try init_from_shape(alloc, &shape, gfx);
+    }
 
+    pub fn plane_on_sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, plane_extent_radians: f32, gfx: *gf.GfxState) !Model {
+        // Generate cone shape
+        var shape = zmesh.Shape.initPlane(slices, stacks);
+        defer shape.deinit();
+
+        shape.translate(-0.5, -0.5, 0.0);
+
+        for (shape.positions) |*pos| {
+            const dx = -(std.math.pi / 2.0) - ((plane_extent_radians * pos[0]) / 2.0);
+            const dy = -(std.math.pi / 2.0) - ((plane_extent_radians * pos[1]) / 2.0);
+            var r = zm.rotationX(dy);
+            r = zm.mul(r, zm.rotationZ(dx));
+            const rpos = zm.rotate(zm.quatFromMat(r), zm.loadArr3(pos.*));
+            zm.storeArr3(pos, rpos);
+        }
+
+        // rotate to point upwards
+        shape.rotate(std.math.degreesToRadians(-90.0), 0.0, 1.0, 0.0);
+        shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
+
+        return try init_from_shape(alloc, &shape, gfx);
     }
 
     pub fn sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *gf.GfxState) !Model {

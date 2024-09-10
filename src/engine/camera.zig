@@ -29,6 +29,7 @@ pub const Camera = struct {
     min_orbit_distance: f32,
     orbit_distance: f32,
 
+    global_up_direction: zm.F32x4 = zm.f32x4(0.0, 1.0, 0.0, 0.0),
     view_matrix: zm.Mat = zm.identity(),
 
     camera_type: enum {
@@ -117,16 +118,16 @@ pub const Camera = struct {
         if (input.get_key(kc.KeyCode.MouseRight)) {
             self.view_matrix = zm.mul(
                 zm.matFromAxisAngle(
-                    zm.f32x4(0.0, -1.0, 0.0, 0.0), 
-                    self.mouse_sensitivity * input.mouse_delta[0]
+                    self.global_up_direction,
+                    -self.mouse_sensitivity * input.mouse_delta[0]
                 ),
                 self.view_matrix,
             );
             self.view_matrix = zm.mul(
                 self.view_matrix, 
                 zm.matFromAxisAngle(
-                    zm.f32x4(-1.0, 0.0, 0.0, 0.0), 
-                    self.mouse_sensitivity * input.mouse_delta[1]
+                    zm.f32x4(1.0, 0.0, 0.0, 0.0),
+                    -self.mouse_sensitivity * input.mouse_delta[1]
                 )
             );
         }
