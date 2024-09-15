@@ -23,7 +23,7 @@ pub const ImageLoader = struct {
     }
 
     pub fn load_from_file(alloc: std.mem.Allocator, file_path: path.Path) !Image {
-        const cpath = file_path.resolve_path_c_str(alloc);
+        const cpath = try file_path.resolve_path_c_str(alloc);
         defer alloc.free(cpath);
 
         return try stbi.Image.loadFromFile(cpath, 4);

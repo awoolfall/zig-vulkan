@@ -14,7 +14,15 @@ pub const AssetManager = struct {
 
     pub fn deinit(self: *Self) void {
         // assert all asset packs have been unloaded before deinit
-        std.debug.assert(self.num_loaded_asset_packs() == 0);
+        if (self.num_loaded_asset_packs() != 0) {
+            std.log.warn("Not all asset packs have been unloaded before deinit!", .{});
+
+            // deinit all remaining asset packs
+            var iterator = self.loaded_asset_packs.iterator();
+            while (iterator.next()) |pack| {
+                pack.deinit();
+            }
+        }
 
         self.loaded_asset_packs.deinit();
         self.allocator.free(self.resources_directory);
@@ -60,6 +68,17 @@ pub const AssetManager = struct {
                     try loaded_asset_pack.models.put(
                         name_hash, 
                         try ms.Model.plane_on_sphere(alloc, d.slices, d.stacks, d.plane_extent_radians, gfx)
+                    );
+                },
+                .HeightMap => |h| {
+                    try loaded_asset_pack.models.put(
+                        name_hash, 
+                        try ms.Model.heightmap_plane_on_sphere(alloc, &h.height_map, .{
+                            .slices = h.slices,
+                            .stacks = h.stacks,
+                            .plane_extent_radians = h.plane_extent_radians,
+                            .heightmap_scale = h.height_map_scale,
+                        }, gfx)
                     );
                 },
                 .Cone => |d| {
@@ -197,13 +216,20 @@ pub const AssetPack = struct {
     pub const ModelAsset = union(enum) {
         Path: []const u8,
         Plane: struct {
-            slices: i32,
-            stacks: i32,
+            slices: i32 = 32,
+            stacks: i32 = 32,
         },
         PlaneOnSphere: struct {
-            slices: i32,
-            stacks: i32,
+            slices: i32 = 32,
+            stacks: i32 = 32,
             plane_extent_radians: f32,
+        },
+        HeightMap: struct {
+            height_map: ms.Model.Heightmap,
+            slices: i32 = 32,
+            stacks: i32 = 32,
+            plane_extent_radians: f32 = 0.0,
+            height_map_scale: f32 = 1.0,
         },
         Cone: struct {
             slices: i32,

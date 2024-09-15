@@ -71,7 +71,9 @@ pub fn Engine(comptime App: type) type {
             engine.general_allocator = std.heap.GeneralPurposeAllocator(.{}){};
             defer {
                 const check = engine.general_allocator.deinit();
-                std.debug.assert(check == std.heap.Check.ok);
+                if (check != std.heap.Check.ok) {
+                    std.log.err("General allocator leak check: {}", .{check});
+                }
             }
             const alloc = engine.general_allocator.allocator();
 

@@ -975,7 +975,7 @@ pub const Model = struct {
     }
 
     pub fn plane_on_sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, plane_extent_radians: f32, gfx: *gf.GfxState) !Model {
-        // Generate cone shape
+        // Generate plane shape
         var shape = zmesh.Shape.initPlane(slices, stacks);
         defer shape.deinit();
 
@@ -984,6 +984,89 @@ pub const Model = struct {
         for (shape.positions) |*pos| {
             const dx = -(std.math.pi / 2.0) - ((plane_extent_radians * pos[0]) / 2.0);
             const dy = -(std.math.pi / 2.0) - ((plane_extent_radians * pos[1]) / 2.0);
+            var r = zm.rotationX(dy);
+            r = zm.mul(r, zm.rotationZ(dx));
+            const rpos = zm.rotate(zm.quatFromMat(r), zm.loadArr3(pos.*));
+            zm.storeArr3(pos, rpos);
+        }
+
+        // rotate to point upwards
+        shape.rotate(std.math.degreesToRadians(-90.0), 0.0, 1.0, 0.0);
+        shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
+
+        return try init_from_shape(alloc, &shape, gfx);
+    }
+
+    pub const Heightmap = struct {
+        data: []f32,
+        width: usize,
+        height: usize,
+
+        pub fn get_heightmap_pixel(height_map: *const Heightmap, x: f32, y: f32) f32 {
+            var w = @as(usize, @intFromFloat(std.math.floor(x)));
+            var h = @as(usize, @intFromFloat(std.math.floor(y)));
+
+            // sample mirror w and h if they are out of bounds
+            w = @mod(w, height_map.width); 
+            if (w >= height_map.width) { 
+                w = height_map.width - (w - height_map.width);
+            }
+            h = @mod(h, height_map.height); 
+            if (h >= height_map.height) { 
+                h = height_map.height - (h - height_map.height);
+            }
+
+            return height_map.data[w + h * height_map.width];
+        }
+
+
+        pub fn sample_heightmap(height_map: *const Heightmap, x: f32, y: f32) f32 {
+            const px = x * @as(f32, @floatFromInt(height_map.width));
+            const py = y * @as(f32, @floatFromInt(height_map.height));
+
+            // -------
+            // |h0|h1|
+            // -------
+            // |h2|h3|
+            // -------
+            const h0 = get_heightmap_pixel(height_map, std.math.floor(px), std.math.floor(py));
+            const h1 = get_heightmap_pixel(height_map, std.math.ceil(px), std.math.floor(py));
+            const h2 = get_heightmap_pixel(height_map, std.math.floor(px), std.math.ceil(py));
+            const h3 = get_heightmap_pixel(height_map, std.math.ceil(px), std.math.ceil(py));
+
+            const x_frac = @mod(x, 1.0);
+            const y_frac = @mod(y, 1.0);
+            return 
+                (h0 * (1.0 - x_frac) * (1.0 - y_frac)) +
+                (h1 * x_frac * (1.0 - y_frac)) +
+                (h2 * (1.0 - x_frac) * y_frac) +
+                (h3 * x_frac * y_frac);
+        }
+    };
+
+    pub fn heightmap_plane_on_sphere(
+        alloc: std.mem.Allocator, 
+        height_map: *const Heightmap, 
+        options: struct {
+            slices: i32 = 32,
+            stacks: i32 = 32,
+            plane_extent_radians: f32 = 0.0,
+            heightmap_scale: f32 = 1.0,
+        },
+        gfx: *gf.GfxState
+    ) !Model {
+        // generate plane shape
+        var shape = zmesh.Shape.initPlane(options.slices, options.stacks);
+        defer shape.deinit();
+
+        shape.translate(-0.5, -0.5, 0.0);
+
+        for (shape.positions) |*pos| {
+            const h = height_map.sample_heightmap(pos[0] + 0.5, 1.0 - (pos[1] + 0.5));
+            pos[2] = h * options.heightmap_scale;
+
+            const dx = -(std.math.pi / 2.0) - ((options.plane_extent_radians * pos[0]) / 2.0);
+            const dy = -(std.math.pi / 2.0) - ((options.plane_extent_radians * pos[1]) / 2.0);
             var r = zm.rotationX(dy);
             r = zm.mul(r, zm.rotationZ(dx));
             const rpos = zm.rotate(zm.quatFromMat(r), zm.loadArr3(pos.*));

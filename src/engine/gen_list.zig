@@ -104,6 +104,36 @@ pub fn GenerationalList(comptime T: type) type {
         pub fn is_empty(self: *const Self) bool {
             return self.item_count() == 0;
         }
+
+        pub fn iterator(self: *Self) GenerationalListIterator(T) {
+            return GenerationalListIterator(T).init(self);
+        }
+    };
+}
+
+pub fn GenerationalListIterator(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        list: *GenerationalList(T),
+        index: usize,
+
+        pub fn init(list: *GenerationalList(T)) Self {
+            return Self {
+                .list = list,
+                .index = 0,
+            };
+        }
+
+        pub fn next(self: *Self) ?*T {
+            while (self.index < self.list.data.items.len) {
+                defer self.index += 1;
+                if (self.list.data.items[self.index].item_data != null) {
+                    return &(self.list.data.items[self.index].item_data.?);
+                }
+            }
+            return null;
+        }
     };
 }
 

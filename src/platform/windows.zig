@@ -69,9 +69,7 @@ pub const Win32Window = struct {
         ) != 0);
 
         const window_style: u32 = 
-            @as(u32, @intCast(w32.WS_OVERLAPPEDWINDOW)) & 
-            ~@as(u32, @intCast(w32.WS_MAXIMIZEBOX)) & 
-            ~@as(u32, @intCast(w32.WS_THICKFRAME));
+            @as(u32, @intCast(w32.WS_OVERLAPPEDWINDOW));
 
         const hwnd = w32.CreateWindowExA(
             0, 
