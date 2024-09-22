@@ -289,7 +289,7 @@ pub const PhysicsSystem = struct {
         };
     }
 
-    pub fn get_raycast_normal(self: *Self, raycast: zphy.RRayCast, raycast_result: zphy.RayCastResult) ?zm.F32x4 {
+    pub fn get_raycast_normal(self: *Self, ray: zphy.RRayCast, raycast_result: zphy.RayCastResult) ?zm.F32x4 {
         if (raycast_result.has_hit) {
             const lock_interface = self.zphy.getBodyLockInterface();
             var lock: zphy.BodyLockRead = .{};
@@ -297,7 +297,7 @@ pub const PhysicsSystem = struct {
             defer lock.unlock();
 
             if (lock.body) |body| {
-                const hit_position = zm.loadArr4(raycast.origin) + zm.loadArr4(raycast.direction) * zm.f32x4s(raycast_result.hit.fraction);
+                const hit_position = zm.loadArr4(ray.origin) + zm.loadArr4(ray.direction) * zm.f32x4s(raycast_result.hit.fraction);
                 const hit_normal = body.getWorldSpaceSurfaceNormal(raycast_result.hit.sub_shape_id, zm.vecToArr3(hit_position));
                 return zm.loadArr3(hit_normal);
             }
@@ -305,7 +305,48 @@ pub const PhysicsSystem = struct {
 
         return null;
     }
+    
+    pub fn raycast(self: *const Self, ray: Ray) ?RaycastHit {
+        const zphy_ray = ray.to_zphy();
+        const r = self.zphy.getNarrowPhaseQuery().castRay(
+            zphy_ray,
+            .{}
+        );
+        if (!r.has_hit) return null;
+        return RaycastHit.init_from_zphy(r.hit, zphy_ray, self);
+    }
 };
+
+pub const Ray = struct {
+    origin: zm.F32x4,
+    direction: zm.F32x4,
+
+    pub fn to_zphy(self: Ray) zphy.RRayCast {
+        return zphy.RRayCast {
+            .origin = zm.vecToArr4(self.origin),
+            .direction = zm.vecToArr4(self.direction),
+        };
+    }
+};
+
+pub const RaycastHit = struct {
+    position: zm.F32x4,
+    body_id: BodyId,
+    _physics_system: *const PhysicsSystem,
+
+    fn init_from_zphy(raycast_result: zphy.RayCastResult, ray: zphy.RRayCast, physics_system: *const PhysicsSystem) RaycastHit {
+        return RaycastHit {
+            .position = ray.origin + ray.direction * zm.f32x4s(raycast_result.fraction),
+            .body_id = raycast_result.body_id,
+            ._physics_system = physics_system,
+        };
+    }
+
+    pub inline fn get_normal(self: *const RaycastHit) ?zm.F32x4 {
+        return self._physics_system.get_raycast_normal(self.position, self.body_id);
+    }
+};
+
 
 // --- Jolt interfaces ---
 pub const object_layers = struct {

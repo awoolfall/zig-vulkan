@@ -37,7 +37,7 @@ pub const Camera = struct {
     } = .ORBIT,
 
     pub fn generate_perspective_matrix(self: *Self, aspect_ratio: f32) zm.Mat {
-        return zm.perspectiveFovLh(self.field_of_view_y, aspect_ratio, self.near_field, self.far_field);
+        return zm.perspectiveFovLh(self.field_of_view_y, aspect_ratio, self.far_field, self.near_field);
     }
 
     pub fn right_direction(self: *Self) zm.F32x4 {

@@ -306,6 +306,10 @@ pub const GfxState = struct {
     pub fn cmd_set_topology(self: *Self, topology: Topology) void {
         self.platform.cmd_set_topology(topology);
     }
+
+    pub fn cmd_copy_texture_to_texture(self: *Self, dst_texture: *const Texture2D, src_texture: *const Texture2D) void {
+        self.platform.cmd_copy_texture_to_texture(dst_texture, src_texture);
+    }
 };
 
 pub const VertexBufferInput = struct {
@@ -634,6 +638,7 @@ pub const TextureFormat = enum {
     R32_Float,
     Rgba16_Float,
     Rg11b10_Float,
+    R24X8_Unorm_Uint,
     D24S8_Unorm_Uint,
 
     pub fn byte_width(self: TextureFormat) usize {
@@ -644,6 +649,7 @@ pub const TextureFormat = enum {
             .Bgra8_Unorm => return 4,
             .Rgba16_Float => return 8,
             .Rg11b10_Float => return 3,
+            .R24X8_Unorm_Uint => return 4,
             .D24S8_Unorm_Uint => return 4,
         }
     }

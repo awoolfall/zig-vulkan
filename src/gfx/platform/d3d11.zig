@@ -136,6 +136,32 @@ pub const GfxStateD3D11 = struct {
 
         std.log.info("Swapchain, device, context created! at level: {}", .{feature_level});
 
+        // Create reverse Z depth stencil state
+        var depth_stencil_state: *d3d11.IDepthStencilState = undefined;
+        try zwin32.hrErrorOnFail(device.CreateDepthStencilState(&d3d11.DEPTH_STENCIL_DESC {
+            .DepthEnable = zwin32.w32.TRUE,
+            .DepthWriteMask = d3d11.DEPTH_WRITE_MASK.ALL,
+            .DepthFunc = d3d11.COMPARISON_FUNC.GREATER_EQUAL,
+            .StencilEnable = 0,
+            .StencilReadMask = 0,
+            .StencilWriteMask = 0,
+            .FrontFace = d3d11.DEPTH_STENCILOP_DESC {
+                .StencilFailOp = d3d11.STENCIL_OP.KEEP,
+                .StencilDepthFailOp = d3d11.STENCIL_OP.KEEP,
+                .StencilPassOp = d3d11.STENCIL_OP.KEEP,
+                .StencilFunc = d3d11.COMPARISON_FUNC.ALWAYS,
+            },
+            .BackFace = d3d11.DEPTH_STENCILOP_DESC {
+                .StencilFailOp = d3d11.STENCIL_OP.KEEP,
+                .StencilDepthFailOp = d3d11.STENCIL_OP.KEEP,
+                .StencilPassOp = d3d11.STENCIL_OP.KEEP,
+                .StencilFunc = d3d11.COMPARISON_FUNC.ALWAYS,
+            },
+        }, @ptrCast(&depth_stencil_state)));
+        defer _ = depth_stencil_state.Release();
+
+        context.OMSetDepthStencilState(@ptrCast(depth_stencil_state), 0);
+
         return Self {
             .device = device,
             .swapchain = swapchain,
@@ -356,6 +382,10 @@ pub const GfxStateD3D11 = struct {
         };
         self.context.IASetPrimitiveTopology(d3d11_topology);
     }
+
+    pub inline fn cmd_copy_texture_to_texture(self: *Self, dst_texture: *const gf.Texture2D, src_texture: *const gf.Texture2D) void {
+        self.context.CopyResource(@ptrCast(dst_texture.platform.texture), @ptrCast(src_texture.platform.texture));
+    }
 };
 
 fn vertex_input_layout_format_to_dxgi(self: gf.VertexInputLayoutFormat) zwin32.dxgi.FORMAT {
@@ -384,6 +414,7 @@ fn texture_format_to_d3d11(self: gf.TextureFormat) zwin32.dxgi.FORMAT {
         .R32_Float => zwin32.dxgi.FORMAT.R32_FLOAT,
         .Rgba16_Float => zwin32.dxgi.FORMAT.R16G16B16A16_FLOAT,
         .Rg11b10_Float => zwin32.dxgi.FORMAT.R11G11B10_FLOAT,
+        .R24X8_Unorm_Uint => zwin32.dxgi.FORMAT.R24_UNORM_X8_TYPELESS,
         .D24S8_Unorm_Uint => zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT,
     };
 }

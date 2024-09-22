@@ -167,6 +167,12 @@ pub const GfxStateNoop = struct {
         _ = self;
         _ = topology;
     }
+
+    pub inline fn cmd_copy_texture_to_texture(self: *Self, dst_texture: *const gf.Texture2D, src_texture: *const gf.Texture2D) void {
+        _ = self;
+        _ = dst_texture;
+        _ = src_texture;
+    }
 };
 
 pub const VertexShaderNoop = struct {
