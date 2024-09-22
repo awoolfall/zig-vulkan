@@ -45,7 +45,7 @@ pub fn Engine(comptime App: type) type {
         input: input.InputState,
         time: time.TimeState,
         asset_manager: assets.AssetManager,
-        app: App,
+        app: *App,
         entities: EntityList,
         exe_path: []u8,
         general_allocator: std.heap.GeneralPurposeAllocator(.{}),
@@ -118,8 +118,13 @@ pub fn Engine(comptime App: type) type {
             engine.entities = try EntityList.init(alloc, &engine);
             defer engine.entities.deinit(&engine);
 
+            Log.debug("Creating app!", .{});
+            engine.app = try engine.general_allocator.allocator().create(App);
+            defer engine.general_allocator.allocator().destroy(engine.app);
+            engine.app.engine = &engine;
+
             Log.debug("Calling app init!", .{});
-            engine.app = try App.init(&engine);
+            try engine.app.init();
             defer engine.app.deinit();
 
             Log.debug("Engine inited!", .{});
