@@ -109,8 +109,8 @@ pub fn Engine(comptime App: type) type {
 
                 break :blk try assets.AssetManager.init(alloc, resources_path);
             };
-
             defer engine.asset_manager.deinit();
+
             Log.debug("Calling physics init", .{});
             engine.physics = try physics.PhysicsSystem.init(alloc, &engine.asset_manager, &engine.gfx);
             defer engine.physics.deinit();
@@ -121,9 +121,9 @@ pub fn Engine(comptime App: type) type {
             Log.debug("Creating app!", .{});
             engine.app = try engine.general_allocator.allocator().create(App);
             defer engine.general_allocator.allocator().destroy(engine.app);
-            engine.app.engine = &engine;
 
             Log.debug("Calling app init!", .{});
+            engine.app.engine = &engine;
             try engine.app.init();
             defer engine.app.deinit();
 

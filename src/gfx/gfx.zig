@@ -32,6 +32,10 @@ pub const GfxState = struct {
         metallic_roughness: TextureView2D,
         ambient_occlusion: TextureView2D,
         emission: TextureView2D,
+
+        vertex_shader: *const VertexShader = undefined,
+        pixel_shader: *const PixelShader = undefined,
+        constant_buffers: std.BoundedArray(ConstantBufferItem, 8) = undefined,
     },
 
     // @TODO: add rasterization state map, blend state map, and sampler map so we can just use them at 
@@ -312,6 +316,13 @@ pub const GfxState = struct {
     }
 };
 
+pub const ConstantBufferItem = struct { 
+    stages: ShaderStageFlags = .{}, 
+    buffer: ?*const Buffer = null,
+};
+
+pub const ConstantBufferArray = std.BoundedArray(ConstantBufferItem, 4);
+
 pub const VertexBufferInput = struct {
     buffer: *Buffer,
     stride: u32,
@@ -326,6 +337,11 @@ pub const IndexFormat = enum {
 pub const ShaderStage = enum {
     Vertex,
     Pixel,
+};
+
+pub const ShaderStageFlags = packed struct(u2) {
+    Vertex: bool = false,
+    Pixel: bool = false,
 };
 
 pub const Topology = enum {
@@ -383,8 +399,12 @@ pub const VertexShader = struct {
         vs_layout: []const VertexInputLayoutEntry,
         gfx: *GfxState,
     ) !VertexShader {
+        const platform = pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, gfx) catch |err| {
+            std.log.err("Vertex shader init failed: {s}", .{@errorName(err)});
+            return err;
+        };
         return VertexShader {
-            .platform = try pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, gfx),
+            .platform = platform,
         };
     }
 };
@@ -447,8 +467,12 @@ pub const PixelShader = struct {
         ps_func: []const u8, 
         gfx: *GfxState,
     ) !PixelShader {
+        const platform = pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, gfx) catch |err| {
+            std.log.err("Pixel shader init failed: {s}", .{@errorName(err)});
+            return err;
+        };
         return PixelShader {
-            .platform = try pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, gfx),
+            .platform = platform,
         };
     }
 };
