@@ -176,6 +176,9 @@ pub const GfxState = struct {
     }
 
     pub fn present(self: *Self) !void {
+        if (self.swapchain_size.width * self.swapchain_size.height == 0) {
+            return error.SwapchainSizeIsZero;
+        }
         try self.platform.present();
     }
 
@@ -199,6 +202,9 @@ pub const GfxState = struct {
     }
 
     pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {
+        const w = @max(new_width, 1);
+        const h = @max(new_height, 1);
+
         // Release help render target view before we update the swapchain.
         // If we dont do this swapchain resize buffers will fail.
         self.hdr_rtv.deinit();
@@ -207,11 +213,11 @@ pub const GfxState = struct {
 
         // self.context.ClearState();
         self.flush();
-        self.platform.resize_swapchain(new_width, new_height);
+        self.platform.resize_swapchain(w, h);
 
         // Update swapchain size variables
-        self.swapchain_size.width = new_width;
-        self.swapchain_size.height = new_height;
+        self.swapchain_size.width = w;
+        self.swapchain_size.height = h;
 
         // Reacquire render target view from new swapchain
         var framebuffer_texture = self.create_texture2d_from_framebuffer() catch unreachable;

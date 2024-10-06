@@ -10,6 +10,8 @@ pub const TimeState = struct {
     last_frame_time_s: f64,
     last_frame_wait_time_s: f64,
     target_frame_time_ns: i128,
+    target_lost_focus_frame_time_ns: i128 = 1e8, // 10fps
+    is_focused: bool = true,
     
     pub fn init() Self {
         return Self {
@@ -33,14 +35,15 @@ pub const TimeState = struct {
 
         // if there is a target frame rate, do wait here
         self.last_frame_wait_time_s = 0.0;
-        if (self.target_frame_time_ns != 0) {
+        const target_frame_time_ns = if (self.is_focused) self.target_frame_time_ns else self.target_lost_focus_frame_time_ns;
+        if (target_frame_time_ns != 0) {
             // calculate wait time in seconds
-            self.last_frame_wait_time_s = @as(f64, @floatFromInt(self.target_frame_time_ns - frame_diff_ns)) / std.time.ns_per_s;
+            self.last_frame_wait_time_s = @as(f64, @floatFromInt(target_frame_time_ns - frame_diff_ns)) / std.time.ns_per_s;
 
             // while loop to account for "spurious wakeups"
-            while (frame_diff_ns < self.target_frame_time_ns) {
+            while (frame_diff_ns < target_frame_time_ns) {
                 // sleep remaining ns to hit desired frame rate
-                std.time.sleep(@intCast(self.target_frame_time_ns - frame_diff_ns));
+                std.time.sleep(@intCast(target_frame_time_ns - frame_diff_ns));
 
                 // recollect frame diff times
                 frame_diff_ns = std.time.nanoTimestamp() - self.frame_start_time_ns;
@@ -54,6 +57,8 @@ pub const TimeState = struct {
     pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
         switch (event.*) {
             .EVENTS_CLEARED => { self.on_update(); },
+            .LOST_FOCUS => { self.is_focused = false; },
+            .GAINED_FOCUS => { self.is_focused = true; },
             else => {},
         }
     }
