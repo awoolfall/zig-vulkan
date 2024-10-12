@@ -12,6 +12,7 @@ inline fn is_dbg() bool {
 
 pub const GfxState = struct {
     const Self = @This();
+    pub const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.hlsl");
 
     platform: pl.GfxPlatform,
 
@@ -597,6 +598,25 @@ pub const Texture2D = struct {
         mip_levels: u32 = 1,
     };
 
+    pub fn map(self: *const Texture2D, comptime OutType: type, gfx: *GfxState) !MappedTexture(OutType) {
+        return MappedTexture(OutType) {
+            .platform = try self.platform.map(OutType, gfx),
+        };
+    }
+
+    pub fn MappedTexture(comptime T: type) type {
+        return struct {
+            platform: pl.GfxPlatform.Texture2D.MappedTexture(T),
+
+            pub fn unmap(self: *const MappedTexture(T)) void {
+                self.platform.unmap();
+            }
+            
+            pub fn data(self: *const MappedTexture(T)) [*]align(1)T {
+                return self.platform.data();
+            }
+        };
+    }
 };
 
 pub const TextureView2D = struct {
@@ -792,7 +812,6 @@ pub const BlendState = struct {
 };
 
 const ToneMappingAndBloomFilter = struct {
-    const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.hlsl");
     const HLSL = //
 \\  Texture2D hdr_buffer;
 \\  Texture2D bloom_buffer;
@@ -858,7 +877,7 @@ const ToneMappingAndBloomFilter = struct {
 
     pub fn init(gfx: *GfxState) !ToneMappingAndBloomFilter {
         var vertex_shader = try VertexShader.init_buffer(
-            FULL_SCREEN_QUAD_VS,
+            GfxState.FULL_SCREEN_QUAD_VS,
             "vs_main",
             ([0]VertexInputLayoutEntry {})[0..],
             gfx
@@ -866,7 +885,7 @@ const ToneMappingAndBloomFilter = struct {
         errdefer vertex_shader.deinit();
 
         var pixel_shader = try PixelShader.init_buffer(
-            FULL_SCREEN_QUAD_VS ++ HLSL,
+            GfxState.FULL_SCREEN_QUAD_VS ++ HLSL,
             "ps_main",
             gfx
         );

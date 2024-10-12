@@ -712,6 +712,32 @@ pub const Texture2DD3D11 = struct {
             .texture = texture,
         };
     }
+
+    pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
+        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+        try zwin32.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.texture), 0, d3d11.MAP.READ, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+        return MappedTexture(OutType) {
+            .context = gfx.platform.context,
+            .texture = self.texture,
+            .data_ptr = @ptrCast(@alignCast(mapped_subresource.pData)),
+        };
+    }
+
+    pub fn MappedTexture(comptime T: type) type {
+        return struct {
+            data_ptr: *T,
+            texture: *d3d11.ITexture2D,
+            context: *d3d11.IDeviceContext,
+
+            pub inline fn unmap(self: *const MappedTexture(T)) void {
+                self.context.Unmap(@ptrCast(self.texture), 0);
+            }
+            
+            pub inline fn data(self: *const MappedTexture(T)) [*]align(1)T {
+                return @as([*]align(1)T, @ptrCast(self.data_ptr));
+            }
+        };
+    }
 };
 
 pub const TextureView2DD3D11 = struct {

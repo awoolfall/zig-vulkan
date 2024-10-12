@@ -26,6 +26,7 @@ pub const particles = @import("engine/particles.zig");
 pub const easings = @import("easings.zig");
 pub const animation = @import("engine/anim_controller.zig");
 pub const ui = @import("engine/ui.zig");
+pub const debug = @import("debug/debug.zig");
 
 pub const window = @import("window.zig");
 
@@ -44,6 +45,7 @@ pub fn Engine(comptime App: type) type {
         physics: physics.PhysicsSystem,
         input: input.InputState,
         time: time.TimeState,
+        debug: debug.Debug,
         asset_manager: assets.AssetManager,
         app: *App,
         entities: EntityList,
@@ -61,6 +63,7 @@ pub fn Engine(comptime App: type) type {
                 .physics = undefined,
                 .input = undefined,
                 .time = undefined,
+                .debug = undefined,
                 .asset_manager = undefined,
                 .app = undefined,
                 .entities = undefined,
@@ -111,6 +114,9 @@ pub fn Engine(comptime App: type) type {
             };
             defer engine.asset_manager.deinit();
 
+            engine.debug = try debug.Debug.init(alloc, &engine.gfx);
+            defer engine.debug.deinit();
+
             Log.debug("Calling physics init", .{});
             engine.physics = try physics.PhysicsSystem.init(alloc, &engine.asset_manager, &engine.gfx);
             defer engine.physics.deinit();
@@ -124,7 +130,10 @@ pub fn Engine(comptime App: type) type {
 
             Log.debug("Calling app init!", .{});
             engine.app.engine = &engine;
-            try engine.app.init();
+            engine.app.init() catch |err| {
+                Log.err("App init failed! Error: {s}", .{@errorName(err)});
+                return err;
+            };
             defer engine.app.deinit();
 
             Log.debug("Engine inited!", .{});
