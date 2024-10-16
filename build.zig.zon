@@ -2,7 +2,7 @@
     .name = "zig_dx11",
     .version = "0.0.1",
     .dependencies = .{
-        .zwin32 = .{ .path = "libs/zig-gamedev/libs/zwin32" },
+        .zwindows = .{ .path = "libs/zig-gamedev/libs/zwindows" },
         .zopengl = .{ .path = "libs/zig-gamedev/libs/zopengl" },
         .zmath = .{ .path = "libs/zig-gamedev/libs/zmath" },
         .zmesh = .{ .path = "libs/zig-gamedev/libs/zmesh" },

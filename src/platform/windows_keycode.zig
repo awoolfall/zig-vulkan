@@ -1,5 +1,5 @@
-const zwin32 = @import("zwin32");
-const w32 = zwin32.w32;
+const zwindows = @import("zwindows");
+const w32 = zwindows.windows;
 const kc = @import("../input/keycode.zig");
 const KeyCode = kc.KeyCode;
 

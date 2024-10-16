@@ -1,7 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const zwin32 = @import("zwin32");
-const d3d11 = zwin32.d3d11;
+const zwindows = @import("zwindows");
+const d3d11 = zwindows.d3d11;
+const dxgi = zwindows.dxgi;
 const zm = @import("zmath");
 const gf = @import("../gfx.zig");
 const wb = @import("../../window.zig");
@@ -28,10 +29,10 @@ pub const GfxStateD3D11 = struct {
     pub const BlendState = BlendStateD3D11;
 
     device: *d3d11.IDevice,
-    swapchain: *zwin32.dxgi.ISwapChain,
+    swapchain: *dxgi.ISwapChain,
     context: *d3d11.IDeviceContext,
 
-    swapchain_flags: zwin32.dxgi.SWAP_CHAIN_FLAG,
+    swapchain_flags: dxgi.SWAP_CHAIN_FLAG,
 
     const enable_debug_layers = true;
     const swapchain_buffer_count: u32 = 3;
@@ -48,8 +49,8 @@ pub const GfxStateD3D11 = struct {
         _ = self.device.Release();
 
         // var debug: *zwin32.dxgi.IDebug1 = undefined;
-        // if (zwin32.hrErrorOnFail(zwin32.dxgi.GetDebugInterface1(0, &zwin32.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
-        //     zwin32.hrErrorOnFail(debug.ReportLiveObjects(
+        // if (zwindows.hrErrorOnFail(zwin32.dxgi.GetDebugInterface1(0, &zwin32.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
+        //     zwindows.hrErrorOnFail(debug.ReportLiveObjects(
         //         zwin32.dxgi.DXGI_DEBUG_ALL,
         //         zwin32.dxgi.RLO_FLAGS{ 
         //             .DETAIL = true,
@@ -66,52 +67,52 @@ pub const GfxStateD3D11 = struct {
 
     pub fn init(alloc: std.mem.Allocator, window: *win32window.Win32Window) !Self {
         _ = alloc;
-        const accepted_feature_levels = [_]zwin32.d3d.FEATURE_LEVEL{
+        const accepted_feature_levels = [_]zwindows.d3d.FEATURE_LEVEL{
             .@"11_0", 
             .@"10_1" 
         };
 
         const window_size = try window.get_client_size();
 
-        const swapchain_flags = zwin32.dxgi.SWAP_CHAIN_FLAG {
+        const swapchain_flags = dxgi.SWAP_CHAIN_FLAG {
             .ALLOW_MODE_SWITCH = true,
             .ALLOW_TEARING = true,
         };
 
-        const swapchain_desc = zwin32.dxgi.SWAP_CHAIN_DESC {
-            .BufferDesc = zwin32.dxgi.MODE_DESC {
+        const swapchain_desc = dxgi.SWAP_CHAIN_DESC {
+            .BufferDesc = dxgi.MODE_DESC {
                 .Width = @intCast(window_size.width),
                 .Height = @intCast(window_size.height),
                 .Format = texture_format_to_d3d11(swapchain_format),
-                .Scaling = zwin32.dxgi.MODE_SCALING.STRETCHED,
-                .RefreshRate = zwin32.dxgi.RATIONAL{
+                .Scaling = dxgi.MODE_SCALING.STRETCHED,
+                .RefreshRate = dxgi.RATIONAL{
                     .Numerator = 0,
                     .Denominator = 1,
                 },
-                .ScanlineOrdering = zwin32.dxgi.MODE_SCANLINE_ORDER.UNSPECIFIED,
+                .ScanlineOrdering = dxgi.MODE_SCANLINE_ORDER.UNSPECIFIED,
             },
-            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+            .SampleDesc = dxgi.SAMPLE_DESC {
                 .Count = 1,
                 .Quality = 0,
             },
-            .BufferUsage = zwin32.dxgi.USAGE {
+            .BufferUsage = dxgi.USAGE {
                 .RENDER_TARGET_OUTPUT = true,
             },
             .BufferCount = swapchain_buffer_count,
             .OutputWindow = window.hwnd,
-            .Windowed = zwin32.w32.TRUE,
-            .SwapEffect = zwin32.dxgi.SWAP_EFFECT.FLIP_DISCARD,
+            .Windowed = zwindows.windows.TRUE,
+            .SwapEffect = dxgi.SWAP_EFFECT.FLIP_DISCARD,
             .Flags = swapchain_flags,
         };
 
         var device: *d3d11.IDevice = undefined;
-        var swapchain: *zwin32.dxgi.ISwapChain = undefined;
-        var feature_level = zwin32.d3d.FEATURE_LEVEL.@"1_0_CORE";
+        var swapchain: *dxgi.ISwapChain = undefined;
+        var feature_level = zwindows.d3d.FEATURE_LEVEL.@"1_0_CORE";
         var context: *d3d11.IDeviceContext = undefined;
 
         // Attempt to create the device and swapchain with feature level 11_1.
         attempt_create_device_and_swapchain(
-            &[_]zwin32.d3d.FEATURE_LEVEL{ .@"11_1" },
+            &[_]zwindows.d3d.FEATURE_LEVEL{ .@"11_1" },
             swapchain_desc,
             @ptrCast(&swapchain),
             @ptrCast(&device),
@@ -120,7 +121,7 @@ pub const GfxStateD3D11 = struct {
         ) catch |err| {
             std.log.warn("Failed to create at feature level 11_1", .{});
             // If 11_1 is not available the above call will fail, then try creating at other levels
-            if (err == zwin32.w32.Error.INVALIDARG) {
+            if (err == zwindows.windows.Error.INVALIDARG) {
                 std.log.warn("Recreating at a lower level", .{});
                 try attempt_create_device_and_swapchain(
                     accepted_feature_levels[0..], 
@@ -138,8 +139,8 @@ pub const GfxStateD3D11 = struct {
 
         // Create reverse Z depth stencil state
         var depth_stencil_state: *d3d11.IDepthStencilState = undefined;
-        try zwin32.hrErrorOnFail(device.CreateDepthStencilState(&d3d11.DEPTH_STENCIL_DESC {
-            .DepthEnable = zwin32.w32.TRUE,
+        try zwindows.hrErrorOnFail(device.CreateDepthStencilState(&d3d11.DEPTH_STENCIL_DESC {
+            .DepthEnable = zwindows.windows.TRUE,
             .DepthWriteMask = d3d11.DEPTH_WRITE_MASK.ALL,
             .DepthFunc = d3d11.COMPARISON_FUNC.GREATER_EQUAL,
             .StencilEnable = 0,
@@ -171,21 +172,21 @@ pub const GfxStateD3D11 = struct {
     }
 
     fn attempt_create_device_and_swapchain(
-        accepted_feature_levels: []const zwin32.d3d.FEATURE_LEVEL,
-        swapchain_desc: zwin32.dxgi.SWAP_CHAIN_DESC,
-        swapchain: ?*?*zwin32.dxgi.ISwapChain,
+        accepted_feature_levels: []const zwindows.d3d.FEATURE_LEVEL,
+        swapchain_desc: dxgi.SWAP_CHAIN_DESC,
+        swapchain: ?*?*dxgi.ISwapChain,
         device: ?*?*d3d11.IDevice,
-        feature_level: ?*zwin32.d3d.FEATURE_LEVEL,
+        feature_level: ?*zwindows.d3d.FEATURE_LEVEL,
         context: ?*?*d3d11.IDeviceContext,
     ) !void {
         if (is_dbg() and enable_debug_layers) {
             std.log.debug("enabling d3d11 debug layers", .{});
         }
-        try zwin32.hrErrorOnFail(d3d11.D3D11CreateDeviceAndSwapChain(
+        try zwindows.hrErrorOnFail(d3d11.D3D11CreateDeviceAndSwapChain(
                 null,
-                zwin32.d3d.DRIVER_TYPE.HARDWARE, 
+                zwindows.d3d.DRIVER_TYPE.HARDWARE, 
                 null,
-                zwin32.d3d11.CREATE_DEVICE_FLAG {
+                d3d11.CREATE_DEVICE_FLAG {
                     .DEBUG = (is_dbg() and enable_debug_layers),
                     .BGRA_SUPPORT = true,
                     .PREVENT_ALTERING_LAYER_SETTINGS_FROM_REGISTRY = !is_dbg(),
@@ -203,7 +204,7 @@ pub const GfxStateD3D11 = struct {
 
     pub fn create_texture2d_from_framebuffer(self: *Self, gfx: *gf.GfxState) !gf.Texture2D {
         var framebuffer: *d3d11.ITexture2D = undefined;
-        zwin32.hrPanicOnFail(self.swapchain.GetBuffer(0, &d3d11.IID_ITexture2D, @ptrCast(&framebuffer)));
+        zwindows.hrPanicOnFail(self.swapchain.GetBuffer(0, &d3d11.IID_ITexture2D, @ptrCast(&framebuffer)));
 
         return gf.Texture2D {
             .platform = Self.Texture2D {
@@ -240,7 +241,7 @@ pub const GfxStateD3D11 = struct {
     }
 
     pub inline fn present(self: *Self) !void {
-        try zwin32.hrErrorOnFail(self.swapchain.Present(0, zwin32.dxgi.PRESENT_FLAG {}));
+        try zwindows.hrErrorOnFail(self.swapchain.Present(0, dxgi.PRESENT_FLAG {}));
     }
 
     pub inline fn flush(self: *Self) void {
@@ -252,8 +253,8 @@ pub const GfxStateD3D11 = struct {
         _ = new_height;
 
         self.context.Flush();
-        zwin32.hrPanicOnFail(self.swapchain.ResizeBuffers(
-                0, 0, 0, zwin32.dxgi.FORMAT.UNKNOWN, // automatic
+        zwindows.hrPanicOnFail(self.swapchain.ResizeBuffers(
+                0, 0, 0, dxgi.FORMAT.UNKNOWN, // automatic
                 self.swapchain_flags)); 
     }
 
@@ -313,8 +314,8 @@ pub const GfxStateD3D11 = struct {
 
     pub inline fn cmd_set_index_buffer(self: *Self, buffer: *gf.Buffer, format: gf.IndexFormat, offset: u32) void {
         const d3d11_format = switch (format) {
-            .U16 => zwin32.dxgi.FORMAT.R16_UINT,
-            .U32 => zwin32.dxgi.FORMAT.R32_UINT,
+            .U16 => dxgi.FORMAT.R16_UINT,
+            .U32 => dxgi.FORMAT.R32_UINT,
         };
         self.context.IASetIndexBuffer(buffer.platform.buffer, d3d11_format, offset);
     }
@@ -388,14 +389,14 @@ pub const GfxStateD3D11 = struct {
     }
 };
 
-fn vertex_input_layout_format_to_dxgi(self: gf.VertexInputLayoutFormat) zwin32.dxgi.FORMAT {
+fn vertex_input_layout_format_to_dxgi(self: gf.VertexInputLayoutFormat) dxgi.FORMAT {
     return switch (self) {
-        .F32x1 => zwin32.dxgi.FORMAT.R32_FLOAT,
-        .F32x2 => zwin32.dxgi.FORMAT.R32G32_FLOAT,
-        .F32x3 => zwin32.dxgi.FORMAT.R32G32B32_FLOAT,
-        .F32x4 => zwin32.dxgi.FORMAT.R32G32B32A32_FLOAT,
-        .I32x4 => zwin32.dxgi.FORMAT.R32G32B32A32_SINT,
-        .U8x4 => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM,
+        .F32x1 => dxgi.FORMAT.R32_FLOAT,
+        .F32x2 => dxgi.FORMAT.R32G32_FLOAT,
+        .F32x3 => dxgi.FORMAT.R32G32B32_FLOAT,
+        .F32x4 => dxgi.FORMAT.R32G32B32A32_FLOAT,
+        .I32x4 => dxgi.FORMAT.R32G32B32A32_SINT,
+        .U8x4 => dxgi.FORMAT.R8G8B8A8_UNORM,
     };
 }
 
@@ -406,16 +407,16 @@ fn vertex_input_layout_iterate_per_to_d3d11(self: gf.VertexInputLayoutIteratePer
     };
 }
 
-fn texture_format_to_d3d11(self: gf.TextureFormat) zwin32.dxgi.FORMAT {
+fn texture_format_to_d3d11(self: gf.TextureFormat) dxgi.FORMAT {
     return switch (self) {
-        .Rgba8_Unorm_Srgb => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
-        .Rgba8_Unorm => zwin32.dxgi.FORMAT.R8G8B8A8_UNORM,
-        .Bgra8_Unorm => zwin32.dxgi.FORMAT.B8G8R8A8_UNORM,
-        .R32_Float => zwin32.dxgi.FORMAT.R32_FLOAT,
-        .Rgba16_Float => zwin32.dxgi.FORMAT.R16G16B16A16_FLOAT,
-        .Rg11b10_Float => zwin32.dxgi.FORMAT.R11G11B10_FLOAT,
-        .R24X8_Unorm_Uint => zwin32.dxgi.FORMAT.R24_UNORM_X8_TYPELESS,
-        .D24S8_Unorm_Uint => zwin32.dxgi.FORMAT.D24_UNORM_S8_UINT,
+        .Rgba8_Unorm_Srgb => dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
+        .Rgba8_Unorm => dxgi.FORMAT.R8G8B8A8_UNORM,
+        .Bgra8_Unorm => dxgi.FORMAT.B8G8R8A8_UNORM,
+        .R32_Float => dxgi.FORMAT.R32_FLOAT,
+        .Rgba16_Float => dxgi.FORMAT.R16G16B16A16_FLOAT,
+        .Rg11b10_Float => dxgi.FORMAT.R11G11B10_FLOAT,
+        .R24X8_Unorm_Uint => dxgi.FORMAT.R24_UNORM_X8_TYPELESS,
+        .D24S8_Unorm_Uint => dxgi.FORMAT.D24_UNORM_S8_UINT,
     };
 }
 
@@ -506,12 +507,12 @@ pub const VertexShaderD3D11 = struct {
         const vs_func_c = try std.heap.page_allocator.dupeZ(u8, vs_func);
         defer std.heap.page_allocator.free(vs_func_c);
 
-        var vs_blob: *zwin32.d3d.IBlob = undefined;
-        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&vs_data[0], vs_data.len, null, null, null, vs_func_c, "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
+        var vs_blob: *zwindows.d3d.IBlob = undefined;
+        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(&vs_data[0], vs_data.len, null, null, null, vs_func_c, "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
         defer _ = vs_blob.Release();
 
         var vso: *d3d11.IVertexShader = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
         errdefer _ = vso.Release();
 
         var d3d11_layout_desc = try std.BoundedArray(d3d11.INPUT_ELEMENT_DESC, 32).init(0);
@@ -536,7 +537,7 @@ pub const VertexShaderD3D11 = struct {
         }
 
         var vso_input_layout: *d3d11.IInputLayout = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateInputLayout(@ptrCast(&d3d11_layout_desc.buffer[0]), d3d11_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateInputLayout(@ptrCast(&d3d11_layout_desc.buffer[0]), d3d11_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
         errdefer _ = vso_input_layout.Release();
 
         return Self {
@@ -562,12 +563,12 @@ pub const PixelShaderD3D11 = struct {
         const ps_func_c = try std.heap.page_allocator.dupeZ(u8, ps_func);
         defer std.heap.page_allocator.free(ps_func_c);
 
-        var ps_blob: *zwin32.d3d.IBlob = undefined;
-        try zwin32.hrErrorOnFail(zwin32.d3dcompiler.D3DCompile(&ps_data[0], ps_data.len, null, null, null, ps_func_c, "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
+        var ps_blob: *zwindows.d3d.IBlob = undefined;
+        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(&ps_data[0], ps_data.len, null, null, null, ps_func_c, "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
         defer _ = ps_blob.Release();
 
         var pso: *d3d11.IPixelShader = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
         errdefer _ = pso.Release();
 
         return Self {
@@ -597,7 +598,7 @@ pub const BufferD3D11 = struct {
             .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
         };
         var buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBuffer(&buffer_desc, null, @ptrCast(&buffer)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateBuffer(&buffer_desc, null, @ptrCast(&buffer)));
         errdefer _ = buffer.Release();
         
         return Self {
@@ -618,7 +619,7 @@ pub const BufferD3D11 = struct {
             .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
         };
         var buffer: *d3d11.IBuffer = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &data[0], }, @ptrCast(&buffer)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = &data[0], }, @ptrCast(&buffer)));
         errdefer _ = buffer.Release();
         
         return Self {
@@ -628,7 +629,7 @@ pub const BufferD3D11 = struct {
 
     pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedBuffer(OutType) {
         var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+        try zwindows.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
         return MappedBuffer(OutType) {
             .context = gfx.platform.context,
             .buffer = self.buffer,
@@ -680,7 +681,7 @@ pub const Texture2DD3D11 = struct {
             .MipLevels = @intCast(desc.mip_levels),
             .ArraySize = @intCast(desc.array_length),
             .Format = texture_format_to_d3d11(desc.format),
-            .SampleDesc = zwin32.dxgi.SAMPLE_DESC {
+            .SampleDesc = dxgi.SAMPLE_DESC {
                 .Count = 1,
                 .Quality = 0,
             },
@@ -691,7 +692,7 @@ pub const Texture2DD3D11 = struct {
         };
         var texture: *d3d11.ITexture2D = undefined;
         if (data) |d| {
-            try zwin32.hrErrorOnFail(gfx.platform.device.CreateTexture2D(
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateTexture2D(
                     &texture_desc, 
                     &d3d11.SUBRESOURCE_DATA {
                         .pSysMem = @ptrCast(d), 
@@ -700,7 +701,7 @@ pub const Texture2DD3D11 = struct {
                     @ptrCast(&texture)
             ));
         } else {
-            try zwin32.hrErrorOnFail(gfx.platform.device.CreateTexture2D(
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateTexture2D(
                     &texture_desc, 
                     null,
                     @ptrCast(&texture)
@@ -715,7 +716,7 @@ pub const Texture2DD3D11 = struct {
 
     pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
         var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.texture), 0, d3d11.MAP.READ, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+        try zwindows.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.texture), 0, d3d11.MAP.READ, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
         return MappedTexture(OutType) {
             .context = gfx.platform.context,
             .texture = self.texture,
@@ -760,7 +761,7 @@ pub const TextureView2DD3D11 = struct {
             },
         };
         var texture_view: *d3d11.IShaderResourceView = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
                 @ptrCast(texture.platform.texture), 
                 &texture_resource_view_desc, 
                 @ptrCast(&texture_view)
@@ -788,7 +789,7 @@ pub const RenderTargetViewD3D11 = struct {
 
     pub inline fn init_from_texture2d_mip(texture: *const gf.Texture2D, mip_level: u32, gfx: *gf.GfxState) !Self {
         var rtv: *d3d11.IRenderTargetView = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateRenderTargetView(
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateRenderTargetView(
                 @ptrCast(texture.platform.texture), 
                 &d3d11.RENDER_TARGET_VIEW_DESC{
                     .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE2D,
@@ -837,7 +838,7 @@ pub const DepthStencilViewD3D11 = struct {
             },
         };
         var depth_stencil_view: *d3d11.IDepthStencilView = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateDepthStencilView(@ptrCast(texture.platform.texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateDepthStencilView(@ptrCast(texture.platform.texture), &depth_stencil_desc, @ptrCast(&depth_stencil_view)));
         errdefer _ = depth_stencil_view.Release();
 
         return Self {
@@ -876,7 +877,7 @@ pub const RasterizationStateD3D11 = struct {
         };
 
         var rasterization_state: *d3d11.IRasterizerState = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
         errdefer _ = rasterization_state.Release();
 
         return Self {
@@ -927,7 +928,7 @@ pub const SamplerD3D11 = struct {
             .MaxLOD = desc.max_lod,
         };
         var sampler: *d3d11.ISamplerState = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateSamplerState(&sampler_desc, @ptrCast(&sampler)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateSamplerState(&sampler_desc, @ptrCast(&sampler)));
         errdefer _ = sampler.Release();
 
         return Self {
@@ -955,7 +956,7 @@ pub const BlendStateD3D11 = struct {
         }
 
         var blend_state: *d3d11.IBlendState = undefined;
-        try zwin32.hrErrorOnFail(gfx.platform.device.CreateBlendState(&blend_state_desc, @ptrCast(&blend_state)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateBlendState(&blend_state_desc, @ptrCast(&blend_state)));
         errdefer _ = blend_state.Release();
 
         return Self {

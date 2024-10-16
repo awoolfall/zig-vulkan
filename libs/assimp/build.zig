@@ -40,12 +40,12 @@ pub fn build(b: *std.Build) void {
     const options_module = options_step.createModule();
 
     const assimp_module = b.addModule("root", .{
-        .root_source_file = .{ .path = "src/assimp.zig" },
+        .root_source_file = b.path("src/assimp.zig"),
         .imports = &.{
             .{ .name = "assimp_options", .module = options_module },
         },
     });
-    assimp_module.addIncludePath(.{ .path = "libs/assimp/include" });
+    assimp_module.addIncludePath(b.path("libs/assimp/include"));
 
     const unzip = b.addStaticLibrary(.{
         .name = "unzip",
@@ -54,15 +54,13 @@ pub fn build(b: *std.Build) void {
     });
 
     const zlib_conf_step = b.addConfigHeader(.{ 
-        .style = .{ .cmake = .{
-            .path = "libs/assimp/contrib/zlib/zconf.h.in",
-        } },
+        .style = .{ .cmake = b.path("libs/assimp/contrib/zlib/zconf.h.in") },
     }, .{});
     unzip.addConfigHeader(zlib_conf_step);
     unzip.installConfigHeader(zlib_conf_step);
 
-    unzip.addIncludePath(.{ .path = "libs/assimp/contrib/unzip" });
-    unzip.addIncludePath(.{ .path = "libs/assimp/contrib/zlib" });
+    unzip.addIncludePath(b.path("libs/assimp/contrib/unzip"));
+    unzip.addIncludePath(b.path("libs/assimp/contrib/zlib"));
     unzip.linkLibC();
     unzip.linkLibCpp();
     unzip.addCSourceFiles(.{
@@ -97,7 +95,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    zip.addIncludePath(.{ .path = "libs/assimp/contrib/zip/src" });
+    zip.addIncludePath(b.path("libs/assimp/contrib/zip/src"));
     zip.linkLibC();
     zip.linkLibCpp();
     zip.defineCMacro("MINIZ_USE_UNALIGNED_LOADS_AND_STORES", "0");
@@ -118,7 +116,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    pugixml.addIncludePath(.{ .path = "libs/assimp/contrib/pugixml/src" });
+    pugixml.addIncludePath(b.path("libs/assimp/contrib/pugixml/src"));
     pugixml.linkLibC();
     pugixml.linkLibCpp();
     pugixml.addCSourceFiles(.{
@@ -138,8 +136,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    openddlparser.addIncludePath(.{ .path = "libs/assimp/contrib/openddlparser/code" });
-    openddlparser.addIncludePath(.{ .path = "libs/assimp/contrib/openddlparser/include" });
+    openddlparser.addIncludePath(b.path("libs/assimp/contrib/openddlparser/code"));
+    openddlparser.addIncludePath(b.path("libs/assimp/contrib/openddlparser/include"));
     openddlparser.linkLibC();
     openddlparser.linkLibCpp();
     openddlparser.defineCMacro("OPENDDLPARSER_BUILD", "1");
@@ -165,7 +163,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    cencode.addIncludePath(.{ .path = "libs/assimp/code/AssetLib/Assjson/" });
+    cencode.addIncludePath(b.path("libs/assimp/code/AssetLib/Assjson/"));
     cencode.linkLibC();
     cencode.addCSourceFiles(.{
         .files = &.{
@@ -183,7 +181,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    poly2tri.addIncludePath(.{ .path = "libs/assimp/contrib/poly2tri" });
+    poly2tri.addIncludePath(b.path("libs/assimp/contrib/poly2tri"));
     poly2tri.linkLibC();
     poly2tri.linkLibCpp();
     poly2tri.addCSourceFiles(.{
@@ -209,9 +207,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(assimp);
 
     const assimp_conf_step = b.addConfigHeader(.{ 
-        .style = .{ .cmake = .{
-            .path = "libs/assimp/include/assimp/config.h.in",
-        } },
+        .style = .{ .cmake = b.path("libs/assimp/include/assimp/config.h.in") },
         .include_path = "assimp/config.h",
     }, .{});
     assimp.addConfigHeader(assimp_conf_step);
@@ -219,9 +215,7 @@ pub fn build(b: *std.Build) void {
 
     const assimp_rev_step = b.addConfigHeader(
         .{ 
-            .style = .{ .cmake = .{
-                .path = "libs/assimp/revision.h.in",
-            } },
+            .style = .{ .cmake = b.path("libs/assimp/revision.h.in") },
         }, 
         .{
             .GIT_COMMIT_HASH = 0,
@@ -244,18 +238,18 @@ pub fn build(b: *std.Build) void {
     assimp.linkLibrary(pugixml);
     assimp.linkLibrary(openddlparser);
 
-    assimp.addIncludePath(.{ .path = "libs/assimp/include" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/include/assimp" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/code" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib/zlib" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib/unzip" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib/rapidjson/include" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib/openddlparser/include" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib/utf8cpp/source" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib/pugixml/src" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib/poly2tri" });
-    assimp.addIncludePath(.{ .path = "libs/assimp/contrib" });
+    assimp.addIncludePath(b.path("libs/assimp/include"));
+    assimp.addIncludePath(b.path("libs/assimp/include/assimp"));
+    assimp.addIncludePath(b.path("libs/assimp/code"));
+    assimp.addIncludePath(b.path("libs/assimp/"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib/zlib"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib/unzip"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib/rapidjson/include"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib/openddlparser/include"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib/utf8cpp/source"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib/pugixml/src"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib/poly2tri"));
+    assimp.addIncludePath(b.path("libs/assimp/contrib"));
     assimp.defineCMacro("RAPIDJSON_HAS_STDSTRING", "1");
     assimp.defineCMacro("ASSIMP_BUILD_NO_C4D_IMPORTER", "1");
     assimp.defineCMacro("ASSIMP_BUILD_NO_IFC_IMPORTER", "1");
