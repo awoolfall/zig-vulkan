@@ -1,3 +1,4 @@
+const std = @import("std");
 const tf = @import("transform.zig");
 const zm = @import("zmath");
 const kc = @import("../input/keycode.zig");
@@ -31,6 +32,9 @@ pub const Camera = struct {
 
     global_up_direction: zm.F32x4 = zm.f32x4(0.0, 1.0, 0.0, 0.0),
     view_matrix: zm.Mat = zm.identity(),
+
+    damping_movement: [2]f32 = [_]f32{ 0.0, 0.0 },
+    damping_amount: f32 = 1.0 / 0.1,
 
     camera_type: enum {
         FLY, ORBIT,
@@ -116,21 +120,27 @@ pub const Camera = struct {
 
         // camera rotation
         if (input.get_key(kc.KeyCode.MouseRight)) {
-            self.view_matrix = zm.mul(
-                zm.matFromAxisAngle(
-                    self.global_up_direction,
-                    -self.mouse_sensitivity * input.mouse_delta[0]
-                ),
-                self.view_matrix,
-            );
-            self.view_matrix = zm.mul(
-                self.view_matrix, 
-                zm.matFromAxisAngle(
-                    zm.f32x4(1.0, 0.0, 0.0, 0.0),
-                    -self.mouse_sensitivity * input.mouse_delta[1]
-                )
-            );
+            self.damping_movement[0] = input.mouse_delta[0] * self.mouse_sensitivity;
+            self.damping_movement[1] = input.mouse_delta[1] * self.mouse_sensitivity;
+        } else {
+            self.damping_movement[0] = std.math.lerp(self.damping_movement[0], 0.0, self.damping_amount * time.delta_time_f32());
+            self.damping_movement[1] = std.math.lerp(self.damping_movement[1], 0.0, self.damping_amount * time.delta_time_f32());
         }
+
+        self.view_matrix = zm.mul(
+            zm.matFromAxisAngle(
+                self.global_up_direction,
+                -self.damping_movement[0]
+            ),
+            self.view_matrix,
+        );
+        self.view_matrix = zm.mul(
+            self.view_matrix, 
+            zm.matFromAxisAngle(
+                zm.f32x4(1.0, 0.0, 0.0, 0.0),
+                -self.damping_movement[1]
+            )
+        );
 
         // translate orbit distance by input
         const orbit_distance_change = float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) 

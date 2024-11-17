@@ -506,6 +506,7 @@ pub const Imui = struct {
         text_dark: zm.F32x4,
         text_light: zm.F32x4,
         border: zm.F32x4,
+        muted: zm.F32x4,
 
         pub fn slate() Palette {
             @setEvalBranchQuota(10000);
@@ -516,6 +517,7 @@ pub const Imui = struct {
                .border = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(214.3/360.0, 0.318, 0.914, 1.0))),
                .background = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(0.0/360.0, 0.0, 1.0, 1.0))),
                .foreground = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(222.2/360.0, 0.84, 0.049, 1.0))),
+               .muted = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(210.0/360.0, 0.4, 0.961, 1.0))),
                .secondary = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(210.0/360.0, 0.4, 0.961, 1.0))),
                .accent = zm.srgbToRgb(zm.hslToRgb(zm.f32x4(210.0/360.0, 0.4, 0.961, 1.0))),
             };
@@ -1329,33 +1331,31 @@ pub const Imui = struct {
 
     pub const SliderId = struct {
         filled_bar:usize, 
-        background_bar:usize
+        background_bar:usize,
+        middle_dot:usize,
     };
 
     pub fn slider(self: *Self, value: f32, min: f32, max: f32, key: anytype) WidgetSignal(SliderId) {
         const complete_percent = std.math.clamp((value - min) / (max - min), 0.0, 1.0);
         const box = self.push_layout(.X, key ++ .{@src().line});
-        self.get_widget(box).?.semantic_size[0].kind = .ParentPercentage;
-        self.get_widget(box).?.semantic_size[0].value = 1.0;
-        self.get_widget(box).?.flags.render = true;
-        self.get_widget(box).?.background_colour = self.palette().secondary;
-        self.get_widget(box).?.border_colour = self.palette().border;
-        self.get_widget(box).?.border_width_px = 1;
-        self.get_widget(box).?.corner_radii_px = .{
-            .top_left = 4,
-            .top_right = 4,
-            .bottom_left = 4,
-            .bottom_right = 4,
-        };
+        if (self.get_widget(box)) |bw| {
+            bw.semantic_size[0].kind = .ParentPercentage;
+            bw.semantic_size[0].value = 1.0;
+            bw.semantic_size[1].kind = .Pixels;
+            bw.semantic_size[1].value = 16.0;
+            bw.flags.render = false;
+            bw.anchor = .{ 0.0, 0.0 };
+            bw.pivot = .{ 0.0, 0.0 };
+        }
 
         const filled_bar_widget = Widget {
             .key = gen_key(key ++ .{@src().line}),
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .ParentPercentage, .value = complete_percent, .shrinkable_percent = 0.0, },
-                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable_percent = 0.0, },
             },
             .background_colour = self.palette().primary,
-            .border_colour = self.palette().border,
+            .border_colour = self.palette().primary,
             .border_width_px = 1,
             .corner_radii_px = .{
                 .top_left = 4,
@@ -1366,30 +1366,78 @@ pub const Imui = struct {
             .flags = .{
                 .clickable = true,
             },
+            .anchor = .{0.0, 0.5},
+            .pivot = .{0.0, 0.5},
         };
         const filled_bar_widget_id = self.add_widget(filled_bar_widget);
         const filled_bar_widget_signals = self.generate_widget_signals(filled_bar_widget_id);
 
+        const l1 = self.push_layout(.X, key ++ .{@src().line});
+        if (self.get_widget(l1)) |lw| {
+            lw.semantic_size[0].kind = .ParentPercentage;
+            lw.semantic_size[0].value = (1.0 - complete_percent);
+            lw.semantic_size[1].kind = .ParentPercentage;
+            lw.semantic_size[1].value = 1.0;
+            lw.flags.render = false;
+            lw.layout_axis = null;
+        }
+
         const empty_bar_widget = Widget {
             .key = gen_key(key ++ .{@src().line}),
             .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .ParentPercentage, .value = (1.0 - complete_percent), .shrinkable_percent = 0.0, },
-                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable_percent = 0.0, },
             },
             .flags = .{
-                .render = false,
+                .render = true,
                 .clickable = true,
             },
+            .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.2),
+            .border_colour = self.palette().border,
+            .border_width_px = 1,
+            .corner_radii_px = .{
+                .top_left = 4,
+                .top_right = 4,
+                .bottom_left = 4,
+                .bottom_right = 4,
+            },
+            .anchor = .{0.0, 0.5},
+            .pivot = .{0.0, 0.5},
         };
         const empty_bar_widget_id = self.add_widget(empty_bar_widget);
         const empty_bar_widget_signals = self.generate_widget_signals(empty_bar_widget_id);
 
+        const middle_dot_widget = Widget {
+            .key = gen_key(key ++ .{@src().line}),
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            },
+            .flags = .{
+                .render = true,
+                .clickable = false,
+            },
+            .background_colour = self.palette().background,
+            .border_colour = self.palette().primary,
+            .border_width_px = 1,
+            .corner_radii_px = .{
+                .top_left = 8,
+                .top_right = 8,
+                .bottom_left = 8,
+                .bottom_right = 8,
+            },
+            .anchor = .{0.0, 0.5},
+            .pivot = .{0.5, 0.5},
+        };
+        const middle_dot_widget_id = self.add_widget(middle_dot_widget);
+
+        self.pop_layout(); // l1
         self.pop_layout();
 
         return combine_signals(
             filled_bar_widget_signals, 
             empty_bar_widget_signals, 
-            SliderId{ .filled_bar = filled_bar_widget_id, .background_bar = box, }
+            SliderId{ .filled_bar = filled_bar_widget_id, .background_bar = box, .middle_dot = middle_dot_widget_id, }
         );
     }
 
