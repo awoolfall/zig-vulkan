@@ -409,6 +409,7 @@ fn vertex_input_layout_iterate_per_to_d3d11(self: gf.VertexInputLayoutIteratePer
 
 fn texture_format_to_d3d11(self: gf.TextureFormat) dxgi.FORMAT {
     return switch (self) {
+        .Unknown => dxgi.FORMAT.UNKNOWN,
         .Rgba8_Unorm_Srgb => dxgi.FORMAT.R8G8B8A8_UNORM_SRGB,
         .Rgba8_Unorm => dxgi.FORMAT.R8G8B8A8_UNORM,
         .Bgra8_Unorm => dxgi.FORMAT.B8G8R8A8_UNORM,

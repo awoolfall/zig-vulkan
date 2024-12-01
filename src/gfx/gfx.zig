@@ -18,6 +18,7 @@ pub const GfxState = struct {
 
     framebuffer_rtv: RenderTargetView,
     hdr_rtv: RenderTargetView,
+    hdr_texture: Texture2D,
     hdr_texture_view: TextureView2D,
 
     swapchain_size: struct{width: i32, height: i32},
@@ -44,9 +45,8 @@ pub const GfxState = struct {
 
     const enable_debug_layers = true;
     const swapchain_buffer_count: u32 = 3;
-    const hdr_format = TextureFormat.Rgba16_Float;
-    const ldr_format = TextureFormat.Rgba8_Unorm;
-    const swapchain_format = ldr_format;
+    pub const hdr_format = TextureFormat.Rgba16_Float;
+    pub const ldr_format = TextureFormat.Rgba8_Unorm;
 
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
@@ -68,6 +68,7 @@ pub const GfxState = struct {
 
         self.hdr_rtv.deinit();
         self.hdr_texture_view.deinit();
+        self.hdr_texture.deinit();
 
         self.framebuffer_rtv.deinit();
 
@@ -88,6 +89,7 @@ pub const GfxState = struct {
             },
             .framebuffer_rtv = undefined,
             .hdr_rtv = undefined,
+            .hdr_texture = undefined,
             .hdr_texture_view = undefined,
             .tone_mapping_filter = undefined,
             .default = .{
@@ -101,18 +103,18 @@ pub const GfxState = struct {
         };
 
         const framebuffer_texture = try gfx_state.create_texture2d_from_framebuffer();
-        defer framebuffer_texture.deinit();
+        errdefer framebuffer_texture.deinit();
 
         gfx_state.framebuffer_rtv = try RenderTargetView.init_from_texture2d(&framebuffer_texture, &gfx_state);
         errdefer gfx_state.framebuffer_rtv.deinit();
 
-        const hdr_texture = try gfx_state.create_hdr_rtv_texture2d_from_framebuffer();
-        defer hdr_texture.deinit();
+        gfx_state.hdr_texture = try gfx_state.create_hdr_rtv_texture2d_from_framebuffer();
+        errdefer gfx_state.hdr_texture.deinit();
 
-        gfx_state.hdr_rtv = try RenderTargetView.init_from_texture2d(&hdr_texture, &gfx_state);
+        gfx_state.hdr_rtv = try RenderTargetView.init_from_texture2d(&gfx_state.hdr_texture, &gfx_state);
         errdefer gfx_state.hdr_rtv.deinit();
 
-        gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&hdr_texture, &gfx_state);
+        gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&gfx_state.hdr_texture, &gfx_state);
         errdefer gfx_state.hdr_texture_view.deinit();
 
         gfx_state.tone_mapping_filter = try ToneMappingAndBloomFilter.init(&gfx_state);
@@ -210,6 +212,7 @@ pub const GfxState = struct {
         // If we dont do this swapchain resize buffers will fail.
         self.hdr_rtv.deinit();
         self.hdr_texture_view.deinit();
+        self.hdr_texture.deinit();
         self.framebuffer_rtv.deinit();
 
         // self.context.ClearState();
@@ -227,13 +230,13 @@ pub const GfxState = struct {
         self.framebuffer_rtv = RenderTargetView.init_from_texture2d(&framebuffer_texture, self)
             catch unreachable;
 
-        var hdr_texture = self.create_hdr_rtv_texture2d_from_framebuffer() catch unreachable;
-        defer hdr_texture.deinit();
+        self.hdr_texture = self.create_hdr_rtv_texture2d_from_framebuffer() catch unreachable;
+        errdefer self.hdr_texture.deinit();
 
-        self.hdr_rtv = RenderTargetView.init_from_texture2d(&hdr_texture, self)
+        self.hdr_rtv = RenderTargetView.init_from_texture2d(&self.hdr_texture, self)
             catch unreachable;
 
-        self.hdr_texture_view = TextureView2D.init_from_texture2d(&hdr_texture, self)
+        self.hdr_texture_view = TextureView2D.init_from_texture2d(&self.hdr_texture, self)
             catch unreachable;
     }
 
@@ -394,7 +397,7 @@ pub const VertexShader = struct {
         defer alloc.free(vs_buf);
 
         if (try vs_file.readAll(vs_buf) != vs_file_len) {
-            return error.FailedToReadVertexShader;
+            return error.FailedToReadShader;
         }
 
         return init_buffer(vs_buf, vs_func, vs_layout, gfx);
@@ -463,7 +466,7 @@ pub const PixelShader = struct {
         defer alloc.free(ps_buf);
 
         if (try ps_file.readAll(ps_buf) != ps_file_len) {
-            return error.FailedToReadVertexShader;
+            return error.FailedToReadShader;
         }
 
         return init_buffer(ps_buf, ps_func, gfx);
@@ -682,6 +685,7 @@ pub const DepthStencilView = struct {
 };
 
 pub const TextureFormat = enum {
+    Unknown,
     Rgba8_Unorm_Srgb,
     Rgba8_Unorm,
     Bgra8_Unorm,
@@ -693,6 +697,7 @@ pub const TextureFormat = enum {
 
     pub fn byte_width(self: TextureFormat) usize {
         switch (self) {
+            .Unknown => return 0,
             .R32_Float => return 4,
             .Rgba8_Unorm_Srgb => return 4,
             .Rgba8_Unorm => return 4,
