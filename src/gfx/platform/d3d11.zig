@@ -22,6 +22,8 @@ pub const GfxStateD3D11 = struct {
     pub const Buffer = BufferD3D11;
     pub const Texture2D = Texture2DD3D11;
     pub const TextureView2D = TextureView2DD3D11;
+    pub const Texture3D = Texture3DD3D11;
+    pub const TextureView3D = TextureView3DD3D11;
     pub const RenderTargetView = RenderTargetViewD3D11;
     pub const DepthStencilView = DepthStencilViewD3D11;
     pub const RasterizationState = RasterizationStateD3D11;
@@ -489,6 +491,51 @@ fn blend_type_to_d3d11(self: gf.BlendType) d3d11.RENDER_TARGET_BLEND_DESC {
     }
 }
 
+const D3D11ShaderMacros = struct {
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    shader_macros: []zwindows.d3d.SHADER_MACRO,
+
+    pub fn deinit(self: *D3D11ShaderMacros) void {
+        self.arena.deinit();
+        self.allocator.destroy(self.arena);
+    }
+
+    pub fn init(allocator: std.mem.Allocator, macros: []const gf.ShaderDefineTuple) !D3D11ShaderMacros {
+        var arena = try allocator.create(std.heap.ArenaAllocator);
+        errdefer allocator.destroy(arena);
+
+        arena.* = std.heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+
+        const alloc = arena.allocator();
+
+        // +1 for sentinel value, must be null
+        var allocation = try alloc.alloc(zwindows.d3d.SHADER_MACRO, macros.len + 1);
+        errdefer alloc.free(allocation);
+        @memset(std.mem.sliceAsBytes(allocation), 0);
+
+        for (macros, 0..) |macro, i| {
+            const name = try alloc.dupeZ(u8, macro[0]);
+            errdefer alloc.free(name);
+
+            const definition = try alloc.dupeZ(u8, macro[1]);
+            errdefer alloc.free(definition);
+
+            allocation[i] = zwindows.d3d.SHADER_MACRO {
+                .Name = name,
+                .Definition = definition,
+            };
+        }
+
+        return D3D11ShaderMacros {
+            .allocator = allocator,
+            .arena = arena,
+            .shader_macros = allocation,
+        };
+    }
+};
+
 pub const VertexShaderD3D11 = struct {
     const Self = @This();
     vso: *d3d11.IVertexShader,
@@ -503,13 +550,33 @@ pub const VertexShaderD3D11 = struct {
         vs_data: []const u8, 
         vs_func: []const u8, 
         vs_layout: []const gf.VertexInputLayoutEntry,
+        options: gf.VertexShaderOptions,
         gfx: *gf.GfxState,
     ) !Self {
         const vs_func_c = try std.heap.page_allocator.dupeZ(u8, vs_func);
         defer std.heap.page_allocator.free(vs_func_c);
 
+        const source_file_path_c_alloc = if (options.filepath) |s| try std.heap.page_allocator.dupeZ(u8, s) else null;
+        defer if (source_file_path_c_alloc) |s| std.heap.page_allocator.free(s);
+        const source_file_path_c = if (source_file_path_c_alloc) |s| @as([*:0]u8, s) else null;
+
+        var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
+        defer defines.deinit();
+
         var vs_blob: *zwindows.d3d.IBlob = undefined;
-        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(&vs_data[0], vs_data.len, null, null, null, vs_func_c, "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
+        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+                &vs_data[0], 
+                vs_data.len, 
+                source_file_path_c, 
+                &defines.shader_macros[0], 
+                null, 
+                vs_func_c, 
+                "vs_5_0", 
+                0, 
+                0, 
+                @ptrCast(&vs_blob), 
+                null
+        ));
         defer _ = vs_blob.Release();
 
         var vso: *d3d11.IVertexShader = undefined;
@@ -559,13 +626,33 @@ pub const PixelShaderD3D11 = struct {
     pub inline fn init_buffer(
         ps_data: []const u8, 
         ps_func: []const u8, 
+        options: gf.PixelShaderOptions,
         gfx: *gf.GfxState,
     ) !Self {
         const ps_func_c = try std.heap.page_allocator.dupeZ(u8, ps_func);
         defer std.heap.page_allocator.free(ps_func_c);
 
+        const source_file_path_c_alloc = if (options.filepath) |s| try std.heap.page_allocator.dupeZ(u8, s) else null;
+        defer if (source_file_path_c_alloc) |s| std.heap.page_allocator.free(s);
+        const source_file_path_c = if (source_file_path_c_alloc) |s| @as([*:0]u8, s) else null;
+
+        var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
+        defer defines.deinit();
+
         var ps_blob: *zwindows.d3d.IBlob = undefined;
-        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(&ps_data[0], ps_data.len, null, null, null, ps_func_c, "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
+        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+                &ps_data[0], 
+                ps_data.len, 
+                source_file_path_c, 
+                &defines.shader_macros[0], 
+                null, 
+                ps_func_c, 
+                "ps_5_0", 
+                0, 
+                0, 
+                @ptrCast(&ps_blob), 
+                null
+        ));
         defer _ = ps_blob.Release();
 
         var pso: *d3d11.IPixelShader = undefined;
@@ -756,6 +843,117 @@ pub const TextureView2DD3D11 = struct {
             .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
             .u = .{
                 .Texture2D = d3d11.TEX2D_SRV {
+                    .MostDetailedMip = 0,
+                    .MipLevels = texture.desc.mip_levels,
+                },
+            },
+        };
+        var texture_view: *d3d11.IShaderResourceView = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
+                @ptrCast(texture.platform.texture), 
+                &texture_resource_view_desc, 
+                @ptrCast(&texture_view)
+        ));
+        errdefer _ = texture_view.Release();
+
+        return Self {
+            .view = texture_view,
+        };
+    }
+};
+
+pub const Texture3DD3D11 = struct {
+    const Self = @This();
+    texture: *d3d11.ITexture3D,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.texture.Release();
+    }
+
+    pub inline fn init(
+        desc: gf.Texture3D.Descriptor,
+        bind_flags: gf.BindFlag,
+        access_flags: gf.AccessFlags,
+        data: ?[]const u8,
+        gfx: *gf.GfxState
+    ) !Self {
+        const texture_desc = d3d11.TEXTURE3D_DESC {
+            .Width = @intCast(desc.width),
+            .Height = @intCast(desc.height),
+            .Depth = @intCast(desc.depth),
+            .MipLevels = @intCast(desc.mip_levels),
+            .Format = texture_format_to_d3d11(desc.format),
+            .Usage = access_flags_to_d3d11_usage(access_flags),
+            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
+            .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
+        };
+        var texture: *d3d11.ITexture3D = undefined;
+        if (data) |d| {
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateTexture3D(
+                    &texture_desc, 
+                    &d3d11.SUBRESOURCE_DATA {
+                        .pSysMem = @ptrCast(d), 
+                        .SysMemPitch = @intCast(desc.width * desc.format.byte_width()),
+                        .SysMemSlicePitch = @intCast(desc.width * desc.height * desc.format.byte_width()),
+                    }, 
+                    @ptrCast(&texture)
+            ));
+        } else {
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateTexture3D(
+                    &texture_desc, 
+                    null,
+                    @ptrCast(&texture)
+            ));
+        }
+        errdefer _ = texture.Release();
+
+        return Self {
+            .texture = texture,
+        };
+    }
+
+    pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
+        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.texture), 0, d3d11.MAP.READ, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+        return MappedTexture(OutType) {
+            .context = gfx.platform.context,
+            .texture = self.texture,
+            .data_ptr = @ptrCast(@alignCast(mapped_subresource.pData)),
+        };
+    }
+
+    pub fn MappedTexture(comptime T: type) type {
+        return struct {
+            data_ptr: *T,
+            texture: *d3d11.ITexture3D,
+            context: *d3d11.IDeviceContext,
+
+            pub inline fn unmap(self: *const MappedTexture(T)) void {
+                self.context.Unmap(@ptrCast(self.texture), 0);
+            }
+            
+            pub inline fn data(self: *const MappedTexture(T)) [*]align(1)T {
+                return @as([*]align(1)T, @ptrCast(self.data_ptr));
+            }
+        };
+    }
+};
+
+pub const TextureView3DD3D11 = struct {
+    const Self = @This();
+    view: *d3d11.IShaderResourceView,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.view.Release();
+    }
+
+    pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
+        const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
+            .Format = texture_format_to_d3d11(texture.desc.format),
+            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE3D,
+            .u = .{
+                .Texture3D = d3d11.TEX3D_SRV {
                     .MostDetailedMip = 0,
                     .MipLevels = texture.desc.mip_levels,
                 },

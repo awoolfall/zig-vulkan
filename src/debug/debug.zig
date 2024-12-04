@@ -34,6 +34,7 @@ pub const Debug = struct {
                 .{ .name = "TEXCOORD", .index = 1, .slot = 1, .format = .F32x4, .per = .Instance, },
                 .{ .name = "COLOR", .index = 0, .slot = 2, .format = .F32x4, .per = .Instance, },
             })[0..],
+            .{},
             gfx_state
         );
         errdefer lines_vertex_shader.deinit();
@@ -41,6 +42,7 @@ pub const Debug = struct {
         const lines_pixel_shader = try gfx.PixelShader.init_buffer(
             LINES_HLSL,
             "ps_main",
+            .{},
             gfx_state
         );
         errdefer lines_pixel_shader.deinit();

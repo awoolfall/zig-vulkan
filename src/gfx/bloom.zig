@@ -36,6 +36,7 @@ pub const BloomFilter = struct {
             FULL_SCREEN_QUAD_VS,
             "vs_main",
             ([0]gf.VertexInputLayoutEntry {})[0..],
+            .{},
             gfx
         );
         errdefer full_screen_quad_vertex_shader.deinit();
@@ -43,6 +44,7 @@ pub const BloomFilter = struct {
         var downsample_pixel_shader = try gf.PixelShader.init_buffer(
             FULL_SCREEN_QUAD_VS ++ BLOOM_DOWNSAMPLE_HLSL,
             "ps_main",
+            .{},
             gfx
         );
         errdefer downsample_pixel_shader.deinit();
@@ -50,6 +52,7 @@ pub const BloomFilter = struct {
         var upsample_pixel_shader = try gf.PixelShader.init_buffer(
             FULL_SCREEN_QUAD_VS ++ BLOOM_UPSAMPLE_HLSL,
             "ps_main",
+            .{},
             gfx
         );
         errdefer upsample_pixel_shader.deinit();

@@ -371,6 +371,13 @@ pub const Viewport = struct {
     max_depth: f32,
 };
 
+pub const ShaderDefineTuple = std.meta.Tuple(&[_]type{ []const u8, []const u8 });
+
+pub const VertexShaderOptions = struct {
+    filepath: ?[]const u8 = null,
+    defines: []const ShaderDefineTuple = &.{},
+};
+
 pub const VertexShader = struct {
     platform: pl.GfxPlatform.VertexShader,
     
@@ -383,10 +390,14 @@ pub const VertexShader = struct {
         vs_path: path.Path, 
         vs_func: []const u8,
         vs_layout: []const VertexInputLayoutEntry,
+        options: VertexShaderOptions,
         gfx: *GfxState,
     ) !VertexShader {
         const vs_res_path = try vs_path.resolve_path(alloc);
         defer alloc.free(vs_res_path);
+
+        var modified_options = options;
+        modified_options.filepath = vs_res_path;
 
         var vs_file = try std.fs.cwd().openFile(vs_res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
         defer vs_file.close();
@@ -400,16 +411,17 @@ pub const VertexShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(vs_buf, vs_func, vs_layout, gfx);
+        return init_buffer(vs_buf, vs_func, vs_layout, modified_options, gfx);
     }
 
     pub fn init_buffer(
         vs_data: []const u8, 
         vs_func: []const u8, 
         vs_layout: []const VertexInputLayoutEntry,
+        options: VertexShaderOptions,
         gfx: *GfxState,
     ) !VertexShader {
-        const platform = pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, gfx) catch |err| {
+        const platform = pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, options, gfx) catch |err| {
             std.log.err("Vertex shader init failed: {s}", .{@errorName(err)});
             return err;
         };
@@ -441,6 +453,11 @@ pub const VertexInputLayoutIteratePer = enum {
     Instance,
 };
 
+pub const PixelShaderOptions = struct {
+    filepath: ?[]const u8 = null,
+    defines: []const ShaderDefineTuple = &.{},
+};
+
 pub const PixelShader = struct {
     platform: pl.GfxPlatform.PixelShader,
     
@@ -452,10 +469,14 @@ pub const PixelShader = struct {
         alloc: std.mem.Allocator,
         ps_path: path.Path, 
         ps_func: []const u8,
+        options: PixelShaderOptions,
         gfx: *GfxState,
     ) !PixelShader {
         const ps_res_path = try ps_path.resolve_path(alloc);
         defer alloc.free(ps_res_path);
+
+        var modified_options = options;
+        modified_options.filepath = ps_res_path;
 
         var ps_file = try std.fs.cwd().openFile(ps_res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
         defer ps_file.close();
@@ -469,15 +490,16 @@ pub const PixelShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(ps_buf, ps_func, gfx);
+        return init_buffer(ps_buf, ps_func, modified_options, gfx);
     }
 
     pub fn init_buffer(
         ps_data: []const u8, 
-        ps_func: []const u8, 
+        ps_func: []const u8,
+        options: PixelShaderOptions,
         gfx: *GfxState,
     ) !PixelShader {
-        const platform = pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, gfx) catch |err| {
+        const platform = pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, options, gfx) catch |err| {
             std.log.err("Pixel shader init failed: {s}", .{@errorName(err)});
             return err;
         };
@@ -632,6 +654,100 @@ pub const TextureView2D = struct {
     pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !TextureView2D {
         return TextureView2D {
             .platform = try pl.GfxPlatform.TextureView2D.init_from_texture2d(texture, gfx),
+        };
+    }
+};
+
+pub const Texture3D = struct {
+    platform: pl.GfxPlatform.Texture3D,
+    desc: Descriptor,
+
+    pub fn deinit(self: *const Texture3D) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(
+        desc: Descriptor,
+        bind_flags: BindFlag,
+        access_flags: AccessFlags,
+        data: ?[]const u8,
+        gfx: *GfxState
+    ) !Texture3D {
+        if (data) |d| {
+            if (d.len < (desc.width * desc.height * desc.depth * desc.format.byte_width())) {
+                return error.NotEnoughDataToFillTexture;
+            }
+        } else {
+            if (!access_flags.CpuWrite and !access_flags.GpuWrite) { 
+                return error.DataNotSuppliedToImmutableTexture; 
+            }
+        }
+
+        return Texture3D {
+            .platform = try pl.GfxPlatform.Texture3D.init(desc, bind_flags, access_flags, data, gfx),
+            .desc = desc,
+        };
+    }
+
+    pub fn init_colour(
+        desc: Descriptor,
+        bind_flags: BindFlag,
+        access_flags: AccessFlags,
+        colour: [4]u8,
+        gfx: *GfxState
+    ) !Texture3D {
+        if (desc.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
+
+        const data = try std.heap.page_allocator.alloc(u8, desc.width * desc.height * 4);
+        defer std.heap.page_allocator.free(data);
+
+        const data_u32: *const align(1) []u32 = @ptrCast(&data);
+        const colour_u32: *const align(1) u32 = @ptrCast(&colour);
+
+        @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
+
+        return init(desc, bind_flags, access_flags, data, gfx);
+    }
+
+    pub const Descriptor = struct {
+        width: u32,
+        height: u32,
+        depth: u32,
+        format: TextureFormat,
+        mip_levels: u32 = 1,
+    };
+
+    pub fn map(self: *const Texture3D, comptime OutType: type, gfx: *GfxState) !MappedTexture(OutType) {
+        return MappedTexture(OutType) {
+            .platform = try self.platform.map(OutType, gfx),
+        };
+    }
+
+    pub fn MappedTexture(comptime T: type) type {
+        return struct {
+            platform: pl.GfxPlatform.Texture3D.MappedTexture(T),
+
+            pub fn unmap(self: *const MappedTexture(T)) void {
+                self.platform.unmap();
+            }
+            
+            pub fn data(self: *const MappedTexture(T)) [*]align(1)T {
+                return self.platform.data();
+            }
+        };
+    }
+};
+
+pub const TextureView3D = struct {
+    platform: pl.GfxPlatform.TextureView3D,
+
+    pub fn deinit(self: *const TextureView3D) void {
+        self.platform.deinit();
+    }
+
+    pub fn init_from_texture3d(texture: *const Texture3D, gfx: *GfxState) !TextureView3D {
+        return TextureView3D {
+            .platform = try pl.GfxPlatform.TextureView3D.init_from_texture3d(texture, gfx),
         };
     }
 };
@@ -885,6 +1001,7 @@ const ToneMappingAndBloomFilter = struct {
             GfxState.FULL_SCREEN_QUAD_VS,
             "vs_main",
             ([0]VertexInputLayoutEntry {})[0..],
+            .{},
             gfx
         );
         errdefer vertex_shader.deinit();
@@ -892,6 +1009,7 @@ const ToneMappingAndBloomFilter = struct {
         var pixel_shader = try PixelShader.init_buffer(
             GfxState.FULL_SCREEN_QUAD_VS ++ HLSL,
             "ps_main",
+            .{},
             gfx
         );
         errdefer pixel_shader.deinit();

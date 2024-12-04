@@ -210,6 +210,7 @@ pub const QuadRenderer = struct {
             QUAD_SHADER_HLSL,
             "vs_main",
             ([_]_gfx.VertexInputLayoutEntry {})[0..],
+            .{},
             gfx
         );
         errdefer ui.quad_vso.deinit();
@@ -217,6 +218,7 @@ pub const QuadRenderer = struct {
         ui.quad_pso = try _gfx.PixelShader.init_buffer(
             QUAD_SHADER_HLSL,
             "ps_main",
+            .{},
             gfx
         );
         errdefer ui.quad_pso.deinit();

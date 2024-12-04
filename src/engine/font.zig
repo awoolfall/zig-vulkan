@@ -210,6 +210,7 @@ pub const Font = struct {
                 .{ .name = "TEXCOORD", .index = 0, .format = .F32x4, .per = .Instance, },
                 .{ .name = "TEXCOORD", .index = 1, .format = .F32x4, .per = .Instance, },
             })[0..],
+            .{},
             gfx
         );
         errdefer font.font_vso.deinit();
@@ -217,6 +218,7 @@ pub const Font = struct {
         font.font_pso = try _gfx.PixelShader.init_buffer(
             MSDF_FONT_SHADER_HLSL,
             "ps_main",
+            .{},
             gfx
         );
         errdefer font.font_pso.deinit();
