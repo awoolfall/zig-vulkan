@@ -416,6 +416,7 @@ fn texture_format_to_d3d11(self: gf.TextureFormat) dxgi.FORMAT {
         .Rgba8_Unorm => dxgi.FORMAT.R8G8B8A8_UNORM,
         .Bgra8_Unorm => dxgi.FORMAT.B8G8R8A8_UNORM,
         .R32_Float => dxgi.FORMAT.R32_FLOAT,
+        .Rgba32_Float => dxgi.FORMAT.R32G32B32A32_FLOAT,
         .Rgba16_Float => dxgi.FORMAT.R16G16B16A16_FLOAT,
         .Rg11b10_Float => dxgi.FORMAT.R11G11B10_FLOAT,
         .R24X8_Unorm_Uint => dxgi.FORMAT.R24_UNORM_X8_TYPELESS,
@@ -563,21 +564,34 @@ pub const VertexShaderD3D11 = struct {
         var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
         defer defines.deinit();
 
+        var error_blob: ?*zwindows.d3d.IBlob = null;
+
         var vs_blob: *zwindows.d3d.IBlob = undefined;
         try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
                 &vs_data[0], 
                 vs_data.len, 
                 source_file_path_c, 
                 &defines.shader_macros[0], 
-                null, 
+                zwindows.d3dcompiler.COMPILE_STANDARD_FILE_INCLUDE, 
                 vs_func_c, 
                 "vs_5_0", 
                 0, 
                 0, 
                 @ptrCast(&vs_blob), 
-                null
+                @ptrCast(&error_blob)
         ));
         defer _ = vs_blob.Release();
+
+        if (error_blob) |err_blob| {
+            const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
+            const err_blob_len = std.mem.len(err_blob_string);
+            if (std.mem.indexOf(u8, err_blob_string[0..err_blob_len], "error") != null) {
+                std.log.err("Vertex shader compilation error: \n\n{s}", .{err_blob_string});
+                return error.CompilationError;
+            } else {
+                std.log.warn("Vertex shader compilation warnings: \n\n{s}", .{err_blob_string});
+            }
+        }
 
         var vso: *d3d11.IVertexShader = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
@@ -639,21 +653,34 @@ pub const PixelShaderD3D11 = struct {
         var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
         defer defines.deinit();
 
+        var error_blob: ?*zwindows.d3d.IBlob = null;
+
         var ps_blob: *zwindows.d3d.IBlob = undefined;
         try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
                 &ps_data[0], 
                 ps_data.len, 
                 source_file_path_c, 
                 &defines.shader_macros[0], 
-                null, 
-                ps_func_c, 
+                zwindows.d3dcompiler.COMPILE_STANDARD_FILE_INCLUDE,
+                ps_func_c,
                 "ps_5_0", 
                 0, 
                 0, 
                 @ptrCast(&ps_blob), 
-                null
+                @ptrCast(&error_blob)
         ));
         defer _ = ps_blob.Release();
+
+        if (error_blob) |err_blob| {
+            const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
+            const err_blob_len = std.mem.len(err_blob_string);
+            if (std.mem.indexOf(u8, err_blob_string[0..err_blob_len], "error") != null) {
+                std.log.err("Pixel shader compilation error: \n\n{s}", .{err_blob_string});
+                return error.CompilationError;
+            } else {
+                std.log.warn("Pixel shader compilation warnings: \n\n{s}", .{err_blob_string});
+            }
+        }
 
         var pso: *d3d11.IPixelShader = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));

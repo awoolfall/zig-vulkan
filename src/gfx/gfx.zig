@@ -334,7 +334,7 @@ pub const ConstantBufferItem = struct {
 pub const ConstantBufferArray = std.BoundedArray(ConstantBufferItem, 4);
 
 pub const VertexBufferInput = struct {
-    buffer: *Buffer,
+    buffer: *const Buffer,
     stride: u32,
     offset: u32,
 };
@@ -500,7 +500,10 @@ pub const PixelShader = struct {
         gfx: *GfxState,
     ) !PixelShader {
         const platform = pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, options, gfx) catch |err| {
-            std.log.err("Pixel shader init failed: {s}", .{@errorName(err)});
+            std.log.err("Pixel shader init failed: {s}\n\t- {s}", .{
+                @errorName(err),
+                options.filepath orelse "no filepath provided",
+            });
             return err;
         };
         return PixelShader {
@@ -646,6 +649,7 @@ pub const Texture2D = struct {
 
 pub const TextureView2D = struct {
     platform: pl.GfxPlatform.TextureView2D,
+    desc: Texture2D.Descriptor,
 
     pub fn deinit(self: *const TextureView2D) void {
         self.platform.deinit();
@@ -654,6 +658,21 @@ pub const TextureView2D = struct {
     pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !TextureView2D {
         return TextureView2D {
             .platform = try pl.GfxPlatform.TextureView2D.init_from_texture2d(texture, gfx),
+            .desc = texture.desc,
+        };
+    }
+};
+
+pub const TextureComputeView2D = struct {
+    platform: pl.GfxPlatform.TextureComputeView2D,
+
+    pub fn deinit(self: *const TextureComputeView2D) void {
+        self.platform.deinit();
+    }
+
+    pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !TextureComputeView2D {
+        return TextureComputeView2D {
+            .platform = try pl.GfxPlatform.TextureComputeView2D.init_from_texture2d(texture, gfx),
         };
     }
 };
@@ -740,6 +759,7 @@ pub const Texture3D = struct {
 
 pub const TextureView3D = struct {
     platform: pl.GfxPlatform.TextureView3D,
+    desc: Texture3D.Descriptor,
 
     pub fn deinit(self: *const TextureView3D) void {
         self.platform.deinit();
@@ -748,6 +768,21 @@ pub const TextureView3D = struct {
     pub fn init_from_texture3d(texture: *const Texture3D, gfx: *GfxState) !TextureView3D {
         return TextureView3D {
             .platform = try pl.GfxPlatform.TextureView3D.init_from_texture3d(texture, gfx),
+            .desc = texture.desc,
+        };
+    }
+};
+
+pub const BufferComputeView = struct {
+    platform: pl.GfxPlatform.BufferComputeView,
+
+    pub fn deinit(self: *const BufferComputeView) void {
+        self.platform.deinit();
+    }
+
+    pub fn init_from_buffer(buffer: *const Buffer, gfx: *GfxState) !BufferComputeView {
+        return BufferComputeView {
+            .platform = try pl.GfxPlatform.BufferComputeView.init_from_buffer(buffer, gfx),
         };
     }
 };
@@ -807,6 +842,7 @@ pub const TextureFormat = enum {
     Bgra8_Unorm,
     R32_Float,
     Rgba16_Float,
+    Rgba32_Float,
     Rg11b10_Float,
     R24X8_Unorm_Uint,
     D24S8_Unorm_Uint,
@@ -819,6 +855,7 @@ pub const TextureFormat = enum {
             .Rgba8_Unorm => return 4,
             .Bgra8_Unorm => return 4,
             .Rgba16_Float => return 8,
+            .Rgba32_Float => return 16,
             .Rg11b10_Float => return 3,
             .R24X8_Unorm_Uint => return 4,
             .D24S8_Unorm_Uint => return 4,

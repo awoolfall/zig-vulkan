@@ -269,7 +269,7 @@ pub const Font = struct {
     };
 
     pub fn render_text_2d(
-        self: *Font,
+        self: *const Font,
         text: []const u8,
         props: FontRenderProperties2D,
         rtv: _gfx.RenderTargetView, 
@@ -374,7 +374,7 @@ pub const Font = struct {
     }
 
     pub fn text_bounds_2d_pixels(
-        self: *Font,
+        self: *const Font,
         text: []const u8,
         pixel_height: u32,
     ) ui.RectPixels {

@@ -25,7 +25,7 @@ pub const path = @import("engine/path.zig");
 pub const particles = @import("engine/particles.zig");
 pub const easings = @import("easings.zig");
 pub const animation = @import("engine/anim_controller.zig");
-pub const ui = @import("engine/ui.zig");
+pub const ui = @import("ui/ui.zig");
 pub const debug = @import("debug/debug.zig");
 
 pub const window = @import("window.zig");

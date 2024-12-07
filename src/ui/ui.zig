@@ -1,15 +1,17 @@
 const std = @import("std");
 const zstbi = @import("zstbi");
-const _gfx = @import("../gfx/gfx.zig");
-const tm = @import("../engine/time.zig");
-const in = @import("../input/input.zig");
-const kc = @import("../input/keycode.zig");
-const es = @import("../easings.zig");
-const platform = @import("../platform/platform.zig");
 const zm = @import("zmath");
-const path = @import("path.zig");
+const engine = @import("../engine.zig");
+const _gfx = engine.gfx;
+const tm = engine.time;
+const in = engine.input;
+const es = engine.easings;
+const platform = engine.platform;
+const path = engine.path;
 
 pub const font = @import("font.zig");
+pub const qr = @import("quad_renderer.zig");
+const QuadRenderer = qr.QuadRenderer;
 
 // pixels, top left of screen is 0, 0. moving down and right increases
 pub const RectPixels = struct {
@@ -33,20 +35,29 @@ pub const RectPixels = struct {
                 coord[1] >= self.top and
                 coord[1] <= self.top + self.height;
     }
+};
 
-    pub fn to_screen_bounds(self: *const RectPixels, max_width: u32, max_height: u32) Bounds {
-        const top_left = position_pixels_to_screen_space(self.left, self.top, max_width, max_height);
-        const bottom_right = position_pixels_to_screen_space(self.left + self.width, self.top + self.height, max_width, max_height);
-        return Bounds {
-            .left = top_left[0],
-            .top = top_left[1],
-            .right = bottom_right[0],
-            .bottom = bottom_right[1],
-        };
+pub const FontEnum = enum(usize) {
+    GeistMono = 0,
+    Geist,
+    Count,
+
+    fn font_paths(font_enum: FontEnum) struct {json: path.Path, png: path.Path} {
+        switch (font_enum) {
+            FontEnum.GeistMono => return .{
+                .json = path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
+                .png = path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
+            },
+            FontEnum.Geist => return .{
+                .json = path.Path{.ExeRelative = "../../res/Geist-Regular.json"},
+                .png = path.Path{.ExeRelative = "../../res/Geist-Regular.png"},
+            },
+            FontEnum.Count => unreachable,
+        }
     }
 };
 
-pub inline fn position_pixels_to_screen_space(x: i32, y: i32, max_width: u32, max_height: u32) [2]f32 {
+pub fn position_pixels_to_screen_space(x: i32, y: i32, max_width: u32, max_height: u32) [2]f32 {
     const x_f32: f32 = @floatFromInt(x);
     const y_f32: f32 = @floatFromInt(y);
     const max_width_f32: f32 = @floatFromInt(max_width);
@@ -56,288 +67,6 @@ pub inline fn position_pixels_to_screen_space(x: i32, y: i32, max_width: u32, ma
         -(((y_f32 / max_height_f32) * 2.0) - 1.0)
     };
 }
-
-pub const Size = union(enum) {
-    Pixels: i32, // 0 -> image width/height
-    Screen: f32, // 0.0 (bottom, left) -> 1.0 (top, right)
-};
-
-// -1.0 to 1.0, left and bottom of screen is -1.0, right and top is 1.0
-pub const Bounds = extern struct {
-    left: f32 = 0.0,
-    bottom: f32 = 0.0,
-    right: f32 = 0.0,
-    top: f32 = 0.0,
-};
-
-pub const QuadBufferVertexBuffer = extern struct {
-    quad_bounds: Bounds = Bounds {},
-};
-
-pub const QuadBufferFlags = packed struct(u32) {
-    has_texture: bool = false,
-    __unused: u31 = 0,
-};
-
-pub const CornerRadiiPx = packed struct {
-    top_left: u8 = 0,
-    top_right: u8 = 0,
-    bottom_left: u8 = 0,
-    bottom_right: u8 = 0,
-};
-
-pub const QuadBufferPixelBuffer = packed struct {
-    bg_colour: zm.F32x4,
-    border_colour: zm.F32x4,
-    
-    quad_width_pixels: f32,
-    quad_height_pixels: f32,
-    corner_radii: CornerRadiiPx,
-    border_width_px: f32,
-
-    flags: u32,
-    __padding0: u32 = 0,
-    __padding1: u32 = 0,
-    __padding2: u32 = 0,
-    //__padding3: u32 = 0,
-};
-
-pub const FontEnum = enum(usize) {
-    GeistMono = 0,
-    Geist,
-    Count,
-};
-
-pub const UiRenderer = struct {
-    _allocator: std.mem.Allocator,
-    quad_renderer: QuadRenderer,
-    fonts: [@intFromEnum(FontEnum.Count)]font.Font,
-
-    pub fn deinit(self: *UiRenderer) void {
-        self.quad_renderer.deinit();
-        for (&self.fonts) |*f| {
-            f.deinit();
-        }
-    }
-
-    pub fn init(alloc: std.mem.Allocator, gfx: *_gfx.GfxState) !UiRenderer {
-        // construct ui object
-        return UiRenderer {
-            ._allocator = alloc,
-            .quad_renderer = try QuadRenderer.init(gfx),
-            .fonts = [_]font.Font {
-                try font.Font.init(
-                    alloc,
-                    path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
-                    path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
-                    gfx
-                ),
-                try font.Font.init(
-                    alloc,
-                    path.Path{.ExeRelative = "../../res/Geist-Regular.json"},
-                    path.Path{.ExeRelative = "../../res/Geist-Regular.png"},
-                    gfx
-                ),
-            },
-        };
-    }
-
-    pub fn get_font(self: *UiRenderer, font_enum: FontEnum) *font.Font {
-        return &self.fonts[@intFromEnum(font_enum)];
-    }
-
-    pub fn render_text_2d(
-        self: *UiRenderer, 
-        font_enum: FontEnum,
-        text: []const u8,
-        props: font.Font.FontRenderProperties2D,
-        rtv: _gfx.RenderTargetView, 
-        gfx: *_gfx.GfxState,
-    ) void {
-        self.fonts[@intFromEnum(font_enum)].render_text_2d(
-            text, props, rtv, gfx
-        );
-    }
-
-    pub fn render_quad(
-        self: *UiRenderer,
-        rect_pixels: RectPixels,
-        props: QuadRenderer.QuadProperties,
-        rtv: _gfx.RenderTargetView, 
-        gfx: *_gfx.GfxState,
-    ) void {
-        self.quad_renderer.render_quad(
-            rect_pixels, props, rtv, gfx
-        );
-    }
-};
-
-pub const QuadRenderer = struct {
-    sampler: _gfx.Sampler,
-    blend_state: _gfx.BlendState,
-
-    quad_vso: _gfx.VertexShader,
-    quad_pso: _gfx.PixelShader,
-    quad_buffer_vertex: _gfx.Buffer,
-    quad_buffer_pixel: _gfx.Buffer,
-
-    const QUAD_SHADER_HLSL = @embedFile("quad_shader.hlsl");
-
-    pub fn deinit(self: *QuadRenderer) void {
-        self.blend_state.deinit();
-        self.sampler.deinit();
-
-        self.quad_vso.deinit();
-        self.quad_pso.deinit();
-        self.quad_buffer_vertex.deinit();
-        self.quad_buffer_pixel.deinit();
-    }
-
-    pub fn init(gfx: *_gfx.GfxState) !QuadRenderer {
-        // construct ui object
-        var ui = QuadRenderer {
-            .sampler = undefined,
-            .blend_state = undefined,
-
-            .quad_vso = undefined,
-            .quad_pso = undefined,
-            .quad_buffer_vertex = undefined,
-            .quad_buffer_pixel = undefined,
-        };
-
-        // create the quad shaders
-        ui.quad_vso = try _gfx.VertexShader.init_buffer(
-            QUAD_SHADER_HLSL,
-            "vs_main",
-            ([_]_gfx.VertexInputLayoutEntry {})[0..],
-            .{},
-            gfx
-        );
-        errdefer ui.quad_vso.deinit();
-
-        ui.quad_pso = try _gfx.PixelShader.init_buffer(
-            QUAD_SHADER_HLSL,
-            "ps_main",
-            .{},
-            gfx
-        );
-        errdefer ui.quad_pso.deinit();
-
-        // create quad constant buffers
-        ui.quad_buffer_vertex = try _gfx.Buffer.init(
-            @sizeOf(QuadBufferVertexBuffer),
-            .{ .ConstantBuffer = true, },
-            .{ .CpuWrite = true, },
-            gfx
-        );
-        errdefer ui.quad_buffer_vertex.deinit();
-
-        ui.quad_buffer_pixel = try _gfx.Buffer.init(
-            @sizeOf(QuadBufferPixelBuffer),
-            .{ .ConstantBuffer = true, },
-            .{ .CpuWrite = true, },
-            gfx
-        );
-        errdefer ui.quad_buffer_pixel.deinit();
-
-        // create sampler
-        ui.sampler = try _gfx.Sampler.init(
-            .{
-                .filter_min_mag = .Linear,
-                .filter_mip = .Point,
-                .border_mode = .Wrap,
-            },
-            gfx
-        );
-        errdefer ui.sampler.deinit();
-
-        // create blend state
-        ui.blend_state = try _gfx.BlendState.init(([_]_gfx.BlendType{.Simple})[0..], gfx);
-        errdefer ui.blend_state.deinit();
-
-        // finally return the ui structure
-        return ui;
-    }
-
-    pub const QuadPropertiesTexture = struct {
-        texture_view: _gfx.TextureView2D,
-        sampler: _gfx.Sampler,
-    };
-
-    pub const QuadProperties = struct {
-        colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
-        border_colour: zm.F32x4 = zm.f32x4s(0.0),
-        border_width_px: u32 = 0,
-        corner_radii_px: CornerRadiiPx = .{},
-        texture: ?QuadPropertiesTexture = null,
-    };
-
-    pub fn render_quad(
-        self: *QuadRenderer,
-        rect_pixels: RectPixels,
-        props: QuadProperties,
-        rtv: _gfx.RenderTargetView, 
-        gfx: *_gfx.GfxState,
-    ) void {
-        { // Setup quad vertex info buffer
-            const mapped_buffer = self.quad_buffer_vertex.map(QuadBufferVertexBuffer, gfx) catch unreachable;
-            defer mapped_buffer.unmap();
-
-            mapped_buffer.data().* = QuadBufferVertexBuffer {
-                .quad_bounds = rect_pixels.to_screen_bounds(rtv.size.width, rtv.size.height),
-            };
-        }
-        { // Setup quad pixel info buffer
-            const mapped_buffer = self.quad_buffer_pixel.map(QuadBufferPixelBuffer, gfx) catch unreachable;
-            defer mapped_buffer.unmap();
-
-            mapped_buffer.data().* = QuadBufferPixelBuffer {
-                .bg_colour = props.colour,
-                .border_colour = props.border_colour,
-                .border_width_px = @floatFromInt(props.border_width_px),
-                .quad_width_pixels = @floatFromInt(rect_pixels.width),
-                .quad_height_pixels = @floatFromInt(rect_pixels.height),
-                .corner_radii = props.corner_radii_px,
-                .flags = @bitCast(QuadBufferFlags{
-                    .has_texture = (props.texture != null),
-                }),
-            };
-        }
-
-        const viewport = _gfx.Viewport {
-            .width = @floatFromInt(rtv.size.width),
-            .height = @floatFromInt(rtv.size.height),
-            .min_depth = 0.0,
-            .max_depth = 1.0,
-            .top_left_x = 0,
-            .top_left_y = 0,
-        };
-        gfx.cmd_set_viewport(viewport);
-
-        gfx.cmd_set_pixel_shader(&self.quad_pso);
-
-        gfx.cmd_set_render_target(&rtv, null);
-        gfx.cmd_set_blend_state(&self.blend_state);
-
-        gfx.cmd_set_vertex_shader(&self.quad_vso);
-
-        gfx.cmd_set_topology(.TriangleList);
-        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
-
-        gfx.cmd_set_constant_buffers(.Vertex, 0, &.{&self.quad_buffer_vertex});
-        gfx.cmd_set_constant_buffers(.Pixel, 1, &.{&self.quad_buffer_pixel});
-
-        if (props.texture) |texture_props| {
-            gfx.cmd_set_samplers(.Pixel, 0, &.{&texture_props.sampler});
-            gfx.cmd_set_shader_resources(.Pixel, 0, &.{&texture_props.texture_view});
-        } else {
-            gfx.cmd_set_samplers(.Pixel, 0, &.{&gfx.default.sampler});
-            gfx.cmd_set_shader_resources(.Pixel, 0, &.{&gfx.default.diffuse});
-        }
-
-        gfx.cmd_draw(6, 0);
-    }
-};
 
 pub const Imui = struct {
     const Self = @This();
@@ -460,7 +189,7 @@ pub const Imui = struct {
         background_colour: ?zm.F32x4 = null,
         border_colour: ?zm.F32x4 = null,
         border_width_px: u16 = 0,
-        corner_radii_px: CornerRadiiPx = .{},
+        corner_radii_px: qr.CornerRadiiPx = .{},
         texture: ?struct {
             texture_view: _gfx.TextureView2D,
             sampler: _gfx.Sampler,
@@ -557,8 +286,9 @@ pub const Imui = struct {
     time: *const tm.TimeState,
     window: *const platform.Window,
 
-    primary_interact_key: kc.KeyCode = kc.KeyCode.MouseLeft,
-    ui: UiRenderer,
+    primary_interact_key: in.KeyCode = in.KeyCode.MouseLeft,
+    quad_renderer: QuadRenderer,
+    fonts: [@intFromEnum(FontEnum.Count)]font.Font,
 
     parent_stack: std.ArrayList(usize),
     palette_stack: std.ArrayList(Palette),
@@ -573,7 +303,10 @@ pub const Imui = struct {
     image_sampler: _gfx.Sampler,
 
     pub fn deinit(self: *Self) void {
-        self.ui.deinit();
+        for (self.fonts) |f| {
+            f.deinit();
+        }
+        self.quad_renderer.deinit();
 
         self.palette_stack.deinit();
         self.parent_stack.deinit();
@@ -611,11 +344,24 @@ pub const Imui = struct {
         );
         errdefer scuffed_x_checkbox_image_view.deinit();
 
+        // Initialize fonts
+        var fonts: [@intFromEnum(FontEnum.Count)]font.Font = [_]font.Font{undefined} ** @intFromEnum(FontEnum.Count);
+        for (0..@intFromEnum(FontEnum.Count)) |idx| {
+            const font_enum = @as(FontEnum, @enumFromInt(idx));
+            const font_paths = font_enum.font_paths();
+            const font_obj = try font.Font.init(
+                alloc,
+                font_paths.json,
+                font_paths.png,
+                gfx
+            );
+            fonts[idx] = font_obj;
+        }
+
         var self = Self {
             .input = input,
             .time = time,
             .window = window,
-            .ui = try UiRenderer.init(alloc, gfx),
             .parent_stack = std.ArrayList(usize).init(alloc),
             .palette_stack = std.ArrayList(Palette).init(alloc),
             .widgets = std.ArrayList(Widget).init(alloc),
@@ -627,9 +373,28 @@ pub const Imui = struct {
                 std.heap.ArenaAllocator.init(alloc),
                 std.heap.ArenaAllocator.init(alloc),
             },
+            .quad_renderer = try QuadRenderer.init(gfx),
+            .fonts = fonts,
         };
         self.add_root_widget(gfx);
         return self;
+    }
+
+    fn get_font(self: *const Self, font_enum: FontEnum) *const font.Font {
+        return &self.fonts[@intFromEnum(font_enum)];
+    }
+
+    pub fn render_text(
+        self: *const Self,
+        font_enum: FontEnum,
+        text: []const u8,
+        props: font.Font.FontRenderProperties2D,
+        rtv: _gfx.RenderTargetView, 
+        gfx: *_gfx.GfxState,
+    ) void {
+        self.get_font(font_enum).render_text_2d(
+            text, props, rtv, gfx
+        );
     }
 
     fn arena(self: *Self) *std.heap.ArenaAllocator {
@@ -678,13 +443,13 @@ pub const Imui = struct {
                 },
                 .TextContent => {
                     if (widget.text_content) |*text| {
-                        const text_bounds = self.ui.fonts[@intFromEnum(text.font)].text_bounds_2d_pixels(
+                        const text_bounds = self.get_font(text.font).text_bounds_2d_pixels(
                             text.text,
                             text.size
                         );
                         switch (axis) {
                             0 => widget.computed.size[0] = @floatFromInt(text_bounds.width),
-                            1 => widget.computed.size[1] = @as(f32,@floatFromInt(text_bounds.height)) - self.ui.get_font(text.font).font_metrics.descender,
+                            1 => widget.computed.size[1] = @as(f32,@floatFromInt(text_bounds.height)) - self.get_font(text.font).font_metrics.descender,
                             else => {unreachable;}
                         }
                     } else {
@@ -968,12 +733,12 @@ pub const Imui = struct {
                 widget.texture != null;
 
             if (render_rect) {
-                var background_colour = zm.f32x4s(0.0);
+                var background_colour = zm.f32x4s(1.0);
                 if (widget.background_colour) |bc| {
                     background_colour = bc;
                 }
 
-                var border_colour = zm.f32x4s(0.0);
+                var border_colour = zm.f32x4s(1.0);
                 if (widget.border_colour) |bc| {
                     border_colour = bc;
                 }
@@ -989,7 +754,7 @@ pub const Imui = struct {
                     } 
                 }; 
 
-                self.ui.render_quad(
+                self.quad_renderer.render_quad(
                     widget.computed.rect(),
                     .{
                         .colour = background_colour + zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)),
@@ -1006,11 +771,11 @@ pub const Imui = struct {
             // render text
             if (widget.text_content) |*text| {
                 const text_size_f32: f32 = @floatFromInt(text.size);
-                const font_metrics = self.ui.get_font(text.font).font_metrics;
+                const font_metrics = self.get_font(text.font).font_metrics;
                 const x: i32 = @intFromFloat(widget.computed.offset_position[0]);
                 const top: i32 = @as(i32, @intFromFloat(widget.computed.offset_position[1] + (font_metrics.ascender * text_size_f32)));
                 const y: i32 = top;
-                self.ui.render_text_2d(
+                self.render_text(
                     text.font,
                     text.text,
                     .{
@@ -1653,39 +1418,39 @@ pub const Imui = struct {
             }
 
             // Remove selection if escape pressed
-            if (self.input.get_key_down(kc.KeyCode.Escape)) {
+            if (self.input.get_key_down(in.KeyCode.Escape)) {
                 state.mark = state.cursor;
             }
 
             // Handle arrow keys
-            if (self.input.get_key_down_repeat(kc.KeyCode.ArrowLeft)) {
+            if (self.input.get_key_down_repeat(in.KeyCode.ArrowLeft)) {
                 if (state.cursor > 0) {
                     state.cursor = state.cursor - 1;
                 }
-                if (!self.input.get_key(kc.KeyCode.Shift)) {
+                if (!self.input.get_key(in.KeyCode.Shift)) {
                     state.cursor = @min(state.cursor, state.mark);
                     state.mark = state.cursor;
                 }
             }
-            if (self.input.get_key_down_repeat(kc.KeyCode.ArrowRight)) {
+            if (self.input.get_key_down_repeat(in.KeyCode.ArrowRight)) {
                 if (state.cursor < state.text.items.len) {
                     state.cursor = state.cursor + 1;
                 }
-                if (!self.input.get_key(kc.KeyCode.Shift)) {
+                if (!self.input.get_key(in.KeyCode.Shift)) {
                     state.cursor = @max(state.cursor, state.mark);
                     state.mark = state.cursor;
                 }
             }
 
             // Handle copy
-            if (self.input.get_key_down(kc.KeyCode.C) and self.input.get_key(kc.KeyCode.Control)) {
+            if (self.input.get_key_down(in.KeyCode.C) and self.input.get_key(in.KeyCode.Control)) {
                 if (state.cursor != state.mark) {
                     self.window.copy_string_to_clipboard(state.text.items[@min(state.mark, state.cursor)..@max(state.mark, state.cursor)])
                         catch |err| std.log.err("Failed to copy string to clipboard: {}", .{err});
                 }
             }
             // Handle paste
-            if (self.input.get_key_down(kc.KeyCode.V) and self.input.get_key(kc.KeyCode.Control)) {
+            if (self.input.get_key_down(in.KeyCode.V) and self.input.get_key(in.KeyCode.Control)) {
                 if (self.window.get_string_from_clipboard(std.heap.page_allocator)) |clipboard_str| {
                     defer std.heap.page_allocator.free(clipboard_str);
 
@@ -1720,5 +1485,47 @@ pub const Imui = struct {
             text_signals,
             TextInputId{ .text = text_input_widget_id, .box = l, }
         );
+    }
+
+    pub fn image(self: *Self, texture_view: _gfx.TextureView2D, sampler: _gfx.Sampler, key: anytype) WidgetSignal(usize) {
+        var image_widget = Widget {
+            .key = gen_key(key ++ .{@src()}),
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .Pixels, .value = 300.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 300.0, .shrinkable_percent = 0.0, },
+            },
+            .texture =  .{
+                .texture_view = texture_view,
+                .sampler = sampler,
+            },
+            //.background_colour = zm.f32x4(1.0, 0.0, 0.0, 1.0),
+            .flags = .{
+                .render = true,
+            },
+        };
+
+        // set size based on parent layout. Fill parent layout axis and keep image aspect ratio.
+        if (self.get_widget_from_last_frame(self.parent_stack.getLast())) |parent| {
+            const aspect_ratio = @as(f32, @floatFromInt(texture_view.desc.width)) / @as(f32, @floatFromInt(texture_view.desc.height));
+            if (parent.layout_axis) |layout_axis| {
+                switch (layout_axis) {
+                    .X => {
+                        image_widget.semantic_size[0].kind = .Pixels;
+                        image_widget.semantic_size[0].value = @as(f32, @floatFromInt(parent.content_rect().height)) * aspect_ratio;
+                        image_widget.semantic_size[1].kind = .ParentPercentage;
+                        image_widget.semantic_size[1].value = 1.0;
+                    },
+                    .Y => {
+                        image_widget.semantic_size[0].kind = .ParentPercentage;
+                        image_widget.semantic_size[0].value = 1.0;
+                        image_widget.semantic_size[1].kind = .Pixels;
+                        image_widget.semantic_size[1].value = @as(f32, @floatFromInt(parent.content_rect().width)) / aspect_ratio;
+                    },
+                }
+            }
+        }
+
+        const image_widget_id = self.add_widget(image_widget);
+        return self.generate_widget_signals(image_widget_id);
     }
 };
