@@ -171,7 +171,7 @@ pub const BloomFilter = struct {
                 .max_depth = 0.0,
             };
 
-            gfx.cmd_set_render_target(&rtv[mip_level], null);
+            gfx.cmd_set_render_target(&.{&rtv[mip_level]}, null);
             gfx.cmd_set_viewport(viewport);
             gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_source});
 
@@ -216,7 +216,7 @@ pub const BloomFilter = struct {
                 mapped_buffer.data().resolution_or_radius[2] = viewport.width / viewport.height;
             }
 
-            gfx.cmd_set_render_target(&rtv[mip_level], null);
+            gfx.cmd_set_render_target(&.{&rtv[mip_level]}, null);
             gfx.cmd_set_viewport(viewport);
             gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_source});
 

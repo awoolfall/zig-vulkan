@@ -17,7 +17,7 @@ Texture2D msdf_font_texture;
 struct vs_out
 {
     float4 position : SV_POSITION;
-    float4 tex_coord : TEXCOORD;
+    float4 tex_coord : TEXCOORD0;
 };
 
 // generate quad in shader 

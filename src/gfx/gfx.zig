@@ -264,8 +264,8 @@ pub const GfxState = struct {
         self.platform.cmd_set_viewport(viewport);
     }
 
-    pub fn cmd_set_render_target(self: *Self, rt: *const RenderTargetView, depth_stencil_view: ?*const DepthStencilView) void {
-        self.platform.cmd_set_render_target(rt, depth_stencil_view);
+    pub fn cmd_set_render_target(self: *Self, rtvs: []const *const RenderTargetView, depth_stencil_view: ?*const DepthStencilView) void {
+        self.platform.cmd_set_render_target(rtvs, depth_stencil_view);
     }
 
     pub fn cmd_set_vertex_shader(self: *Self, vs: *const VertexShader) void {
@@ -274,6 +274,10 @@ pub const GfxState = struct {
 
     pub fn cmd_set_pixel_shader(self: *Self, ps: *const PixelShader) void {
         self.platform.cmd_set_pixel_shader(ps);
+    }
+
+    pub fn cmd_set_geometry_shader(self: *Self, gs: ?*const GeometryShader) void {
+        self.platform.cmd_set_geometry_shader(gs);
     }
 
     pub fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const VertexBufferInput) void {
@@ -347,6 +351,7 @@ pub const IndexFormat = enum {
 pub const ShaderStage = enum {
     Vertex,
     Pixel,
+    Geometry,
 };
 
 pub const ShaderStageFlags = packed struct(u2) {
@@ -507,6 +512,65 @@ pub const PixelShader = struct {
             return err;
         };
         return PixelShader {
+            .platform = platform,
+        };
+    }
+};
+
+pub const GeometryShaderOptions = struct {
+    filepath: ?[]const u8 = null,
+    defines: []const ShaderDefineTuple = &.{},
+};
+
+pub const GeometryShader = struct {
+    platform: pl.GfxPlatform.GeometryShader,
+    
+    pub fn deinit(self: *const GeometryShader) void {
+        self.platform.deinit();
+    }
+    
+    pub fn init_file(
+        alloc: std.mem.Allocator,
+        gs_path: path.Path, 
+        gs_func: []const u8,
+        options: GeometryShaderOptions,
+        gfx: *GfxState,
+    ) !GeometryShader {
+        const res_path = try gs_path.resolve_path(alloc);
+        defer alloc.free(res_path);
+
+        var modified_options = options;
+        modified_options.filepath = res_path;
+
+        var file = try std.fs.cwd().openFile(res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
+        defer file.close();
+
+        const file_len = try file.getEndPos();
+
+        const buf: []u8 = try alloc.alloc(u8, @intCast(file_len));
+        defer alloc.free(buf);
+
+        if (try file.readAll(buf) != file_len) {
+            return error.FailedToReadShader;
+        }
+
+        return init_buffer(buf, gs_func, modified_options, gfx);
+    }
+
+    pub fn init_buffer(
+        gs_data: []const u8, 
+        gs_func: []const u8,
+        options: GeometryShaderOptions,
+        gfx: *GfxState,
+    ) !GeometryShader {
+        const platform = pl.GfxPlatform.GeometryShader.init_buffer(gs_data, gs_func, options, gfx) catch |err| {
+            std.log.err("Geometry shader init failed: {s}\n\t- {s}", .{
+                @errorName(err),
+                options.filepath orelse "no filepath provided",
+            });
+            return err;
+        };
+        return GeometryShader {
             .platform = platform,
         };
     }
@@ -717,7 +781,7 @@ pub const Texture3D = struct {
     ) !Texture3D {
         if (desc.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
 
-        const data = try std.heap.page_allocator.alloc(u8, desc.width * desc.height * 4);
+        const data = try std.heap.page_allocator.alloc(u8, desc.width * desc.height * desc.depth * 4);
         defer std.heap.page_allocator.free(data);
 
         const data_u32: *const align(1) []u32 = @ptrCast(&data);
@@ -789,7 +853,7 @@ pub const BufferComputeView = struct {
 
 pub const RenderTargetView = struct {
     platform: pl.GfxPlatform.RenderTargetView,
-    size: struct { width: u32, height: u32, },
+    size: struct { width: u32, height: u32, depth: u32, },
 
     pub fn deinit(self: *const RenderTargetView) void {
         self.platform.deinit();
@@ -805,6 +869,18 @@ pub const RenderTargetView = struct {
             .size = .{
                 .width = texture.desc.width / std.math.pow(u32, 2, mip_level),
                 .height = texture.desc.height / std.math.pow(u32, 2, mip_level),
+                .depth = 1,
+            },
+        };
+    }
+
+    pub fn init_from_texture3d(texture: *const Texture3D, gfx: *GfxState) !RenderTargetView {
+        return RenderTargetView {
+            .platform = try pl.GfxPlatform.RenderTargetView.init_from_texture3d(texture, gfx),
+            .size = .{
+                .width = texture.desc.width,
+                .height = texture.desc.height,
+                .depth = texture.desc.depth,
             },
         };
     }
@@ -1101,7 +1177,7 @@ const ToneMappingAndBloomFilter = struct {
         };
 
         gfx.cmd_set_blend_state(null);
-        gfx.cmd_set_render_target(rtv, null);
+        gfx.cmd_set_render_target(&.{rtv}, null);
 
         gfx.cmd_set_viewport(viewport);
         gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });

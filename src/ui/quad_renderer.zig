@@ -199,7 +199,7 @@ pub const QuadRenderer = struct {
 
         gfx.cmd_set_pixel_shader(&self.quad_pso);
 
-        gfx.cmd_set_render_target(&rtv, null);
+        gfx.cmd_set_render_target(&.{&rtv}, null);
         gfx.cmd_set_blend_state(&self.blend_state);
 
         gfx.cmd_set_vertex_shader(&self.quad_vso);

@@ -299,7 +299,7 @@ pub const Font = struct {
         gfx.cmd_set_pixel_shader(&self.font_pso);
         gfx.cmd_set_shader_resources(.Pixel, 0, &.{&self.msdf_texture_view});
 
-        gfx.cmd_set_render_target(&rtv, null);
+        gfx.cmd_set_render_target(&.{&rtv}, null);
         gfx.cmd_set_blend_state(&self.blend_state);
 
         gfx.cmd_set_vertex_shader(&self.font_vso);

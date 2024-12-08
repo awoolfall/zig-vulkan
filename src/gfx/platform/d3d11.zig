@@ -19,6 +19,7 @@ pub const GfxStateD3D11 = struct {
 
     pub const VertexShader = VertexShaderD3D11;
     pub const PixelShader = PixelShaderD3D11;
+    pub const GeometryShader = GeometryShaderD3D11;
     pub const Buffer = BufferD3D11;
     pub const Texture2D = Texture2DD3D11;
     pub const TextureView2D = TextureView2DD3D11;
@@ -288,8 +289,13 @@ pub const GfxStateD3D11 = struct {
         self.context.RSSetViewports(1, @ptrCast(&d3d11_viewport));
     }
 
-    pub inline fn cmd_set_render_target(self: *Self, rt: *const gf.RenderTargetView, depth_stencil_view: ?*const gf.DepthStencilView) void {
-        self.context.OMSetRenderTargets(1, @ptrCast(&rt.platform.view),
+    pub inline fn cmd_set_render_target(self: *Self, rtvs: []const *const gf.RenderTargetView, depth_stencil_view: ?*const gf.DepthStencilView) void {
+        std.debug.assert(rtvs.len <= 8);
+        var d3d11_rtvs: [8]?*d3d11.IRenderTargetView = undefined;
+        for (rtvs, 0..) |r, i| {
+            d3d11_rtvs[i] = @ptrCast(r.platform.view);
+        }
+        self.context.OMSetRenderTargets(@intCast(rtvs.len), @ptrCast(&d3d11_rtvs),
             if (depth_stencil_view) |dsv| @ptrCast(dsv.platform.view) else null);
     }
 
@@ -300,6 +306,14 @@ pub const GfxStateD3D11 = struct {
 
     pub inline fn cmd_set_pixel_shader(self: *Self, ps: *const gf.PixelShader) void {
         self.context.PSSetShader(@ptrCast(ps.platform.pso), null, 0);
+    }
+
+    pub inline fn cmd_set_geometry_shader(self: *Self, gs: ?*const gf.GeometryShader) void {
+        self.context.GSSetShader(
+            if (gs) |g| @ptrCast(g.platform.gso) else null, 
+            null, 
+            0
+        );
     }
 
     pub inline fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const gf.VertexBufferInput) void {
@@ -330,6 +344,7 @@ pub const GfxStateD3D11 = struct {
         switch (shader_stage) {
             .Vertex => self.context.VSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
             .Pixel => self.context.PSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+            .Geometry => self.context.GSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
         }
     }
 
@@ -349,6 +364,7 @@ pub const GfxStateD3D11 = struct {
         switch (shader_stage) {
             .Vertex => self.context.VSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
             .Pixel => self.context.PSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
+            .Geometry => self.context.GSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
         }
     }
 
@@ -360,6 +376,7 @@ pub const GfxStateD3D11 = struct {
         switch (shader_stage) {
             .Vertex => unreachable,// self.context.VSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
             .Pixel => self.context.PSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+            .Geometry => self.context.GSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
         }
     }
 
@@ -567,7 +584,7 @@ pub const VertexShaderD3D11 = struct {
         var error_blob: ?*zwindows.d3d.IBlob = null;
 
         var vs_blob: *zwindows.d3d.IBlob = undefined;
-        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+        const compile_result = zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
                 &vs_data[0], 
                 vs_data.len, 
                 source_file_path_c, 
@@ -592,6 +609,8 @@ pub const VertexShaderD3D11 = struct {
                 std.log.warn("Vertex shader compilation warnings: \n\n{s}", .{err_blob_string});
             }
         }
+
+        try compile_result;
 
         var vso: *d3d11.IVertexShader = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
@@ -656,7 +675,7 @@ pub const PixelShaderD3D11 = struct {
         var error_blob: ?*zwindows.d3d.IBlob = null;
 
         var ps_blob: *zwindows.d3d.IBlob = undefined;
-        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+        const compile_result = zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
                 &ps_data[0], 
                 ps_data.len, 
                 source_file_path_c, 
@@ -682,12 +701,79 @@ pub const PixelShaderD3D11 = struct {
             }
         }
 
+        try compile_result;
+
         var pso: *d3d11.IPixelShader = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
         errdefer _ = pso.Release();
 
         return Self {
             .pso = pso,
+        };
+    }
+};
+
+pub const GeometryShaderD3D11 = struct {
+    const Self = @This();
+    gso: *d3d11.IGeometryShader,
+    
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.gso.Release();
+    }
+    
+    pub inline fn init_buffer(
+        gs_data: []const u8, 
+        gs_func: []const u8, 
+        options: gf.GeometryShaderOptions,
+        gfx: *gf.GfxState,
+    ) !Self {
+        const func_c = try std.heap.page_allocator.dupeZ(u8, gs_func);
+        defer std.heap.page_allocator.free(func_c);
+
+        const source_file_path_c_alloc = if (options.filepath) |s| try std.heap.page_allocator.dupeZ(u8, s) else null;
+        defer if (source_file_path_c_alloc) |s| std.heap.page_allocator.free(s);
+        const source_file_path_c = if (source_file_path_c_alloc) |s| @as([*:0]u8, s) else null;
+
+        var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
+        defer defines.deinit();
+
+        var error_blob: ?*zwindows.d3d.IBlob = null;
+
+        var gs_blob: *zwindows.d3d.IBlob = undefined;
+        const compile_result = zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+                &gs_data[0], 
+                gs_data.len, 
+                source_file_path_c, 
+                &defines.shader_macros[0], 
+                zwindows.d3dcompiler.COMPILE_STANDARD_FILE_INCLUDE,
+                func_c,
+                "gs_5_0", 
+                0, 
+                0, 
+                @ptrCast(&gs_blob), 
+                @ptrCast(&error_blob)
+        ));
+        defer _ = gs_blob.Release();
+
+        if (error_blob) |err_blob| {
+            const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
+            const err_blob_len = std.mem.len(err_blob_string);
+            if (std.mem.indexOf(u8, err_blob_string[0..err_blob_len], "error") != null) {
+                std.log.err("Geometry shader compilation error: \n\n{s}", .{err_blob_string});
+                return error.CompilationError;
+            } else {
+                std.log.warn("Geometry shader compilation warnings: \n\n{s}", .{err_blob_string});
+            }
+        }
+
+        try compile_result;
+
+        var gso: *d3d11.IGeometryShader = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateGeometryShader(gs_blob.GetBufferPointer(), gs_blob.GetBufferSize(), null, @ptrCast(&gso)));
+        errdefer _ = gso.Release();
+
+        return Self {
+            .gso = gso,
         };
     }
 };
@@ -1003,7 +1089,7 @@ pub const TextureView3DD3D11 = struct {
 pub const RenderTargetViewD3D11 = struct {
     const Self = @This();
     view: *d3d11.IRenderTargetView,
-    size: struct { width: u32, height: u32, },
+    size: struct { width: u32, height: u32, depth: u32, },
 
     pub inline fn deinit(self: *const Self) void {
         _ = self.view.Release();
@@ -1032,6 +1118,33 @@ pub const RenderTargetViewD3D11 = struct {
             .size = .{
                 .width = texture.desc.width / std.math.pow(u32, 2, mip_level),
                 .height = texture.desc.height / std.math.pow(u32, 2, mip_level),
+                .depth = 1,
+            },
+        };
+    }
+
+    pub fn init_from_texture3d(texture: *const gf.Texture3D, gfx: *gf.GfxState) !Self {
+        var rtv: *d3d11.IRenderTargetView = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateRenderTargetView(
+                @ptrCast(texture.platform.texture), 
+                &d3d11.RENDER_TARGET_VIEW_DESC{
+                    .ViewDimension = d3d11.RTV_DIMENSION.TEXTURE3D,
+                    .Format = texture_format_to_d3d11(texture.desc.format),
+                    .u = .{.Texture3D = d3d11.TEX3D_RTV {
+                        .MipSlice = 0,
+                        .FirstWSlice = 0,
+                        .WSize = texture.desc.depth,
+                    }},
+                }, 
+                @ptrCast(&rtv)
+        ));
+
+        return Self {
+            .view = rtv,
+            .size = .{
+                .width = texture.desc.width,
+                .height = texture.desc.height,
+                .depth = texture.desc.depth,
             },
         };
     }

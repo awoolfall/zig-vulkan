@@ -85,7 +85,7 @@ pub const Debug = struct {
             }
         }
 
-        gfx_state.cmd_set_render_target(rtv, null);
+        gfx_state.cmd_set_render_target(&.{rtv}, null);
         gfx_state.cmd_set_blend_state(null);
         gfx_state.cmd_set_topology(.TriangleList);
         gfx_state.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });

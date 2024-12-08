@@ -1491,8 +1491,8 @@ pub const Imui = struct {
         var image_widget = Widget {
             .key = gen_key(key ++ .{@src()}),
             .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .Pixels, .value = 300.0, .shrinkable_percent = 0.0, },
-                SemanticSize{ .kind = .Pixels, .value = 300.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 100.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 100.0, .shrinkable_percent = 0.0, },
             },
             .texture =  .{
                 .texture_view = texture_view,
@@ -1506,21 +1506,23 @@ pub const Imui = struct {
 
         // set size based on parent layout. Fill parent layout axis and keep image aspect ratio.
         if (self.get_widget_from_last_frame(self.parent_stack.getLast())) |parent| {
-            const aspect_ratio = @as(f32, @floatFromInt(texture_view.desc.width)) / @as(f32, @floatFromInt(texture_view.desc.height));
-            if (parent.layout_axis) |layout_axis| {
-                switch (layout_axis) {
-                    .X => {
-                        image_widget.semantic_size[0].kind = .Pixels;
-                        image_widget.semantic_size[0].value = @as(f32, @floatFromInt(parent.content_rect().height)) * aspect_ratio;
-                        image_widget.semantic_size[1].kind = .ParentPercentage;
-                        image_widget.semantic_size[1].value = 1.0;
-                    },
-                    .Y => {
-                        image_widget.semantic_size[0].kind = .ParentPercentage;
-                        image_widget.semantic_size[0].value = 1.0;
-                        image_widget.semantic_size[1].kind = .Pixels;
-                        image_widget.semantic_size[1].value = @as(f32, @floatFromInt(parent.content_rect().width)) / aspect_ratio;
-                    },
+            if (texture_view.desc.width != 0 and texture_view.desc.height != 0) {
+                const aspect_ratio = @as(f32, @floatFromInt(texture_view.desc.width)) / @as(f32, @floatFromInt(texture_view.desc.height));
+                if (parent.layout_axis) |layout_axis| {
+                    switch (layout_axis) {
+                        .X => {
+                            image_widget.semantic_size[0].kind = .Pixels;
+                            image_widget.semantic_size[0].value = @as(f32, @floatFromInt(parent.content_rect().height)) * aspect_ratio;
+                            image_widget.semantic_size[1].kind = .ParentPercentage;
+                            image_widget.semantic_size[1].value = 1.0;
+                        },
+                        .Y => {
+                            image_widget.semantic_size[0].kind = .ParentPercentage;
+                            image_widget.semantic_size[0].value = 1.0;
+                            image_widget.semantic_size[1].kind = .Pixels;
+                            image_widget.semantic_size[1].value = @as(f32, @floatFromInt(parent.content_rect().width)) / aspect_ratio;
+                        },
+                    }
                 }
             }
         }
