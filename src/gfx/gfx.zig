@@ -264,7 +264,7 @@ pub const GfxState = struct {
         self.platform.cmd_set_viewport(viewport);
     }
 
-    pub fn cmd_set_render_target(self: *Self, rtvs: []const *const RenderTargetView, depth_stencil_view: ?*const DepthStencilView) void {
+    pub fn cmd_set_render_target(self: *Self, rtvs: []const ?*const RenderTargetView, depth_stencil_view: ?*const DepthStencilView) void {
         self.platform.cmd_set_render_target(rtvs, depth_stencil_view);
     }
 
@@ -301,8 +301,12 @@ pub const GfxState = struct {
         self.platform.cmd_set_blend_state(blend_state);
     }
 
-    pub fn cmd_set_shader_resources(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: []const ?*const TextureView2D) void {
-        self.platform.cmd_set_shader_resources(shader_stage, start_slot, views);
+    pub fn cmd_set_shader_resources(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: anytype) void {
+        var srvs: [8]?*const pl.GfxPlatform.ShaderResourceView = [_]?*const pl.GfxPlatform.ShaderResourceView{null} ** 8;
+        inline for (views, 0..) |v, i| {
+            srvs[i] = if (@TypeOf(v) != @TypeOf(null)) v.shader_resource_view() else null;
+        }
+        self.platform.cmd_set_shader_resources(shader_stage, start_slot, &srvs);
     }
 
     pub fn cmd_set_samplers(self: *Self, shader_stage: ShaderStage, start_slot: u32, sampler: []const *const Sampler) void {
@@ -628,7 +632,6 @@ pub const Buffer = struct {
             }
         };
     }
-
 };
 
 pub const Texture2D = struct {
@@ -724,6 +727,10 @@ pub const TextureView2D = struct {
             .platform = try pl.GfxPlatform.TextureView2D.init_from_texture2d(texture, gfx),
             .desc = texture.desc,
         };
+    }
+
+    pub fn shader_resource_view(self: *const TextureView2D) *const pl.GfxPlatform.ShaderResourceView {
+        return self.platform.shader_resource_view();
     }
 };
 
@@ -834,6 +841,10 @@ pub const TextureView3D = struct {
             .platform = try pl.GfxPlatform.TextureView3D.init_from_texture3d(texture, gfx),
             .desc = texture.desc,
         };
+    }
+
+    pub fn shader_resource_view(self: *const TextureView3D) *const pl.GfxPlatform.ShaderResourceView {
+        return self.platform.shader_resource_view();
     }
 };
 

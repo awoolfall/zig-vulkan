@@ -30,6 +30,7 @@ pub const GfxStateD3D11 = struct {
     pub const RasterizationState = RasterizationStateD3D11;
     pub const Sampler = SamplerD3D11;
     pub const BlendState = BlendStateD3D11;
+    pub const ShaderResourceView = d3d11.IShaderResourceView;
 
     device: *d3d11.IDevice,
     swapchain: *dxgi.ISwapChain,
@@ -289,11 +290,11 @@ pub const GfxStateD3D11 = struct {
         self.context.RSSetViewports(1, @ptrCast(&d3d11_viewport));
     }
 
-    pub inline fn cmd_set_render_target(self: *Self, rtvs: []const *const gf.RenderTargetView, depth_stencil_view: ?*const gf.DepthStencilView) void {
+    pub inline fn cmd_set_render_target(self: *Self, rtvs: []const ?*const gf.RenderTargetView, depth_stencil_view: ?*const gf.DepthStencilView) void {
         std.debug.assert(rtvs.len <= 8);
         var d3d11_rtvs: [8]?*d3d11.IRenderTargetView = undefined;
-        for (rtvs, 0..) |r, i| {
-            d3d11_rtvs[i] = @ptrCast(r.platform.view);
+        for (rtvs, 0..) |mr, i| {
+            d3d11_rtvs[i] = if (mr) |r| @ptrCast(r.platform.view) else null;
         }
         self.context.OMSetRenderTargets(@intCast(rtvs.len), @ptrCast(&d3d11_rtvs),
             if (depth_stencil_view) |dsv| @ptrCast(dsv.platform.view) else null);
@@ -356,15 +357,11 @@ pub const GfxStateD3D11 = struct {
         self.context.OMSetBlendState(if (blend_state) |b| @ptrCast(b.platform.state) else null, null, 0xffffffff);
     }
 
-    pub inline fn cmd_set_shader_resources(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?*const gf.TextureView2D) void {
-        var d3d11_views: [8]?*d3d11.IShaderResourceView = undefined;
-        for (views, 0..) |v, i| {
-            d3d11_views[i] = if (v) |r| @ptrCast(r.platform.view) else null;
-        }
+    pub inline fn cmd_set_shader_resources(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?*const ShaderResourceView) void {
         switch (shader_stage) {
-            .Vertex => self.context.VSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
-            .Pixel => self.context.PSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
-            .Geometry => self.context.GSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(&d3d11_views)),
+            .Vertex => self.context.VSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
+            .Pixel => self.context.PSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
+            .Geometry => self.context.GSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
         }
     }
 
@@ -973,6 +970,47 @@ pub const TextureView2DD3D11 = struct {
             .view = texture_view,
         };
     }
+
+    pub fn shader_resource_view(self: *const Self) *const GfxStateD3D11.ShaderResourceView {
+        return self.view;
+    }
+};
+
+pub const TextureView3DD3D11 = struct {
+    const Self = @This();
+    view: *d3d11.IShaderResourceView,
+
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.view.Release();
+    }
+
+    pub inline fn init_from_texture3d(texture: *const gf.Texture3D, gfx: *gf.GfxState) !Self {
+        const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
+            .Format = texture_format_to_d3d11(texture.desc.format),
+            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE3D,
+            .u = .{
+                .Texture3D = d3d11.TEX3D_SRV {
+                    .MostDetailedMip = 0,
+                    .MipLevels = texture.desc.mip_levels,
+                },
+            },
+        };
+        var texture_view: *d3d11.IShaderResourceView = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
+                @ptrCast(texture.platform.texture), 
+                &texture_resource_view_desc, 
+                @ptrCast(&texture_view)
+        ));
+        errdefer _ = texture_view.Release();
+
+        return Self {
+            .view = texture_view,
+        };
+    }
+
+    pub fn shader_resource_view(self: *const Self) *const GfxStateD3D11.ShaderResourceView {
+        return self.view;
+    }
 };
 
 pub const Texture3DD3D11 = struct {
@@ -1053,35 +1091,11 @@ pub const Texture3DD3D11 = struct {
     }
 };
 
-pub const TextureView3DD3D11 = struct {
-    const Self = @This();
-    view: *d3d11.IShaderResourceView,
 
-    pub inline fn deinit(self: *const Self) void {
-        _ = self.view.Release();
     }
 
-    pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
-        const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
-            .Format = texture_format_to_d3d11(texture.desc.format),
-            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE3D,
-            .u = .{
-                .Texture3D = d3d11.TEX3D_SRV {
-                    .MostDetailedMip = 0,
-                    .MipLevels = texture.desc.mip_levels,
-                },
-            },
         };
-        var texture_view: *d3d11.IShaderResourceView = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
-                @ptrCast(texture.platform.texture), 
-                &texture_resource_view_desc, 
-                @ptrCast(&texture_view)
-        ));
-        errdefer _ = texture_view.Release();
 
-        return Self {
-            .view = texture_view,
         };
     }
 };
