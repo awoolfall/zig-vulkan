@@ -1208,6 +1208,21 @@ pub const Imui = struct {
         );
     }
 
+    pub fn slider_default_behaviour(self: *Self, slider_id: WidgetSignal(SliderId), value: *f32, options: struct {
+        step: f32 = 1.0,
+        min: f32,
+        max: f32,
+    }) void {
+        if (slider_id.dragged) {
+            if (self.get_widget_from_last_frame(slider_id.id.background_bar)) |b| {
+                const pixel_width: f32 = @floatFromInt(b.content_rect().width);
+                const percent = @as(f32, @floatFromInt(self.input.cursor_position[0] - b.computed.rect().left)) / pixel_width;
+                const a = std.math.round((1.0 / options.step) * percent * (options.max - options.min)) * options.step;
+                value.* = std.math.clamp(a + options.min, options.min, options.max);
+            }
+        }
+    }
+
     pub const TextInputState = struct {
         cursor: usize = 0,
         mark: usize = 0,
