@@ -103,7 +103,7 @@ pub const GfxState = struct {
         };
 
         const framebuffer_texture = try gfx_state.create_texture2d_from_framebuffer();
-        errdefer framebuffer_texture.deinit();
+        defer framebuffer_texture.deinit();
 
         gfx_state.framebuffer_rtv = try RenderTargetView.init_from_texture2d(&framebuffer_texture, &gfx_state);
         errdefer gfx_state.framebuffer_rtv.deinit();
@@ -189,6 +189,10 @@ pub const GfxState = struct {
         self.platform.flush();
     }
 
+    pub fn clear_state(self: *Self) void {
+        self.platform.clear_state();
+    }
+
     pub fn swapchain_aspect(self: *Self) f32 {
         return @as(f32, @floatFromInt(self.swapchain_size.width)) / @as(f32, @floatFromInt(self.swapchain_size.height));
     }
@@ -208,6 +212,9 @@ pub const GfxState = struct {
         const w = @max(new_width, 1);
         const h = @max(new_height, 1);
 
+        self.clear_state();
+        self.flush();
+
         // Release help render target view before we update the swapchain.
         // If we dont do this swapchain resize buffers will fail.
         self.hdr_rtv.deinit();
@@ -215,8 +222,6 @@ pub const GfxState = struct {
         self.hdr_texture.deinit();
         self.framebuffer_rtv.deinit();
 
-        // self.context.ClearState();
-        self.flush();
         self.platform.resize_swapchain(w, h);
 
         // Update swapchain size variables

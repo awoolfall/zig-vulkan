@@ -52,11 +52,11 @@ pub const GfxStateD3D11 = struct {
         _ = self.context.Release();
         _ = self.device.Release();
 
-        // var debug: *zwin32.dxgi.IDebug1 = undefined;
-        // if (zwindows.hrErrorOnFail(zwin32.dxgi.GetDebugInterface1(0, &zwin32.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
+        // var debug: *zwindows.dxgi.IDebug1 = undefined;
+        // if (zwindows.hrErrorOnFail(zwindows.dxgi.GetDebugInterface1(0, &zwindows.dxgi.IID_IDebug1, @ptrCast(&debug)))) {
         //     zwindows.hrErrorOnFail(debug.ReportLiveObjects(
-        //         zwin32.dxgi.DXGI_DEBUG_ALL,
-        //         zwin32.dxgi.RLO_FLAGS{ 
+        //         zwindows.dxgi.DXGI_DEBUG_ALL,
+        //         zwindows.dxgi.RLO_FLAGS{ 
         //             .DETAIL = true,
         //             .IGNORE_INTERNAL = true,
         //         }
@@ -251,12 +251,17 @@ pub const GfxStateD3D11 = struct {
     pub inline fn flush(self: *Self) void {
         self.context.Flush();
     }
+
+    pub inline fn clear_state(self: *Self) void {
+        self.context.ClearState();
+    }
     
     pub inline fn resize_swapchain(self: *Self, new_width: i32, new_height: i32) void {
         _ = new_width;
         _ = new_height;
 
-        self.context.Flush();
+        self.clear_state();
+        self.flush();
         zwindows.hrPanicOnFail(self.swapchain.ResizeBuffers(
                 0, 0, 0, dxgi.FORMAT.UNKNOWN, // automatic
                 self.swapchain_flags)); 
