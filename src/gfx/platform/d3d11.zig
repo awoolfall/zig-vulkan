@@ -20,6 +20,7 @@ pub const GfxStateD3D11 = struct {
     pub const VertexShader = VertexShaderD3D11;
     pub const PixelShader = PixelShaderD3D11;
     pub const GeometryShader = GeometryShaderD3D11;
+    pub const ComputeShader = ComputeShaderD3D11;
     pub const Buffer = BufferD3D11;
     pub const Texture2D = Texture2DD3D11;
     pub const TextureView2D = TextureView2DD3D11;
@@ -31,6 +32,7 @@ pub const GfxStateD3D11 = struct {
     pub const Sampler = SamplerD3D11;
     pub const BlendState = BlendStateD3D11;
     pub const ShaderResourceView = d3d11.IShaderResourceView;
+    pub const UnorderedAccessView = d3d11.IUnorderedAccessView;
 
     device: *d3d11.IDevice,
     swapchain: *dxgi.ISwapChain,
@@ -219,6 +221,8 @@ pub const GfxStateD3D11 = struct {
                 .height = @intCast(gfx.swapchain_size.height),
                 .format = gf.TextureFormat.Rgba8_Unorm_Srgb,
             },
+            .bind_flags = .{ .RenderTarget = true },
+            .access_flags = .{},
         };
     }
 
@@ -322,6 +326,14 @@ pub const GfxStateD3D11 = struct {
         );
     }
 
+    pub inline fn cmd_set_compute_shader(self: *Self, cs: ?*const gf.ComputeShader) void {
+        self.context.CSSetShader(
+            if (cs) |c| @ptrCast(c.platform.cso) else null, 
+            null, 
+            0
+        );
+    }
+
     pub inline fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const gf.VertexBufferInput) void {
         var d3d11_buffers: [8]*d3d11.IBuffer = undefined;
         var d3d11_strides: [8]u32 = undefined;
@@ -351,6 +363,7 @@ pub const GfxStateD3D11 = struct {
             .Vertex => self.context.VSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
             .Pixel => self.context.PSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
             .Geometry => self.context.GSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+            .Compute => self.context.CSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
         }
     }
 
@@ -367,6 +380,7 @@ pub const GfxStateD3D11 = struct {
             .Vertex => self.context.VSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
             .Pixel => self.context.PSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
             .Geometry => self.context.GSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
+            .Compute => self.context.CSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
         }
     }
 
@@ -379,6 +393,7 @@ pub const GfxStateD3D11 = struct {
             .Vertex => unreachable,// self.context.VSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
             .Pixel => self.context.PSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
             .Geometry => self.context.GSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+            .Compute => self.context.CSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
         }
     }
 
@@ -403,6 +418,10 @@ pub const GfxStateD3D11 = struct {
             .TriangleStrip => d3d11.PRIMITIVE_TOPOLOGY.TRIANGLESTRIP,
         };
         self.context.IASetPrimitiveTopology(d3d11_topology);
+    }
+
+    pub inline fn cmd_dispatch_compute(self: *Self, num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) void {
+        self.context.Dispatch(@intCast(num_groups_x), @intCast(num_groups_y), @intCast(num_groups_z));
     }
 
     pub inline fn cmd_copy_texture_to_texture(self: *Self, dst_texture: *const gf.Texture2D, src_texture: *const gf.Texture2D) void {
@@ -499,13 +518,14 @@ fn blend_type_to_d3d11(self: gf.BlendType) d3d11.RENDER_TARGET_BLEND_DESC {
             .BlendOpAlpha = d3d11.BLEND_OP.ADD,
         },
         .Simple => return d3d11.RENDER_TARGET_BLEND_DESC {
+            // postmultiplied alpha blending
             .BlendEnable = 1,
             .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
             .SrcBlend = d3d11.BLEND.SRC_ALPHA,
             .DestBlend = d3d11.BLEND.INV_SRC_ALPHA,
             .BlendOp = d3d11.BLEND_OP.ADD,
-            .SrcBlendAlpha = d3d11.BLEND.ONE,
-            .DestBlendAlpha = d3d11.BLEND.ZERO,
+            .SrcBlendAlpha = d3d11.BLEND.ZERO,
+            .DestBlendAlpha = d3d11.BLEND.DEST_ALPHA,
             .BlendOpAlpha = d3d11.BLEND_OP.ADD,
         },
     }
@@ -599,20 +619,14 @@ pub const VertexShaderD3D11 = struct {
                 @ptrCast(&vs_blob), 
                 @ptrCast(&error_blob)
         ));
-        defer _ = vs_blob.Release();
 
         if (error_blob) |err_blob| {
             const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
-            const err_blob_len = std.mem.len(err_blob_string);
-            if (std.mem.indexOf(u8, err_blob_string[0..err_blob_len], "error") != null) {
-                std.log.err("Vertex shader compilation error: \n\n{s}", .{err_blob_string});
-                return error.CompilationError;
-            } else {
-                std.log.warn("Vertex shader compilation warnings: \n\n{s}", .{err_blob_string});
-            }
+            std.log.debug("Vertex shader compilation messages: \n\n{s}", .{err_blob_string});
         }
 
         try compile_result;
+        defer _ = vs_blob.Release();
 
         var vso: *d3d11.IVertexShader = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
@@ -690,20 +704,14 @@ pub const PixelShaderD3D11 = struct {
                 @ptrCast(&ps_blob), 
                 @ptrCast(&error_blob)
         ));
-        defer _ = ps_blob.Release();
 
         if (error_blob) |err_blob| {
             const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
-            const err_blob_len = std.mem.len(err_blob_string);
-            if (std.mem.indexOf(u8, err_blob_string[0..err_blob_len], "error") != null) {
-                std.log.err("Pixel shader compilation error: \n\n{s}", .{err_blob_string});
-                return error.CompilationError;
-            } else {
-                std.log.warn("Pixel shader compilation warnings: \n\n{s}", .{err_blob_string});
-            }
+            std.log.debug("Pixel shader compilation messages: \n\n{s}", .{err_blob_string});
         }
 
         try compile_result;
+        defer _ = ps_blob.Release();
 
         var pso: *d3d11.IPixelShader = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
@@ -755,20 +763,14 @@ pub const GeometryShaderD3D11 = struct {
                 @ptrCast(&gs_blob), 
                 @ptrCast(&error_blob)
         ));
-        defer _ = gs_blob.Release();
 
         if (error_blob) |err_blob| {
             const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
-            const err_blob_len = std.mem.len(err_blob_string);
-            if (std.mem.indexOf(u8, err_blob_string[0..err_blob_len], "error") != null) {
-                std.log.err("Geometry shader compilation error: \n\n{s}", .{err_blob_string});
-                return error.CompilationError;
-            } else {
-                std.log.warn("Geometry shader compilation warnings: \n\n{s}", .{err_blob_string});
-            }
+            std.log.debug("Geometry shader compilation messages: \n\n{s}", .{err_blob_string});
         }
 
         try compile_result;
+        defer _ = gs_blob.Release();
 
         var gso: *d3d11.IGeometryShader = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.device.CreateGeometryShader(gs_blob.GetBufferPointer(), gs_blob.GetBufferSize(), null, @ptrCast(&gso)));
@@ -776,6 +778,65 @@ pub const GeometryShaderD3D11 = struct {
 
         return Self {
             .gso = gso,
+        };
+    }
+};
+
+pub const ComputeShaderD3D11 = struct {
+    const Self = @This();
+    cso: *d3d11.IComputeShader,
+    
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.cso.Release();
+    }
+    
+    pub inline fn init_buffer(
+        cs_data: []const u8, 
+        cs_func: []const u8,
+        options: gf.ComputeShaderOptions,
+        gfx: *gf.GfxState,
+    ) !Self {
+        const cs_func_c = try std.heap.page_allocator.dupeZ(u8, cs_func);
+        defer std.heap.page_allocator.free(cs_func_c);
+
+        const source_file_path_c_alloc = if (options.filepath) |s| try std.heap.page_allocator.dupeZ(u8, s) else null;
+        defer if (source_file_path_c_alloc) |s| std.heap.page_allocator.free(s);
+        const source_file_path_c = if (source_file_path_c_alloc) |s| @as([*:0]u8, s) else null;
+
+        var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
+        defer defines.deinit();
+
+        var error_blob: ?*zwindows.d3d.IBlob = null;
+
+        var cs_blob: *zwindows.d3d.IBlob = undefined;
+        const compile_result = zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+                &cs_data[0], 
+                cs_data.len, 
+                source_file_path_c,
+                &defines.shader_macros[0],
+                zwindows.d3dcompiler.COMPILE_STANDARD_FILE_INCLUDE,
+                cs_func_c, 
+                "cs_5_0", 
+                0, 
+                0, 
+                @ptrCast(&cs_blob),
+                @ptrCast(&error_blob)
+        ));
+
+        if (error_blob) |err_blob| {
+            const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
+            std.log.debug("Compute shader compilation messages: \n\n{s}", .{err_blob_string});
+        }
+
+        try compile_result;
+        defer _ = cs_blob.Release();
+
+        var cso: *d3d11.IComputeShader = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateComputeShader(cs_blob.GetBufferPointer(), cs_blob.GetBufferSize(), null, @ptrCast(&cso)));
+        errdefer _ = cso.Release();
+
+        return Self {
+            .cso = cso,
         };
     }
 };
@@ -917,9 +978,19 @@ pub const Texture2DD3D11 = struct {
         };
     }
 
-    pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
+    pub inline fn map_read(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
         var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.texture), 0, d3d11.MAP.READ, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
+        return MappedTexture(OutType) {
+            .context = gfx.platform.context,
+            .texture = self.texture,
+            .data_ptr = @ptrCast(@alignCast(mapped_subresource.pData)),
+        };
+    }
+
+    pub inline fn map_write_discard(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
+        var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.texture), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
         return MappedTexture(OutType) {
             .context = gfx.platform.context,
             .texture = self.texture,
@@ -979,6 +1050,10 @@ pub const TextureView2DD3D11 = struct {
     pub fn shader_resource_view(self: *const Self) *const GfxStateD3D11.ShaderResourceView {
         return self.view;
     }
+
+    pub fn unordered_access_view(self: *const Self) *const GfxStateD3D11.UnorderedAccessView {
+        return self.view;
+    }
 };
 
 pub const TextureView3DD3D11 = struct {
@@ -1014,6 +1089,10 @@ pub const TextureView3DD3D11 = struct {
     }
 
     pub fn shader_resource_view(self: *const Self) *const GfxStateD3D11.ShaderResourceView {
+        return self.view;
+    }
+
+    pub fn unordered_access_view(self: *const Self) *const GfxStateD3D11.UnorderedAccessView {
         return self.view;
     }
 };
@@ -1092,15 +1171,6 @@ pub const Texture3DD3D11 = struct {
             pub inline fn data(self: *const MappedTexture(T)) [*]align(1)T {
                 return @as([*]align(1)T, @ptrCast(self.data_ptr));
             }
-        };
-    }
-};
-
-
-    }
-
-        };
-
         };
     }
 };

@@ -285,6 +285,10 @@ pub const GfxState = struct {
         self.platform.cmd_set_geometry_shader(gs);
     }
 
+    pub fn cmd_set_compute_shader(self: *Self, cs: ?*const ComputeShader) void {
+        self.platform.cmd_set_compute_shader(cs);
+    }
+
     pub fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const VertexBufferInput) void {
         self.platform.cmd_set_vertex_buffers(start_slot, buffers);
     }
@@ -334,6 +338,10 @@ pub const GfxState = struct {
         self.platform.cmd_set_topology(topology);
     }
 
+    pub fn cmd_dispatch_compute(self: *Self, num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) void {
+        self.platform.cmd_dispatch_compute(num_groups_x, num_groups_y, num_groups_z);
+    }
+
     pub fn cmd_copy_texture_to_texture(self: *Self, dst_texture: *const Texture2D, src_texture: *const Texture2D) void {
         self.platform.cmd_copy_texture_to_texture(dst_texture, src_texture);
     }
@@ -361,6 +369,7 @@ pub const ShaderStage = enum {
     Vertex,
     Pixel,
     Geometry,
+    Compute,
 };
 
 pub const ShaderStageFlags = packed struct(u2) {
@@ -585,6 +594,62 @@ pub const GeometryShader = struct {
     }
 };
 
+pub const ComputeShaderOptions = struct {
+    filepath: ?[]const u8 = null,
+    defines: []const ShaderDefineTuple = &.{},
+};
+
+pub const ComputeShader = struct {
+    platform: pl.GfxPlatform.ComputeShader,
+    
+    pub fn deinit(self: *const ComputeShader) void {
+        self.platform.deinit();
+    }
+    
+    pub fn init_file(
+        alloc: std.mem.Allocator,
+        cs_path: path.Path, 
+        cs_func: []const u8,
+        options: ComputeShaderOptions,
+        gfx: *GfxState,
+    ) !ComputeShader {
+        const cs_res_path = try cs_path.resolve_path(alloc);
+        defer alloc.free(cs_res_path);
+
+        var modified_options = options;
+        modified_options.filepath = cs_res_path;
+
+        var cs_file = try std.fs.cwd().openFile(cs_res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
+        defer cs_file.close();
+
+        const cs_file_len = try cs_file.getEndPos();
+
+        const cs_buf: []u8 = try alloc.alloc(u8, @intCast(cs_file_len));
+        defer alloc.free(cs_buf);
+
+        if (try cs_file.readAll(cs_buf) != cs_file_len) {
+            return error.FailedToReadShader;
+        }
+
+        return init_buffer(cs_buf, cs_func, modified_options, gfx);
+    }
+
+    pub fn init_buffer(
+        cs_data: []const u8, 
+        cs_func: []const u8, 
+        options: ComputeShaderOptions,
+        gfx: *GfxState,
+    ) !ComputeShader {
+        const platform = pl.GfxPlatform.ComputeShader.init_buffer(cs_data, cs_func, options, gfx) catch |err| {
+            std.log.err("Compute shader init failed: {s}", .{@errorName(err)});
+            return err;
+        };
+        return ComputeShader {
+            .platform = platform,
+        };
+    }
+};
+
 pub const Buffer = struct {
     platform: pl.GfxPlatform.Buffer,
 
@@ -642,6 +707,8 @@ pub const Buffer = struct {
 pub const Texture2D = struct {
     platform: pl.GfxPlatform.Texture2D,
     desc: Descriptor,
+    bind_flags: BindFlag,
+    access_flags: AccessFlags,
 
     pub fn deinit(self: *const Texture2D) void {
         self.platform.deinit();
@@ -667,6 +734,8 @@ pub const Texture2D = struct {
         return Texture2D {
             .platform = try pl.GfxPlatform.Texture2D.init(desc, bind_flags, access_flags, data, gfx),
             .desc = desc,
+            .bind_flags = bind_flags,
+            .access_flags = access_flags,
         };
     }
 
@@ -700,7 +769,13 @@ pub const Texture2D = struct {
 
     pub fn map(self: *const Texture2D, comptime OutType: type, gfx: *GfxState) !MappedTexture(OutType) {
         return MappedTexture(OutType) {
-            .platform = try self.platform.map(OutType, gfx),
+            .platform = try self.platform.map_read(OutType, gfx),
+        };
+    }
+
+    pub fn map_write_discard(self: *const Texture2D, comptime OutType: type, gfx: *GfxState) !MappedTexture(OutType) {
+        return MappedTexture(OutType) {
+            .platform = try self.platform.map_write_discard(OutType, gfx),
         };
     }
 
@@ -722,6 +797,8 @@ pub const Texture2D = struct {
 pub const TextureView2D = struct {
     platform: pl.GfxPlatform.TextureView2D,
     desc: Texture2D.Descriptor,
+    bind_flags: BindFlag,
+    access_flags: AccessFlags,
 
     pub fn deinit(self: *const TextureView2D) void {
         self.platform.deinit();
@@ -731,31 +808,27 @@ pub const TextureView2D = struct {
         return TextureView2D {
             .platform = try pl.GfxPlatform.TextureView2D.init_from_texture2d(texture, gfx),
             .desc = texture.desc,
+            .bind_flags = texture.bind_flags,
+            .access_flags = texture.access_flags,
         };
     }
 
     pub fn shader_resource_view(self: *const TextureView2D) *const pl.GfxPlatform.ShaderResourceView {
+        std.debug.assert(self.bind_flags.ShaderResource);
         return self.platform.shader_resource_view();
     }
-};
 
-pub const TextureComputeView2D = struct {
-    platform: pl.GfxPlatform.TextureComputeView2D,
-
-    pub fn deinit(self: *const TextureComputeView2D) void {
-        self.platform.deinit();
-    }
-
-    pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !TextureComputeView2D {
-        return TextureComputeView2D {
-            .platform = try pl.GfxPlatform.TextureComputeView2D.init_from_texture2d(texture, gfx),
-        };
+    pub fn unordered_access_view(self: *const TextureView2D) *const pl.GfxPlatform.UnorderedAccessView {
+        std.debug.assert(self.bind_flags.UnorderedAccess);
+        return self.platform.unordered_access_view();
     }
 };
 
 pub const Texture3D = struct {
     platform: pl.GfxPlatform.Texture3D,
     desc: Descriptor,
+    bind_flags: BindFlag,
+    access_flags: AccessFlags,
 
     pub fn deinit(self: *const Texture3D) void {
         self.platform.deinit();
@@ -781,6 +854,8 @@ pub const Texture3D = struct {
         return Texture3D {
             .platform = try pl.GfxPlatform.Texture3D.init(desc, bind_flags, access_flags, data, gfx),
             .desc = desc,
+            .bind_flags = bind_flags,
+            .access_flags = access_flags,
         };
     }
 
@@ -836,6 +911,8 @@ pub const Texture3D = struct {
 pub const TextureView3D = struct {
     platform: pl.GfxPlatform.TextureView3D,
     desc: Texture3D.Descriptor,
+    bind_flags: BindFlag,
+    access_flags: AccessFlags,
 
     pub fn deinit(self: *const TextureView3D) void {
         self.platform.deinit();
@@ -845,25 +922,19 @@ pub const TextureView3D = struct {
         return TextureView3D {
             .platform = try pl.GfxPlatform.TextureView3D.init_from_texture3d(texture, gfx),
             .desc = texture.desc,
+            .bind_flags = texture.bind_flags,
+            .access_flags = texture.access_flags,
         };
     }
 
     pub fn shader_resource_view(self: *const TextureView3D) *const pl.GfxPlatform.ShaderResourceView {
+        std.debug.assert(self.bind_flags.ShaderResource);
         return self.platform.shader_resource_view();
     }
-};
 
-pub const BufferComputeView = struct {
-    platform: pl.GfxPlatform.BufferComputeView,
-
-    pub fn deinit(self: *const BufferComputeView) void {
-        self.platform.deinit();
-    }
-
-    pub fn init_from_buffer(buffer: *const Buffer, gfx: *GfxState) !BufferComputeView {
-        return BufferComputeView {
-            .platform = try pl.GfxPlatform.BufferComputeView.init_from_buffer(buffer, gfx),
-        };
+    pub fn unordered_access_view(self: *const TextureView3D) *const pl.GfxPlatform.UnorderedAccessView {
+        std.debug.assert(self.bind_flags.UnorderedAccess);
+        return self.platform.unordered_access_view();
     }
 };
 

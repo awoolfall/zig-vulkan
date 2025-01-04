@@ -219,6 +219,27 @@ pub const PixelShaderNoop = struct {
     }
 };
 
+pub const ComputeShaderNoop = struct {
+    const Self = @This();
+    
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.cso.Release();
+    }
+    
+    pub inline fn init_buffer(
+        cs_data: []const u8, 
+        cs_func: []const u8, 
+        gfx: *gf.GfxState,
+    ) !Self {
+        _ = cs_data;
+        _ = cs_func;
+        _ = gfx;
+
+        return Self {
+        };
+    }
+};
+
 pub const BufferNoop = struct {
     const Self = @This();
 
