@@ -30,7 +30,6 @@ pub const Camera = struct {
     min_orbit_distance: f32,
     orbit_distance: f32,
 
-    global_up_direction: zm.F32x4 = zm.f32x4(0.0, 1.0, 0.0, 0.0),
     view_matrix: zm.Mat = zm.identity(),
 
     damping_movement: [2]f32 = [_]f32{ 0.0, 0.0 },
@@ -104,6 +103,7 @@ pub const Camera = struct {
 
     pub fn orbit_camera_update(
         self: *Self, 
+        camera_transform: *tf.Transform, 
         orbit_target: zm.F32x4, 
         window: *Window,
         input: *const _input.InputState,
@@ -118,6 +118,12 @@ pub const Camera = struct {
             window.free_confined_cursor();
         }
 
+        // translate orbit distance by input
+        const orbit_distance_change = float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) 
+            - float_from_bool(input.get_key(kc.KeyCode.ArrowUp));
+        self.orbit_distance = self.orbit_distance + self.orbit_distance * (orbit_distance_change * 0.5 * time.delta_time_f32());
+        self.orbit_distance = @max(@min(self.orbit_distance, self.max_orbit_distance), self.min_orbit_distance);
+
         // camera rotation
         if (input.get_key(kc.KeyCode.MouseRight)) {
             self.damping_movement[0] = input.mouse_delta[0] * self.mouse_sensitivity;
@@ -127,31 +133,32 @@ pub const Camera = struct {
             self.damping_movement[1] = std.math.lerp(self.damping_movement[1], 0.0, self.damping_amount * time.delta_time_f32());
         }
 
-        self.view_matrix = zm.mul(
-            zm.matFromAxisAngle(
-                self.global_up_direction,
-                -self.damping_movement[0]
-            ),
-            self.view_matrix,
-        );
-        self.view_matrix = zm.mul(
-            self.view_matrix, 
-            zm.matFromAxisAngle(
-                zm.f32x4(1.0, 0.0, 0.0, 0.0),
-                -self.damping_movement[1]
-            )
-        );
+        var target_offset = camera_transform.position - orbit_target;
+        if (zm.length3(target_offset)[0] < 0.001) {
+            target_offset = zm.f32x4(0.0, 0.0, 1.0, 0.0);
+        }
 
-        // translate orbit distance by input
-        const orbit_distance_change = float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) 
-            - float_from_bool(input.get_key(kc.KeyCode.ArrowUp));
-        self.orbit_distance = self.orbit_distance + self.orbit_distance * (orbit_distance_change * 0.5 * time.delta_time_f32());
-        self.orbit_distance = @max(@min(self.orbit_distance, self.max_orbit_distance), self.min_orbit_distance);
+        if (!std.math.approxEqAbs(f32, zm.length3(target_offset)[0], self.orbit_distance, 0.05)) {
+            camera_transform.position = orbit_target + zm.normalize3(target_offset) * zm.f32x4s(self.orbit_distance);
+            camera_transform.position[3] = 0.0;
+        }
 
-        // Reset view matrix translation then set it to be orbit_distance from target in camera dir
-        self.view_matrix[3] = zm.f32x4(0.0, 0.0, 0.0, 1.0);
-        self.view_matrix = zm.mul(self.view_matrix, zm.translationV(zm.rotate(zm.quatFromMat(self.view_matrix), -orbit_target)));
-        self.view_matrix = zm.mul(self.view_matrix, zm.translation(0.0, 0.0, self.orbit_distance));
+        target_offset = camera_transform.position - orbit_target;
+        target_offset = zm.rotate(zm.quatFromAxisAngle(
+                zm.cross3(target_offset, zm.f32x4(0.0, 1.0, 0.0, 0.0)),
+                self.damping_movement[1]
+            ), target_offset);
+        target_offset = zm.rotate(zm.quatFromAxisAngle(
+                zm.f32x4(0.0, 1.0, 0.0, 0.0),
+                self.damping_movement[0]
+            ), target_offset);
+
+        camera_transform.position = orbit_target + target_offset;
+        camera_transform.position[3] = 0.0;
+
+        camera_transform.rotation = zm.quatFromMat(zm.inverse(zm.lookAtLh(camera_transform.position, orbit_target, zm.f32x4(0.0, 1.0, 0.0, 0.0))));
+
+        self.view_matrix = camera_transform.generate_view_matrix();
     }
 
     pub fn update(
@@ -162,7 +169,6 @@ pub const Camera = struct {
         input: *const _input.InputState,
         time: *const _time.TimeState,
     ) void {
-        _ = camera_transform;
         if (input.get_key_down(kc.KeyCode.P)) {
             if (self.camera_type == .ORBIT) {
                 self.camera_type = .FLY;
@@ -172,7 +178,7 @@ pub const Camera = struct {
         }
         switch (self.camera_type) {
             .FLY => self.fly_camera_update(window, input, time),
-            .ORBIT => self.orbit_camera_update(orbit_target, window, input, time),
+            .ORBIT => self.orbit_camera_update(camera_transform, orbit_target, window, input, time),
         }
     }
 };
