@@ -127,7 +127,7 @@ pub const PhysicsSystem = struct {
                                     character.virtual.extendedUpdate(
                                         1.0 / UpdateRateHz,
                                         self.zphy.getGravity(),
-                                        ext,
+                                        &ext,
                                         .{
                                             .body_filter = character.body_filter,
                                         }

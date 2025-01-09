@@ -13,7 +13,7 @@ pub const KeyState = enum {
 
 pub const InputState = struct {
     const Self = @This();
-    const KEY_STATE_LEN = @typeInfo(kc.KeyCode).Enum.fields.len;
+    const KEY_STATE_LEN = @typeInfo(kc.KeyCode).@"enum".fields.len;
 
     key_state: [KEY_STATE_LEN]KeyState,
     keys_to_update: [KEY_STATE_LEN]u8,

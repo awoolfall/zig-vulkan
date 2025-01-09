@@ -268,7 +268,7 @@ pub const D3D11DebugRenderer = extern struct {
         self: *D3D11DebugRenderer,
         from: *const [3]zphy.Real,
         to: *const [3]zphy.Real,
-        color: *const zphy.DebugRenderer.Color,
+        color: zphy.DebugRenderer.Color,
     ) callconv(.C) void {
         _ = self;
         _ = from;
@@ -282,7 +282,7 @@ pub const D3D11DebugRenderer = extern struct {
         v1: *const [3]zphy.Real,
         v2: *const [3]zphy.Real,
         v3: *const [3]zphy.Real,
-        color: *const zphy.DebugRenderer.Color,
+        color: zphy.DebugRenderer.Color,
     ) callconv(.C) void {
         _ = self;
         _ = v1;

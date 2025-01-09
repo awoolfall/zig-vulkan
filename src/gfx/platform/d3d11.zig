@@ -663,7 +663,7 @@ pub const VertexShaderD3D11 = struct {
         }
 
         var vso_input_layout: *d3d11.IInputLayout = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateInputLayout(@ptrCast(&d3d11_layout_desc.buffer[0]), d3d11_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateInputLayout(@ptrCast(&d3d11_layout_desc.buffer[0]), @intCast(d3d11_layout_desc.len), vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
         errdefer _ = vso_input_layout.Release();
 
         return Self {
