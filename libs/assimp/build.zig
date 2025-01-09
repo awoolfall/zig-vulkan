@@ -98,7 +98,7 @@ pub fn build(b: *std.Build) void {
     zip.addIncludePath(b.path("libs/assimp/contrib/zip/src"));
     zip.linkLibC();
     zip.linkLibCpp();
-    zip.defineCMacro("MINIZ_USE_UNALIGNED_LOADS_AND_STORES", "0");
+    zip.root_module.addCMacro("MINIZ_USE_UNALIGNED_LOADS_AND_STORES", "0");
     zip.addCSourceFiles(.{
         .files = &.{
             "libs/assimp/contrib/zip/src/zip.c",
@@ -140,7 +140,7 @@ pub fn build(b: *std.Build) void {
     openddlparser.addIncludePath(b.path("libs/assimp/contrib/openddlparser/include"));
     openddlparser.linkLibC();
     openddlparser.linkLibCpp();
-    openddlparser.defineCMacro("OPENDDLPARSER_BUILD", "1");
+    openddlparser.root_module.addCMacro("OPENDDLPARSER_BUILD", "1");
     openddlparser.addCSourceFiles(.{
         .files = &.{
             "libs/assimp/contrib/openddlparser/code/DDLNode.cpp",
@@ -250,16 +250,16 @@ pub fn build(b: *std.Build) void {
     assimp.addIncludePath(b.path("libs/assimp/contrib/pugixml/src"));
     assimp.addIncludePath(b.path("libs/assimp/contrib/poly2tri"));
     assimp.addIncludePath(b.path("libs/assimp/contrib"));
-    assimp.defineCMacro("RAPIDJSON_HAS_STDSTRING", "1");
-    assimp.defineCMacro("ASSIMP_BUILD_NO_C4D_IMPORTER", "1");
-    assimp.defineCMacro("ASSIMP_BUILD_NO_IFC_IMPORTER", "1");
-    assimp.defineCMacro("ASSIMP_BUILD_NO_M3D_IMPORTER", "1");
-    assimp.defineCMacro("ASSIMP_BUILD_NO_M3D_EXPORTER", "1");
-    assimp.defineCMacro("OPENDDLPARSER_BUILD", "1");
-    assimp.defineCMacro("STB_USE_HUNTER", "0");
-    assimp.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
+    assimp.root_module.addCMacro("RAPIDJSON_HAS_STDSTRING", "1");
+    assimp.root_module.addCMacro("ASSIMP_BUILD_NO_C4D_IMPORTER", "1");
+    assimp.root_module.addCMacro("ASSIMP_BUILD_NO_IFC_IMPORTER", "1");
+    assimp.root_module.addCMacro("ASSIMP_BUILD_NO_M3D_IMPORTER", "1");
+    assimp.root_module.addCMacro("ASSIMP_BUILD_NO_M3D_EXPORTER", "1");
+    assimp.root_module.addCMacro("OPENDDLPARSER_BUILD", "1");
+    assimp.root_module.addCMacro("STB_USE_HUNTER", "0");
+    assimp.root_module.addCMacro("WIN32_LEAN_AND_MEAN", "1");
 
-    if (options.no_export) assimp.defineCMacro("ASSIMP_BUILD_NO_EXPORT", "1");
+    if (options.no_export) assimp.root_module.addCMacro("ASSIMP_BUILD_NO_EXPORT", "1");
 
     assimp.linkLibC();
     assimp.linkLibCpp();

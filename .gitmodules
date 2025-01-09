@@ -1,6 +1,23 @@
-[submodule "libs/zig-gamedev"]
-	path = libs/zig-gamedev
-	url = https://github.com/awoolfall/zig-gamedev.git
 [submodule "libs/assimp/libs/assimp"]
 	path = libs/assimp/libs/assimp
 	url = https://github.com/assimp/assimp.git
+[submodule "libs/zphysics"]
+	path = libs/zphysics
+	url = https://github.com/awoolfall/zphysics
+	branch = modifications
+[submodule "libs/zwindows"]
+	path = libs/zwindows
+	url = https://github.com/awoolfall/zwindows
+	branch = modifications
+[submodule "libs/zmath"]
+	path = libs/zmath
+	url = https://github.com/zig-gamedev/zmath
+[submodule "libs/zmesh"]
+	path = libs/zmesh
+	url = https://github.com/zig-gamedev/zmesh
+[submodule "libs/znoise"]
+	path = libs/znoise
+	url = https://github.com/zig-gamedev/znoise
+[submodule "libs/zstbi"]
+	path = libs/zstbi
+	url = https://github.com/zig-gamedev/zstbi
