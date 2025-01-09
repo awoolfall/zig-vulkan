@@ -61,5 +61,6 @@ float4 ps_main(vs_out input) : SV_TARGET
     float screenPxDistance = screenPxRange(input.tex_coord.xy) * (sd - 0.5);
     float opacity = clamp(screenPxDistance + 0.5, 0.0, 1.0);
     //return msd;
-    return lerp(bg_colour, fg_colour, opacity);
+    float4 colour = lerp(bg_colour, fg_colour, opacity);
+    return float4(colour.rgb * colour.a, colour.a);
 }

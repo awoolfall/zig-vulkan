@@ -1113,6 +1113,7 @@ pub const Sampler = struct {
 pub const BlendType = enum {
     None,
     Simple,
+    PremultipliedAlpha,
 };
 
 pub const BlendState = struct {

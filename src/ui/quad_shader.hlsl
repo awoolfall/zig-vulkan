@@ -103,5 +103,5 @@ float4 ps_main(vs_out input) : SV_TARGET
     // corner anti-aliasing
     colour.a *= saturate(min_px_from_border);
 
-    return colour;
+    return float4(colour.rgb * colour.a, colour.a);
 }

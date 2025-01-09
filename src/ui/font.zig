@@ -236,7 +236,7 @@ pub const Font = struct {
 
         // create blend state
         font.blend_state = try _gfx.BlendState.init(
-            ([_]_gfx.BlendType { .Simple })[0..],
+            ([_]_gfx.BlendType { .PremultipliedAlpha })[0..],
             gfx
         );
         errdefer font.blend_state.deinit();

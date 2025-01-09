@@ -518,7 +518,6 @@ fn blend_type_to_d3d11(self: gf.BlendType) d3d11.RENDER_TARGET_BLEND_DESC {
             .BlendOpAlpha = d3d11.BLEND_OP.ADD,
         },
         .Simple => return d3d11.RENDER_TARGET_BLEND_DESC {
-            // postmultiplied alpha blending
             .BlendEnable = 1,
             .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
             .SrcBlend = d3d11.BLEND.SRC_ALPHA,
@@ -526,6 +525,16 @@ fn blend_type_to_d3d11(self: gf.BlendType) d3d11.RENDER_TARGET_BLEND_DESC {
             .BlendOp = d3d11.BLEND_OP.ADD,
             .SrcBlendAlpha = d3d11.BLEND.ZERO,
             .DestBlendAlpha = d3d11.BLEND.DEST_ALPHA,
+            .BlendOpAlpha = d3d11.BLEND_OP.ADD,
+        },
+        .PremultipliedAlpha => return d3d11.RENDER_TARGET_BLEND_DESC {
+            .BlendEnable = 1,
+            .RenderTargetWriteMask = d3d11.COLOR_WRITE_ENABLE.ALL,
+            .SrcBlend = d3d11.BLEND.ONE,
+            .DestBlend = d3d11.BLEND.INV_SRC_ALPHA,
+            .BlendOp = d3d11.BLEND_OP.ADD,
+            .SrcBlendAlpha = d3d11.BLEND.ONE,
+            .DestBlendAlpha = d3d11.BLEND.ZERO,
             .BlendOpAlpha = d3d11.BLEND_OP.ADD,
         },
     }

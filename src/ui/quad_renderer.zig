@@ -135,7 +135,7 @@ pub const QuadRenderer = struct {
         errdefer quad_renderer.sampler.deinit();
 
         // create blend state
-        quad_renderer.blend_state = try _gfx.BlendState.init(([_]_gfx.BlendType{.Simple})[0..], gfx);
+        quad_renderer.blend_state = try _gfx.BlendState.init(([_]_gfx.BlendType{.PremultipliedAlpha})[0..], gfx);
         errdefer quad_renderer.blend_state.deinit();
 
         // finally return the ui structure
