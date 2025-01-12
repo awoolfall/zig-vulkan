@@ -420,6 +420,13 @@ pub const GfxStateD3D11 = struct {
         self.context.IASetPrimitiveTopology(d3d11_topology);
     }
 
+    pub inline fn cmd_set_unordered_access_views(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?*const UnorderedAccessView) void {
+        switch (shader_stage) {
+            .Compute => self.context.CSSetUnorderedAccessViews(start_slot, @intCast(views.len), @ptrCast(views), null),
+            else => unreachable,
+        }
+    }
+
     pub inline fn cmd_dispatch_compute(self: *Self, num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) void {
         self.context.Dispatch(@intCast(num_groups_x), @intCast(num_groups_y), @intCast(num_groups_z));
     }
@@ -454,6 +461,7 @@ fn texture_format_to_d3d11(self: gf.TextureFormat) dxgi.FORMAT {
         .Rgba8_Unorm => dxgi.FORMAT.R8G8B8A8_UNORM,
         .Bgra8_Unorm => dxgi.FORMAT.B8G8R8A8_UNORM,
         .R32_Float => dxgi.FORMAT.R32_FLOAT,
+        .Rg32_Float => dxgi.FORMAT.R32G32_FLOAT,
         .Rgba32_Float => dxgi.FORMAT.R32G32B32A32_FLOAT,
         .Rgba16_Float => dxgi.FORMAT.R16G16B16A16_FLOAT,
         .Rg11b10_Float => dxgi.FORMAT.R11G11B10_FLOAT,
@@ -1026,83 +1034,137 @@ pub const Texture2DD3D11 = struct {
 
 pub const TextureView2DD3D11 = struct {
     const Self = @This();
-    view: *d3d11.IShaderResourceView,
+    srv: ?*d3d11.IShaderResourceView,
+    uav: ?*d3d11.IUnorderedAccessView,
 
     pub inline fn deinit(self: *const Self) void {
-        _ = self.view.Release();
+        if (self.srv) |v| { _ = v.Release(); }
+        if (self.uav) |v| { _ = v.Release(); }
     }
 
     pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
-        const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
-            .Format = texture_format_to_d3d11(texture.desc.format),
-            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
-            .u = .{
-                .Texture2D = d3d11.TEX2D_SRV {
-                    .MostDetailedMip = 0,
-                    .MipLevels = texture.desc.mip_levels,
+        var srv: ?*d3d11.IShaderResourceView = null;
+        if (texture.bind_flags.ShaderResource) {
+            const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
+                .Format = texture_format_to_d3d11(texture.desc.format),
+                .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
+                .u = .{
+                    .Texture2D = d3d11.TEX2D_SRV {
+                        .MostDetailedMip = 0,
+                        .MipLevels = texture.desc.mip_levels,
+                    },
+                    },
+                };
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
+                    @ptrCast(texture.platform.texture), 
+                    &texture_resource_view_desc, 
+                    @ptrCast(&srv)
+            ));
+        }
+        errdefer { if (srv) |v| _ = v.Release(); }
+
+        var uav: ?*d3d11.IUnorderedAccessView = null;
+        if (texture.bind_flags.UnorderedAccess) {
+            const uav_desc = d3d11.UNORDERED_ACCESS_VIEW_DESC {
+                .Format = texture_format_to_d3d11(texture.desc.format),
+                .ViewDimension = d3d11.UAV_DIMENSION.TEXTURE2D,
+                .u = .{
+                    .Texture2D = d3d11.TEX2D_UAV {
+                        .MipSlice = 0,
+                    },
                 },
-            },
-        };
-        var texture_view: *d3d11.IShaderResourceView = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
-                @ptrCast(texture.platform.texture), 
-                &texture_resource_view_desc, 
-                @ptrCast(&texture_view)
-        ));
-        errdefer _ = texture_view.Release();
+            };
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateUnorderedAccessView(
+                    @ptrCast(texture.platform.texture), 
+                    &uav_desc,
+                    @ptrCast(&uav)
+            ));
+        }
+        errdefer { if (uav) |v| _ = v.Release(); }
 
         return Self {
-            .view = texture_view,
+            .srv = srv,
+            .uav = uav,
         };
     }
 
     pub fn shader_resource_view(self: *const Self) *const GfxStateD3D11.ShaderResourceView {
-        return self.view;
+        std.debug.assert(self.srv != null);
+        return self.srv.?;
     }
 
     pub fn unordered_access_view(self: *const Self) *const GfxStateD3D11.UnorderedAccessView {
-        return self.view;
+        std.debug.assert(self.uav != null);
+        return self.uav.?;
     }
 };
 
 pub const TextureView3DD3D11 = struct {
     const Self = @This();
-    view: *d3d11.IShaderResourceView,
+    srv: ?*d3d11.IShaderResourceView,
+    uav: ?*d3d11.IUnorderedAccessView,
 
     pub inline fn deinit(self: *const Self) void {
-        _ = self.view.Release();
+        if (self.srv) |v| { _ = v.Release(); }
+        if (self.uav) |v| { _ = v.Release(); }
     }
 
     pub inline fn init_from_texture3d(texture: *const gf.Texture3D, gfx: *gf.GfxState) !Self {
-        const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
-            .Format = texture_format_to_d3d11(texture.desc.format),
-            .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE3D,
-            .u = .{
-                .Texture3D = d3d11.TEX3D_SRV {
-                    .MostDetailedMip = 0,
-                    .MipLevels = texture.desc.mip_levels,
+        var srv: ?*d3d11.IShaderResourceView = null;
+        if (texture.bind_flags.ShaderResource) {
+            const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
+                .Format = texture_format_to_d3d11(texture.desc.format),
+                .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE3D,
+                .u = .{
+                    .Texture3D = d3d11.TEX3D_SRV {
+                        .MostDetailedMip = 0,
+                        .MipLevels = texture.desc.mip_levels,
+                    },
+                    },
+                };
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
+                    @ptrCast(texture.platform.texture), 
+                    &texture_resource_view_desc, 
+                    @ptrCast(&srv)
+            ));
+        }
+        errdefer { if (srv) |v| _ = v.Release(); }
+
+        var uav: ?*d3d11.IUnorderedAccessView = null;
+        if (texture.bind_flags.UnorderedAccess) {
+            const uav_desc = d3d11.UNORDERED_ACCESS_VIEW_DESC {
+                .Format = texture_format_to_d3d11(texture.desc.format),
+                .ViewDimension = d3d11.UAV_DIMENSION.TEXTURE3D,
+                .u = .{
+                    .Texture3D = d3d11.TEX3D_UAV {
+                        .MipSlice = 0,
+                        .FirstWSlice = 0,
+                        .WSize = texture.desc.depth,
+                    },
                 },
-            },
-        };
-        var texture_view: *d3d11.IShaderResourceView = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateShaderResourceView(
-                @ptrCast(texture.platform.texture), 
-                &texture_resource_view_desc, 
-                @ptrCast(&texture_view)
-        ));
-        errdefer _ = texture_view.Release();
+            };
+            try zwindows.hrErrorOnFail(gfx.platform.device.CreateUnorderedAccessView(
+                    @ptrCast(texture.platform.texture), 
+                    &uav_desc,
+                    @ptrCast(&uav)
+            ));
+        }
+        errdefer { if (uav) |v| _ = v.Release(); }
 
         return Self {
-            .view = texture_view,
+            .srv = srv,
+            .uav = uav,
         };
     }
 
     pub fn shader_resource_view(self: *const Self) *const GfxStateD3D11.ShaderResourceView {
-        return self.view;
+        std.debug.assert(self.srv != null);
+        return self.srv.?;
     }
 
     pub fn unordered_access_view(self: *const Self) *const GfxStateD3D11.UnorderedAccessView {
-        return self.view;
+        std.debug.assert(self.uav != null);
+        return self.uav.?;
     }
 };
 

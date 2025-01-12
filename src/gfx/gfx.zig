@@ -338,6 +338,14 @@ pub const GfxState = struct {
         self.platform.cmd_set_topology(topology);
     }
 
+    pub fn cmd_set_unordered_access_views(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: anytype) void {
+        var uavs: [8]?*const pl.GfxPlatform.UnorderedAccessView = [_]?*const pl.GfxPlatform.UnorderedAccessView{null} ** 8;
+        inline for (views, 0..) |v, i| {
+            uavs[i] = if (@TypeOf(v) != @TypeOf(null)) v.unordered_access_view() else null;
+        }
+        self.platform.cmd_set_unordered_access_views(shader_stage, start_slot, &uavs);
+    }
+
     pub fn cmd_dispatch_compute(self: *Self, num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) void {
         self.platform.cmd_dispatch_compute(num_groups_x, num_groups_y, num_groups_z);
     }
@@ -704,6 +712,9 @@ pub const Buffer = struct {
     }
 };
 
+pub const ShaderResourceView = *const pl.GfxPlatform.ShaderResourceView;
+pub const UnorderedAccessView = *const pl.GfxPlatform.UnorderedAccessView;
+
 pub const Texture2D = struct {
     platform: pl.GfxPlatform.Texture2D,
     desc: Descriptor,
@@ -813,12 +824,12 @@ pub const TextureView2D = struct {
         };
     }
 
-    pub fn shader_resource_view(self: *const TextureView2D) *const pl.GfxPlatform.ShaderResourceView {
+    pub fn shader_resource_view(self: *const TextureView2D) ShaderResourceView {
         std.debug.assert(self.bind_flags.ShaderResource);
         return self.platform.shader_resource_view();
     }
 
-    pub fn unordered_access_view(self: *const TextureView2D) *const pl.GfxPlatform.UnorderedAccessView {
+    pub fn unordered_access_view(self: *const TextureView2D) UnorderedAccessView {
         std.debug.assert(self.bind_flags.UnorderedAccess);
         return self.platform.unordered_access_view();
     }
@@ -927,12 +938,12 @@ pub const TextureView3D = struct {
         };
     }
 
-    pub fn shader_resource_view(self: *const TextureView3D) *const pl.GfxPlatform.ShaderResourceView {
+    pub fn shader_resource_view(self: *const TextureView3D) ShaderResourceView {
         std.debug.assert(self.bind_flags.ShaderResource);
         return self.platform.shader_resource_view();
     }
 
-    pub fn unordered_access_view(self: *const TextureView3D) *const pl.GfxPlatform.UnorderedAccessView {
+    pub fn unordered_access_view(self: *const TextureView3D) UnorderedAccessView {
         std.debug.assert(self.bind_flags.UnorderedAccess);
         return self.platform.unordered_access_view();
     }
@@ -1004,6 +1015,7 @@ pub const TextureFormat = enum {
     Rgba8_Unorm,
     Bgra8_Unorm,
     R32_Float,
+    Rg32_Float,
     Rgba16_Float,
     Rgba32_Float,
     Rg11b10_Float,
@@ -1014,6 +1026,7 @@ pub const TextureFormat = enum {
         switch (self) {
             .Unknown => return 0,
             .R32_Float => return 4,
+            .Rg32_Float => return 8,
             .Rgba8_Unorm_Srgb => return 4,
             .Rgba8_Unorm => return 4,
             .Bgra8_Unorm => return 4,
