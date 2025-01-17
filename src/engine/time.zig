@@ -1,12 +1,13 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const wb = @import("../window.zig");
 
 pub const TimeState = struct {
     const Self = @This();
 
     frame_number: u128 = 0,
-    start_time_ns: i128,
-    frame_start_time_ns: i128,
+    app_start_time: std.time.Instant,
+    frame_start_time: std.time.Instant,
     last_frame_time_s: f64,
     last_frame_wait_time_s: f64,
     target_frame_time_ns: i128,
@@ -14,9 +15,10 @@ pub const TimeState = struct {
     is_focused: bool = true,
     
     pub fn init() Self {
+        const start_time = std.time.Instant.now() catch unreachable;
         return Self {
-            .start_time_ns = std.time.nanoTimestamp(),
-            .frame_start_time_ns = std.time.nanoTimestamp(),
+            .app_start_time = start_time,
+            .frame_start_time = start_time,
             .last_frame_time_s = 1e-5,
             .last_frame_wait_time_s = 1e-5,
             .target_frame_time_ns = 0,
@@ -31,27 +33,27 @@ pub const TimeState = struct {
         self.frame_number += 1;
 
         // collect frame time difference
-        var frame_diff_ns = std.time.nanoTimestamp() - self.frame_start_time_ns;
+        var new_frame_start_time = std.time.Instant.now() catch unreachable;
+        var frame_diff_ns = new_frame_start_time.since(self.frame_start_time);
 
         // if there is a target frame rate, do wait here
-        self.last_frame_wait_time_s = 0.0;
+        const frame_wait_start_time = new_frame_start_time;
         const target_frame_time_ns = if (self.is_focused) self.target_frame_time_ns else self.target_lost_focus_frame_time_ns;
         if (target_frame_time_ns != 0) {
-            // calculate wait time in seconds
-            self.last_frame_wait_time_s = @as(f64, @floatFromInt(target_frame_time_ns - frame_diff_ns)) / std.time.ns_per_s;
-
             // while loop to account for "spurious wakeups"
             while (frame_diff_ns < target_frame_time_ns) {
                 // sleep remaining ns to hit desired frame rate
                 std.time.sleep(@intCast(target_frame_time_ns - frame_diff_ns));
 
                 // recollect frame diff times
-                frame_diff_ns = std.time.nanoTimestamp() - self.frame_start_time_ns;
+                new_frame_start_time = std.time.Instant.now() catch unreachable;
+                frame_diff_ns = new_frame_start_time.since(self.frame_start_time);
             }
         }
+        self.last_frame_wait_time_s = @as(f64, @floatFromInt(new_frame_start_time.since(frame_wait_start_time))) / @as(f64, std.time.ns_per_s);
 
         self.last_frame_time_s = @as(f64, @floatFromInt(frame_diff_ns)) / @as(f64, @floatFromInt(std.time.ns_per_s));
-        self.frame_start_time_ns = std.time.nanoTimestamp();
+        self.frame_start_time = new_frame_start_time;
     }
 
     pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
@@ -85,7 +87,8 @@ pub const TimeState = struct {
     }
 
     pub fn time_since_start_of_app(self: *const Self) f64 {
-        return @as(f64, @floatFromInt((self.frame_start_time_ns - self.start_time_ns))) / std.time.ns_per_s;
+        const diff_ms = self.frame_start_time.since(self.app_start_time) / std.time.ns_per_ms;
+        return @as(f64, @floatFromInt(diff_ms)) / @as(f64, std.time.ms_per_s);
     }
 };
 

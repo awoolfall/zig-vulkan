@@ -17,7 +17,7 @@ const DebugRenderer = if (debug_renderer_enabled()) @import("physics_debug_rende
 pub const PhysicsSystem = struct {
     const Self = @This();
     const UpdateRateHz = 60.0;
-    const UpdateRateNs: i128 = @intFromFloat((1.0 / 60.0) * @as(f64, @floatFromInt(std.time.ns_per_s)));
+    const UpdateRateNs: u64 = std.time.ns_per_s / @as(u64, @intFromFloat(60.0));
 
     _allocator: std.mem.Allocator,
     _interfaces: struct {
@@ -28,7 +28,8 @@ pub const PhysicsSystem = struct {
     _debug_renderer: if (debug_renderer_enabled()) *DebugRenderer else void,
     asset_manager: *as.AssetManager,
     zphy: *zphy.PhysicsSystem, 
-    next_update_time: i128 = 0,
+    last_update_time: std.time.Instant,
+    last_update_time_offset: u64 = 0,
 
     pub fn init(alloc: std.mem.Allocator, asset_manager: *as.AssetManager, gfx: *_gfx.GfxState) !Self {
         try zphy.init(alloc, .{});
@@ -79,7 +80,7 @@ pub const PhysicsSystem = struct {
             ._debug_renderer = if (debug_renderer_enabled()) debug_renderer.? else undefined,
             .asset_manager = asset_manager,
             .zphy = physics_system,
-            .next_update_time = std.time.nanoTimestamp() + UpdateRateNs,
+            .last_update_time = std.time.Instant.now() catch unreachable,
         };
     }
 
@@ -97,8 +98,23 @@ pub const PhysicsSystem = struct {
     }
 
     pub fn update(self: *Self, comptime EntityList: type, entity_list: *EntityList, time: *tm.TimeState) void {
+        // find out how many times we need to update to hit UpdateRateHz
+        const ns_since_with_offset = time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
+        const times_to_update = ns_since_with_offset / UpdateRateNs;
+
+        // if we haven't hit UpdateRateHz yet, return
+        if (times_to_update == 0) {
+            return;
+        }
+
+        // update last_update_time and last_update_time_offset
+        // last_update_time_offset accounts for the portion of time between the 
+        // last sub-frame physics update and the actual frame time 
+        self.last_update_time = time.frame_start_time;
+        self.last_update_time_offset = ns_since_with_offset - (times_to_update * UpdateRateNs);
+
         // Update at UpdateRateHz, this may happen zero or more than one times before returning
-        while (time.frame_start_time_ns > self.next_update_time) {
+        for (0..@intCast(times_to_update)) |_| {
             // Run physics update
             self.zphy.update(1.0 / UpdateRateHz, .{}) 
                 catch std.log.err("Unable to update physics", .{});
@@ -155,8 +171,6 @@ pub const PhysicsSystem = struct {
                     }
                 }
             }
-
-            self.next_update_time += UpdateRateNs;
         }
     }
 
