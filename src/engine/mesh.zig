@@ -81,6 +81,7 @@ pub const MeshPrimitive = struct {
     nor_offset: usize,
     tex_coord_offset: usize,
     tangents_offset: usize,
+    bitangents_offset: usize,
     topology: PrimitiveTopology,
     material_template: ?usize,
     positions: [][3]f32,
@@ -150,6 +151,7 @@ pub const Buffers = struct {
     offsets: struct {
         positions: usize,
         normals: usize,
+        bitangents: usize,
         texcoords: usize,
         tangents: usize,
         bone_ids: usize,
@@ -158,6 +160,7 @@ pub const Buffers = struct {
     strides: struct {
         positions: usize,
         normals: usize,
+        bitangents: usize,
         texcoords: usize,
         tangents: usize,
         bone_ids: usize,
@@ -191,7 +194,8 @@ pub const Buffers = struct {
         mesh_positions: []const ([3]f32),
         mesh_normals: ?[]const ([3]f32),
         mesh_tex_coords: ?[]const ([2]f32),
-        mesh_tangents: ?[]const ([4]f32),
+        mesh_tangents: ?[]const ([3]f32),
+        mesh_bitangents: ?[]const ([3]f32),
         mesh_bone_ids: ?[]const ([4]i32),
         mesh_weights: ?[]const ([4]f32),
         gfx: *gf.GfxState,
@@ -211,6 +215,9 @@ pub const Buffers = struct {
         const tangents_offset = vertices_buffer_length;
         vertices_buffer_length += mesh_positions.len * @sizeOf([4]f32);
 
+        const bitangents_offset = vertices_buffer_length;
+        vertices_buffer_length += mesh_positions.len * @sizeOf([4]f32);
+
         const bone_ids_offset = vertices_buffer_length;
         vertices_buffer_length += mesh_positions.len * @sizeOf([4]i32);
 
@@ -228,7 +235,8 @@ pub const Buffers = struct {
         // copy vertex attributes
         copy_data_to_buffer([3]f32, vertices_data, normals_offset, num_positions, mesh_normals, [3]f32{0.0, 0.0, 0.0});
         copy_data_to_buffer([2]f32, vertices_data, tex_coords_offset, num_positions, mesh_tex_coords, [2]f32{0.0, 0.0});
-        copy_data_to_buffer([4]f32, vertices_data, tangents_offset, num_positions, mesh_tangents, [4]f32{0.0, 0.0, 0.0, 0.0});
+        copy_data_to_buffer([3]f32, vertices_data, tangents_offset, num_positions, mesh_tangents, [3]f32{0.0, 0.0, 0.0});
+        copy_data_to_buffer([3]f32, vertices_data, bitangents_offset, num_positions, mesh_bitangents, [3]f32{0.0, 0.0, 0.0});
         copy_data_to_buffer([4]i32, vertices_data, bone_ids_offset, num_positions, mesh_bone_ids, [4]i32{0, 0, 0, 0});
         copy_data_to_buffer([4]f32, vertices_data, bone_weights_offset, num_positions, mesh_weights, [4]f32{0.0, 0.0, 0.0, 0.0});
 
@@ -256,6 +264,7 @@ pub const Buffers = struct {
             .offsets = .{
                 .positions = 0,
                 .normals = normals_offset,
+                .bitangents = bitangents_offset,
                 .texcoords = tex_coords_offset,
                 .tangents = tangents_offset,
                 .bone_ids = bone_ids_offset,
@@ -264,8 +273,9 @@ pub const Buffers = struct {
             .strides = .{
                 .positions = @sizeOf([3]f32),
                 .normals = @sizeOf([3]f32),
+                .bitangents = @sizeOf([3]f32),
                 .texcoords = @sizeOf([2]f32),
-                .tangents = @sizeOf([4]f32),
+                .tangents = @sizeOf([3]f32),
                 .bone_ids = @sizeOf([4]i32),
                 .bone_weights = @sizeOf([4]f32),
             },
@@ -483,7 +493,8 @@ pub const Model = struct {
         var mesh_positions = std.ArrayList([3]f32).init(local_arena.allocator());
         var mesh_normals = std.ArrayList([3]f32).init(local_arena.allocator());
         var mesh_tex_coords = std.ArrayList([2]f32).init(local_arena.allocator());
-        var mesh_tangents = std.ArrayList([4]f32).init(local_arena.allocator());
+        var mesh_tangents = std.ArrayList([3]f32).init(local_arena.allocator());
+        var mesh_bitangents = std.ArrayList([3]f32).init(local_arena.allocator());
 
         // Create an array ready to store upcoming mesh primitives
         const mesh_primatives = try model_arena.alloc(MeshPrimitive, scene.meshes().len);
@@ -515,6 +526,7 @@ pub const Model = struct {
                     .nor_offset = mesh_normals.items.len,
                     .tex_coord_offset = mesh_tex_coords.items.len,
                     .tangents_offset = mesh_tangents.items.len,
+                    .bitangents_offset = mesh_bitangents.items.len,
                     .material_template = @intCast(mesh.material_index()),
                     .topology = .Triangles, // @TODO
                 };
@@ -546,16 +558,13 @@ pub const Model = struct {
 
                     try mesh_tex_coords.appendSlice(texcoords_v2);
                 }
-                // copy tangents, converting to vec4
+                // copy tangents
                 if (mesh.tangents()) |tangents| {
-                    const tangents_v4 = try alloc.alloc([4]f32, tangents.len);
-                    defer alloc.free(tangents_v4);
-
-                    for (tangents, 0..) |t, i| {
-                        tangents_v4[i] = [4]f32{t.x, t.y, t.z, 0.0};
-                    }
-
-                    try mesh_tangents.appendSlice(tangents_v4);
+                    try mesh_tangents.appendSlice(@as(*const [][3]f32, @ptrCast(&tangents)).*);
+                }
+                // copy bitangents
+                if (mesh.bitangents()) |bitangents| {
+                    try mesh_bitangents.appendSlice(@as(*const [][3]f32, @ptrCast(&bitangents)).*);
                 }
 
                 prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
@@ -644,6 +653,7 @@ pub const Model = struct {
             mesh_normals.items,
             mesh_tex_coords.items,
             mesh_tangents.items,
+            mesh_bitangents.items,
             mesh_bone_ids.items,
             mesh_weights.items,
             gfx
@@ -876,6 +886,35 @@ pub const Model = struct {
 
         shape.computeNormals();
 
+        const bitangents = try alloc.alloc([3]f32, shape.positions.len);
+        defer alloc.free(bitangents);
+        @memset(bitangents, [3]f32{0.0, 0.0, 0.0});
+
+        const tangents = try alloc.alloc([3]f32, shape.positions.len);
+        defer alloc.free(tangents);
+        @memset(tangents, [3]f32{0.0, 0.0, 0.0});
+
+        // Compute tangents and bitangents
+        // @TODO: make this more robust, currently only works for planes
+        if (shape.normals) |normals| {
+            var zmn = zm.f32x4s(0.0);
+            var zmt = zm.f32x4s(0.0);
+            var zmb = zm.f32x4s(0.0);
+            for (normals, 0..) |*n, i| {
+                zmn = zm.loadArr3(n.*);
+                if (zm.dot3(zmn, zm.f32x4(0.0, 0.0, 1.0, 0.0))[0] < 0.9999) {
+                    zmb = zm.cross3(zmn, zm.f32x4(0.0, 0.0, 1.0, 0.0));
+                } else {
+                    zmb = zm.cross3(zmn, zm.f32x4(0.0, 1.0, 0.0, 0.0));
+                }
+                zmt = zm.cross3(zmb, zmn);
+                zmb = zm.cross3(zmt, zmn);
+
+                zm.storeArr3(&tangents[i], zmb);
+                zm.storeArr3(&bitangents[i], zmt);
+            }
+        }
+
         const bone_ids = try alloc.alloc([4]i32, shape.positions.len);
         defer alloc.free(bone_ids);
         // set all bone ids to default to pointing at the last valid bone
@@ -892,7 +931,8 @@ pub const Model = struct {
             shape.positions,
             shape.normals,
             shape.texcoords,
-            null,
+            tangents,
+            bitangents,
             bone_ids,
             bone_weights,
             gfx
@@ -912,6 +952,7 @@ pub const Model = struct {
             .num_indices = shape.indices.len,
             .num_vertices = shape.positions.len,
             .tangents_offset = 0,
+            .bitangents_offset = 0,
             .tex_coord_offset = 0,
             .material_template = null,
         };
@@ -968,8 +1009,8 @@ pub const Model = struct {
         defer shape.deinit();
 
         // rotate to point upwards
+        shape.translate(-0.5, -0.5, 0.0);
         shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
-        shape.translate(-0.5, 0.0, 0.5);
 
         return try init_from_shape(alloc, &shape, gfx);
     }
