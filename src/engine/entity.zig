@@ -42,19 +42,19 @@ pub fn EntitySuperStruct(comptime App: type) type {
                 .should_serialize = desc.should_serialize,
                 .serialize_id = desc.serialize_id,
                 .transform = desc.transform,
-                .model = if (desc.model) |m| try m.deserialize(&engine.asset_manager) else null,
+                .model = if (desc.model) |m| try as.ModelAssetId.deserialize(m, &engine.asset_manager) else null,
                 .physics = null,
                 .app = try App.EntityData.init(desc.app, engine),
             };
         }
 
-        pub fn descriptor(self: *const EntitySuperStruct(App), engine: *en.Engine(App)) !EntityDescriptor(App) {
+        pub fn descriptor(self: *const EntitySuperStruct(App), alloc: std.mem.Allocator, engine: *en.Engine(App)) !EntityDescriptor(App) {
             return EntityDescriptor(App) {
                 .should_serialize = self.should_serialize,
                 .serialize_id = self.serialize_id,
                 .name = self.name,
                 .transform = self.transform,
-                .model = if (self.model) |m| try m.serialize(&engine.asset_manager) else null,
+                .model = if (self.model) |m| try m.serialize(alloc, &engine.asset_manager) else null,
                 .physics = if (self.physics) |phys| phys.descriptor() else null,
                 .app = self.app.descriptor(),
             };
@@ -83,7 +83,7 @@ pub fn EntityDescriptor(comptime App: type) type {
 
         name: ?[]const u8 = null,
         transform: tf.Transform = tf.Transform.new(),
-        model: ?as.ModelAssetId.Serialized = null,
+        model: ?[]const u8 = null,
         physics: ?PhysicsOptionsDescriptor = null,
         app: App.EntityData.Descriptor = App.EntityData.Descriptor {},
     };

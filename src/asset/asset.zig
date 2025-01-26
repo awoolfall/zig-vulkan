@@ -36,11 +36,14 @@ pub const AssetManager = struct {
         };
     }
 
-    pub fn load_asset_pack(self: *Self, alloc: std.mem.Allocator, asset_pack: *const AssetPack, gfx: *gf.GfxState) !AssetPackId {
+    pub fn load_asset_pack(self: *Self, asset_pack: *const AssetPack, gfx: *gf.GfxState) !AssetPackId {
         const asset_pack_id = try self.loaded_asset_packs.insert(LoadedAssetPack{
+            .allocator = self.allocator,
+            .asset_names = std.AutoHashMap(u64, []const u8).init(self.allocator),
+            .unique_name = try self.allocator.dupe(u8, asset_pack.unique_name),
             .unique_name_hash = asset_pack.unique_name_hash,
-            .models = std.AutoHashMap(u64, ?ms.Model).init(alloc),
-            .animations = std.AutoHashMap(u64, LoadedAnimation).init(alloc),
+            .models = std.AutoHashMap(u64, ?ms.Model).init(self.allocator),
+            .animations = std.AutoHashMap(u64, LoadedAnimation).init(self.allocator),
         });
         const loaded_asset_pack = self.loaded_asset_packs.get(asset_pack_id) orelse return error.AssetPackNotLoaded;
 
@@ -48,33 +51,39 @@ pub const AssetManager = struct {
         for (asset_pack.model_assets.items) |path| {
             const name_hash = std.hash_map.hashString(path.unique_name);
 
+            try loaded_asset_pack.asset_names.put(name_hash, try self.allocator.dupe(u8, path.unique_name));
+            errdefer {
+                self.allocator.free(loaded_asset_pack.asset_names.get(name_hash).?);
+                _ = loaded_asset_pack.asset_names.remove(name_hash);
+            }
+
             // @TODO move actual loading of models to another thread
             switch (path.asset_path) {
                 .Path => |p| {
-                    const asset_path = try std.fs.path.join(alloc, &[_][]const u8{self.resources_directory, p});
-                    defer alloc.free(asset_path);
+                    const asset_path = try std.fs.path.join(self.allocator, &[_][]const u8{self.resources_directory, p});
+                    defer self.allocator.free(asset_path);
 
                     try loaded_asset_pack.models.put(
                         name_hash, 
-                        try ms.Model.init_from_file_assimp(alloc, pt.Path{ .Absolute = asset_path }, gfx)
+                        try ms.Model.init_from_file_assimp(self.allocator, pt.Path{ .Absolute = asset_path }, gfx)
                     );
                 },
                 .Plane => |d| {
                     try loaded_asset_pack.models.put(
                         name_hash, 
-                        try ms.Model.plane(alloc, d.slices, d.stacks, gfx)
+                        try ms.Model.plane(self.allocator, d.slices, d.stacks, gfx)
                     );
                 },
                 .PlaneOnSphere => |d| {
                     try loaded_asset_pack.models.put(
                         name_hash, 
-                        try ms.Model.plane_on_sphere(alloc, d.slices, d.stacks, d.plane_extent_radians, gfx)
+                        try ms.Model.plane_on_sphere(self.allocator, d.slices, d.stacks, d.plane_extent_radians, gfx)
                     );
                 },
                 .HeightMap => |h| {
                     try loaded_asset_pack.models.put(
                         name_hash, 
-                        try ms.Model.heightmap_plane_on_sphere(alloc, &h.height_map, .{
+                        try ms.Model.heightmap_plane_on_sphere(self.allocator, &h.height_map, .{
                             .slices = h.slices,
                             .stacks = h.stacks,
                             .plane_extent_radians = h.plane_extent_radians,
@@ -85,13 +94,13 @@ pub const AssetManager = struct {
                 .Cone => |d| {
                     try loaded_asset_pack.models.put(
                         name_hash, 
-                        try ms.Model.cone(alloc, d.slices, gfx)
+                        try ms.Model.cone(self.allocator, d.slices, gfx)
                     );
                 },
                 .Sphere => |s| {
                     try loaded_asset_pack.models.put(
                         name_hash, 
-                        try ms.Model.sphere(alloc, s.slices, s.stacks, gfx)
+                        try ms.Model.sphere(self.allocator, s.slices, s.stacks, gfx)
                     );
                 },
             }
@@ -307,11 +316,20 @@ pub const LoadedAnimation = struct {
 };
 
 pub const LoadedAssetPack = struct {
+    allocator: std.mem.Allocator,
     models: std.AutoHashMap(u64, ?ms.Model),
     animations: std.AutoHashMap(u64, LoadedAnimation),
+    asset_names: std.AutoHashMap(u64, []const u8),
+    unique_name: []const u8,
     unique_name_hash: u64,
 
     pub fn deinit(self: *LoadedAssetPack) void {
+        var name_iter = self.asset_names.valueIterator();
+        while (name_iter.next()) |name| {
+            self.allocator.free(name.*);
+        }
+        self.asset_names.deinit();
+
         var m_iter = self.models.valueIterator();
         while (m_iter.next()) |model| {
             if (model.*) |*m| {
@@ -321,6 +339,12 @@ pub const LoadedAssetPack = struct {
         self.models.deinit();
 
         self.animations.deinit();
+
+        self.allocator.free(self.unique_name);
+    }
+
+    pub fn get_asset_name(self: *const LoadedAssetPack, asset_id: u64) ?[]const u8 {
+        return self.asset_names.get(asset_id);
     }
 };
 
@@ -332,22 +356,23 @@ pub const AssetId = struct {
         return self.asset_pack_id.eql(other.asset_pack_id) and self.id == other.id;
     }
 
-    pub const Serialized = struct {
-        pack: u64, // asset pack unique name hash
-        asset: u64, // asset unique name hash
+    const SerializeSplitChar = '|';
+    pub fn serialize(self: *const AssetId, alloc: std.mem.Allocator, asset_manager: *const AssetManager) ![]const u8 {
+        const pack = asset_manager.loaded_asset_packs.get(self.asset_pack_id) orelse return error.AssetPackNotLoaded;
+        const pack_name = pack.unique_name;
+        const asset_name = pack.get_asset_name(self.id) orelse return error.AssetNotFound;
 
-        pub fn deserialize(self: *const Serialized, asset_manager: *const AssetManager) !AssetId {
-            return AssetId {
-                .asset_pack_id = asset_manager.find_asset_pack_by_unique_name_id(self.pack) orelse return error.AssetPackNotLoaded,
-                .id = self.asset,
-            };
-        }
-    };
+        return try std.mem.join(alloc, &[_]u8{ SerializeSplitChar }, &[_][]const u8{ pack_name, asset_name });
+    }
 
-    pub fn serialize(self: *const AssetId, asset_manager: *const AssetManager) !Serialized {
-        return .{
-            .pack = (asset_manager.loaded_asset_packs.get(self.asset_pack_id) orelse return error.AssetPackNotLoaded).unique_name_hash,
-            .asset = self.id,
+    pub fn deserialize(serialized_string: []const u8, asset_manager: *const AssetManager) !AssetId {
+        var split_iter = std.mem.splitScalar(u8, serialized_string, SerializeSplitChar);
+        const pack_name = split_iter.next() orelse return error.MalformedAssetString;
+        const asset_name = split_iter.next() orelse return error.MalformedAssetString;
+
+        return AssetId {
+            .asset_pack_id = asset_manager.find_asset_pack_by_unique_name_id(std.hash_map.hashString(pack_name)) orelse return error.AssetPackNotLoaded,
+            .id = std.hash_map.hashString(asset_name),
         };
     }
 };
@@ -355,19 +380,13 @@ pub const AssetId = struct {
 pub const ModelAssetId = struct {
     asset_id: AssetId,
 
-    pub const Serialized = struct {
-        asset_id: AssetId.Serialized,
+    pub fn serialize(self: *const ModelAssetId, alloc: std.mem.Allocator, asset_manager: *const AssetManager) ![]const u8 {
+        return self.asset_id.serialize(alloc, asset_manager);
+    }
 
-        pub fn deserialize(self: *const Serialized, asset_manager: *const AssetManager) !ModelAssetId {
-            return ModelAssetId {
-                .asset_id = try self.asset_id.deserialize(asset_manager),
-            };
-        }
-    };
-
-    pub fn serialize(self: *const ModelAssetId, asset_manager: *const AssetManager) !Serialized {
-        return .{
-            .asset_id = self.asset_id.serialize(asset_manager) catch return error.AssetPackNotLoaded,
+    pub fn deserialize(serialized_string: []const u8, asset_manager: *const AssetManager) !ModelAssetId {
+        return ModelAssetId {
+            .asset_id = try AssetId.deserialize(serialized_string, asset_manager),
         };
     }
 };
@@ -375,19 +394,13 @@ pub const ModelAssetId = struct {
 pub const AnimationAssetId = struct {
     asset_id: AssetId,
 
-    pub const Serialized = struct {
-        asset_id: AssetId.Serialized,
+    pub fn serialize(self: *const AnimationAssetId, alloc: std.mem.Allocator, asset_manager: *const AssetManager) ![]const u8 {
+        return self.asset_id.serialize(alloc, asset_manager);
+    }
 
-        pub fn deserialize(self: *const Serialized, asset_manager: *const AssetManager) !AnimationAssetId {
-            return AnimationAssetId {
-                .asset_id = try self.asset_id.deserialize(asset_manager),
-            };
-        }
-    };
-
-    pub fn serialize(self: *const AnimationAssetId, asset_manager: *const AssetManager) !Serialized {
-        return .{
-            .asset_id = self.asset_id.serialize(asset_manager) catch return error.AssetPackNotLoaded,
+    pub fn deserialize(serialized_string: []const u8, asset_manager: *const AssetManager) !AnimationAssetId {
+        return AnimationAssetId {
+            .asset_id = try AssetId.deserialize(serialized_string, asset_manager),
         };
     }
 };
