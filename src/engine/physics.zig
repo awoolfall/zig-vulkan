@@ -125,15 +125,15 @@ pub const PhysicsSystem = struct {
                 if (it.item_data) |*e| {
                     if (e.physics) |phys| {
                         switch (phys) {
-                            .Body => |body_id| {
-                                const pos = body_interface.getPosition(body_id);
+                            .Body => |body| {
+                                const pos = body_interface.getPosition(body.id);
                                 e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-                                e.transform.rotation = body_interface.getRotation(body_id);
+                                e.transform.rotation = body_interface.getRotation(body.id);
                             },
                             .Character => |character| {
-                                character.postSimulation(0.1, true);
+                                character.character.postSimulation(0.1, true);
 
-                                const pos = character.getPosition();
+                                const pos = character.character.getPosition();
                                 e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
                                 //e.transform.rotation = character.getRotation();
                             },
@@ -145,7 +145,6 @@ pub const PhysicsSystem = struct {
                                         self.zphy.getGravity(),
                                         &ext,
                                         .{
-                                            .body_filter = character.body_filter,
                                         }
                                     );
                                 } else {
@@ -153,7 +152,6 @@ pub const PhysicsSystem = struct {
                                         1.0 / UpdateRateHz,
                                         self.zphy.getGravity(),
                                         .{
-                                            .body_filter = character.body_filter,
                                         }
                                     );
                                 }
@@ -525,7 +523,7 @@ pub const CharacterBaseSettings = struct {
     up: [4]f32 align(16) = [4]f32{ 0.0, 1.0, 0.0, 0.0 },
     supporting_volume: [4]f32 align(16) = [4]f32{ 0.0, 1.0, 0.0, -1.0e10 },
     max_slope_angle: f32 = std.math.degreesToRadians(50.0),
-    shape: *zphy.Shape,
+    shape: ShapeSettings,
 };
 
 pub const CharacterSettings = struct {
@@ -536,16 +534,14 @@ pub const CharacterSettings = struct {
     friction: f32 = 0.2,
     gravity_factor: f32 = 1.0,
 
-    pub fn create_zphy(self: CharacterSettings) !*zphy.CharacterSettings {
+    pub fn create_zphy(self: CharacterSettings, phys: *PhysicsSystem) !*zphy.CharacterSettings {
         var ret = try zphy.CharacterSettings.create();
         errdefer ret.release();
-
-        self.base.shape.addRef();
 
         ret.base.up = self.base.up;
         ret.base.supporting_volume = self.base.supporting_volume;
         ret.base.max_slope_angle = self.base.max_slope_angle;
-        ret.base.shape = self.base.shape;
+        ret.base.shape = try phys.create_shape(self.base.shape);
 
         ret.layer = self.layer;
         ret.mass = self.mass;
@@ -556,7 +552,7 @@ pub const CharacterSettings = struct {
     }
 
     pub fn create_character(self: CharacterSettings, transform: tf.Transform, phys: *PhysicsSystem) !*zphy.Character {
-        const settings = try self.create_zphy();
+        const settings = try self.create_zphy(phys);
         defer settings.release();
 
         return try zphy.Character.create(
@@ -586,16 +582,14 @@ pub const CharacterVirtualSettings = struct {
     hit_reduction_cos_max_angle: f32 = 0.999,
     penetration_recovery_speed: f32 = 1.0,
 
-    pub fn create_zphy(self: CharacterVirtualSettings) !*zphy.CharacterVirtualSettings {
+    pub fn create_zphy(self: CharacterVirtualSettings, phys: *PhysicsSystem) !*zphy.CharacterVirtualSettings {
         var ret = try zphy.CharacterVirtualSettings.create();
         errdefer ret.release();
-
-        self.base.shape.addRef();
 
         ret.base.up = self.base.up;
         ret.base.supporting_volume = self.base.supporting_volume;
         ret.base.max_slope_angle = self.base.max_slope_angle;
-        ret.base.shape = self.base.shape;
+        ret.base.shape = try phys.create_shape(self.base.shape);
 
         ret.mass = self.mass;
         ret.max_strength = self.max_strength;
@@ -615,7 +609,7 @@ pub const CharacterVirtualSettings = struct {
     }
 
     pub fn create_character_virtual(self: CharacterVirtualSettings, transform: tf.Transform, phys: *PhysicsSystem) !*zphy.CharacterVirtual {
-        const settings = try self.create_zphy();
+        const settings = try self.create_zphy(phys);
         defer settings.release();
 
         return try zphy.CharacterVirtual.create(

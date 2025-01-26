@@ -125,6 +125,10 @@ pub fn GenerationalListIterator(comptime T: type) type {
             };
         }
 
+        pub inline fn reset(self: *Self) void {
+            self.* = Self.init(self.list);
+        }
+
         pub fn next(self: *Self) ?*T {
             while (self.index < self.list.data.items.len) {
                 defer self.index += 1;

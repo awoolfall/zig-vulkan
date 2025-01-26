@@ -38,6 +38,7 @@ pub const AssetManager = struct {
 
     pub fn load_asset_pack(self: *Self, alloc: std.mem.Allocator, asset_pack: *const AssetPack, gfx: *gf.GfxState) !AssetPackId {
         const asset_pack_id = try self.loaded_asset_packs.insert(LoadedAssetPack{
+            .unique_name_hash = asset_pack.unique_name_hash,
             .models = std.AutoHashMap(u64, ?ms.Model).init(alloc),
             .animations = std.AutoHashMap(u64, LoadedAnimation).init(alloc),
         });
@@ -119,6 +120,20 @@ pub const AssetManager = struct {
         try self.loaded_asset_packs.remove(asset_pack_id);
     }
 
+    pub fn find_asset_pack_by_unique_name_id(self: *const Self, unique_name_hash: u64) ?AssetPackId {
+        for (self.loaded_asset_packs.data.items, 0..) |*it, idx| {
+            if (it.item_data) |*pack| {
+                if (pack.unique_name_hash == unique_name_hash) {
+                    return AssetPackId {
+                        .index = idx,
+                        .generation = it.generation,
+                    };
+                }
+            }
+        }
+        return null;
+    }
+
     pub fn find_model_id(self: *const Self, model_name: []const u8) ?ModelAssetId {
         const model_name_hash = std.hash_map.hashString(model_name);
         for (self.loaded_asset_packs.data.items, 0..) |*it, idx| {
@@ -198,18 +213,23 @@ pub const AssetPack = struct {
     arena: std.heap.ArenaAllocator,
     model_assets: std.ArrayList(AssetPath(ModelAsset)),
     animations: std.ArrayList(AssetPath(AnimationAsset)),
+    unique_name: []u8,
+    unique_name_hash: u64,
 
     pub fn deinit(self: *AssetPack) void {
         self.model_assets.deinit();
         self.animations.deinit();
+        self.arena.child_allocator.free(self.unique_name);
         self.arena.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator) AssetPack {
+    pub fn init(alloc: std.mem.Allocator, unique_name: []const u8) !AssetPack {
         return AssetPack {
             .model_assets = std.ArrayList(AssetPath(ModelAsset)).init(alloc),
             .animations = std.ArrayList(AssetPath(AnimationAsset)).init(alloc),
             .arena = std.heap.ArenaAllocator.init(alloc),
+            .unique_name = try alloc.dupe(u8, unique_name),
+            .unique_name_hash = std.hash_map.hashString(unique_name),
         };
     }
 
@@ -289,6 +309,7 @@ pub const LoadedAnimation = struct {
 pub const LoadedAssetPack = struct {
     models: std.AutoHashMap(u64, ?ms.Model),
     animations: std.AutoHashMap(u64, LoadedAnimation),
+    unique_name_hash: u64,
 
     pub fn deinit(self: *LoadedAssetPack) void {
         var m_iter = self.models.valueIterator();
@@ -310,12 +331,63 @@ pub const AssetId = struct {
     pub fn eql(self: AssetId, other: AssetId) bool {
         return self.asset_pack_id.eql(other.asset_pack_id) and self.id == other.id;
     }
+
+    pub const Serialized = struct {
+        pack: u64, // asset pack unique name hash
+        asset: u64, // asset unique name hash
+
+        pub fn deserialize(self: *const Serialized, asset_manager: *const AssetManager) !AssetId {
+            return AssetId {
+                .asset_pack_id = asset_manager.find_asset_pack_by_unique_name_id(self.pack) orelse return error.AssetPackNotLoaded,
+                .id = self.asset,
+            };
+        }
+    };
+
+    pub fn serialize(self: *const AssetId, asset_manager: *const AssetManager) !Serialized {
+        return .{
+            .pack = (asset_manager.loaded_asset_packs.get(self.asset_pack_id) orelse return error.AssetPackNotLoaded).unique_name_hash,
+            .asset = self.id,
+        };
+    }
 };
 
 pub const ModelAssetId = struct {
     asset_id: AssetId,
+
+    pub const Serialized = struct {
+        asset_id: AssetId.Serialized,
+
+        pub fn deserialize(self: *const Serialized, asset_manager: *const AssetManager) !ModelAssetId {
+            return ModelAssetId {
+                .asset_id = try self.asset_id.deserialize(asset_manager),
+            };
+        }
+    };
+
+    pub fn serialize(self: *const ModelAssetId, asset_manager: *const AssetManager) !Serialized {
+        return .{
+            .asset_id = self.asset_id.serialize(asset_manager) catch return error.AssetPackNotLoaded,
+        };
+    }
 };
 
 pub const AnimationAssetId = struct {
     asset_id: AssetId,
+
+    pub const Serialized = struct {
+        asset_id: AssetId.Serialized,
+
+        pub fn deserialize(self: *const Serialized, asset_manager: *const AssetManager) !AnimationAssetId {
+            return AnimationAssetId {
+                .asset_id = try self.asset_id.deserialize(asset_manager),
+            };
+        }
+    };
+
+    pub fn serialize(self: *const AnimationAssetId, asset_manager: *const AssetManager) !Serialized {
+        return .{
+            .asset_id = self.asset_id.serialize(asset_manager) catch return error.AssetPackNotLoaded,
+        };
+    }
 };

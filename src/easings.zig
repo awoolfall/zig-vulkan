@@ -38,7 +38,6 @@ pub const Easing = union(enum) {
     OutQuart: void,
     OutElastic: void,
     OutExpo: void,
-    Custom: *const fn(f32) f32,
 
     pub fn func(self: Easing) *const fn(f32) f32 {
         switch(self) {
@@ -47,7 +46,6 @@ pub const Easing = union(enum) {
             .OutQuart => return ease_out_quart,
             .OutElastic => return ease_out_elastic,
             .OutExpo => return ease_out_expo,
-            .Custom => |f| return f,
         }
     }
 

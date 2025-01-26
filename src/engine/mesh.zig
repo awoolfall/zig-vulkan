@@ -299,6 +299,8 @@ pub const Model = struct {
     bone_mapping: std.StringHashMap(i32),
     bone_info: std.ArrayList(BoneInfo),
 
+    bounding_box: BoundingBox,
+
     pub fn deinit(self: *Self) void {
         for (self.materials) |*mat| {
             mat.deinit();
@@ -742,6 +744,23 @@ pub const Model = struct {
             }
         }
 
+        var bounding_box = BoundingBox{
+            .min = zm.f32x4s(0.0),
+            .max = zm.f32x4s(0.0),
+        };
+        for (scene.meshes(), 0..) |mesh, idx| {
+            const bb = mesh.bounding_box();
+            const zmbbmin = zm.f32x4(bb.mMin.x, bb.mMin.y, bb.mMin.z, 0.0);
+            const zmbbmax = zm.f32x4(bb.mMax.x, bb.mMax.y, bb.mMax.z, 0.0);
+            if (idx == 0) {
+                bounding_box.min = zmbbmin;
+                bounding_box.max = zmbbmax;
+            } else {
+                bounding_box.min = zm.min(bounding_box.min, zmbbmin);
+                bounding_box.max = zm.max(bounding_box.max, zmbbmax);
+            }
+        }
+
         return Self {
             .buffers = buffers,
             .mesh_list = mesh_primatives,
@@ -755,6 +774,8 @@ pub const Model = struct {
             .global_inverse_transform = zm.inverse(scene.root_node().?.transformation()),
             .bone_mapping = bone_mapping,
             .bone_info = bone_info,
+
+            .bounding_box = bounding_box,
         };
     }
 
@@ -973,6 +994,16 @@ pub const Model = struct {
 
         rn[0] = 0;
 
+        var bounding_box = BoundingBox{
+            .min = zm.loadArr3(shape.positions[0]),
+            .max = zm.loadArr3(shape.positions[0]),
+        };
+        for (shape.positions) |pos| {
+            const zmpos = zm.loadArr3(pos);
+            bounding_box.min = zm.min(bounding_box.min, zmpos);
+            bounding_box.max = zm.max(bounding_box.max, zmpos);
+        }
+
         return Model {
             .buffers = buffers,
             .mesh_list = mp,
@@ -986,6 +1017,8 @@ pub const Model = struct {
             .global_inverse_transform = zm.identity(),
             .bone_mapping = std.StringHashMap(i32).init(model_arena),
             .bone_info = std.ArrayList(BoneInfo).init(model_arena),
+
+            .bounding_box = bounding_box,
         };
     }
 

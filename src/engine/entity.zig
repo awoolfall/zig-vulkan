@@ -9,6 +9,9 @@ const en = @import("../engine.zig");
 
 pub fn EntitySuperStruct(comptime App: type) type {
     return struct {
+        should_serialize: bool = false,
+        serialize_id: ?u32 = null,
+
         name: ?[]const u8,
         transform: tf.Transform,
         model: ?as.ModelAssetId,
@@ -36,17 +39,31 @@ pub fn EntitySuperStruct(comptime App: type) type {
 
             return EntitySuperStruct(App) {
                 .name = name,
+                .should_serialize = desc.should_serialize,
+                .serialize_id = desc.serialize_id,
                 .transform = desc.transform,
-                .model = desc.model,
+                .model = if (desc.model) |m| try m.deserialize(&engine.asset_manager) else null,
                 .physics = null,
-                .app = desc.app,
+                .app = try App.EntityData.init(desc.app, engine),
+            };
+        }
+
+        pub fn descriptor(self: *const EntitySuperStruct(App), engine: *en.Engine(App)) !EntityDescriptor(App) {
+            return EntityDescriptor(App) {
+                .should_serialize = self.should_serialize,
+                .serialize_id = self.serialize_id,
+                .name = self.name,
+                .transform = self.transform,
+                .model = if (self.model) |m| try m.serialize(&engine.asset_manager) else null,
+                .physics = if (self.physics) |phys| phys.descriptor() else null,
+                .app = self.app.descriptor(),
             };
         }
 
         /// Applies and initializes the given physics options to the entity
         pub fn set_physics(self: *EntitySuperStruct(App), entity_id: gen.GenerationalIndex, desc: PhysicsOptionsDescriptor, physics_system: *physics.PhysicsSystem) !void {
             self.remove_physics(physics_system);
-            self.physics = try PhysicsOptions.init(desc, entity_id, physics_system);
+            self.physics = try PhysicsOptions.init(desc, self.transform, entity_id, physics_system);
         }
 
         /// Removes the applied physics options from the entity
@@ -61,11 +78,14 @@ pub fn EntitySuperStruct(comptime App: type) type {
 
 pub fn EntityDescriptor(comptime App: type) type {
     return struct {
+        should_serialize: bool = false,
+        serialize_id: ?u32 = null,
+
         name: ?[]const u8 = null,
         transform: tf.Transform = tf.Transform.new(),
-        model: ?as.ModelAssetId = null,
+        model: ?as.ModelAssetId.Serialized = null,
         physics: ?PhysicsOptionsDescriptor = null,
-        app: App.EntityData = App.EntityData {},
+        app: App.EntityData.Descriptor = App.EntityData.Descriptor {},
     };
 }
 
@@ -123,23 +143,30 @@ pub fn EntityList(comptime App: type) type {
 }
 
 pub const PhysicsOptions = union(enum) {
-    Body: physics.zphy.BodyId,
-    Character: *physics.zphy.Character,
+    Body: struct {
+        descriptor: PhysicsOptionsDescriptor,
+        id: physics.zphy.BodyId,
+    },
+    Character: struct {
+        character: *physics.zphy.Character,
+        settings: physics.CharacterSettings,
+    },
     CharacterVirtual: struct {
         virtual: *physics.zphy.CharacterVirtual,
         character: ?*physics.zphy.Character,
+        settings: physics.CharacterVirtualSettings,
         extended_update_settings: ?physics.zphy.CharacterVirtual.ExtendedUpdateSettings = null,
-        body_filter: ?*const physics.zphy.BodyFilter = null,
+
     },
 
     pub fn deinit(self: *PhysicsOptions, phys: *physics.PhysicsSystem) void {
         switch (self.*) {
-            .Body => |body_id| {
-                phys.zphy.getBodyInterfaceMut().removeAndDestroyBody(body_id);
+            .Body => |body| {
+                phys.zphy.getBodyInterfaceMut().removeAndDestroyBody(body.id);
             },
             .Character => |character| {
-                character.removeFromPhysicsSystem(.{});
-                character.destroy();
+                character.character.removeFromPhysicsSystem(.{});
+                character.character.destroy();
             },
             .CharacterVirtual => |character| {
                 character.virtual.destroy();
@@ -151,25 +178,36 @@ pub const PhysicsOptions = union(enum) {
         }
     }
 
-    pub fn init(desc: PhysicsOptionsDescriptor, entity_id: gen.GenerationalIndex, phys: *physics.PhysicsSystem) !PhysicsOptions {
+    pub fn init(desc: PhysicsOptionsDescriptor, transform: en.Transform, entity_id: gen.GenerationalIndex, phys: *physics.PhysicsSystem) !PhysicsOptions {
         const physics_options = blk: { switch (desc) {
-            .Body => |body_id| {
+            .Body => |b| {
+                const shape = try phys.create_shape(b.settings);
+                defer shape.release();
+
+                const body = try phys.zphy.getBodyInterfaceMut().createAndAddBody(.{
+                    .shape = shape,
+                    .motion_type = if (b.is_static) .static else .dynamic, // TODO: fix this
+                }, .dont_activate);
+
                 break :blk PhysicsOptions {
-                    .Body = body_id,
+                    .Body = .{ .id = body, .descriptor = desc },
                 };
             },
             .Character => |settings| {
-                const zphy_character = try settings.settings.create_character(settings.transform, phys);
+                const zphy_character = try settings.settings.create_character(transform, phys);
                 errdefer zphy_character.destroy();
 
                 zphy_character.addToPhysicsSystem(.{});
 
                 break :blk PhysicsOptions {
-                    .Character = zphy_character,
+                    .Character = .{
+                        .character = zphy_character,
+                        .settings = settings.settings,
+                    },
                 };
             },
             .CharacterVirtual => |settings| {
-                const zphy_virtual_character = try settings.settings.create_character_virtual(settings.transform, phys);
+                const zphy_virtual_character = try settings.settings.create_character_virtual(transform, phys);
                 errdefer zphy_virtual_character.destroy();
 
                 var zphy_character: ?*zphy.Character = null;
@@ -182,7 +220,7 @@ pub const PhysicsOptions = union(enum) {
                         .gravity_factor = 0.0,
                     };
 
-                    zphy_character = try character_settings.create_character(settings.transform, phys);
+                    zphy_character = try character_settings.create_character(transform, phys);
                     zphy_character.?.addToPhysicsSystem(.{});
                 }
 
@@ -190,8 +228,8 @@ pub const PhysicsOptions = union(enum) {
                     .CharacterVirtual = .{
                         .virtual = zphy_virtual_character,
                         .character = zphy_character,
+                        .settings = settings.settings,
                         .extended_update_settings = settings.extended_update_settings,
-                        .body_filter = settings.body_filter,
                     },
                 };
             },
@@ -201,11 +239,35 @@ pub const PhysicsOptions = union(enum) {
         return physics_options;
     }
 
+    pub fn descriptor(self: *const PhysicsOptions) PhysicsOptionsDescriptor {
+        if (self.* == .CharacterVirtual) {
+            @panic("TDOD: body_filter must be made declarative");
+        }
+        return switch (self.*) {
+            .Body => |b| blk: {
+                // TODO: currently we cannot modify any body parameters after creation
+                break :blk b.descriptor;
+            },
+            .Character => |character| .{ 
+                .Character = .{
+                    .settings = character.settings,
+                },
+            },
+            .CharacterVirtual => |character| .{
+                .CharacterVirtual = .{
+                    .settings = character.settings,
+                    .create_character = (character.character != null),
+                    .extended_update_settings = character.extended_update_settings,
+                },
+            },
+        };
+    }
+
     /// Sets the full 64 bit user data for the physics body
     fn set_full_user_data(self: *const PhysicsOptions, data: u64, physics_system: *physics.PhysicsSystem) void {
         const body_id: ?physics.zphy.BodyId = switch (self.*) {
-            .Body => |body_id| body_id,
-            .Character => |character| character.getBodyId(),
+            .Body => |body| body.id,
+            .Character => |character| character.character.getBodyId(),
             .CharacterVirtual => |character| if (character.character) |c| c.getBodyId() else null,
         };
 
@@ -220,7 +282,7 @@ pub const PhysicsOptions = union(enum) {
     /// Sets the end user accessable 16 bit user data for the physics body
     pub fn set_user_data(self: *const PhysicsOptions, data: u16, physics_system: *physics.PhysicsSystem) void {
         const body_id: ?physics.zphy.BodyId = switch (self.*) {
-            .Body => |body_id| body_id,
+            .Body => |body| body.id,
             .Character => |character| character.getBodyId(),
             .CharacterVirtual => |character| if (character.character) |c| c.getBodyId() else null,
         };
@@ -236,17 +298,18 @@ pub const PhysicsOptions = union(enum) {
 };
 
 pub const PhysicsOptionsDescriptor = union(enum) {
-    Body: physics.zphy.BodyId,
+    Body: struct {
+        settings: physics.ShapeSettings,
+        is_static: bool = true,
+        is_sensor: bool = false,
+    },
     Character: struct {
         settings: physics.CharacterSettings,
-        transform: tf.Transform,
     },
     CharacterVirtual: struct {
         settings: physics.CharacterVirtualSettings,
-        transform: tf.Transform,
         create_character: bool,
         extended_update_settings: ?zphy.CharacterVirtual.ExtendedUpdateSettings = null,
-        body_filter: ?*const zphy.BodyFilter = null,
     },
 };
 
