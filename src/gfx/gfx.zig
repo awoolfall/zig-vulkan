@@ -281,6 +281,10 @@ pub const GfxState = struct {
         self.platform.cmd_set_pixel_shader(ps);
     }
 
+    pub fn cmd_set_hull_shader(self: *Self, hs: ?*const HullShader) void {
+        self.platform.cmd_set_hull_shader(hs);
+    }
+
     pub fn cmd_set_geometry_shader(self: *Self, gs: ?*const GeometryShader) void {
         self.platform.cmd_set_geometry_shader(gs);
     }
@@ -336,6 +340,10 @@ pub const GfxState = struct {
 
     pub fn cmd_set_topology(self: *Self, topology: Topology) void {
         self.platform.cmd_set_topology(topology);
+    }
+
+    pub fn cmd_set_topology_patch_list_count(self: *Self, patch_list_count: u32) void {
+        self.platform.cmd_set_topology_patch_list_count(patch_list_count);
     }
 
     pub fn cmd_set_unordered_access_views(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: anytype) void {
@@ -538,6 +546,65 @@ pub const PixelShader = struct {
             return err;
         };
         return PixelShader {
+            .platform = platform,
+        };
+    }
+};
+
+pub const HullShaderOptions = struct {
+    filepath: ?[]const u8 = null,
+    defines: []const ShaderDefineTuple = &.{},
+};
+
+pub const HullShader = struct {
+    platform: pl.GfxPlatform.HullShader,
+    
+    pub fn deinit(self: *const HullShader) void {
+        self.platform.deinit();
+    }
+    
+    pub fn init_file(
+        alloc: std.mem.Allocator,
+        hs_path: path.Path, 
+        hs_func: []const u8,
+        options: HullShaderOptions,
+        gfx: *GfxState,
+    ) !HullShader {
+        const res_path = try hs_path.resolve_path(alloc);
+        defer alloc.free(res_path);
+
+        var modified_options = options;
+        modified_options.filepath = res_path;
+
+        var file = try std.fs.cwd().openFile(res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
+        defer file.close();
+
+        const file_len = try file.getEndPos();
+
+        const buf: []u8 = try alloc.alloc(u8, @intCast(file_len));
+        defer alloc.free(buf);
+
+        if (try file.readAll(buf) != file_len) {
+            return error.FailedToReadShader;
+        }
+
+        return init_buffer(buf, hs_func, modified_options, gfx);
+    }
+
+    pub fn init_buffer(
+        hs_data: []const u8, 
+        hs_func: []const u8,
+        options: HullShaderOptions,
+        gfx: *GfxState,
+    ) !HullShader {
+        const platform = pl.GfxPlatform.HullShader.init_buffer(hs_data, hs_func, options, gfx) catch |err| {
+            std.log.err("Hull shader init failed: {s}\n\t- {s}", .{
+                @errorName(err),
+                options.filepath orelse "no filepath provided",
+            });
+            return err;
+        };
+        return HullShader {
             .platform = platform,
         };
     }

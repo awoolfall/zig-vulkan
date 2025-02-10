@@ -19,6 +19,7 @@ pub const GfxStateD3D11 = struct {
 
     pub const VertexShader = VertexShaderD3D11;
     pub const PixelShader = PixelShaderD3D11;
+    pub const HullShader = HullShaderD3D11;
     pub const GeometryShader = GeometryShaderD3D11;
     pub const ComputeShader = ComputeShaderD3D11;
     pub const Buffer = BufferD3D11;
@@ -318,6 +319,14 @@ pub const GfxStateD3D11 = struct {
         self.context.PSSetShader(@ptrCast(ps.platform.pso), null, 0);
     }
 
+    pub inline fn cmd_set_hull_shader(self: *Self, hs: ?*const gf.HullShader) void {
+        self.context.HSSetShader(
+            if (hs) |h| @ptrCast(h.platform.hso) else null, 
+            null, 
+            0
+        );
+    }
+
     pub inline fn cmd_set_geometry_shader(self: *Self, gs: ?*const gf.GeometryShader) void {
         self.context.GSSetShader(
             if (gs) |g| @ptrCast(g.platform.gso) else null, 
@@ -418,6 +427,14 @@ pub const GfxStateD3D11 = struct {
             .TriangleStrip => d3d11.PRIMITIVE_TOPOLOGY.TRIANGLESTRIP,
         };
         self.context.IASetPrimitiveTopology(d3d11_topology);
+    }
+
+    pub inline fn cmd_set_topology_patch_list_count(self: *Self, patch_list_count: u32) void {
+        std.debug.assert(patch_list_count > 0);
+        std.debug.assert(patch_list_count <= 32);
+        self.context.IASetPrimitiveTopology(@enumFromInt(
+                @intFromEnum(d3d11.PRIMITIVE_TOPOLOGY.CONTROL_POINT_PATCHLIST) + (patch_list_count - 1)
+        ));
     }
 
     pub inline fn cmd_set_unordered_access_views(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?*const UnorderedAccessView) void {
@@ -736,6 +753,65 @@ pub const PixelShaderD3D11 = struct {
 
         return Self {
             .pso = pso,
+        };
+    }
+};
+
+pub const HullShaderD3D11 = struct {
+    const Self = @This();
+    hso: *d3d11.IHullShader,
+    
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.hso.Release();
+    }
+    
+    pub inline fn init_buffer(
+        hs_data: []const u8, 
+        hs_func: []const u8, 
+        options: gf.HullShaderOptions,
+        gfx: *gf.GfxState,
+    ) !Self {
+        const func_c = try std.heap.page_allocator.dupeZ(u8, hs_func);
+        defer std.heap.page_allocator.free(func_c);
+
+        const source_file_path_c_alloc = if (options.filepath) |s| try std.heap.page_allocator.dupeZ(u8, s) else null;
+        defer if (source_file_path_c_alloc) |s| std.heap.page_allocator.free(s);
+        const source_file_path_c = if (source_file_path_c_alloc) |s| @as([*:0]u8, s) else null;
+
+        var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
+        defer defines.deinit();
+
+        var error_blob: ?*zwindows.d3d.IBlob = null;
+
+        var hs_blob: *zwindows.d3d.IBlob = undefined;
+        const compile_result = zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+                &hs_data[0], 
+                hs_data.len, 
+                source_file_path_c, 
+                &defines.shader_macros[0], 
+                zwindows.d3dcompiler.COMPILE_STANDARD_FILE_INCLUDE,
+                func_c,
+                "hs_5_0", 
+                0, 
+                0, 
+                @ptrCast(&hs_blob), 
+                @ptrCast(&error_blob)
+        ));
+
+        if (error_blob) |err_blob| {
+            const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
+            std.log.debug("Hull shader compilation messages: \n\n{s}", .{err_blob_string});
+        }
+
+        try compile_result;
+        defer _ = hs_blob.Release();
+
+        var hso: *d3d11.IHullShader = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateHullShader(hs_blob.GetBufferPointer(), hs_blob.GetBufferSize(), null, @ptrCast(&hso)));
+        errdefer _ = hso.Release();
+
+        return Self {
+            .hso = hso,
         };
     }
 };
