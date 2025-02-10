@@ -69,6 +69,25 @@ pub const Debug = struct {
         };
     }
 
+    pub fn draw_point(self: *Self, debug_point: DebugPoint) void {
+        const size = debug_point.size;
+        self.draw_line(DebugLine{
+            .p0 = debug_point.point - zm.f32x4(size, 0.0, 0.0, 0.0),
+            .p1 = debug_point.point + zm.f32x4(size, 0.0, 0.0, 0.0),
+            .colour = debug_point.colour,
+        });
+        self.draw_line(DebugLine{
+            .p0 = debug_point.point - zm.f32x4(0.0, size, 0.0, 0.0),
+            .p1 = debug_point.point + zm.f32x4(0.0, size, 0.0, 0.0),
+            .colour = debug_point.colour,
+        });
+        self.draw_line(DebugLine{
+            .p0 = debug_point.point - zm.f32x4(0.0, 0.0, size, 0.0),
+            .p1 = debug_point.point + zm.f32x4(0.0, 0.0, size, 0.0),
+            .colour = debug_point.colour,
+        });
+    }
+
     pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: *const gfx.RenderTargetView, gfx_state: *gfx.GfxState) void {
         const lines_slice = self.lines.constSlice();
 
@@ -108,6 +127,12 @@ pub const DebugLine = struct {
     p0: zm.F32x4,
     p1: zm.F32x4,
     colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
+};
+
+pub const DebugPoint = struct {
+    point: zm.F32x4,
+    colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
+    size: f32 = 1.0,
 };
 
 const LINES_HLSL = @embedFile("lines.hlsl");
