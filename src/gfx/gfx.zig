@@ -285,6 +285,10 @@ pub const GfxState = struct {
         self.platform.cmd_set_hull_shader(hs);
     }
 
+    pub fn cmd_set_domain_shader(self: *Self, ds: ?*const DomainShader) void {
+        self.platform.cmd_set_domain_shader(ds);
+    }
+
     pub fn cmd_set_geometry_shader(self: *Self, gs: ?*const GeometryShader) void {
         self.platform.cmd_set_geometry_shader(gs);
     }
@@ -384,6 +388,8 @@ pub const IndexFormat = enum {
 pub const ShaderStage = enum {
     Vertex,
     Pixel,
+    Hull,
+    Domain,
     Geometry,
     Compute,
 };
@@ -605,6 +611,65 @@ pub const HullShader = struct {
             return err;
         };
         return HullShader {
+            .platform = platform,
+        };
+    }
+};
+
+pub const DomainShaderOptions = struct {
+    filepath: ?[]const u8 = null,
+    defines: []const ShaderDefineTuple = &.{},
+};
+
+pub const DomainShader = struct {
+    platform: pl.GfxPlatform.DomainShader,
+    
+    pub fn deinit(self: *const DomainShader) void {
+        self.platform.deinit();
+    }
+    
+    pub fn init_file(
+        alloc: std.mem.Allocator,
+        ds_path: path.Path, 
+        ds_func: []const u8,
+        options: DomainShaderOptions,
+        gfx: *GfxState,
+    ) !DomainShader {
+        const res_path = try ds_path.resolve_path(alloc);
+        defer alloc.free(res_path);
+
+        var modified_options = options;
+        modified_options.filepath = res_path;
+
+        var file = try std.fs.cwd().openFile(res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
+        defer file.close();
+
+        const file_len = try file.getEndPos();
+
+        const buf: []u8 = try alloc.alloc(u8, @intCast(file_len));
+        defer alloc.free(buf);
+
+        if (try file.readAll(buf) != file_len) {
+            return error.FailedToReadShader;
+        }
+
+        return init_buffer(buf, ds_func, modified_options, gfx);
+    }
+
+    pub fn init_buffer(
+        ds_data: []const u8, 
+        ds_func: []const u8,
+        options: DomainShaderOptions,
+        gfx: *GfxState,
+    ) !DomainShader {
+        const platform = pl.GfxPlatform.DomainShader.init_buffer(ds_data, ds_func, options, gfx) catch |err| {
+            std.log.err("Domain shader init failed: {s}\n\t- {s}", .{
+                @errorName(err),
+                options.filepath orelse "no filepath provided",
+            });
+            return err;
+        };
+        return DomainShader {
             .platform = platform,
         };
     }

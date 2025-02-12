@@ -20,6 +20,7 @@ pub const GfxStateD3D11 = struct {
     pub const VertexShader = VertexShaderD3D11;
     pub const PixelShader = PixelShaderD3D11;
     pub const HullShader = HullShaderD3D11;
+    pub const DomainShader = DomainShaderD3D11;
     pub const GeometryShader = GeometryShaderD3D11;
     pub const ComputeShader = ComputeShaderD3D11;
     pub const Buffer = BufferD3D11;
@@ -327,6 +328,14 @@ pub const GfxStateD3D11 = struct {
         );
     }
 
+    pub inline fn cmd_set_domain_shader(self: *Self, ds: ?*const gf.DomainShader) void {
+        self.context.DSSetShader(
+            if (ds) |d| @ptrCast(d.platform.dso) else null, 
+            null, 
+            0
+        );
+    }
+
     pub inline fn cmd_set_geometry_shader(self: *Self, gs: ?*const gf.GeometryShader) void {
         self.context.GSSetShader(
             if (gs) |g| @ptrCast(g.platform.gso) else null, 
@@ -371,6 +380,8 @@ pub const GfxStateD3D11 = struct {
         switch (shader_stage) {
             .Vertex => self.context.VSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
             .Pixel => self.context.PSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+            .Hull => self.context.HSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
+            .Domain => self.context.DSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
             .Geometry => self.context.GSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
             .Compute => self.context.CSSetConstantBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers)),
         }
@@ -388,6 +399,8 @@ pub const GfxStateD3D11 = struct {
         switch (shader_stage) {
             .Vertex => self.context.VSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
             .Pixel => self.context.PSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
+            .Hull => self.context.HSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
+            .Domain => self.context.DSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
             .Geometry => self.context.GSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
             .Compute => self.context.CSSetShaderResources(start_slot, @intCast(views.len), @ptrCast(views)),
         }
@@ -401,6 +414,8 @@ pub const GfxStateD3D11 = struct {
         switch (shader_stage) {
             .Vertex => unreachable,// self.context.VSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
             .Pixel => self.context.PSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+            .Hull => self.context.HSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
+            .Domain => self.context.DSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
             .Geometry => self.context.GSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
             .Compute => self.context.CSSetSamplers(start_slot, @intCast(sampler.len), @ptrCast(&d3d11_samplers)),
         }
@@ -812,6 +827,65 @@ pub const HullShaderD3D11 = struct {
 
         return Self {
             .hso = hso,
+        };
+    }
+};
+
+pub const DomainShaderD3D11 = struct {
+    const Self = @This();
+    dso: *d3d11.IDomainShader,
+    
+    pub inline fn deinit(self: *const Self) void {
+        _ = self.dso.Release();
+    }
+    
+    pub inline fn init_buffer(
+        ds_data: []const u8, 
+        ds_func: []const u8, 
+        options: gf.DomainShaderOptions,
+        gfx: *gf.GfxState,
+    ) !Self {
+        const func_c = try std.heap.page_allocator.dupeZ(u8, ds_func);
+        defer std.heap.page_allocator.free(func_c);
+
+        const source_file_path_c_alloc = if (options.filepath) |s| try std.heap.page_allocator.dupeZ(u8, s) else null;
+        defer if (source_file_path_c_alloc) |s| std.heap.page_allocator.free(s);
+        const source_file_path_c = if (source_file_path_c_alloc) |s| @as([*:0]u8, s) else null;
+
+        var defines = try D3D11ShaderMacros.init(std.heap.page_allocator, options.defines);
+        defer defines.deinit();
+
+        var error_blob: ?*zwindows.d3d.IBlob = null;
+
+        var ds_blob: *zwindows.d3d.IBlob = undefined;
+        const compile_result = zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(
+                &ds_data[0], 
+                ds_data.len, 
+                source_file_path_c, 
+                &defines.shader_macros[0], 
+                zwindows.d3dcompiler.COMPILE_STANDARD_FILE_INCLUDE,
+                func_c,
+                "ds_5_0", 
+                0, 
+                0, 
+                @ptrCast(&ds_blob), 
+                @ptrCast(&error_blob)
+        ));
+
+        if (error_blob) |err_blob| {
+            const err_blob_string = @as([*c]u8, @ptrCast(err_blob.GetBufferPointer()));
+            std.log.debug("Domain shader compilation messages: \n\n{s}", .{err_blob_string});
+        }
+
+        try compile_result;
+        defer _ = ds_blob.Release();
+
+        var dso: *d3d11.IDomainShader = undefined;
+        try zwindows.hrErrorOnFail(gfx.platform.device.CreateDomainShader(ds_blob.GetBufferPointer(), ds_blob.GetBufferSize(), null, @ptrCast(&dso)));
+        errdefer _ = dso.Release();
+
+        return Self {
+            .dso = dso,
         };
     }
 };
