@@ -181,5 +181,9 @@ pub const Camera = struct {
             .ORBIT => self.orbit_camera_update(camera_transform, orbit_target, window, input, time),
         }
     }
+
+    pub fn horizontal_to_vertical_fov(horizontal_fov: f32, aspect_ratio: f32) f32 {
+        return 2.0 * std.math.atan2(std.math.tan(horizontal_fov / 2.0), aspect_ratio);
+    }
 };
 
