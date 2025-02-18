@@ -41,6 +41,7 @@ pub const GfxStateD3D11 = struct {
     context: *d3d11.IDeviceContext,
 
     swapchain_flags: dxgi.SWAP_CHAIN_FLAG,
+    vsync: bool = true,
 
     const enable_debug_layers = true;
     const swapchain_buffer_count: u32 = 3;
@@ -82,6 +83,7 @@ pub const GfxStateD3D11 = struct {
 
         const window_size = try window.get_client_size();
 
+        // TODO: check at init if allow tearing is supported by the gpu before using it
         const swapchain_flags = dxgi.SWAP_CHAIN_FLAG {
             .ALLOW_MODE_SWITCH = true,
             .ALLOW_TEARING = true,
@@ -251,7 +253,11 @@ pub const GfxStateD3D11 = struct {
     }
 
     pub inline fn present(self: *Self) !void {
-        try zwindows.hrErrorOnFail(self.swapchain.Present(0, dxgi.PRESENT_FLAG {}));
+        if (self.vsync) {
+            try zwindows.hrErrorOnFail(self.swapchain.Present(1, dxgi.PRESENT_FLAG { .ALLOW_TEARING = false, }));
+        } else {
+            try zwindows.hrErrorOnFail(self.swapchain.Present(0, dxgi.PRESENT_FLAG { .ALLOW_TEARING = true, }));
+        }
     }
 
     pub inline fn flush(self: *Self) void {
