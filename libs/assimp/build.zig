@@ -215,7 +215,8 @@ pub fn build(b: *std.Build) void {
 
     const assimp_rev_step = b.addConfigHeader(
         .{ 
-            .style = .{ .cmake = b.path("libs/assimp/revision.h.in") },
+            .style = .{ .cmake = b.path("libs/assimp/include/assimp/revision.h.in") },
+            .include_path = "assimp/revision.h",
         }, 
         .{
             .GIT_COMMIT_HASH = 0,
@@ -254,6 +255,8 @@ pub fn build(b: *std.Build) void {
     assimp.root_module.addCMacro("ASSIMP_BUILD_NO_C4D_IMPORTER", "1");
     assimp.root_module.addCMacro("ASSIMP_BUILD_NO_IFC_IMPORTER", "1");
     assimp.root_module.addCMacro("ASSIMP_BUILD_NO_M3D_IMPORTER", "1");
+    assimp.root_module.addCMacro("ASSIMP_BUILD_NO_USD_IMPORTER", "1");
+    assimp.root_module.addCMacro("ASSIMP_BUILD_NO_X3D_IMPORTER", "1");
     assimp.root_module.addCMacro("ASSIMP_BUILD_NO_M3D_EXPORTER", "1");
     assimp.root_module.addCMacro("OPENDDLPARSER_BUILD", "1");
     assimp.root_module.addCMacro("STB_USE_HUNTER", "0");
@@ -399,20 +402,20 @@ pub fn build(b: *std.Build) void {
             src_dir ++ "/AssetLib/X/XFileExporter.cpp",
             src_dir ++ "/AssetLib/X/XFileImporter.cpp",
             src_dir ++ "/AssetLib/X/XFileParser.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DExporter.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DGeoHelper.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Geometry2D.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Geometry3D.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Group.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Light.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Metadata.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Networking.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Postprocess.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Rendering.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Shape.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DImporter_Texturing.cpp",
-            src_dir ++ "/AssetLib/X3D/X3DXmlHelper.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DExporter.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DGeoHelper.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Geometry2D.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Geometry3D.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Group.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Light.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Metadata.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Networking.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Postprocess.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Rendering.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Shape.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DImporter_Texturing.cpp",
+            // src_dir ++ "/AssetLib/X3D/X3DXmlHelper.cpp",
             src_dir ++ "/AssetLib/XGL/XGLLoader.cpp",
             src_dir ++ "/CApi/AssimpCExport.cpp",
             src_dir ++ "/CApi/CInterfaceIOWrapper.cpp",

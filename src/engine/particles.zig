@@ -34,7 +34,7 @@ pub const ParticleSystem = struct {
     next_particle_index: usize = 0,
 
     alloc: std.mem.Allocator,
-    rand: std.rand.DefaultPrng,
+    rand: std.Random.DefaultPrng,
     noise: zn.FnlGenerator,
 
     seconds_to_next_particle: f32 = 0.0,
@@ -71,6 +71,7 @@ pub const ParticleSystem = struct {
                 .{ .name = "Velocity", .slot = 5, .format = .F32x4, .per = .Instance },
                 .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
             })[0..],
+            .{},
             gfx
         );
         errdefer vertex_shader.deinit();
@@ -78,6 +79,7 @@ pub const ParticleSystem = struct {
         const pixel_shader = try gf.PixelShader.init_buffer(
             SHADER_HLSL,
             "ps_main",
+            .{},
             gfx
         );
         errdefer pixel_shader.deinit();
@@ -112,7 +114,7 @@ pub const ParticleSystem = struct {
             .settings = settings,
             .particles = particles,
             .alloc = alloc,
-            .rand = std.rand.DefaultPrng.init(@intCast(std.time.microTimestamp())),
+            .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
             .noise = zn.FnlGenerator{},
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
@@ -143,7 +145,7 @@ pub const ParticleSystem = struct {
         }
 
         self.particles[self.next_particle_index] = ParticleData {
-            .rand = std.rand.DefaultPrng.init(@intCast(std.time.microTimestamp())),
+            .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
             .rand_vec = random_v(self.rand.random()),
             .transform = tf.Transform {
                 .position = self.f32x4_variance(self.settings.spawn_origin + self.settings.spawn_offset, zm.f32x4s(self.settings.spawn_radius)),
@@ -312,7 +314,7 @@ pub const ParticleSystem = struct {
         gfx.cmd_set_rasterizer_state(.{ .FillBack = true, });
         gfx.cmd_set_pixel_shader(&self.pixel_shader);
 
-        gfx.cmd_set_render_target(rtv, depth_view);
+        gfx.cmd_set_render_target(&.{rtv}, depth_view);
         gfx.cmd_set_blend_state(&self.blend_state);
 
         gfx.cmd_set_vertex_shader(&self.vertex_shader);
@@ -335,7 +337,7 @@ pub const ParticleSystem = struct {
         gfx.cmd_draw_instanced(6, @intCast(self.particles.len), 0, 0);
     }
 
-    fn random_v(rand: std.rand.Random) zm.F32x4 {
+    fn random_v(rand: std.Random) zm.F32x4 {
         return zm.f32x4(
             rand.float(f32),
             rand.float(f32),
@@ -354,7 +356,7 @@ pub const ParticleSystem = struct {
 };
 
 pub const ParticleData = struct {
-    rand: std.rand.DefaultPrng,
+    rand: std.Random.DefaultPrng,
     rand_vec: zm.F32x4,
     transform: tf.Transform,
     velocity: zm.F32x4 = zm.f32x4s(0.0),

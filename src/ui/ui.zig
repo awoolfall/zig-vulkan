@@ -380,7 +380,7 @@ pub const Imui = struct {
         return self;
     }
 
-    fn get_font(self: *const Self, font_enum: FontEnum) *const font.Font {
+    pub fn get_font(self: *const Self, font_enum: FontEnum) *const font.Font {
         return &self.fonts[@intFromEnum(font_enum)];
     }
 
@@ -1246,7 +1246,7 @@ pub const Imui = struct {
 
     fn character_advance_at_cursor(self: *Self, text_input_widget: *const Widget, text_input_state: *const TextInputState) i32 {
         if (text_input_state.cursor == 0) { return 0; }
-        const f = self.ui.get_font(text_input_widget.text_content.?.font);
+        const f = self.get_font(text_input_widget.text_content.?.font);
         return @intFromFloat(
             f.ascii_character_map[text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]].advance * 
             @as(f32, @floatFromInt(text_input_widget.text_content.?.size))
@@ -1320,7 +1320,7 @@ pub const Imui = struct {
         _ = self.add_widget(phantom_text);
 
         // Cursor (and selection box)
-        const f = self.ui.get_font(text_input_widget.text_content.?.font);
+        const f = self.get_font(text_input_widget.text_content.?.font);
         const selection_bounds = f.text_bounds_2d_pixels(
             state.text.items[l_sel..r_sel],
             text_input_widget.text_content.?.size
@@ -1367,7 +1367,7 @@ pub const Imui = struct {
                 }
                 state.cursor += 1;
             }
-            while (self.ui.get_font(text_input_widget.text_content.?.font).text_bounds_2d_pixels(
+            while (self.get_font(text_input_widget.text_content.?.font).text_bounds_2d_pixels(
                 state.text.items[0..state.cursor],
                 text_input_widget.text_content.?.size
             ).width - @divTrunc(self.character_advance_at_cursor(&text_input_widget, state), 2) > cursor_in_box_pos[0]) {

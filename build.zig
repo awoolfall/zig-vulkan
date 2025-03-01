@@ -81,7 +81,6 @@ pub fn build(b: *std.Build) void {
     const zstbi = b.dependency("zstbi", .{
     });
     engine.addImport("zstbi", zstbi.module("root"));
-    engine.linkLibrary(zstbi.artifact("zstbi"));
 
     const znoise = b.dependency("znoise", .{
     });
