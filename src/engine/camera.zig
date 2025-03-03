@@ -30,8 +30,6 @@ pub const Camera = struct {
     min_orbit_distance: f32,
     orbit_distance: f32,
 
-    view_matrix: zm.Mat = zm.identity(),
-
     damping_movement: [2]f32 = [_]f32{ 0.0, 0.0 },
     damping_amount: f32 = 1.0 / 0.1,
 
@@ -43,20 +41,9 @@ pub const Camera = struct {
         return zm.perspectiveFovLh(self.field_of_view_y, aspect_ratio, self.far_field, self.near_field);
     }
 
-    pub fn right_direction(self: *Self) zm.F32x4 {
-        return zm.rotate(zm.inverse(zm.quatFromMat(self.view_matrix)), zm.f32x4(1.0, 0.0, 0.0, 0.0));
-    }
-
-    pub fn up_direction(self: *const Self) zm.F32x4 {
-        return zm.rotate(zm.inverse(zm.quatFromMat(self.view_matrix)), zm.f32x4(0.0, 1.0, 0.0, 0.0));
-    }
-    
-    pub fn forward_direction(self: *const Self) zm.F32x4 {
-        return zm.rotate(zm.inverse(zm.quatFromMat(self.view_matrix)), zm.f32x4(0.0, 0.0, 1.0, 0.0));
-    }
-
     pub fn fly_camera_update(
         self: *Self, 
+        camera_transform: *tf.Transform,
         window: *Window,
         input: *const _input.InputState,
         time: *const _time.TimeState,
@@ -70,7 +57,8 @@ pub const Camera = struct {
                 float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) * -move_amount + 
                 float_from_bool(input.get_key(kc.KeyCode.ArrowUp)) * move_amount;
 
-            self.view_matrix = zm.mul(self.view_matrix, zm.translation(-cam_x, 0.0, -cam_z));
+            camera_transform.position += camera_transform.forward_direction() * zm.f32x4s(cam_z);
+            camera_transform.position += camera_transform.right_direction() * zm.f32x4s(cam_x);
         }
         
         if (input.get_key_down(kc.KeyCode.MouseRight)) {
@@ -84,17 +72,17 @@ pub const Camera = struct {
 
         // Camera rotation
         if (input.get_key(kc.KeyCode.MouseRight)) {
-            self.view_matrix = zm.mul(
-                self.view_matrix, 
-                zm.matFromAxisAngle(
-                    zm.rotate(zm.quatFromMat(self.view_matrix), zm.f32x4(0.0, -1.0, 0.0, 0.0)), 
+            camera_transform.rotation = zm.qmul(
+                camera_transform.rotation,
+                zm.quatFromAxisAngle(
+                    zm.f32x4(0.0, 1.0, 0.0, 0.0),
                     self.mouse_sensitivity * input.mouse_delta[0]
                 )
             );
-            self.view_matrix = zm.mul(
-                self.view_matrix, 
-                zm.matFromAxisAngle(
-                    zm.f32x4(-1.0, 0.0, 0.0, 0.0), 
+            camera_transform.rotation = zm.qmul(
+                camera_transform.rotation,
+                zm.quatFromAxisAngle(
+                    camera_transform.right_direction(),
                     self.mouse_sensitivity * input.mouse_delta[1]
                 )
             );
@@ -157,8 +145,6 @@ pub const Camera = struct {
         camera_transform.position[3] = 0.0;
 
         camera_transform.rotation = zm.quatFromMat(zm.inverse(zm.lookAtLh(camera_transform.position, orbit_target, zm.f32x4(0.0, 1.0, 0.0, 0.0))));
-
-        self.view_matrix = camera_transform.generate_view_matrix();
     }
 
     pub fn update(
@@ -177,7 +163,7 @@ pub const Camera = struct {
             }
         }
         switch (self.camera_type) {
-            .FLY => self.fly_camera_update(window, input, time),
+            .FLY => self.fly_camera_update(camera_transform, window, input, time),
             .ORBIT => self.orbit_camera_update(camera_transform, orbit_target, window, input, time),
         }
     }

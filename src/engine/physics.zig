@@ -145,6 +145,7 @@ pub const PhysicsSystem = struct {
                                         self.zphy.getGravity(),
                                         &ext,
                                         .{
+                                            .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
                                         }
                                     );
                                 } else {
@@ -152,6 +153,7 @@ pub const PhysicsSystem = struct {
                                         1.0 / UpdateRateHz,
                                         self.zphy.getGravity(),
                                         .{
+                                            .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
                                         }
                                     );
                                 }

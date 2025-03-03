@@ -156,7 +156,7 @@ pub const PhysicsOptions = union(enum) {
         character: ?*physics.zphy.Character,
         settings: physics.CharacterVirtualSettings,
         extended_update_settings: ?physics.zphy.CharacterVirtual.ExtendedUpdateSettings = null,
-
+        body_filter: ?physics.IgnoreIdsBodyFilter = null,
     },
 
     pub fn deinit(self: *PhysicsOptions, phys: *physics.PhysicsSystem) void {
@@ -211,6 +211,7 @@ pub const PhysicsOptions = union(enum) {
                 errdefer zphy_virtual_character.destroy();
 
                 var zphy_character: ?*zphy.Character = null;
+                var body_filter: ?physics.IgnoreIdsBodyFilter = null;
                 if (settings.create_character) {
                     const character_settings = physics.CharacterSettings {
                         .base = settings.settings.base,
@@ -222,6 +223,8 @@ pub const PhysicsOptions = union(enum) {
 
                     zphy_character = try character_settings.create_character(transform, phys);
                     zphy_character.?.addToPhysicsSystem(.{});
+
+                    body_filter = physics.IgnoreIdsBodyFilter.init(&[1]physics.zphy.BodyId{zphy_character.?.getBodyId()});
                 }
 
                 break :blk PhysicsOptions {
@@ -230,6 +233,7 @@ pub const PhysicsOptions = union(enum) {
                         .character = zphy_character,
                         .settings = settings.settings,
                         .extended_update_settings = settings.extended_update_settings,
+                        .body_filter = body_filter,
                     },
                 };
             },
