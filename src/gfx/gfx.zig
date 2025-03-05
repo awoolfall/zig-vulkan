@@ -1147,6 +1147,7 @@ pub const TextureFormat = enum {
     Rgba8_Unorm,
     Bgra8_Unorm,
     R32_Float,
+    R32_Uint,
     Rg32_Float,
     Rgba16_Float,
     Rgba32_Float,
@@ -1158,6 +1159,7 @@ pub const TextureFormat = enum {
         switch (self) {
             .Unknown => return 0,
             .R32_Float => return 4,
+            .R32_Uint => return 4,
             .Rg32_Float => return 8,
             .Rgba8_Unorm_Srgb => return 4,
             .Rgba8_Unorm => return 4,

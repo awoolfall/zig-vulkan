@@ -139,6 +139,16 @@ pub fn EntityList(comptime App: type) type {
         pub fn get(self: *EntityList(App), entity_id: gen.GenerationalIndex) ?*EntitySuperStruct(App) {
             return self.list.get(entity_id);
         }
+
+        pub fn get_dont_check_generation(self: *EntityList(App), index: usize) ?*EntitySuperStruct(App) {
+            if (index >= self.list.data.items.len) {
+                return null;
+            }
+            if (self.list.data.items[index].item_data) |*ent| {
+                return ent;
+            }
+            return null;
+        }
     };
 }
 

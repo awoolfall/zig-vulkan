@@ -499,6 +499,7 @@ fn texture_format_to_d3d11(self: gf.TextureFormat) dxgi.FORMAT {
         .Rgba8_Unorm => dxgi.FORMAT.R8G8B8A8_UNORM,
         .Bgra8_Unorm => dxgi.FORMAT.B8G8R8A8_UNORM,
         .R32_Float => dxgi.FORMAT.R32_FLOAT,
+        .R32_Uint => dxgi.FORMAT.R32_UINT,
         .Rg32_Float => dxgi.FORMAT.R32G32_FLOAT,
         .Rgba32_Float => dxgi.FORMAT.R32G32B32A32_FLOAT,
         .Rgba16_Float => dxgi.FORMAT.R16G16B16A16_FLOAT,
