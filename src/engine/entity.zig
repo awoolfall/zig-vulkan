@@ -1,11 +1,11 @@
 const std = @import("std");
 const zm = @import("zmath");
 const gen = @import("gen_list.zig");
-const tf = @import("transform.zig");
+const Transform = @import("transform.zig");
 const as = @import("../asset/asset.zig");
 const physics = @import("physics.zig");
 const zphy = physics.zphy;
-const en = @import("../engine.zig");
+const Engine = @import("../engine.zig");
 
 pub fn EntitySuperStruct(comptime App: type) type {
     return struct {
@@ -13,12 +13,12 @@ pub fn EntitySuperStruct(comptime App: type) type {
         serialize_id: ?u32 = null,
 
         name: ?[]const u8,
-        transform: tf.Transform,
+        transform: Transform,
         model: ?as.ModelAssetId,
         physics: ?PhysicsOptions,
         app: App.EntityData,
 
-        pub fn deinit(self: *EntitySuperStruct(App), engine: *en.Engine(App)) void {
+        pub fn deinit(self: *EntitySuperStruct(App), engine: *Engine) void {
             self.app.deinit();
 
             if (self.name) |name| {
@@ -31,7 +31,7 @@ pub fn EntitySuperStruct(comptime App: type) type {
             }
         }
 
-        pub fn init_no_physics(desc: EntityDescriptor(App), engine: *en.Engine(App)) !EntitySuperStruct(App) {
+        pub fn init_no_physics(desc: EntityDescriptor(App), engine: *Engine) !EntitySuperStruct(App) {
             var name: ?[]const u8 = null;
             if (desc.name) |n| {
                 name = try engine.general_allocator.allocator().dupe(u8, n);
@@ -44,11 +44,11 @@ pub fn EntitySuperStruct(comptime App: type) type {
                 .transform = desc.transform,
                 .model = if (desc.model) |m| try as.ModelAssetId.deserialize(m, &engine.asset_manager) else null,
                 .physics = null,
-                .app = try App.EntityData.init(desc.app, engine),
+                .app = try App.EntityData.init(desc.app),
             };
         }
 
-        pub fn descriptor(self: *const EntitySuperStruct(App), alloc: std.mem.Allocator, engine: *en.Engine(App)) !EntityDescriptor(App) {
+        pub fn descriptor(self: *const EntitySuperStruct(App), alloc: std.mem.Allocator, engine: *Engine) !EntityDescriptor(App) {
             return EntityDescriptor(App) {
                 .should_serialize = self.should_serialize,
                 .serialize_id = self.serialize_id,
@@ -82,7 +82,7 @@ pub fn EntityDescriptor(comptime App: type) type {
         serialize_id: ?u32 = null,
 
         name: ?[]const u8 = null,
-        transform: tf.Transform = tf.Transform.new(),
+        transform: Transform = .{},
         model: ?[]const u8 = null,
         physics: ?PhysicsOptionsDescriptor = null,
         app: App.EntityData.Descriptor = App.EntityData.Descriptor {},
@@ -92,9 +92,9 @@ pub fn EntityDescriptor(comptime App: type) type {
 pub fn EntityList(comptime App: type) type {
     return struct {
         list: gen.GenerationalList(EntitySuperStruct(App)),
-        engine: *en.Engine(App),
+        engine: *Engine,
 
-        pub fn deinit(self: *EntityList(App), engine: *en.Engine(App)) void {
+        pub fn deinit(self: *EntityList(App), engine: *Engine) void {
             for (self.list.data.items) |*it| {
                 if (it.item_data) |*entt| {
                     entt.deinit(engine);
@@ -103,7 +103,7 @@ pub fn EntityList(comptime App: type) type {
             self.list.deinit();
         }
 
-        pub fn init(alloc: std.mem.Allocator, engine: *en.Engine(App)) !EntityList(App) {
+        pub fn init(alloc: std.mem.Allocator, engine: *Engine) !EntityList(App) {
             return EntityList(App) {
                 .list = try gen.GenerationalList(EntitySuperStruct(App)).init(alloc),
                 .engine = engine,
@@ -188,7 +188,7 @@ pub const PhysicsOptions = union(enum) {
         }
     }
 
-    pub fn init(desc: PhysicsOptionsDescriptor, transform: en.Transform, entity_id: gen.GenerationalIndex, phys: *physics.PhysicsSystem) !PhysicsOptions {
+    pub fn init(desc: PhysicsOptionsDescriptor, transform: Transform, entity_id: gen.GenerationalIndex, phys: *physics.PhysicsSystem) !PhysicsOptions {
         const physics_options = blk: { switch (desc) {
             .Body => |b| {
                 const shape = try phys.create_shape(b.settings);

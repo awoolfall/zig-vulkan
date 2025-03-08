@@ -1,7 +1,7 @@
 const std = @import("std");
 const zm = @import("zmath");
 const zn = @import("znoise");
-const tf = @import("transform.zig");
+const Transform = @import("transform.zig");
 const tm = @import("time.zig");
 const gf = @import("../gfx/gfx.zig");
 const es = @import("../easings.zig");
@@ -147,7 +147,7 @@ pub const ParticleSystem = struct {
         self.particles[self.next_particle_index] = ParticleData {
             .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
             .rand_vec = random_v(self.rand.random()),
-            .transform = tf.Transform {
+            .transform = Transform {
                 .position = self.f32x4_variance(self.settings.spawn_origin + self.settings.spawn_offset, zm.f32x4s(self.settings.spawn_radius)),
                 .scale = KeyFrame(zm.F32x4).calc(self.settings.scale[0..], 0.0),
             },
@@ -358,7 +358,7 @@ pub const ParticleSystem = struct {
 pub const ParticleData = struct {
     rand: std.Random.DefaultPrng,
     rand_vec: zm.F32x4,
-    transform: tf.Transform,
+    transform: Transform,
     velocity: zm.F32x4 = zm.f32x4s(0.0),
     colour: zm.F32x4 = zm.f32x4s(0.0),
     life_remaining: f32 = 0.0,

@@ -1,6 +1,6 @@
 const std = @import("std");
 const zm = @import("zmath");
-const engine = @import("../engine.zig");
+const engine = @import("../root.zig");
 const _gfx = engine.gfx;
 const ui = @import("ui.zig");
 

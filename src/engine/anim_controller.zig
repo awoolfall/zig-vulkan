@@ -2,7 +2,7 @@ const std = @import("std");
 const zm = @import("zmath");
 const ms = @import("mesh.zig");
 const tm = @import("time.zig");
-const tf = @import("transform.zig");
+const Transform = @import("transform.zig");
 const an = @import("animation.zig");
 const as = @import("../asset/asset.zig");
 const es = @import("../easings.zig");
@@ -63,8 +63,8 @@ pub const AnimController = struct {
 
     /// Calculates the bone transforms for a given node.
     /// This function will blend between the base animation and the animation specified in the node.
-    fn calculate_bone_transforms_for_node(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, node: *const Node, out_transforms: []tf.Transform) void {
-        @memset(out_transforms[0..], tf.Transform{});
+    fn calculate_bone_transforms_for_node(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, node: *const Node, out_transforms: []Transform) void {
+        @memset(out_transforms[0..], Transform{});
 
         // calcualte base animation transforms at full strength
         if (self.base_animation) |base_animation_id| {
@@ -135,12 +135,12 @@ pub const AnimController = struct {
     /// Generates the bone transform matricies for the current active node and any transitioning nodes.
     pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, out_transforms: []zm.Mat) void {
         // calculate the transforms for the current active node
-        var active_node_transforms = [_]tf.Transform{.{}} ** ms.MAX_BONES;
+        var active_node_transforms = [_]Transform{.{}} ** ms.MAX_BONES;
         self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[self.active_node], active_node_transforms[0..]);
 
         // calculate and blend the transforms for any transitioning nodes based on the transition timings and easing
         if (self.current_transition) |transition| {
-            var transition_node_transforms = [_]tf.Transform{.{}} ** ms.MAX_BONES;
+            var transition_node_transforms = [_]Transform{.{}} ** ms.MAX_BONES;
             self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[transition.node_0], transition_node_transforms[0..]);
 
             for (0..active_node_transforms.len) |i| {

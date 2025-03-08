@@ -41,11 +41,14 @@ pub fn build(b: *std.Build) void {
     ) orelse default_backend);
 
     const engine = b.addModule("root", .{
-        .root_source_file = b.path("src/engine.zig"),
+        .root_source_file = b.path("src/root.zig"),
         .imports = &.{
             .{ .name = "build_options", .module = options.createModule() },
         },
     });
+
+    // declare app module, this is imported from the super project
+    engine.addImport("app", b.createModule(.{}));
 
     if (os == .windows) {
         const zwindows = b.dependency("zwindows", .{

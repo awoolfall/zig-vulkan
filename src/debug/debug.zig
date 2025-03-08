@@ -1,6 +1,7 @@
 const std = @import("std");
 const zm = @import("zmath");
 const gfx = @import("../gfx/gfx.zig");
+const engine = @import("../engine.zig");
 
 pub const Debug = struct {
     const Self = @This();
@@ -88,7 +89,9 @@ pub const Debug = struct {
         });
     }
 
-    pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: *const gfx.RenderTargetView, gfx_state: *gfx.GfxState) void {
+    pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: *const gfx.RenderTargetView) void {
+        const gfx_state = &@import("../root.zig").engine().gfx;
+
         const lines_slice = self.lines.constSlice();
 
         {

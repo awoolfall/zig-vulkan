@@ -1,8 +1,8 @@
 const std = @import("std");
-const tf = @import("transform.zig");
+const Transform = @import("transform.zig");
 const zm = @import("zmath");
 const kc = @import("../input/keycode.zig");
-const engine = @import("../engine.zig");
+const engine = @import("../root.zig");
 const Window = engine.platform.Window;
 const _input = engine.input;
 const _time = engine.time;
@@ -43,7 +43,7 @@ pub const Camera = struct {
 
     pub fn fly_camera_update(
         self: *Self, 
-        camera_transform: *tf.Transform,
+        camera_transform: *Transform,
         window: *Window,
         input: *const _input.InputState,
         time: *const _time.TimeState,
@@ -91,7 +91,7 @@ pub const Camera = struct {
 
     pub fn orbit_camera_update(
         self: *Self, 
-        camera_transform: *tf.Transform, 
+        camera_transform: *Transform, 
         orbit_target: zm.F32x4, 
         window: *Window,
         input: *const _input.InputState,
@@ -149,7 +149,7 @@ pub const Camera = struct {
 
     pub fn update(
         self: *Self, 
-        camera_transform: *tf.Transform, 
+        camera_transform: *Transform, 
         orbit_target: zm.F32x4,
         window: *Window,
         input: *const _input.InputState,

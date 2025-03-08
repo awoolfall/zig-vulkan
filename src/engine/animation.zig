@@ -1,6 +1,6 @@
 const std = @import("std");
 const zm = @import("zmath");
-const tf = @import("transform.zig");
+const Transform = @import("transform.zig");
 const ms = @import("mesh.zig");
 
 pub const AnimationKey = struct {
@@ -15,7 +15,7 @@ pub const BoneAnimationChannel = struct {
     scale_keys: []AnimationKey,
 
     // used in BoneAnimation to select a specific animation time
-    selected_transform: tf.Transform = .{},
+    selected_transform: Transform = .{},
 
     fn find_anim_position(self: *const BoneAnimationChannel, animation_time: f64) ?usize {
         for (0..(self.position_keys.len - 1)) |i| {

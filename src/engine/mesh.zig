@@ -5,7 +5,7 @@ const zphy = @import("zphysics");
 const zstbi = @import("zstbi");
 const assert = std.debug.assert;
 const gf = @import("../gfx/gfx.zig");
-const tm = @import("../engine/transform.zig");
+const Transform = @import("../engine/transform.zig");
 const path = @import("../engine/path.zig");
 const an = @import("animation.zig");
 const assimp = @import("assimp");
@@ -131,7 +131,7 @@ pub const MeshSet = struct {
 
 pub const ModelNode = struct {
     name: ?[]u8 = null,
-    transform: tm.Transform = tm.Transform.new(),
+    transform: Transform = Transform {},
     mesh: ?MeshSet = null,
     children: []usize = ([_]usize{})[0..0],
     parent: ?usize = null,
@@ -864,7 +864,7 @@ pub const Model = struct {
 
         // create transform struct for this node
         const dec = node.transformation_decompose();
-        model_nodes_list.items[this_idx].transform = tm.Transform {
+        model_nodes_list.items[this_idx].transform = Transform {
             .position = dec.pos,
             .rotation = dec.rot,
             .scale = dec.sca,
@@ -1171,7 +1171,7 @@ pub const Model = struct {
         strength: f32,
     };
 
-    pub fn blend_animation_bone_transforms(self: *const Self, animation: *const an.BoneAnimation, strength: f32, io_bone_transforms: []tm.Transform) void {
+    pub fn blend_animation_bone_transforms(self: *const Self, animation: *const an.BoneAnimation, strength: f32, io_bone_transforms: []Transform) void {
         for (self.bone_info.items) |*bone_info| {
             if (animation.find_node_anim(bone_info.bone_name)) |anim_channel| {
                 if (self.bone_mapping.get(bone_info.bone_name)) |bone_id| {
@@ -1181,7 +1181,7 @@ pub const Model = struct {
         }
     }
 
-    pub fn generate_bone_transforms_for_pose(self: *const Self, in_bone_pose_transforms: []const tm.Transform, out_bone_matrix_transforms: []zm.Mat) void {
+    pub fn generate_bone_transforms_for_pose(self: *const Self, in_bone_pose_transforms: []const Transform, out_bone_matrix_transforms: []zm.Mat) void {
         std.debug.assert(in_bone_pose_transforms.len >= MAX_BONES);
         std.debug.assert(out_bone_matrix_transforms.len >= MAX_BONES);
 
@@ -1195,7 +1195,7 @@ pub const Model = struct {
 
     fn recurse_generate_bone_transforms_for_pose(
         self: *const Self, 
-        in_bone_pose_transforms: []const tm.Transform, 
+        in_bone_pose_transforms: []const Transform, 
         out_bone_matrix_transforms: []zm.Mat, 
         node: *const ModelNode, 
         parent_mat: zm.Mat

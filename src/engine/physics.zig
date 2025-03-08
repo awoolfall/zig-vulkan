@@ -2,11 +2,11 @@ const std = @import("std");
 pub const zphy = @import("zphysics");
 const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
-const en = @import("../engine.zig");
+const en = @import("../root.zig");
 const ms = @import("../engine/mesh.zig");
 const as = @import("../asset/asset.zig");
 const tm = @import("../engine/time.zig");
-const tf = @import("../engine/transform.zig");
+const Transform = @import("../engine/transform.zig");
 const _gfx = @import("../gfx/gfx.zig");
 
 inline fn debug_renderer_enabled() bool {
@@ -518,7 +518,7 @@ pub const ShapeSettings = struct {
         },
         ModelCompoundConvexHull: as.ModelAssetId,
     },
-    offset_transform: tf.Transform = .{},
+    offset_transform: Transform = .{},
 };
 
 pub const CharacterBaseSettings = struct {
@@ -553,7 +553,7 @@ pub const CharacterSettings = struct {
         return ret;
     }
 
-    pub fn create_character(self: CharacterSettings, transform: tf.Transform, phys: *PhysicsSystem) !*zphy.Character {
+    pub fn create_character(self: CharacterSettings, transform: Transform, phys: *PhysicsSystem) !*zphy.Character {
         const settings = try self.create_zphy(phys);
         defer settings.release();
 
@@ -610,7 +610,7 @@ pub const CharacterVirtualSettings = struct {
         return ret;
     }
 
-    pub fn create_character_virtual(self: CharacterVirtualSettings, transform: tf.Transform, phys: *PhysicsSystem) !*zphy.CharacterVirtual {
+    pub fn create_character_virtual(self: CharacterVirtualSettings, transform: Transform, phys: *PhysicsSystem) !*zphy.CharacterVirtual {
         const settings = try self.create_zphy(phys);
         defer settings.release();
 
