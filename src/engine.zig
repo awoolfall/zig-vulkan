@@ -24,9 +24,9 @@ const wd = @import("window.zig");
 const Self = @This();
 const Log = std.log.scoped(.Engine);
 
-pub const EntitySuperStruct = entity.EntitySuperStruct(App);
-pub const EntityDescriptor = entity.EntityDescriptor(App);
-pub const EntityList = entity.EntityList(App);
+pub const EntitySuperStruct = entity.EntitySuperStruct;
+pub const EntityDescriptor = entity.EntityDescriptor;
+pub const EntityList = entity.EntityList;
 
 window: platform.Window,
 gfx: gf.GfxState,
@@ -142,7 +142,7 @@ fn window_event_received(engine_void_ptr: *anyopaque, event: wd.WindowEvent) voi
         .RESIZED => |new_size| { self.gfx.window_resized(new_size.width, new_size.height); },
         .EVENTS_CLEARED => {
             // Update physics
-            self.physics.update(Self.EntityList, &self.entities, &self.time);
+            self.physics.update();
         },
         else => {},
     }
