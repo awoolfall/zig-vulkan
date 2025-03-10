@@ -99,7 +99,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .cwd_relative = "src/main.zig" },
+        .root_source_file = .{ .cwd_relative = "src/tests.zig" },
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);

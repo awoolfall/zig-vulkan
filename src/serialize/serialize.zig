@@ -111,3 +111,182 @@ pub fn deserialize(comptime T: type, allocator: std.mem.Allocator, value: Serial
     }
 }
 
+
+
+
+
+// Testing Structs //
+
+const S0 = struct {
+    a: u32,
+    b: u32,
+
+    pub const Serde = struct {
+        pub const T = struct {
+            a: u32,
+            b: u32,
+        };
+
+        pub fn serialize(allocator: std.mem.Allocator, value: S0) !T {
+            _ = allocator;
+            return T {
+                .a = value.a,
+                .b = value.b,
+            };
+        }
+
+        pub fn deserialize(allocator: std.mem.Allocator, value: T) !S0 {
+            _ = allocator;
+            return S0 {
+                .a = value.a,
+                .b = value.b,
+            };
+        }
+    };
+};
+
+const S2 = struct {
+    c: u32,
+
+    pub const Serde = struct {
+        pub const T = struct {
+            d: u32,
+        };
+
+        pub fn serialize(allocator: std.mem.Allocator, value: S2) !T {
+            _ = allocator;
+            return T {
+                .d = value.c + 10,
+            };
+        }
+
+        pub fn deserialize(allocator: std.mem.Allocator, value: T) !S2 {
+            _ = allocator;
+            return S2 {
+                .c = value.d - 10,
+            };
+        }
+    };
+};
+
+test "serialize/deserialize" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    {
+        // simple
+        const s = S0 {
+            .a = 1,
+            .b = 2,
+        };
+        const ser = serialize(S0, std.testing.allocator, s) catch unreachable;
+        try std.testing.expectEqual(SerializableStruct(S0.Serde.T) { .a = 1, .b = 2 }, ser);
+        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
+        try std.testing.expectEqualStrings("{\"a\":1,\"b\":2}", json);
+        const des = deserialize(S0, std.testing.allocator, ser) catch unreachable;
+        try std.testing.expectEqual(s, des);
+    }
+
+    _ = arena.reset(.retain_capacity);
+    {
+        // nested serde in a standard struct
+        const s = S0 {
+            .a = 1,
+            .b = 2,
+        };
+        const S1 = struct {
+            a: u32,
+            s0: S0,
+        };
+        const s1 = S1 {
+            .a = 1,
+            .s0 = s,
+        };
+        const ser = serialize(S1, std.testing.allocator, s1) catch unreachable;
+        try std.testing.expectEqual(SerializableStruct(S1) { 
+            .a = 1, 
+            .s0 = SerializableStruct(S0.Serde.T) { .a = 1, .b = 2 },
+        }, ser);
+        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
+        try std.testing.expectEqualStrings("{\"a\":1,\"s0\":{\"a\":1,\"b\":2}}", json);
+        const des = deserialize(S1, std.testing.allocator, ser) catch unreachable;
+        try std.testing.expectEqual(s1, des);
+    }
+
+    _ = arena.reset(.retain_capacity);
+    {
+        // non trivial serde conversion
+        const s2 = S2 {
+            .c = 10,
+        };
+        const ser = serialize(S2, std.testing.allocator, s2) catch unreachable;
+        try std.testing.expectEqual(SerializableStruct(S2.Serde.T) { 
+            .d = 10 + 10,
+        }, ser);
+        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
+        try std.testing.expectEqualStrings("{\"d\":20}", json);
+        const des = deserialize(S2, std.testing.allocator, ser) catch unreachable;
+        try std.testing.expectEqual(s2, des);
+    }
+
+    _ = arena.reset(.retain_capacity);
+    {
+        // array with serde elements
+        const AS = struct {
+            ar: [4]S0,
+        };
+        const s = AS {
+            .ar = [_]S0{
+                S0 { .a = 1, .b = 2 },
+                S0 { .a = 3, .b = 4 },
+                S0 { .a = 5, .b = 6 },
+                S0 { .a = 7, .b = 8 },
+            },
+        };
+        const ser = serialize(AS, std.testing.allocator, s) catch unreachable;
+        try std.testing.expectEqual(SerializableStruct(AS) { 
+            .ar = [_]SerializableStruct(S0.Serde.T){
+                .{ .a = 1, .b = 2 },
+                .{ .a = 3, .b = 4 },
+                .{ .a = 5, .b = 6 },
+                .{ .a = 7, .b = 8 },
+            }
+        }, ser);
+        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
+        try std.testing.expectEqualStrings("{\"ar\":[{\"a\":1,\"b\":2},{\"a\":3,\"b\":4},{\"a\":5,\"b\":6},{\"a\":7,\"b\":8}]}", json);
+        const des = deserialize(AS, std.testing.allocator, ser) catch unreachable;
+        try std.testing.expectEqual(s, des);
+    }
+
+    _ = arena.reset(.retain_capacity);
+    {
+        // slices with serde elements
+        // TODO WARNING this only works with arena allocators since the internal slices are duplicated
+        // using any other allocator may result in leaks
+        const AS = struct {
+            ar: []const S2,
+        };
+        const a = [_]S2 {
+            S2 { .c = 1 },
+            S2 { .c = 2 },
+            S2 { .c = 3 },
+            S2 { .c = 4 },
+        };
+        const s = AS {
+            .ar = a[0..],
+        };
+        const ser = serialize(AS, arena.allocator(), s) catch unreachable;
+        try std.testing.expectEqualDeep(SerializableStruct(AS) {
+            .ar = &[_]SerializableStruct(S2.Serde.T){
+                .{ .d = 1 + 10 },
+                .{ .d = 2 + 10 },
+                .{ .d = 3 + 10 },
+                .{ .d = 4 + 10 },
+            }
+        }, ser);
+        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
+        try std.testing.expectEqualStrings("{\"ar\":[{\"d\":11},{\"d\":12},{\"d\":13},{\"d\":14}]}", json);
+        const des = deserialize(AS, arena.allocator(), ser) catch unreachable;
+        try std.testing.expectEqualDeep(s, des);
+    }
+}
