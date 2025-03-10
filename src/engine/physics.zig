@@ -3,6 +3,7 @@ pub const zphy = @import("zphysics");
 const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
 const en = @import("../root.zig");
+const engine = en.engine;
 const ms = @import("../engine/mesh.zig");
 const as = @import("../asset/asset.zig");
 const tm = @import("../engine/time.zig");
@@ -97,7 +98,10 @@ pub const PhysicsSystem = struct {
         zphy.deinit();
     }
 
-    pub fn update(self: *Self, comptime EntityList: type, entity_list: *EntityList, time: *tm.TimeState) void {
+    pub fn update(self: *Self) void {
+        const entity_list = &engine().entities;
+        const time = &engine().time;
+
         // find out how many times we need to update to hit UpdateRateHz
         const ns_since_with_offset = time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
         const times_to_update = ns_since_with_offset / UpdateRateNs;
@@ -112,6 +116,29 @@ pub const PhysicsSystem = struct {
         // last sub-frame physics update and the actual frame time 
         self.last_update_time = time.frame_start_time;
         self.last_update_time_offset = ns_since_with_offset - (times_to_update * UpdateRateNs);
+
+        { // TODO: Speed: change this to only update when something has changed. Hash?
+            var entity_iter = entity_list.list.iterator();
+            const body_interface = self.zphy.getBodyInterfaceMut();
+            while (entity_iter.next()) |entity| {
+                if (entity.physics) |physics| {
+                    switch (physics) {
+                        .Body => |body| {
+                            body_interface.setPosition(body.id, zm.vecToArr3(entity.transform.position), .dont_activate);
+                            body_interface.setRotation(body.id, entity.transform.rotation, .activate);
+                        },
+                        .Character => |character| {
+                            character.character.setPosition(zm.vecToArr3(entity.transform.position));
+                            //character.character.setRotation(entity.transform.rotation);
+                        },
+                        .CharacterVirtual => |character| {
+                            character.virtual.setPosition(zm.vecToArr3(entity.transform.position));
+                            //character.virtual.setRotation(entity.transform.rotation);
+                        },
+                    }
+                }
+            }
+        }
 
         // Update at UpdateRateHz, this may happen zero or more than one times before returning
         for (0..@intCast(times_to_update)) |_| {
@@ -134,7 +161,7 @@ pub const PhysicsSystem = struct {
                                 character.character.postSimulation(0.1, true);
 
                                 const pos = character.character.getPosition();
-                                e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                                e.transform.position = zm.loadArr3(pos);
                                 //e.transform.rotation = character.getRotation();
                             },
                             .CharacterVirtual => |character| {
@@ -164,7 +191,7 @@ pub const PhysicsSystem = struct {
                                     c.postSimulation(0.05, true);
                                 }
 
-                                e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                                e.transform.position = zm.loadArr3(pos);
                                 e.transform.rotation = character.virtual.getRotation();
                             },
                         }

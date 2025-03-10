@@ -113,8 +113,8 @@ pub fn run() !void {
     engine.physics = try ph.PhysicsSystem.init(alloc, &engine.asset_manager, &engine.gfx);
     defer engine.physics.deinit();
 
-    engine.entities = try EntityList.init(alloc, &engine);
-    defer engine.entities.deinit(&engine);
+    engine.entities = try EntityList.init(alloc);
+    defer engine.entities.deinit();
 
     Log.debug("Creating app!", .{});
     engine.app = try engine.general_allocator.allocator().create(App);

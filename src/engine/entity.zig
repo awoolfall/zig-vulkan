@@ -5,6 +5,7 @@ const Transform = @import("transform.zig");
 const as = @import("../asset/asset.zig");
 const physics = @import("physics.zig");
 const zphy = physics.zphy;
+const engine = @import("../root.zig").engine;
 const Engine = @import("../engine.zig");
 const App = @import("app");
 
@@ -18,23 +19,23 @@ pub const EntitySuperStruct = struct {
     physics: ?PhysicsOptions,
     app: App.EntityData,
 
-    pub fn deinit(self: *EntitySuperStruct, engine: *Engine) void {
+    pub fn deinit(self: *EntitySuperStruct) void {
         self.app.deinit();
 
         if (self.name) |name| {
-            engine.general_allocator.allocator().free(name);
+            engine().general_allocator.allocator().free(name);
         }
 
         if (self.physics) |*phys| {
-            phys.deinit(&engine.physics);
+            phys.deinit(&engine().physics);
             self.physics = null;
         }
     }
 
-    pub fn init_no_physics(desc: EntityDescriptor, engine: *Engine) !EntitySuperStruct {
+    pub fn init_no_physics(desc: EntityDescriptor) !EntitySuperStruct {
         var name: ?[]const u8 = null;
         if (desc.name) |n| {
-            name = try engine.general_allocator.allocator().dupe(u8, n);
+            name = try engine().general_allocator.allocator().dupe(u8, n);
         }
 
         return EntitySuperStruct {
@@ -42,19 +43,19 @@ pub const EntitySuperStruct = struct {
             .should_serialize = desc.should_serialize,
             .serialize_id = desc.serialize_id,
             .transform = desc.transform,
-            .model = if (desc.model) |m| try as.ModelAssetId.deserialize(m, &engine.asset_manager) else null,
+            .model = if (desc.model) |m| try as.ModelAssetId.deserialize(m, &engine().asset_manager) else null,
             .physics = null,
             .app = try App.EntityData.init(desc.app),
         };
     }
 
-    pub fn descriptor(self: *const EntitySuperStruct, alloc: std.mem.Allocator, engine: *Engine) !EntityDescriptor {
+    pub fn descriptor(self: *const EntitySuperStruct, alloc: std.mem.Allocator) !EntityDescriptor {
         return EntityDescriptor {
             .should_serialize = self.should_serialize,
             .serialize_id = self.serialize_id,
             .name = self.name,
             .transform = self.transform,
-            .model = if (self.model) |m| try m.serialize(alloc, &engine.asset_manager) else null,
+            .model = if (self.model) |m| try m.serialize(alloc, &engine().asset_manager) else null,
             .physics = if (self.physics) |phys| phys.descriptor() else null,
             .app = self.app.descriptor(),
         };
@@ -88,31 +89,29 @@ pub const EntityDescriptor = struct {
 
 pub const EntityList = struct {
     list: gen.GenerationalList(EntitySuperStruct),
-    engine: *Engine,
 
-    pub fn deinit(self: *EntityList, engine: *Engine) void {
+    pub fn deinit(self: *EntityList) void {
         for (self.list.data.items) |*it| {
             if (it.item_data) |*entt| {
-                entt.deinit(engine);
+                entt.deinit();
             }
         }
         self.list.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, engine: *Engine) !EntityList {
+    pub fn init(alloc: std.mem.Allocator) !EntityList {
         return EntityList {
             .list = try gen.GenerationalList(EntitySuperStruct).init(alloc),
-            .engine = engine,
         };
     }
 
     /// Creates a new entity with the given descriptor
     pub fn new_entity(self: *EntityList, desc: EntityDescriptor) !gen.GenerationalIndex {
-        const entity = try EntitySuperStruct.init_no_physics(desc, self.engine);
+        const entity = try EntitySuperStruct.init_no_physics(desc);
         const inserted_entity_id = try self.list.insert(entity);
 
         if (desc.physics) |desc_physics| {
-            self.get(inserted_entity_id).?.set_physics(inserted_entity_id, desc_physics, &self.engine.physics) catch {
+            self.get(inserted_entity_id).?.set_physics(inserted_entity_id, desc_physics, &engine().physics) catch {
                 self.list.remove(inserted_entity_id) catch unreachable;
                 return error.FailedToAddPhysics;
             };
@@ -124,7 +123,7 @@ pub const EntityList = struct {
     /// Removes the entity with the given id
     pub fn remove_entity(self: *EntityList, entity_id: gen.GenerationalIndex) !void {
         if (self.get(entity_id)) |entity| {
-            entity.deinit(self.engine);
+            entity.deinit();
         } else {
             return error.EntityDoesNotExist;
         }
