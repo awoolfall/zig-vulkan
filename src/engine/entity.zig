@@ -43,7 +43,7 @@ pub const EntitySuperStruct = struct {
             .should_serialize = desc.should_serialize,
             .serialize_id = desc.serialize_id,
             .transform = desc.transform,
-            .model = if (desc.model) |m| try as.ModelAssetId.deserialize(m, &engine().asset_manager) else null,
+            .model = if (desc.model) |m| try as.ModelAssetId.Serde.deserialize(engine().general_allocator.allocator(), m) else null,
             .physics = null,
             .app = try App.EntityData.init(desc.app),
         };
@@ -55,9 +55,9 @@ pub const EntitySuperStruct = struct {
             .serialize_id = self.serialize_id,
             .name = self.name,
             .transform = self.transform,
-            .model = if (self.model) |m| try m.serialize(alloc, &engine().asset_manager) else null,
+            .model = if (self.model) |m| try m.asset_id.serialize(alloc, &engine().asset_manager) else null,
             .physics = if (self.physics) |phys| phys.descriptor() else null,
-            .app = self.app.descriptor(),
+            .app = try self.app.descriptor(alloc),
         };
     }
 
@@ -248,9 +248,9 @@ pub const PhysicsOptions = union(enum) {
     }
 
     pub fn descriptor(self: *const PhysicsOptions) PhysicsOptionsDescriptor {
-        if (self.* == .CharacterVirtual) {
-            @panic("TDOD: body_filter must be made declarative");
-        }
+        // if (self.* == .CharacterVirtual) {
+        //     @panic("TDOD: body_filter must be made declarative");
+        // }
         return switch (self.*) {
             .Body => |b| blk: {
                 // TODO: currently we cannot modify any body parameters after creation

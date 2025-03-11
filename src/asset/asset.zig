@@ -111,6 +111,12 @@ pub const AssetManager = struct {
             const name_hash = std.hash_map.hashString(path.unique_name);
             const base_model_name_hash = std.hash_map.hashString(asset_pack.model_assets.items[path.asset_path.base_model].unique_name);
 
+            try loaded_asset_pack.asset_names.put(name_hash, try self.allocator.dupe(u8, path.unique_name));
+            errdefer {
+                self.allocator.free(loaded_asset_pack.asset_names.get(name_hash).?);
+                _ = loaded_asset_pack.asset_names.remove(name_hash);
+            }
+
             try loaded_asset_pack.animations.put(
                 name_hash, 
                 .{
@@ -357,7 +363,7 @@ pub const AssetId = struct {
     }
 
     const SerializeSplitChar = '|';
-    pub fn serialize(self: *const AssetId, alloc: std.mem.Allocator, asset_manager: *const AssetManager) ![]const u8 {
+    pub fn serialize(self: *const AssetId, alloc: std.mem.Allocator, asset_manager: *const AssetManager) ![]u8 {
         const pack = asset_manager.loaded_asset_packs.get(self.asset_pack_id) orelse return error.AssetPackNotLoaded;
         const pack_name = pack.unique_name;
         const asset_name = pack.get_asset_name(self.id) orelse return error.AssetNotFound;
@@ -380,27 +386,37 @@ pub const AssetId = struct {
 pub const ModelAssetId = struct {
     asset_id: AssetId,
 
-    pub fn serialize(self: *const ModelAssetId, alloc: std.mem.Allocator, asset_manager: *const AssetManager) ![]const u8 {
-        return self.asset_id.serialize(alloc, asset_manager);
-    }
+    pub const Serde = struct {
+        pub const T = []const u8;
 
-    pub fn deserialize(serialized_string: []const u8, asset_manager: *const AssetManager) !ModelAssetId {
-        return ModelAssetId {
-            .asset_id = try AssetId.deserialize(serialized_string, asset_manager),
-        };
-    }
+        pub fn serialize(alloc: std.mem.Allocator, asset_id: ModelAssetId) !T {
+            return asset_id.asset_id.serialize(alloc, &@import("../root.zig").engine().asset_manager);
+        }
+
+        pub fn deserialize(alloc: std.mem.Allocator, serialized: T) !ModelAssetId {
+            _ = alloc;
+            return ModelAssetId {
+                .asset_id = try AssetId.deserialize(serialized, &@import("../root.zig").engine().asset_manager),
+            };
+        }
+    };
 };
 
 pub const AnimationAssetId = struct {
     asset_id: AssetId,
 
-    pub fn serialize(self: *const AnimationAssetId, alloc: std.mem.Allocator, asset_manager: *const AssetManager) ![]const u8 {
-        return self.asset_id.serialize(alloc, asset_manager);
-    }
+    pub const Serde = struct {
+        pub const T = []const u8;
 
-    pub fn deserialize(serialized_string: []const u8, asset_manager: *const AssetManager) !AnimationAssetId {
-        return AnimationAssetId {
-            .asset_id = try AssetId.deserialize(serialized_string, asset_manager),
-        };
-    }
+        pub fn serialize(alloc: std.mem.Allocator, asset_id: AnimationAssetId) !T {
+            return asset_id.asset_id.serialize(alloc, &@import("../root.zig").engine().asset_manager);
+        }
+
+        pub fn deserialize(alloc: std.mem.Allocator, serialized: T) !AnimationAssetId {
+            _ = alloc;
+            return AnimationAssetId {
+                .asset_id = try AssetId.deserialize(serialized, &@import("../root.zig").engine().asset_manager),
+            };
+        }
+    };
 };

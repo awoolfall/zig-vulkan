@@ -32,12 +32,12 @@ pub fn ease_out_expo(t: f32) f32 {
     }
 }
 
-pub const Easing = union(enum) {
-    Constant: void,
-    OutLinear: void,
-    OutQuart: void,
-    OutElastic: void,
-    OutExpo: void,
+pub const Easing = enum {
+    Constant,
+    OutLinear,
+    OutQuart,
+    OutElastic,
+    OutExpo,
 
     pub fn func(self: Easing) *const fn(f32) f32 {
         switch(self) {

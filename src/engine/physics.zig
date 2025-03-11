@@ -549,8 +549,8 @@ pub const ShapeSettings = struct {
 };
 
 pub const CharacterBaseSettings = struct {
-    up: [4]f32 align(16) = [4]f32{ 0.0, 1.0, 0.0, 0.0 },
-    supporting_volume: [4]f32 align(16) = [4]f32{ 0.0, 1.0, 0.0, -1.0e10 },
+    up: [4]f32 = [4]f32{ 0.0, 1.0, 0.0, 0.0 },
+    supporting_volume: [4]f32 = [4]f32{ 0.0, 1.0, 0.0, -1.0e10 },
     max_slope_angle: f32 = std.math.degreesToRadians(50.0),
     shape: ShapeSettings,
 };
@@ -599,7 +599,7 @@ pub const CharacterVirtualSettings = struct {
 
     mass: f32 = 70.0,
     max_strength: f32 = 100.0,
-    shape_offset: [4]f32 align(16) = [4]f32{ 0.0, 0.0, 0.0, 0.0 },
+    shape_offset: [4]f32 = [4]f32{ 0.0, 0.0, 0.0, 0.0 },
     back_face_mode: zphy.BackFaceMode = .collide_with_back_faces,
     predictive_contact_distance: f32 = 0.1,
     max_collision_iterations: u32 = 5,
