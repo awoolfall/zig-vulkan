@@ -14,7 +14,7 @@ pub fn Serializable(comptime T: type) type {
                         .type = Serializable(field.type),
                         .default_value = null,
                         .is_comptime = false,
-                        .alignment = 0,
+                        .alignment = field.alignment,
                     };
                 }
                 var new_s = s;
@@ -34,7 +34,7 @@ pub fn Serializable(comptime T: type) type {
                     fields[i] = .{
                         .name = field.name,
                         .type = Serializable(field.type),
-                        .alignment = 0,
+                        .alignment = field.alignment,
                     };
                 }
                 var new_u = u;
@@ -61,7 +61,27 @@ pub fn Serializable(comptime T: type) type {
                 .pointer = new_p,
             });
         },
-        .bool, .int, .float, .comptime_int, .comptime_float, .null, .@"enum", .vector, .optional, .void => return T,
+        .optional => |o| {
+            var new_o = o;
+            new_o.child = Serializable(o.child);
+            return @Type(.{
+                .optional = new_o,
+            });
+        },
+        .@"enum" => |_| {
+            if (@hasDecl(T, "Serde")) {
+                return Serializable(T.Serde.T);
+            } else {
+                return T;
+            }
+        },
+        .vector => |v| {
+            switch (@typeInfo(v.child)) {
+                .pointer => @compileError("vectors of pointers are not serializable"),
+                else => return T,
+            }
+        },
+        .bool, .int, .float, .comptime_int, .comptime_float, .null, .void => return T,
         else => { @compileLog(@typeInfo(T)); unreachable; },
     }
 }
@@ -116,6 +136,9 @@ pub fn serialize(comptime T: type, allocator: std.mem.Allocator, value: T) !Seri
             }
             return ar;
         },
+        .optional => |o| {
+            return if (value) |v| try serialize(o.child, allocator, v) else null;
+        },
         else => return value,
     }
 }
@@ -169,6 +192,9 @@ pub fn deserialize(comptime T: type, allocator: std.mem.Allocator, value: Serial
                 ar[i] = try deserialize(p.child, allocator, value[i]);
             }
             return ar;
+        },
+        .optional => |o| {
+            return if (value) |v| try deserialize(o.child, allocator, v) else null;
         },
         else => return value,
     }
