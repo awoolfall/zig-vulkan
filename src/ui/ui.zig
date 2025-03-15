@@ -802,7 +802,11 @@ pub const Imui = struct {
         self.parent_stack.clearRetainingCapacity();
 
         self.last_frame_arena = (self.last_frame_arena + 1) % 2;
-        _ = self.arena().reset(.free_all);
+
+        if (!self.arena().reset(.retain_capacity)) {
+            std.log.err("failed to reset imui arena", .{});
+            _ = self.arena().reset(.free_all);
+        }
 
         self.add_root_widget(gfx);
     }

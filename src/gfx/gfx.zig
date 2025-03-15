@@ -301,7 +301,7 @@ pub const GfxState = struct {
         self.platform.cmd_set_vertex_buffers(start_slot, buffers);
     }
 
-    pub fn cmd_set_index_buffer(self: *Self, buffer: *Buffer, format: IndexFormat, offset: u32) void {
+    pub fn cmd_set_index_buffer(self: *Self, buffer: *const Buffer, format: IndexFormat, offset: u32) void {
         self.platform.cmd_set_index_buffer(buffer, format, offset);
     }
 

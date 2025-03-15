@@ -39,7 +39,10 @@ asset_manager: assets.AssetManager,
 app: *App,
 entities: EntityList,
 exe_path: []u8,
+
 general_allocator: std.heap.GeneralPurposeAllocator(.{}),
+frame_arena: std.heap.ArenaAllocator,
+frame_allocator: std.mem.Allocator,
 
 pub fn run() !void {
     Log.debug("Engine init!", .{});
@@ -58,6 +61,8 @@ pub fn run() !void {
         .entities = undefined,
         .exe_path = undefined,
         .general_allocator = undefined,
+        .frame_arena = undefined,
+        .frame_allocator = undefined,
     };
 
     // set the global engine pointer
@@ -71,6 +76,10 @@ pub fn run() !void {
         }
     }
     const alloc = engine.general_allocator.allocator();
+
+    engine.frame_arena = std.heap.ArenaAllocator.init(alloc);
+    defer engine.frame_arena.deinit();
+    engine.frame_allocator = engine.frame_arena.allocator();
 
     engine.exe_path = try std.fs.selfExeDirPathAlloc(alloc);
     engine.exe_path = try alloc.realloc(engine.exe_path, engine.exe_path.len + 1);
@@ -134,6 +143,11 @@ pub fn run() !void {
 
 fn window_event_received(engine_void_ptr: *anyopaque, event: wd.WindowEvent) void {
     const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
+    // Reset the frame allocator
+    if (!self.frame_arena.reset(.retain_capacity)) {
+        std.log.err("failed to reset frame arena", .{});
+        _ = self.frame_arena.reset(.free_all);
+    }
 
     // Timing needs to be updated at the very beginning of a frame
     self.time.received_window_event(&event);

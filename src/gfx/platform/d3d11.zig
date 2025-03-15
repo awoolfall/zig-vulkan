@@ -78,7 +78,6 @@ pub const GfxStateD3D11 = struct {
         _ = alloc;
         const accepted_feature_levels = [_]zwindows.d3d.FEATURE_LEVEL{
             .@"11_0", 
-            .@"10_1" 
         };
 
         const window_size = try window.get_client_size();
@@ -370,7 +369,7 @@ pub const GfxStateD3D11 = struct {
         self.context.IASetVertexBuffers(start_slot, @intCast(buffers.len), @ptrCast(&d3d11_buffers), @ptrCast(&d3d11_strides), @ptrCast(&d3d11_offsets));
     }
 
-    pub inline fn cmd_set_index_buffer(self: *Self, buffer: *gf.Buffer, format: gf.IndexFormat, offset: u32) void {
+    pub inline fn cmd_set_index_buffer(self: *Self, buffer: *const gf.Buffer, format: gf.IndexFormat, offset: u32) void {
         const d3d11_format = switch (format) {
             .U16 => dxgi.FORMAT.R16_UINT,
             .U32 => dxgi.FORMAT.R32_UINT,

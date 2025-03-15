@@ -48,7 +48,7 @@ fn primitive_topology_from_zcgltf(topology: zmesh.io.zcgltf.PrimitiveType) Primi
 
 pub const MaterialTextureMap = struct {
     map: gf.TextureView2D,
-    uv_index: u32,
+    uv_index: u8,
     sampler: ?gf.Sampler = null,
 
     fn deinit(self: *MaterialTextureMap) void {
@@ -448,7 +448,7 @@ pub const Model = struct {
 
                         material.diffuse_map = MaterialTextureMap {
                             .map = try gf.TextureView2D.init_from_texture2d(&textures[idx], gfx),
-                            .uv_index = p.uvindex,
+                            .uv_index = @truncate(p.uvindex),
                             .sampler = try gf.Sampler.init(
                                 .{
                                     .filter_min_mag = .Linear,
@@ -474,7 +474,7 @@ pub const Model = struct {
 
                         material.normals_map = MaterialTextureMap {
                             .map = try gf.TextureView2D.init_from_texture2d(&textures[idx], gfx),
-                            .uv_index = p.uvindex,
+                            .uv_index = @truncate(p.uvindex),
                             .sampler = try gf.Sampler.init(
                                 .{
                                     .filter_min_mag = .Linear,

@@ -6,6 +6,7 @@ const Transform = @import("transform.zig");
 const an = @import("animation.zig");
 const as = @import("../asset/asset.zig");
 const es = @import("../easings.zig");
+const sr = @import("../serialize/serialize.zig");
 
 /// Animation Controller provides a state machine for controlling skeletal animations. 
 /// It provides functionality to blend between animations based on variable values and node transitions.
@@ -32,14 +33,19 @@ pub const AnimController = struct {
         self.triggered_events.deinit();
         self.arena.deinit();
     }
+    
+    pub const Descriptor = struct {
+        nodes: []Node,
+        base_animation: ?as.AnimationAssetId = null,
+    };
 
-    pub fn init(alloc: std.mem.Allocator, nodes: []const Node) !AnimController {
+    pub fn init(alloc: std.mem.Allocator, desc: Descriptor) !AnimController {
         var arena = std.heap.ArenaAllocator.init(alloc);
         errdefer arena.deinit();
 
         var arena_alloc = arena.allocator();
 
-        const owned_nodes = try arena_alloc.dupe(Node, nodes);
+        const owned_nodes = try arena_alloc.dupe(Node, desc.nodes);
         errdefer arena_alloc.free(owned_nodes);
 
         for (owned_nodes) |*node| {
@@ -54,11 +60,18 @@ pub const AnimController = struct {
             .variables = variables,
             .triggered_events = try std.ArrayList(u32).initCapacity(alloc, 4),
             .nodes = owned_nodes,
+            .base_animation = desc.base_animation,
         };
     }
 
-    pub fn clone(self: *const Self, alloc: std.mem.Allocator) !AnimController {
-        return try Self.init(alloc, self.nodes);
+    pub fn descriptor(self: *const Self, alloc: std.mem.Allocator) !Descriptor {
+        const owned_nodes = try alloc.dupe(Node, self.nodes);
+        errdefer alloc.free(owned_nodes);
+
+        return Descriptor {
+            .nodes = owned_nodes,
+            .base_animation = self.base_animation,
+        };
     }
 
     /// Calculates the bone transforms for a given node.
@@ -261,14 +274,37 @@ pub const AnimController = struct {
     }
 };
 
+pub const NodeType = union(enum) {
+    Basic: BasicNode,
+    Blend1D: BlendNode1D,
+};
+
 /// A node in the animation controller state machine.
 pub const Node = struct {
-    node: union(enum) {
-        Basic: BasicNode,
-        Blend1D: BlendNode1D,
-    },
+    node: NodeType,
     next: []const NodeTransition,
     time: f64 = 0.0,
+
+    pub const Serde = struct {
+        pub const T = struct {
+            node: NodeType,
+            next: []const NodeTransition,
+        };
+
+        pub fn serialize(alloc: std.mem.Allocator, value: Node) !T {
+            return T {
+                .node = value.node,
+                .next = try alloc.dupe(NodeTransition, value.next),
+            };
+        }
+
+        pub fn deserialize(alloc: std.mem.Allocator, value: T) !Node {
+            return Node {
+                .node = value.node,
+                .next = try alloc.dupe(NodeTransition, value.next),
+            };
+        }
+    };
 };
 
 /// A transition specification between two nodes in the animation controller state machine.
