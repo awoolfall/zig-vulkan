@@ -1313,6 +1313,10 @@ pub const Imui = struct {
         };
         const text_input_widget_id = self.add_widget(text_input_widget);
 
+        // ensure data is in a valid state
+        state.cursor = @min(state.cursor, state.text.items.len);
+        state.mark = @min(state.mark, state.text.items.len);
+
         // Push invisible spacer box to until start of selection
         _ = self.push_layout(.X, key ++ .{@src()});
         var l_sel = @min(state.cursor, state.mark);
@@ -1404,7 +1408,7 @@ pub const Imui = struct {
                                         }
                                     } else {
                                         // single char backspace
-                                        l_sel -= 1;
+                                        if (l_sel != 0) { l_sel -= 1; }
                                     }
                                 }
                                 for (l_sel..r_sel) |_| {
