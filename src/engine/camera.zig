@@ -33,21 +33,21 @@ pub const Camera = struct {
     damping_movement: [2]f32 = [_]f32{ 0.0, 0.0 },
     damping_amount: f32 = 1.0 / 0.1,
 
-    camera_type: enum {
-        FLY, ORBIT,
-    } = .ORBIT,
+    local_transform: Transform = .{ .position = zm.f32x4(0.0, 0.0, -1.0, 0.0) },
+    transform: Transform = .{},
 
-    pub fn generate_perspective_matrix(self: *Self, aspect_ratio: f32) zm.Mat {
+    pub fn generate_perspective_matrix(self: *const Self, aspect_ratio: f32) zm.Mat {
         return zm.perspectiveFovLh(self.field_of_view_y, aspect_ratio, self.far_field, self.near_field);
     }
 
     pub fn fly_camera_update(
         self: *Self, 
-        camera_transform: *Transform,
         window: *Window,
         input: *const _input.InputState,
         time: *const _time.TimeState,
     ) void {
+        self.local_transform = self.transform;
+
         { // Camera Movement
             const move_amount = self.move_speed * time.delta_time_f32();
             const cam_x = 
@@ -57,8 +57,8 @@ pub const Camera = struct {
                 float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) * -move_amount + 
                 float_from_bool(input.get_key(kc.KeyCode.ArrowUp)) * move_amount;
 
-            camera_transform.position += camera_transform.forward_direction() * zm.f32x4s(cam_z);
-            camera_transform.position += camera_transform.right_direction() * zm.f32x4s(cam_x);
+            self.local_transform.position += self.local_transform.forward_direction() * zm.f32x4s(cam_z);
+            self.local_transform.position += self.local_transform.right_direction() * zm.f32x4s(cam_x);
         }
         
         if (input.get_key_down(kc.KeyCode.MouseRight)) {
@@ -72,26 +72,28 @@ pub const Camera = struct {
 
         // Camera rotation
         if (input.get_key(kc.KeyCode.MouseRight)) {
-            camera_transform.rotation = zm.qmul(
-                camera_transform.rotation,
+            self.local_transform.rotation = zm.qmul(
+                self.local_transform.rotation,
                 zm.quatFromAxisAngle(
                     zm.f32x4(0.0, 1.0, 0.0, 0.0),
                     self.mouse_sensitivity * input.mouse_delta[0]
                 )
             );
-            camera_transform.rotation = zm.qmul(
-                camera_transform.rotation,
+            self.local_transform.rotation = zm.qmul(
+                self.local_transform.rotation,
                 zm.quatFromAxisAngle(
-                    camera_transform.right_direction(),
+                    self.local_transform.right_direction(),
                     self.mouse_sensitivity * input.mouse_delta[1]
                 )
             );
         }
+
+        // update transform
+        self.transform = self.local_transform;
     }
 
     pub fn orbit_camera_update(
         self: *Self, 
-        camera_transform: *Transform, 
         orbit_target: zm.F32x4, 
         window: *Window,
         input: *const _input.InputState,
@@ -121,17 +123,17 @@ pub const Camera = struct {
             self.damping_movement[1] = std.math.lerp(self.damping_movement[1], 0.0, self.damping_amount * time.delta_time_f32());
         }
 
-        var target_offset = camera_transform.position - orbit_target;
+        var target_offset = self.local_transform.position;
         if (zm.length3(target_offset)[0] < 0.001) {
             target_offset = zm.f32x4(0.0, 0.0, 1.0, 0.0);
         }
 
         if (!std.math.approxEqAbs(f32, zm.length3(target_offset)[0], self.orbit_distance, 0.05)) {
-            camera_transform.position = orbit_target + zm.normalize3(target_offset) * zm.f32x4s(self.orbit_distance);
-            camera_transform.position[3] = 0.0;
+            self.local_transform.position = zm.normalize3(target_offset) * zm.f32x4s(self.orbit_distance);
+            self.local_transform.position[3] = 0.0;
         }
 
-        target_offset = camera_transform.position - orbit_target;
+        target_offset = self.local_transform.position;
         target_offset = zm.rotate(zm.quatFromAxisAngle(
                 zm.cross3(target_offset, zm.f32x4(0.0, 1.0, 0.0, 0.0)),
                 self.damping_movement[1]
@@ -141,31 +143,14 @@ pub const Camera = struct {
                 self.damping_movement[0]
             ), target_offset);
 
-        camera_transform.position = orbit_target + target_offset;
-        camera_transform.position[3] = 0.0;
+        self.local_transform.position = target_offset;
+        self.local_transform.position[3] = 0.0;
 
-        camera_transform.rotation = zm.quatFromMat(zm.inverse(zm.lookAtLh(camera_transform.position, orbit_target, zm.f32x4(0.0, 1.0, 0.0, 0.0))));
-    }
+        self.local_transform.rotation = zm.quatFromMat(zm.inverse(zm.lookAtLh(self.local_transform.position, zm.f32x4s(0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0))));
 
-    pub fn update(
-        self: *Self, 
-        camera_transform: *Transform, 
-        orbit_target: zm.F32x4,
-        window: *Window,
-        input: *const _input.InputState,
-        time: *const _time.TimeState,
-    ) void {
-        if (input.get_key_down(kc.KeyCode.P)) {
-            if (self.camera_type == .ORBIT) {
-                self.camera_type = .FLY;
-            } else {
-                self.camera_type = .ORBIT;
-            }
-        }
-        switch (self.camera_type) {
-            .FLY => self.fly_camera_update(camera_transform, window, input, time),
-            .ORBIT => self.orbit_camera_update(camera_transform, orbit_target, window, input, time),
-        }
+        // update transform
+        self.transform = self.local_transform;
+        self.transform.position += orbit_target;
     }
 
     pub fn horizontal_to_vertical_fov(horizontal_fov: f32, aspect_ratio: f32) f32 {

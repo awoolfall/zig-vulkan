@@ -1154,10 +1154,9 @@ pub const Model = struct {
         return try init_from_shape(alloc, &shape, gfx);
     }
 
-    pub fn sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *gf.GfxState) !Model {
-        _ = stacks;
+    pub fn sphere(alloc: std.mem.Allocator, subdivisions: i32, gfx: *gf.GfxState) !Model {
         // Generate sphere shape
-        var shape = zmesh.Shape.initSubdividedSphere(slices);
+        var shape = zmesh.Shape.initSubdividedSphere(subdivisions);
         defer shape.deinit();
 
         // flat shaded

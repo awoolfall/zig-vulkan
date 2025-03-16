@@ -100,7 +100,7 @@ pub const AssetManager = struct {
                 .Sphere => |s| {
                     try loaded_asset_pack.models.put(
                         name_hash, 
-                        try ms.Model.sphere(self.allocator, s.slices, s.stacks, gfx)
+                        try ms.Model.sphere(self.allocator, s.subdivisions, gfx)
                     );
                 },
             }
@@ -270,8 +270,7 @@ pub const AssetPack = struct {
             slices: i32,
         },
         Sphere: struct {
-            slices: i32,
-            stacks: i32,
+            subdivisions: i32,
         },
     };
 
