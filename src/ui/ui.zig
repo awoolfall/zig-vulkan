@@ -532,6 +532,13 @@ pub const Imui = struct {
             var child_id = widget.first_child;
             while (child_id != null) {
                 const child = &self.widgets.items[child_id.?];
+
+                // if child is floating then it does not contribute to the size of the parent
+                if (child.flags.get_floating_flag(@enumFromInt(axis))) {
+                    child_id = child.next_sibling;
+                    continue;
+                }
+
                 top_size = @max(child.computed.size[axis], top_size);
                 total_size += child.computed.size[axis] + widget.children_gap;
                 child_id = child.next_sibling;
@@ -754,10 +761,29 @@ pub const Imui = struct {
                     } 
                 }; 
 
+                const colour = blk: { 
+                    const debug_colours = false;
+                    if (debug_colours) {
+                        if (self.active_item) |ai| { 
+                            if (ai == widget.key) {
+                                break :blk zm.f32x4(1.0, 0.0, 0.0, 1.0);
+                            }
+                        } 
+                        if (self.hot_item) |hi| {
+                            if (hi == widget.key) {
+                                break :blk zm.f32x4(0.0, 1.0, 0.0, 1.0);
+                            }
+                        }
+                    }
+                    break :blk background_colour;
+                };
+
                 self.quad_renderer.render_quad(
                     widget.computed.rect(),
                     .{
-                        .colour = background_colour + zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)),
+                        .colour = colour 
+                            // TODO: find a better way of doing hover colouring
+                            + zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0),
                         .border_colour = border_colour,
                         .border_width_px = widget.border_width_px,
                         .corner_radii_px = widget.corner_radii_px,
@@ -794,7 +820,7 @@ pub const Imui = struct {
         self.last_frame_widgets.clearRetainingCapacity();
         for (self.widgets.items) |w| {
             if (w.key != Self.LabelKey) {
-                std.debug.assert(!self.last_frame_widgets.contains(w.key));
+                std.debug.assert(!self.last_frame_widgets.contains(w.key)); // widget key is getting squashed. This may mean two or more widgets have the same key.
             }
             self.last_frame_widgets.put(w.key, w) catch unreachable;
         }
@@ -1552,5 +1578,144 @@ pub const Imui = struct {
 
         const image_widget_id = self.add_widget(image_widget);
         return self.generate_widget_signals(image_widget_id);
+    }
+
+    pub const ComboBoxData = struct {
+        default_text: []const u8,
+        options: []const []const u8,
+        selected_index: ?usize = null,
+        dropdown_is_open: bool = false,
+    };
+
+    fn set_combobox_background_layout(self: *const Self, widget: *Widget) void {
+        widget.semantic_size[0] = .{
+            .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+        };
+        widget.flags.render = true;
+        widget.background_colour = self.palette().background;
+        widget.border_colour = self.palette().border;
+        widget.border_width_px = 1;
+        widget.padding_px = .{
+            .left = 4,
+            .right = 4,
+            .top = 4,
+            .bottom = 4,
+        };
+        widget.children_gap = 2;
+        widget.corner_radii_px = .{
+            .top_left = 4,
+            .top_right = 4,
+            .bottom_left = 4,
+            .bottom_right = 4,
+        };
+    }
+
+    pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) usize {
+        // ensure data elements are valid
+        if (data.selected_index) |*si| { si.* = @min(si.*, data.options.len - 1); }
+
+        // push the container layout
+        const container_layout = self.push_layout(.Y, key ++ .{@src()});
+        if (self.get_widget(container_layout)) |container_widget| {
+            container_widget.semantic_size[0] = .{
+                .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+            };
+        }
+        
+        // push the background layout of the primary combobox
+        const background = self.push_layout(.X, key ++ .{@src()});
+        if (self.get_widget(background)) |background_widget| {
+            self.set_combobox_background_layout(background_widget);
+            background_widget.flags.clickable = true;
+        }
+
+        // check wether the combo box was clicked on, record this
+        // so we dont immediately close dropdown options
+        var clicked_on_widget: bool = false;
+        const background_s = self.generate_widget_signals(background);
+        if (background_s.clicked) {
+            data.dropdown_is_open = !data.dropdown_is_open;
+            clicked_on_widget = true;
+        }
+
+        // print the selected label
+        const selected_label = if (data.selected_index) |si| data.options[si] else data.default_text;
+        _ = self.label("<> ");
+        _ = self.label(selected_label);
+        self.pop_layout(); // background layout
+
+        // if the dropdown should be shown then render it
+        dropdown_is_open: { if (data.dropdown_is_open) {
+            // determine the position of the dropdown options based on the primary combobox rect
+            const dropdown_pos = if (self.get_widget_from_last_frame(background)) |b| 
+                .{ b.computed.rect().left, b.computed.rect().top + b.computed.rect().height + 4 }
+             else break :dropdown_is_open;
+
+            // push the options background layout
+            const options_background = self.push_floating_layout(.Y, @floatFromInt(dropdown_pos[0]), @floatFromInt(dropdown_pos[1]), key ++ .{@src()});
+            if (self.get_widget(options_background)) |options_background_widget| {
+                self.set_combobox_background_layout(options_background_widget);
+                options_background_widget.semantic_size[0] = .{
+                    .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+                };
+            }
+
+            // push each of the options into the dropdown menu
+            for (data.options, 0..) |option, i| {
+                const option_background = self.push_layout(.X, key ++ .{@src(), i});
+                defer self.pop_layout();
+
+                // give the option a hover effect
+                if (self.get_widget(option_background)) |option_background_widget| {
+                    option_background_widget.semantic_size[0] = .{
+                        .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+                    };
+                    option_background_widget.flags.clickable = true;
+                    option_background_widget.flags.render = true;
+                    option_background_widget.background_colour = self.palette().background;
+                    option_background_widget.padding_px = .{
+                        .left = 4,
+                        .right = 4,
+                        .top = 4,
+                        .bottom = 4,
+                    };
+                    option_background_widget.corner_radii_px = .{
+                        .top_left = 4,
+                        .top_right = 4,
+                        .bottom_left = 4,
+                        .bottom_right = 4,
+                    };
+                }
+
+                // if the option is clicked then set the data selected index
+                if (self.generate_widget_signals(option_background).clicked) {
+                    if (data.selected_index == i) {
+                        data.selected_index = null;
+                    } else {
+                        data.selected_index = i;
+                    }
+                }
+                
+                // print the option label with a selected indicator
+                if (data.selected_index) |si| {
+                    if (i == si) {
+                        _ = self.label("* ");
+                    }
+                }
+                _ = self.label(option);
+            }
+
+            self.pop_layout(); // options background layout
+        } }
+
+        self.pop_layout(); // container layout
+
+        // close the dropdown if the mouse is clicked anywhere
+        // unless the primary combobox was clicked
+        if (!clicked_on_widget and engine.engine().input.get_key_down(engine.input.KeyCode.MouseLeft)) {
+            data.dropdown_is_open = false;
+        }
+
+        return container_layout;
     }
 };
