@@ -279,8 +279,14 @@ pub const Imui = struct {
 
     const LabelKey: Key = std.hash.XxHash64.hash(0, "Imuilabel");
 
+    // hot and active items for the current frame
     hot_item: ?Key = null,
     active_item: ?Key = null,
+
+    // hot and active items for the next frame
+    // these are modified during widget creation and set to the current values at render time
+    next_hot_item: ?Key = null,
+    next_active_item: ?Key = null,
 
     input: *const in.InputState,
     time: *const tm.TimeState,
@@ -476,6 +482,28 @@ pub const Imui = struct {
 
         self.add_heirarchy_links(parent_id, widget_id);
         return widget_id;
+    }
+
+    fn any_of_widgets_is_hot(self: *const Self, widget_ids: []const Key) bool {
+        if (self.hot_item) |hi| {
+            for (widget_ids) |id| {
+                if (hi == id) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    fn any_of_widgets_is_active(self: *const Self, widget_ids: []const Key) bool {
+        if (self.active_item) |ai| {
+            for (widget_ids) |id| {
+                if (ai == id) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     pub fn get_widget(self: *Self, widget_id: usize) ?*Widget {
@@ -821,8 +849,8 @@ pub const Imui = struct {
         for (self.widgets.items) |w| {
             if (w.key != Self.LabelKey) {
                 std.debug.assert(!self.last_frame_widgets.contains(w.key)); // widget key is getting squashed. This may mean two or more widgets have the same key.
+                self.last_frame_widgets.put(w.key, w) catch unreachable;
             }
-            self.last_frame_widgets.put(w.key, w) catch unreachable;
         }
         self.widgets.clearRetainingCapacity();
         self.parent_stack.clearRetainingCapacity();
@@ -834,49 +862,49 @@ pub const Imui = struct {
             _ = self.arena().reset(.free_all);
         }
 
+        self.hot_item = self.next_hot_item;
+        self.active_item = self.next_active_item;
+        self.next_hot_item = null;
+        self.next_active_item = null;
+
         self.add_root_widget(gfx);
     }
 
-    fn generate_widget_signals(self: *Self, widget_id: usize) WidgetSignal(usize) {
+    pub fn generate_widget_signals(self: *Self, widget_id: usize) WidgetSignal(usize) {
         const widget = self.get_widget(widget_id).?;
         var widget_signal = WidgetSignal(usize) {.id = widget_id,};
         const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
 
         if (last_frame_widget) |lfw| {
             const lfw_contains_cursor = lfw.computed.rect().contains(self.input.cursor_position);
-            if (lfw_contains_cursor) {
-                widget_signal.hover = true;
-                if (self.hot_item == widget.key) {
-                    // continue hover
-                } else {
-                    // start hover
-                    self.hot_item = widget.key;
+
+            // hover detection
+            if (self.hot_item == widget.key) {
+                if (lfw_contains_cursor) {
+                    widget_signal.hover = true;
+                    self.next_hot_item = widget.key;
                 }
             } else {
-                if (self.hot_item == widget.key) {
-                    // end hover
-                    self.hot_item = null;
-                    // if (self.active_item == widget.key) {
-                    //     self.active_item = null;
-                    // }
-                } else {
-
+                if (lfw_contains_cursor) {
+                    self.next_hot_item = widget.key;
                 }
             }
 
+            // click or dragged detection
             if (widget.flags.clickable) {
                 if (self.active_item == widget.key) {
                     if (self.input.get_key(self.primary_interact_key)) {
                         // dragged
                         widget_signal.dragged = true;
+                        self.next_active_item = widget.key;
                     }
                     if (self.input.get_key_up(self.primary_interact_key)) {
-                        self.active_item = null;
+                        // on up
                     }
                 } else if (self.hot_item == widget.key) {
                     if (self.input.get_key_down(self.primary_interact_key)) {
                         widget_signal.clicked = true;
-                        self.active_item = widget.key;
+                        self.next_active_item = widget.key;
                     }
                 }
             }
@@ -1017,7 +1045,7 @@ pub const Imui = struct {
         }
 
         const text_widget = Widget {
-            .key = gen_key(key ++ .{@src().line}),
+            .key = Self.LabelKey,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
@@ -1418,7 +1446,11 @@ pub const Imui = struct {
 
         // Handle keyboard input if hovering
         // @TODO: handle keyboard input if _focused_, not hovering
-        if (box_signals.hover or text_signals.hover) {
+        const line_edit_is_hot_widget = self.any_of_widgets_is_hot(&.{ 
+            self.get_widget(box_signals.id).?.key, 
+            self.get_widget(text_signals.id).?.key
+        });
+        if (line_edit_is_hot_widget) {
             for (self.input.char_events) |c| {
                 if (c != null) {
                     switch (c.?[0]) {
