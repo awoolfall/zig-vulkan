@@ -1371,43 +1371,52 @@ pub const Imui = struct {
         state.cursor = @min(state.cursor, state.text.items.len);
         state.mark = @min(state.mark, state.text.items.len);
 
-        // Push invisible spacer box to until start of selection
-        _ = self.push_layout(.X, key ++ .{@src()});
-        var l_sel = @min(state.cursor, state.mark);
-        const r_sel = @max(state.cursor, state.mark);
-        var phantom_text = text_input_widget;
-        phantom_text.key = gen_key(key ++ .{@src()});
-        phantom_text.flags.render = false;
-        phantom_text.text_content.?.text = state.text.items[0..l_sel];
-        _ = self.add_widget(phantom_text);
-
-        // Cursor (and selection box)
-        const f = self.get_font(text_input_widget.text_content.?.font);
-        const selection_bounds = f.text_bounds_2d_pixels(
-            state.text.items[l_sel..r_sel],
-            text_input_widget.text_content.?.size
-        );
-        const cursor = Widget {
-            .key = gen_key(key ++ .{@src()}),
-            .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.width)) + 1.0, .shrinkable_percent = 0.0, },
-                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.height)), .shrinkable_percent = 0.0, },
-            },
-            .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
-                (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
-            .border_colour = zm.f32x4s(0.0),
-            .flags = .{
-                .render = true,
-            },
-        };
-        _ = self.add_widget(cursor);
-        self.pop_layout(); // phantom and cursor
-
-        self.pop_layout(); // background box
-
         // Generate signals
         const box_signals = self.generate_widget_signals(l);
         const text_signals = self.generate_widget_signals(text_input_widget_id);
+
+        const line_edit_is_hot_widget = self.any_of_widgets_is_hot(&.{ 
+            self.get_widget(box_signals.id).?.key, 
+            self.get_widget(text_signals.id).?.key
+        });
+
+        var l_sel = @min(state.cursor, state.mark);
+        const r_sel = @max(state.cursor, state.mark);
+        const f = self.get_font(text_input_widget.text_content.?.font);
+
+        // Cursor (and selection box)
+        if (line_edit_is_hot_widget or state.cursor != state.mark) {
+            // Push invisible spacer box to until start of selection
+            _ = self.push_layout(.X, key ++ .{@src()});
+            var phantom_text = text_input_widget;
+            phantom_text.key = gen_key(key ++ .{@src()});
+            phantom_text.flags.render = false;
+            phantom_text.text_content.?.text = state.text.items[0..l_sel];
+            _ = self.add_widget(phantom_text);
+
+            // render cursor and selection box
+            const selection_bounds = f.text_bounds_2d_pixels(
+                state.text.items[l_sel..r_sel],
+                text_input_widget.text_content.?.size
+            );
+            const cursor = Widget {
+                .key = gen_key(key ++ .{@src()}),
+                .semantic_size = [2]SemanticSize{
+                    SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.width)) + 1.0, .shrinkable_percent = 0.0, },
+                    SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.height)), .shrinkable_percent = 0.0, },
+                },
+                .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
+                    (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
+                .border_colour = zm.f32x4s(0.0),
+                .flags = .{
+                    .render = true,
+                },
+            };
+            _ = self.add_widget(cursor);
+            self.pop_layout(); // phantom and cursor
+        }
+
+        self.pop_layout(); // background box
 
         // Handle mouse input, click and drag
         if (box_signals.dragged or text_signals.dragged or box_signals.clicked or text_signals.clicked) {
@@ -1446,10 +1455,6 @@ pub const Imui = struct {
 
         // Handle keyboard input if hovering
         // @TODO: handle keyboard input if _focused_, not hovering
-        const line_edit_is_hot_widget = self.any_of_widgets_is_hot(&.{ 
-            self.get_widget(box_signals.id).?.key, 
-            self.get_widget(text_signals.id).?.key
-        });
         if (line_edit_is_hot_widget) {
             for (self.input.char_events) |c| {
                 if (c != null) {
