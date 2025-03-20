@@ -41,8 +41,8 @@ const FontConstantBuffer = extern struct {
 };
 
 const CharacterInfoConstantBuffer = extern struct {
-    quad_bounds: Bounds,
-    atlas_bounds: Bounds,
+    quad_bounds: Bounds = .{},
+    atlas_bounds: Bounds = .{},
 };
 
 const MSDF_FONT_SHADER_HLSL = @embedFile("font_shader.hlsl");
@@ -53,7 +53,7 @@ pub const Font = struct {
     _allocator: std.mem.Allocator,
     atlas_details: AtlasDetails,
     font_metrics: FontMetrics,
-    ascii_character_map: [256]CharacterInfo,
+    character_map: std.AutoHashMap(u21, CharacterInfo),
 
     msdf_texture_view: _gfx.TextureView2D,
     font_vso: _gfx.VertexShader,
@@ -63,7 +63,9 @@ pub const Font = struct {
     character_buffer: _gfx.Buffer,
     font_text_buffer: _gfx.Buffer,
 
-    pub fn deinit(self: *const Font) void {
+    constant_buffer_data: []CharacterInfoConstantBuffer,
+
+    pub fn deinit(self: *Font) void {
         self.msdf_texture_view.deinit();
         self.font_vso.deinit();
         self.font_pso.deinit();
@@ -71,6 +73,8 @@ pub const Font = struct {
         self.blend_state.deinit();
         self.character_buffer.deinit();
         self.font_text_buffer.deinit();
+        self.character_map.deinit();
+        self._allocator.free(self.constant_buffer_data);
     }
 
     pub fn init(alloc: std.mem.Allocator, font_json: path.Path, font_msdf_png: path.Path, gfx: *_gfx.GfxState) !Font {
@@ -106,7 +110,7 @@ pub const Font = struct {
                 underlineThickness: f32,
             },
             glyphs: []struct {
-                unicode: i32,
+                unicode: u21,
                 advance: f32,
                 planeBounds: Bounds = .{},
                 atlasBounds: Bounds = .{},
@@ -120,6 +124,9 @@ pub const Font = struct {
             .allocate = .alloc_always
         });
         defer font_data.deinit();
+
+        const constant_buffer_data = try alloc.alloc(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT);
+        @memset(constant_buffer_data[0..], CharacterInfoConstantBuffer{});
 
         // construct font object
         var font = Font {
@@ -145,24 +152,16 @@ pub const Font = struct {
                 .underline_y = font_data.value.metrics.underlineY,
                 .underline_thickness = font_data.value.metrics.underlineThickness,
             },
-            .ascii_character_map = [_]CharacterInfo{.{
-                .advance=0.0, 
-                .plane_bounds=.{}, 
-                .atlas_bounds=.{}
-            }} ** 256,
+            .character_map = std.AutoHashMap(u21, CharacterInfo).init(alloc),
+            .constant_buffer_data = constant_buffer_data,
         };
 
         const msdf_width: f32 = @floatFromInt(font.atlas_details.width);
         const msdf_height: f32 = @floatFromInt(font.atlas_details.height);
 
         // fill font character info array with data from font json
-        var glyph_idx: usize = 0;
-        for (0..256) |i| {
-            const glyph = &font_data.value.glyphs[glyph_idx];
-            if (glyph.unicode > i) {continue;}
-            if (glyph.unicode < i) {return error.FailedToReadGlyphsInOrder;}
-
-            font.ascii_character_map[i] = CharacterInfo {
+        for (font_data.value.glyphs) |*glyph| {
+            const character_info = CharacterInfo {
                 .advance = glyph.advance,
                 .plane_bounds = glyph.planeBounds,
                 .atlas_bounds = Bounds {
@@ -172,9 +171,7 @@ pub const Font = struct {
                     .bottom = 1.0 - (glyph.atlasBounds.bottom / msdf_height),
                 },
             };
-
-            glyph_idx += 1;
-            if (glyph_idx >= font_data.value.glyphs.len) {break;}
+            try font.character_map.put(glyph.unicode, character_info);
         }
 
         // load msdf font png file
@@ -326,50 +323,62 @@ pub const Font = struct {
             };
         }
 
-        var text_offset: usize = 0;
-        while (text_offset < text.len) {
-            var instance_count: u32 = 0;
+        const text_utf8 = std.unicode.Utf8View.init(text) catch unreachable; // TODO handle error
+        var text_utf8_iter = text_utf8.iterator();
+
+        var instance_id: usize = 0;
+        while (text_utf8_iter.nextCodepoint()) |c| {
+            if (instance_id >= RENDER_INSTANCE_COUNT) {
+                {
+                    const mapped_buffer = self.character_buffer.map(([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer), gfx) catch unreachable;
+                    defer mapped_buffer.unmap();
+
+                    @memcpy(mapped_buffer.data()[0..], self.constant_buffer_data[0..]);
+                }
+
+                gfx.cmd_draw_instanced(6, RENDER_INSTANCE_COUNT, 0, 0);
+
+                instance_id = 0;
+            }
+
+            // handle newline
+            switch (c) {
+                '\n' => {
+                    x_loc = x_start_loc;
+                    y_loc -= self.font_metrics.line_height * screen_size;
+                },
+                else => {
+                    const char_info = self.character_map.get(c) orelse continue; // TODO handle error
+
+                    const quad_bounds = Bounds {
+                        .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
+                        .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
+                        .top = y_loc + char_info.plane_bounds.top * screen_size,
+                        .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
+                    };
+
+                    // Setup character info buffer
+                    self.constant_buffer_data[instance_id] = .{
+                        .quad_bounds = quad_bounds,
+                        .atlas_bounds = char_info.atlas_bounds,
+                    };
+
+                    x_loc += (char_info.advance / aspect) * screen_size;
+                }
+            }
+
+            instance_id += 1;
+        }
+        // render the remaining characters
+        if (instance_id > 0) {
             {
                 const mapped_buffer = self.character_buffer.map(([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer), gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
-                while (instance_count < RENDER_INSTANCE_COUNT and (text_offset + instance_count) < text.len) {
-                    const c = text[text_offset + instance_count];
-
-                    // reset data in this instance
-                    mapped_buffer.data()[instance_count].quad_bounds = .{};
-                    mapped_buffer.data()[instance_count].atlas_bounds = .{};
-
-                    // handle newline character
-                    switch (c) {
-                        '\n' => {
-                            x_loc = x_start_loc;
-                            y_loc -= self.font_metrics.line_height * screen_size;
-                        },
-                        else => {
-                            const char_info = &self.ascii_character_map[@intCast(c)];
-
-                            const quad_bounds = Bounds {
-                                .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
-                                .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
-                                .top = y_loc + char_info.plane_bounds.top * screen_size,
-                                .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
-                            };
-
-                            // Setup character info buffer
-                            mapped_buffer.data()[instance_count].quad_bounds = quad_bounds;
-                            mapped_buffer.data()[instance_count].atlas_bounds = char_info.atlas_bounds;
-
-                            x_loc += (char_info.advance / aspect) * screen_size;
-                        },
-                    }
-
-                    instance_count += 1;
-                }
+                @memcpy(mapped_buffer.data()[0..], self.constant_buffer_data[0..]);
             }
 
-            gfx.cmd_draw_instanced(6, instance_count, 0, 0);
-            text_offset += instance_count;
+            gfx.cmd_draw_instanced(6, @truncate(instance_id), 0, 0);
         }
     }
 
@@ -386,14 +395,18 @@ pub const Font = struct {
         const x_start_loc = x_loc;
 
         var max_x = x_loc;
-        for (text) |c| {
+
+        const text_utf8 = std.unicode.Utf8View.init(text) catch unreachable; // TODO handle error
+        var text_utf8_iter = text_utf8.iterator();
+
+        while (text_utf8_iter.nextCodepoint()) |c| {
             switch (c) {
                 '\n' => {
                     x_loc = x_start_loc;
                     line_count += 1.0;
                 },
                 else => {
-                    const char_info = &self.ascii_character_map[@intCast(c)];
+                    const char_info = self.character_map.get(c) orelse continue; // TODO handle error
 
                     x_loc += char_info.advance;
                     max_x = @max(max_x, x_loc);

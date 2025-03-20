@@ -83,6 +83,7 @@ pub const Imui = struct {
         kind: SizeKind,
         value: f32,
         shrinkable_percent: f32 = 0.0,
+        minimum_pixel_size: f32 = 0.0,
     };
 
     pub const Axis = enum(usize) {
@@ -104,6 +105,7 @@ pub const Imui = struct {
 
     pub const WidgetFlags = packed struct(u32) {
         render: bool = true,
+        hover_effect: bool = true,
 
         allows_overflow_x: bool = false,
         allows_overflow_y: bool = false,
@@ -113,7 +115,7 @@ pub const Imui = struct {
 
         clickable: bool = false,
 
-        __unused: u26 = 0,
+        __unused: u25 = 0,
 
         pub inline fn get_allow_overflow_flag(flags: *const WidgetFlags, axis: Axis) bool {
             switch (axis) {
@@ -222,6 +224,7 @@ pub const Imui = struct {
             clicked: bool = false,
             hover: bool = false,
             dragged: bool = false,
+            data_changed: bool = false,
             id: T,
         };
     }
@@ -309,7 +312,7 @@ pub const Imui = struct {
     image_sampler: _gfx.Sampler,
 
     pub fn deinit(self: *Self) void {
-        for (self.fonts) |f| {
+        for (&self.fonts) |*f| {
             f.deinit();
         }
         self.quad_renderer.deinit();
@@ -446,6 +449,7 @@ pub const Imui = struct {
                 .Pixels => {
                     widget.computed.size[axis] = s.value;
                     apply_padding(widget, axis);
+                    widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
                 },
                 .TextContent => {
                     if (widget.text_content) |*text| {
@@ -462,6 +466,7 @@ pub const Imui = struct {
                         std.log.warn("widget with size kind \"Text Content\" does not have any text content.", .{});
                     }
                     apply_padding(widget, axis);
+                    widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
                 },
                 else => {},
             }
@@ -484,7 +489,7 @@ pub const Imui = struct {
         return widget_id;
     }
 
-    fn any_of_widgets_is_hot(self: *const Self, widget_ids: []const Key) bool {
+    pub fn any_of_widgets_is_hot(self: *const Self, widget_ids: []const Key) bool {
         if (self.hot_item) |hi| {
             for (widget_ids) |id| {
                 if (hi == id) {
@@ -495,7 +500,7 @@ pub const Imui = struct {
         return false;
     }
 
-    fn any_of_widgets_is_active(self: *const Self, widget_ids: []const Key) bool {
+    pub fn any_of_widgets_is_active(self: *const Self, widget_ids: []const Key) bool {
         if (self.active_item) |ai| {
             for (widget_ids) |id| {
                 if (ai == id) {
@@ -504,6 +509,10 @@ pub const Imui = struct {
             }
         }
         return false;
+    }
+
+    pub fn has_focus(self: *const Self) bool {
+        return self.hot_item != null or self.active_item != null;
     }
 
     pub fn get_widget(self: *Self, widget_id: usize) ?*Widget {
@@ -547,6 +556,7 @@ pub const Imui = struct {
                         @intFromEnum(Axis.Y) => widget.computed.size[axis] = @as(f32, @floatFromInt(parent.content_rect().height)) * s.value,
                         else => {unreachable;},
                     }
+                    widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
                 },
                 else => {},
             }
@@ -583,6 +593,7 @@ pub const Imui = struct {
                 .ChildrenSize => {
                     widget.computed.size[axis] = widget.computed.children_size[axis];
                     apply_padding(widget, axis);
+                    widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
                 },
                 else => {},
             }
@@ -789,7 +800,7 @@ pub const Imui = struct {
                     } 
                 }; 
 
-                const colour = blk: { 
+                var colour = blk: { 
                     const debug_colours = false;
                     if (debug_colours) {
                         if (self.active_item) |ai| { 
@@ -806,12 +817,15 @@ pub const Imui = struct {
                     break :blk background_colour;
                 };
 
+                if (widget.flags.hover_effect) {
+                    // TODO: find a better way of doing hover colouring
+                    colour += zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0);
+                }
+
                 self.quad_renderer.render_quad(
                     widget.computed.rect(),
                     .{
-                        .colour = colour 
-                            // TODO: find a better way of doing hover colouring
-                            + zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0),
+                        .colour = colour,
                         .border_colour = border_colour,
                         .border_width_px = widget.border_width_px,
                         .corner_radii_px = widget.corner_radii_px,
@@ -1087,7 +1101,7 @@ pub const Imui = struct {
         box:usize, text:usize
     };
 
-    pub fn checkbox(self: *Self, checked: bool, text: []const u8, key: anytype) WidgetSignal(CheckboxId) {
+    pub fn checkbox(self: *Self, checked: *bool, text: []const u8, key: anytype) WidgetSignal(CheckboxId) {
         const l = self.push_layout(.X, key ++ .{@src().line});
         if (self.get_widget(l)) |lw| {
             lw.children_gap = 8;
@@ -1099,7 +1113,7 @@ pub const Imui = struct {
                 SemanticSize{ .kind = .Pixels , .value = 16.0, .shrinkable_percent = 0.0, },
                 SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
             },
-            .background_colour = blk: {if (checked) { break :blk self.palette().primary; } else { break :blk zm.f32x4s(0.0); }},
+            .background_colour = blk: {if (checked.*) { break :blk self.palette().primary; } else { break :blk zm.f32x4s(0.0); }},
             .border_colour = self.palette().primary,
             .border_width_px = 1,
             .corner_radii_px = .{
@@ -1109,7 +1123,7 @@ pub const Imui = struct {
                 .bottom_right = 4,
             },
             .texture = blk: { 
-                if (checked) { 
+                if (checked.*) { 
                     break :blk .{
                         .texture_view = self.scuffed_x_checkbox_image,
                         .sampler = self.image_sampler,
@@ -1147,11 +1161,18 @@ pub const Imui = struct {
 
         self.pop_layout();
 
-        return combine_signals(
+        const combined_signals = combine_signals(
             box_widget_signals, 
             text_widget_signals, 
             CheckboxId{ .box = box_widget_id, .text = text_widget_id, }
         );
+
+        // checkbox behaviour
+        if (combined_signals.clicked) {
+            checked.* = !checked.*;
+        }
+
+        return combined_signals;
     }
 
     pub const SliderId = struct {
@@ -1190,6 +1211,7 @@ pub const Imui = struct {
             },
             .flags = .{
                 .clickable = true,
+                .hover_effect = false,
             },
             .anchor = .{0.0, 0.5},
             .pivot = .{0.0, 0.5},
@@ -1215,6 +1237,7 @@ pub const Imui = struct {
             },
             .flags = .{
                 .render = true,
+                .hover_effect = false,
                 .clickable = true,
             },
             .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.2),
@@ -1306,7 +1329,7 @@ pub const Imui = struct {
         if (text_input_state.cursor == 0) { return 0; }
         const f = self.get_font(text_input_widget.text_content.?.font);
         return @intFromFloat(
-            f.ascii_character_map[text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]].advance * 
+            f.character_map.get(text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]).?.advance *  // TODO handle error
             @as(f32, @floatFromInt(text_input_widget.text_content.?.size))
         );
     }
@@ -1647,7 +1670,7 @@ pub const Imui = struct {
         };
     }
 
-    pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) usize {
+    pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) WidgetSignal(usize) {
         // ensure data elements are valid
         if (data.selected_index) |*si| { si.* = @min(si.*, data.options.len - 1); }
 
@@ -1677,9 +1700,11 @@ pub const Imui = struct {
 
         // print the selected label
         const selected_label = if (data.selected_index) |si| data.options[si] else data.default_text;
-        _ = self.label("<> ");
+        _ = self.label("▽ ");
         _ = self.label(selected_label);
         self.pop_layout(); // background layout
+
+        var new_option_selected = false;
 
         // if the dropdown should be shown then render it
         dropdown_is_open: { if (data.dropdown_is_open) {
@@ -1731,12 +1756,13 @@ pub const Imui = struct {
                     } else {
                         data.selected_index = i;
                     }
+                    new_option_selected = true;
                 }
                 
                 // print the option label with a selected indicator
                 if (data.selected_index) |si| {
                     if (i == si) {
-                        _ = self.label("* ");
+                        _ = self.label("▶ ");
                     }
                 }
                 _ = self.label(option);
@@ -1753,6 +1779,12 @@ pub const Imui = struct {
             data.dropdown_is_open = false;
         }
 
-        return container_layout;
+        return WidgetSignal(usize) {
+            .id = container_layout,
+            .data_changed = new_option_selected,
+            .hover = false, // TODO
+            .clicked = false, // TODO
+            .dragged = false, // TODO
+        };
     }
 };

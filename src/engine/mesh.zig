@@ -64,6 +64,7 @@ pub const MaterialTemplate = struct {
     shininess: f32 = 0.0,
     emissiveness: f32 = 0.0,
     opacity: f32 = 1.0,
+    unlit: bool = false,
     diffuse_map: ?MaterialTextureMap = null,
     normals_map: ?MaterialTextureMap = null,
 
@@ -432,6 +433,9 @@ pub const Model = struct {
                 if (material_property_map.get("$mat.opacity")) |prop| {
                     material.opacity = prop.data_f32();
                 }
+                if (material_property_map.get("$mat.gltf.unlit")) |prop| {
+                    material.unlit = prop.data_bytes()[0] != 0;
+                }
 
                 if (mat.get_texture_properties(assimp.TextureType.Diffuse, 0)) |p| {
                     var tex_idx: ?usize = null;
@@ -786,7 +790,7 @@ pub const Model = struct {
                 .Double => std.log.info("\t= {d}", .{prop.data_f64()}),
                 .String => std.log.info("\t= \"{s}\"", .{prop.data_bytes()}),
                 .Integer => std.log.info("\t= {}", .{prop.data_i32()}),
-                .Buffer => std.log.info("\t= [data, len={}]", .{prop.data_bytes().len}),
+                .Buffer => std.log.info("\t= [data, len={}, {any}]", .{prop.data_bytes().len, prop.data_bytes()}),
             }
         }
         std.log.info("material diffuse count is {d}", .{
