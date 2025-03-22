@@ -150,14 +150,14 @@ pub const Imui = struct {
         key: Key,
 
         // sibling data
-        next_sibling: ?usize = null,
-        prev_sibling: ?usize = null,
-        parent: usize = 0,
+        next_sibling: ?WidgetId = null,
+        prev_sibling: ?WidgetId = null,
+        parent: WidgetId = WidgetId { .location = .Standard, .index = 0 },
 
         // parent data
         layout_axis: ?Axis = null,
-        first_child: ?usize = null,
-        last_child: ?usize = null,
+        first_child: ?WidgetId = null,
+        last_child: ?WidgetId = null,
         num_children: usize = 0,
 
         computed: struct {
@@ -282,14 +282,23 @@ pub const Imui = struct {
 
     const LabelKey: Key = std.hash.XxHash64.hash(0, "Imuilabel");
 
+    const WidgetLocation = enum(u1) {
+        Standard,
+        Priority,
+    };
+    const WidgetId = packed struct(u32) {
+        location: WidgetLocation,
+        index: u31,
+    };
+
     // hot and active items for the current frame
     hot_item: ?Key = null,
     active_item: ?Key = null,
 
     // hot and active items for the next frame
     // these are modified during widget creation and set to the current values at render time
-    next_hot_item: ?Key = null,
-    next_active_item: ?Key = null,
+    next_hot_item: ?WidgetId = null,
+    next_active_item: ?WidgetId = null,
 
     input: *const in.InputState,
     time: *const tm.TimeState,
@@ -299,10 +308,13 @@ pub const Imui = struct {
     quad_renderer: QuadRenderer,
     fonts: [@intFromEnum(FontEnum.Count)]font.Font,
 
-    parent_stack: std.ArrayList(usize),
+    parent_stack: std.ArrayList(WidgetId),
     palette_stack: std.ArrayList(Palette),
 
     widgets: std.ArrayList(Widget),
+    // widgets within the priority array will always be rendered on top of standard widgets and will
+    // demand interactions over standard widgets. This is useful for things like dropdown or context menus.
+    priority_widgets: std.ArrayList(Widget),
     last_frame_widgets: std.AutoHashMap(Key, Widget),
 
     last_frame_arena: u8,
@@ -320,6 +332,7 @@ pub const Imui = struct {
         self.palette_stack.deinit();
         self.parent_stack.deinit();
         self.widgets.deinit();
+        self.priority_widgets.deinit();
         self.last_frame_widgets.deinit();
 
         self.scuffed_x_checkbox_image.deinit();
@@ -371,9 +384,10 @@ pub const Imui = struct {
             .input = input,
             .time = time,
             .window = window,
-            .parent_stack = std.ArrayList(usize).init(alloc),
+            .parent_stack = std.ArrayList(WidgetId).init(alloc),
             .palette_stack = std.ArrayList(Palette).init(alloc),
             .widgets = std.ArrayList(Widget).init(alloc),
+            .priority_widgets = std.ArrayList(Widget).init(alloc),
             .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
             .scuffed_x_checkbox_image = scuffed_x_checkbox_image_view,
             .image_sampler = try _gfx.Sampler.init(.{}, gfx),
@@ -414,9 +428,9 @@ pub const Imui = struct {
         return self.palette_stack.getLastOrNull() orelse Palette.default_palette;
     }
 
-    fn add_heirarchy_links(self: *Self, parent_id: usize, widget_id: usize) void {
-        const parent = &self.widgets.items[parent_id];
-        const widget = &self.widgets.items[widget_id];
+    fn add_heirarchy_links(self: *Self, parent_id: WidgetId, widget_id: WidgetId) !void {
+        const parent = self.get_widget(parent_id) orelse return error.ParentDoesNotExist;
+        const widget = self.get_widget(widget_id) orelse return error.WidgetDoesNotExist;
 
         widget.parent = parent_id;
 
@@ -426,7 +440,7 @@ pub const Imui = struct {
         } else {
             std.debug.assert(parent.last_child != null);
             const sibling_id = parent.last_child.?;
-            const sibling = &self.widgets.items[parent.last_child.?];
+            const sibling = self.get_widget(sibling_id) orelse return error.SiblingDoesNotExist;
             sibling.next_sibling = widget_id;
             parent.last_child = widget_id;
             widget.prev_sibling = sibling_id;
@@ -473,26 +487,66 @@ pub const Imui = struct {
         }
     }
 
-    pub fn add_widget(self: *Self, widget: Widget) usize {
+    pub fn add_widget_priority(self: *Self, widget: Widget) WidgetId {
         var widget_to_add = widget;
         // we need to own the text content so duplicate it using this frame's arena before adding the widget
         if (widget_to_add.text_content) |*text| {
             text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
         }
 
-        const widget_id = self.widgets.items.len;
-        self.widgets.append(widget_to_add) catch unreachable;
-
         const parent_id = self.parent_stack.getLast();
 
-        self.add_heirarchy_links(parent_id, widget_id);
+        const widget_index = self.priority_widgets.items.len;
+        self.priority_widgets.append(widget_to_add) catch unreachable;
+        const widget_id = WidgetId {
+            .location = .Priority,
+            .index = @truncate(widget_index),
+        };
+
+        self.add_heirarchy_links(parent_id, widget_id) catch unreachable;
         return widget_id;
     }
 
-    pub fn any_of_widgets_is_hot(self: *const Self, widget_ids: []const Key) bool {
+    pub fn add_widget(self: *Self, widget: Widget) WidgetId {
+        var widget_to_add = widget;
+        // we need to own the text content so duplicate it using this frame's arena before adding the widget
+        if (widget_to_add.text_content) |*text| {
+            text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
+        }
+
+        const parent_id = self.parent_stack.getLast();
+
+        const widget_id = blk: {
+            switch (parent_id.location) {
+                .Standard => {
+                    @branchHint(.likely);
+                    const widget_index = self.widgets.items.len;
+                    self.widgets.append(widget_to_add) catch unreachable;
+                    break :blk WidgetId {
+                        .location = .Standard,
+                        .index = @truncate(widget_index),
+                    };
+                },
+                .Priority => {
+                    @branchHint(.unlikely);
+                    const widget_index = self.priority_widgets.items.len;
+                    self.priority_widgets.append(widget_to_add) catch unreachable;
+                    break :blk WidgetId {
+                        .location = .Priority,
+                        .index = @truncate(widget_index),
+                    };
+                },
+            }
+        };
+
+        self.add_heirarchy_links(parent_id, widget_id) catch unreachable;
+        return widget_id;
+    }
+
+    pub fn any_of_widgets_is_hot(self: *const Self, widget_keys: []const Key) bool {
         if (self.hot_item) |hi| {
-            for (widget_ids) |id| {
-                if (hi == id) {
+            for (widget_keys) |k| {
+                if (hi == k) {
                     return true;
                 }
             }
@@ -500,10 +554,10 @@ pub const Imui = struct {
         return false;
     }
 
-    pub fn any_of_widgets_is_active(self: *const Self, widget_ids: []const Key) bool {
+    pub fn any_of_widgets_is_active(self: *const Self, widget_keys: []const Key) bool {
         if (self.active_item) |ai| {
-            for (widget_ids) |id| {
-                if (ai == id) {
+            for (widget_keys) |k| {
+                if (ai == k) {
                     return true;
                 }
             }
@@ -515,14 +569,24 @@ pub const Imui = struct {
         return self.hot_item != null or self.active_item != null;
     }
 
-    pub fn get_widget(self: *Self, widget_id: usize) ?*Widget {
-        if (widget_id >= self.widgets.items.len) { return null; }
-        return &self.widgets.items[widget_id];
+    pub fn get_widget(self: *Self, widget_id: WidgetId) ?*Widget {
+        switch (widget_id.location) {
+            .Standard => {
+                @branchHint(.likely);
+                if (widget_id.index >= self.widgets.items.len) { return null; }
+                return &self.widgets.items[widget_id.index];
+            },
+            .Priority => {
+                @branchHint(.unlikely);
+                if (widget_id.index >= self.priority_widgets.items.len) { return null; }
+                return &self.priority_widgets.items[widget_id.index];
+            },
+        }
     }
 
-    pub fn get_widget_from_last_frame(self: *Self, widget_id: usize) ?*const Widget {
-        if (widget_id >= self.widgets.items.len) { return null; }
-        return self.last_frame_widgets.getPtr(self.widgets.items[widget_id].key);
+    pub fn get_widget_from_last_frame(self: *Self, widget_id: WidgetId) ?*const Widget {
+        const widget = self.get_widget(widget_id) orelse return null;
+        return self.last_frame_widgets.getPtr(widget.key);
     }
 
     fn add_root_widget(self: *Self, gfx: *const _gfx.GfxState) void {
@@ -543,11 +607,11 @@ pub const Imui = struct {
                 .allows_overflow_y = false,
             },
         }) catch unreachable;
-        self.parent_stack.append(0) catch unreachable;
+        self.parent_stack.append(.{ .location = .Standard, .index = 0 }) catch unreachable;
     }
 
     fn solve_upward_dependant_sizes(self: *Self, widget: *Widget) void {
-        const parent = &self.widgets.items[widget.parent];
+        const parent = self.get_widget(widget.parent) orelse unreachable;
         for (widget.semantic_size, 0..) |s, axis| {
             switch (s.kind) {
                 .ParentPercentage => {
@@ -569,7 +633,7 @@ pub const Imui = struct {
             var top_size: f32 = 0.0;
             var child_id = widget.first_child;
             while (child_id != null) {
-                const child = &self.widgets.items[child_id.?];
+                const child = self.get_widget(child_id.?).?;
 
                 // if child is floating then it does not contribute to the size of the parent
                 if (child.flags.get_floating_flag(@enumFromInt(axis))) {
@@ -600,7 +664,7 @@ pub const Imui = struct {
         }
     }
 
-    fn solve_size_violations_in_children(self: *Self, parent_id: usize) bool {
+    fn solve_size_violations_in_children(self: *Self, parent_id: WidgetId) bool {
         const parent = &self.widgets.items[parent_id];
         if (parent.num_children == 0) { return false; }
         var violation_found = false;
@@ -661,6 +725,83 @@ pub const Imui = struct {
         return violation_found;
     }
 
+    fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId) void {
+        const widget = self.get_widget(widget_id) orelse unreachable;
+        if (widget.parent == widget_id) { return; }
+
+        const parent = self.get_widget(widget.parent) orelse unreachable;
+        const parent_content_rect = parent.content_rect();
+        const parent_content_anchor_pos = [2]f32{
+            @floatFromInt(parent_content_rect.left),
+            @floatFromInt(parent_content_rect.top)
+        };
+
+        // calculate relative position of widget on each axis
+        for (0..AxisCount) |axis| {
+            // if floating on this axis then the relative position has been manually applied, skip
+            if (!widget.flags.get_floating_flag(@enumFromInt(axis))) {
+
+                // look at previous siblings to determine relative position
+                if (widget.prev_sibling) |sib_id| {
+                    var prev = self.get_widget(sib_id) orelse unreachable;
+
+                    // skip all previous siblings who are floating on this axis
+                    while (prev.flags.get_floating_flag(@enumFromInt(axis)) and prev.prev_sibling != null) {
+                        prev = self.get_widget(prev.prev_sibling.?) orelse unreachable;
+                    }
+
+                    if (parent.layout_axis) |layout_axis| {
+                        if (@intFromEnum(layout_axis) == axis) {
+                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.size[axis] + parent.children_gap;
+                        } else {
+                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
+                        }
+                    } else {
+                        widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
+                    }
+                } else {
+                    // if no previous siblings then set to parent's relative position
+                    widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
+                }
+            }
+
+            // adjust relative position to account for anchor and pivot
+            const parent_content_size = [2]f32{
+                @floatFromInt(parent_content_rect.width),
+                @floatFromInt(parent_content_rect.height)
+            };
+            // find the potential space that the widget can take up according to the layout .
+            // This contains a compromise which allows a widget to wiggle a bit inside its allowed space 
+            // but overall positioning is still ultimately controlled by the layout.
+            const potential_space_size = blk: {
+                var p = parent_content_size[axis];
+                if (parent.layout_axis) |layout_axis| {
+                    if (@intFromEnum(layout_axis) == axis) {
+                        p = widget.computed.size[axis];
+                    }
+                }
+                break :blk p;
+            };
+            // apply anchor and pivot.
+            // anchor determines the position within the potential space allowed by the layout
+            // pivot determines the coordinate on the widget's box that sticks to the anchor
+            widget.computed.offset_position[axis] = widget.computed.relative_position[axis] 
+                - (widget.pivot[axis] * widget.computed.size[axis]) 
+                + (widget.anchor[axis] * potential_space_size);
+        }
+
+        // solve violations in parent if this is the last sibling
+        if (widget.next_sibling == null) {
+            // const violation_found = self.solve_size_violations_in_children(widget.parent);
+            //
+            // // if we found a size violation we need to recalculate relative positions from parent id
+            // if (violation_found) {
+            //     widget_id = widget.parent;
+            //     continue;
+            // }
+        }
+    }
+
     pub fn compute_widget_rects(self: *Self) void {
         // downward solve
         for (0..self.widgets.items.len) |inv_id| {
@@ -669,10 +810,20 @@ pub const Imui = struct {
             self.compute_standalone_widget_size(widget);
             self.solve_downward_dependant_sizes(widget);
         }
+        for (0..self.priority_widgets.items.len) |inv_id| {
+            const id = self.priority_widgets.items.len - inv_id - 1;
+            const widget = &self.priority_widgets.items[id];
+            self.compute_standalone_widget_size(widget);
+            self.solve_downward_dependant_sizes(widget);
+        }
 
         // upward solve
         for (self.widgets.items, 0..) |*widget, widget_id| {
-            std.debug.assert(widget.parent <= widget_id);
+            std.debug.assert(widget.parent.index <= widget_id);
+            self.solve_upward_dependant_sizes(widget);
+        }
+        for (self.priority_widgets.items, 0..) |*widget, widget_id| {
+            std.debug.assert(widget.parent.location == .Standard or widget.parent.index <= widget_id);
             self.solve_upward_dependant_sizes(widget);
         }
 
@@ -682,89 +833,22 @@ pub const Imui = struct {
             const widget = &self.widgets.items[id];
             self.solve_downward_dependant_sizes(widget);
         }
+        for (0..self.priority_widgets.items.len) |inv_id| {
+            const id = self.priority_widgets.items.len - inv_id - 1;
+            const widget = &self.priority_widgets.items[id];
+            self.solve_downward_dependant_sizes(widget);
+        }
 
         // calculate relative positions and rects
         // step through all widgets top down, if violations occur then we 
         // re-calculate relative positions from parent
-        var widget_id: usize = 0;
-        while (widget_id < self.widgets.items.len) {
-            const widget = &self.widgets.items[widget_id];
-
-            if (widget.parent == widget_id) { widget_id += 1; continue;}
-            const parent = &self.widgets.items[widget.parent];
-            const parent_content_rect = parent.content_rect();
-            const parent_content_anchor_pos = [2]f32{
-                @floatFromInt(parent_content_rect.left),
-                @floatFromInt(parent_content_rect.top)
-            };
-
-            // calculate relative position of widget on each axis
-            for (0..AxisCount) |axis| {
-                // if floating on this axis then the relative position has been manually applied, skip
-                if (!widget.flags.get_floating_flag(@enumFromInt(axis))) {
-
-                    // look at previous siblings to determine relative position
-                    if (widget.prev_sibling) |sib_id| {
-                        var prev = &self.widgets.items[sib_id];
-
-                        // skip all previous siblings who are floating on this axis
-                        while (prev.flags.get_floating_flag(@enumFromInt(axis)) and prev.prev_sibling != null) {
-                            prev = &self.widgets.items[prev.prev_sibling.?];
-                        }
-
-                        if (parent.layout_axis) |layout_axis| {
-                            if (@intFromEnum(layout_axis) == axis) {
-                                widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.size[axis] + parent.children_gap;
-                            } else {
-                                widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
-                            }
-                        } else {
-                            widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
-                        }
-                    } else {
-                        // if no previous siblings then set to parent's relative position
-                        widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
-                    }
-                }
-
-                // adjust relative position to account for anchor and pivot
-                const parent_content_size = [2]f32{
-                    @floatFromInt(parent_content_rect.width),
-                    @floatFromInt(parent_content_rect.height)
-                };
-                // find the potential space that the widget can take up according to the layout .
-                // This contains a compromise which allows a widget to wiggle a bit inside its allowed space 
-                // but overall positioning is still ultimately controlled by the layout.
-                const potential_space_size = blk: {
-                    var p = parent_content_size[axis];
-                    if (parent.layout_axis) |layout_axis| {
-                        if (@intFromEnum(layout_axis) == axis) {
-                            p = widget.computed.size[axis];
-                        }
-                    }
-                    break :blk p;
-                };
-                // apply anchor and pivot.
-                // anchor determines the position within the potential space allowed by the layout
-                // pivot determines the coordinate on the widget's box that sticks to the anchor
-                widget.computed.offset_position[axis] = widget.computed.relative_position[axis] 
-                    - (widget.pivot[axis] * widget.computed.size[axis]) 
-                    + (widget.anchor[axis] * potential_space_size);
-            }
-
-            // solve violations in parent if this is the last sibling
-            if (widget.next_sibling == null) {
-                // const violation_found = self.solve_size_violations_in_children(widget.parent);
-                //
-                // // if we found a size violation we need to recalculate relative positions from parent id
-                // if (violation_found) {
-                //     widget_id = widget.parent;
-                //     continue;
-                // }
-            }
-
-            // go to next widget
-            widget_id += 1;
+        for (0..self.widgets.items.len) |idx| {
+            const id = WidgetId { .location = .Standard, .index = @truncate(idx) };
+            self.compute_widget_relative_positions(id);
+        }
+        for (0..self.priority_widgets.items.len) |idx| {
+            const id = WidgetId { .location = .Priority, .index = @truncate(idx) };
+            self.compute_widget_relative_positions(id);
         }
     }
 
@@ -854,7 +938,7 @@ pub const Imui = struct {
         }
     }
 
-    fn render_imui_recursive(self: *Self, rtv: *_gfx.RenderTargetView, widget_id: usize) void {
+    fn render_imui_recursive(self: *Self, rtv: *_gfx.RenderTargetView, widget_id: WidgetId) void {
         const widget = self.get_widget(widget_id).?;
         if (widget.flags.render) {
             self.render_imui_widget(rtv, widget);
@@ -869,10 +953,23 @@ pub const Imui = struct {
 
     pub fn render_imui(self: *Self, rtv: *_gfx.RenderTargetView, gfx: *_gfx.GfxState) void {
         _ = gfx;
-        self.render_imui_recursive(rtv, 0);
+        self.render_imui_recursive(rtv, .{ .location = .Standard, .index = 0 });
+        if (self.priority_widgets.items.len > 0) {
+            self.render_imui_recursive(rtv, .{ .location = .Priority, .index = 0 });
+        }
     }
 
     pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {
+        std.debug.assert(self.parent_stack.items.len == 1); // more than just the root widget exists in the parent stack, maybe forgot pop_layout?
+        self.parent_stack.clearRetainingCapacity();
+
+        // reset hot and active items
+        self.hot_item = if (self.next_hot_item) |ni| self.get_widget(ni).?.key else null;
+        self.active_item = if (self.next_active_item) |ni| self.get_widget(ni).?.key else null;
+        self.next_hot_item = null;
+        self.next_active_item = null;
+
+        // fill last frame widgets with widgets from current frame
         self.last_frame_widgets.clearRetainingCapacity();
         for (self.widgets.items) |w| {
             if (w.key != Self.LabelKey) {
@@ -881,26 +978,30 @@ pub const Imui = struct {
             }
         }
         self.widgets.clearRetainingCapacity();
-        self.parent_stack.clearRetainingCapacity();
+        for (self.priority_widgets.items) |w| {
+            if (w.key != Self.LabelKey) {
+                std.debug.assert(!self.last_frame_widgets.contains(w.key)); // widget key is getting squashed. This may mean two or more widgets have the same key.
+                self.last_frame_widgets.put(w.key, w) catch unreachable;
+            }
+        }
+        self.priority_widgets.clearRetainingCapacity();
 
+        // swap arenas
         self.last_frame_arena = (self.last_frame_arena + 1) % 2;
 
+        // reset arena for the next frame
         if (!self.arena().reset(.retain_capacity)) {
             std.log.err("failed to reset imui arena", .{});
             _ = self.arena().reset(.free_all);
         }
 
-        self.hot_item = self.next_hot_item;
-        self.active_item = self.next_active_item;
-        self.next_hot_item = null;
-        self.next_active_item = null;
-
+        // add the root widget for the next frame
         self.add_root_widget(gfx);
     }
 
-    pub fn generate_widget_signals(self: *Self, widget_id: usize) WidgetSignal(usize) {
+    pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(WidgetId) {
         const widget = self.get_widget(widget_id).?;
-        var widget_signal = WidgetSignal(usize) {
+        var widget_signal = WidgetSignal(WidgetId) {
             .id = widget_id,
         };
         const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
@@ -909,15 +1010,18 @@ pub const Imui = struct {
             const lfw_contains_cursor = lfw.computed.rect().contains(self.input.cursor_position);
 
             // hover detection
-            if (self.hot_item == widget.key) {
-                if (lfw_contains_cursor) {
+            if (lfw_contains_cursor) {
+                if (self.hot_item == widget.key) {
                     widget_signal.hover = true;
-                    self.next_hot_item = widget.key;
                 }
-            } else {
-                if (lfw_contains_cursor) {
-                    self.next_hot_item = widget.key;
+
+                var new_next_hot_item = widget_id;
+                if (self.next_hot_item) |ni| {
+                    if (ni.location == .Priority and widget_id.location == .Standard) {
+                        new_next_hot_item = ni;
+                    }
                 }
+                self.next_hot_item = new_next_hot_item;
             }
 
             // click or dragged detection
@@ -926,7 +1030,7 @@ pub const Imui = struct {
                     if (self.input.get_key(self.primary_interact_key)) {
                         // dragged
                         widget_signal.dragged = true;
-                        self.next_active_item = widget.key;
+                        self.next_active_item = widget_id;
                     }
                     if (self.input.get_key_up(self.primary_interact_key)) {
                         // on up
@@ -934,7 +1038,7 @@ pub const Imui = struct {
                 } else if (self.hot_item == widget.key) {
                     if (self.input.get_key_down(self.primary_interact_key)) {
                         widget_signal.clicked = true;
-                        self.next_active_item = widget.key;
+                        self.next_active_item = widget_id;
                     }
                 }
             }
@@ -979,18 +1083,24 @@ pub const Imui = struct {
         _ = self.palette_stack.pop();
     }
 
-    pub fn push_layout_id(self: *Self, widget_id: usize) void {
-        std.debug.assert(widget_id < self.widgets.items.len);
+    pub fn push_layout_widget_priority(self: *Self, widget: Widget) WidgetId {
+        const widget_id = self.add_widget_priority(widget);
         self.parent_stack.append(widget_id) catch unreachable;
+        return widget_id;
     }
 
-    pub fn push_layout_widget(self: *Self, widget: Widget) usize {
+    pub fn push_layout_widget(self: *Self, widget: Widget) WidgetId {
         const widget_id = self.add_widget(widget);
         self.parent_stack.append(widget_id) catch unreachable;
         return widget_id;
     }
 
-    pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) usize {
+    pub fn push_layout_id(self: *Self, widget_id: WidgetId) void {
+        std.debug.assert(self.get_widget(widget_id) != null);
+        self.parent_stack.append(widget_id) catch unreachable;
+    }
+
+    pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) WidgetId {
         return self.push_layout_widget(Widget {
             .key = gen_key(key),
             .layout_axis = layout_axis,
@@ -1004,8 +1114,8 @@ pub const Imui = struct {
         });
     }
 
-    pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) usize {
-        const widget = Widget {
+    fn floating_layout_widget(layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) Widget {
+        return Widget {
             .key = gen_key(key),
             .layout_axis = layout_axis,
             .semantic_size = [2]SemanticSize {
@@ -1024,6 +1134,17 @@ pub const Imui = struct {
                 .floating_y = true,
             },
         };
+    }
+
+    pub fn push_priority_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) WidgetId {
+        const widget = Self.floating_layout_widget(layout_axis, floating_x, floating_y, key);
+        const widget_id = self.add_widget_priority(widget);
+        self.push_layout_id(widget_id);
+        return widget_id;
+    }
+
+    pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) WidgetId {
+        const widget = Self.floating_layout_widget(layout_axis, floating_x, floating_y, key);
         const widget_id = self.add_widget(widget);
         self.push_layout_id(widget_id);
         return widget_id;
@@ -1033,7 +1154,7 @@ pub const Imui = struct {
         _ = self.parent_stack.pop();
     }
 
-    pub fn label(self: *Self, text: []const u8) WidgetSignal(usize) {
+    pub fn label(self: *Self, text: []const u8) WidgetSignal(WidgetId) {
         const widget = Widget {
             .key = Self.LabelKey,
             .semantic_size = [2]SemanticSize{
@@ -1054,8 +1175,8 @@ pub const Imui = struct {
     }
 
     pub const ButtonId = struct {
-        box: usize,
-        text: usize,
+        box: WidgetId,
+        text: WidgetId,
     };
 
     pub fn button(self: *Self, text: []const u8, key: anytype) WidgetSignal(ButtonId) {
@@ -1125,7 +1246,8 @@ pub const Imui = struct {
     }
 
     pub const CheckboxId = struct {
-        box:usize, text:usize
+        box: WidgetId, 
+        text: WidgetId,
     };
 
     pub fn checkbox(self: *Self, checked: *bool, text: []const u8, key: anytype) WidgetSignal(CheckboxId) {
@@ -1206,9 +1328,9 @@ pub const Imui = struct {
     }
 
     pub const SliderId = struct {
-        filled_bar:usize, 
-        background_bar:usize,
-        middle_dot:usize,
+        filled_bar: WidgetId, 
+        background_bar: WidgetId,
+        middle_dot: WidgetId,
     };
 
     pub fn slider(self: *Self, value: f32, min: f32, max: f32, key: anytype) WidgetSignal(SliderId) {
@@ -1353,8 +1475,8 @@ pub const Imui = struct {
     };
 
     pub const TextInputId = struct {
-        box: usize,
-        text: usize,
+        box: WidgetId,
+        text: WidgetId,
     };
 
     fn character_advance_at_cursor(self: *Self, text_input_widget: *const Widget, text_input_state: *const TextInputState) i32 {
@@ -1630,7 +1752,7 @@ pub const Imui = struct {
         );
     }
 
-    pub fn image(self: *Self, texture_view: _gfx.TextureView2D, sampler: _gfx.Sampler, key: anytype) WidgetSignal(usize) {
+    pub fn image(self: *Self, texture_view: _gfx.TextureView2D, sampler: _gfx.Sampler, key: anytype) WidgetSignal(WidgetId) {
         var image_widget = Widget {
             .key = gen_key(key ++ .{@src()}),
             .semantic_size = [2]SemanticSize{
@@ -1704,7 +1826,7 @@ pub const Imui = struct {
         };
     }
 
-    pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) WidgetSignal(usize) {
+    pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) WidgetSignal(WidgetId) {
         // ensure data elements are valid
         if (data.selected_index) |*si| { si.* = @min(si.*, data.options.len - 1); }
 
@@ -1748,7 +1870,7 @@ pub const Imui = struct {
              else break :dropdown_is_open;
 
             // push the options background layout
-            const options_background = self.push_floating_layout(.Y, @floatFromInt(dropdown_pos[0]), @floatFromInt(dropdown_pos[1]), key ++ .{@src()});
+            const options_background = self.push_priority_floating_layout(.Y, @floatFromInt(dropdown_pos[0]), @floatFromInt(dropdown_pos[1]), key ++ .{@src()});
             if (self.get_widget(options_background)) |options_background_widget| {
                 self.set_combobox_background_layout(options_background_widget);
                 options_background_widget.semantic_size[0] = .{
@@ -1813,7 +1935,7 @@ pub const Imui = struct {
             data.dropdown_is_open = false;
         }
 
-        return WidgetSignal(usize) {
+        return WidgetSignal(WidgetId) {
             .id = container_layout,
             .data_changed = new_option_selected,
             .hover = false, // TODO
