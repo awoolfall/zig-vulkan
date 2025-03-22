@@ -768,94 +768,108 @@ pub const Imui = struct {
         }
     }
 
-    pub fn render_imui(self: *Self, rtv: *_gfx.RenderTargetView, gfx: *_gfx.GfxState) void {
-        for (self.widgets.items) |*widget| {
-            if (widget.flags.render == false) { continue; }
+    fn render_imui_widget(self: *Self, rtv: *_gfx.RenderTargetView, widget: *const Widget) void {
+        // render rect
+        const render_rect = 
+            widget.background_colour != null or
+            widget.border_colour != null or
+            widget.texture != null;
 
-            // render rect
-            const render_rect = 
-                widget.background_colour != null or
-                widget.border_colour != null or
-                widget.texture != null;
+        if (render_rect) {
+            var background_colour = zm.f32x4s(1.0);
+            if (widget.background_colour) |bc| {
+                background_colour = bc;
+            }
 
-            if (render_rect) {
-                var background_colour = zm.f32x4s(1.0);
-                if (widget.background_colour) |bc| {
-                    background_colour = bc;
-                }
+            var border_colour = zm.f32x4s(1.0);
+            if (widget.border_colour) |bc| {
+                border_colour = bc;
+            }
 
-                var border_colour = zm.f32x4s(1.0);
-                if (widget.border_colour) |bc| {
-                    border_colour = bc;
-                }
+            const quad_texture_props = blk: { 
+                if (widget.texture) |tex_props| {
+                    break :blk QuadRenderer.QuadPropertiesTexture {
+                        .texture_view = tex_props.texture_view,
+                        .sampler = tex_props.sampler,
+                    };
+                } else { 
+                    break :blk null;
+                } 
+            }; 
 
-                const quad_texture_props = blk: { 
-                    if (widget.texture) |tex_props| {
-                        break :blk QuadRenderer.QuadPropertiesTexture {
-                            .texture_view = tex_props.texture_view,
-                            .sampler = tex_props.sampler,
-                        };
-                    } else { 
-                        break :blk null;
+            var colour = blk: { 
+                const debug_colours = false;
+                if (debug_colours) {
+                    if (self.active_item) |ai| { 
+                        if (ai == widget.key) {
+                            break :blk zm.f32x4(1.0, 0.0, 0.0, 1.0);
+                        }
                     } 
-                }; 
-
-                var colour = blk: { 
-                    const debug_colours = false;
-                    if (debug_colours) {
-                        if (self.active_item) |ai| { 
-                            if (ai == widget.key) {
-                                break :blk zm.f32x4(1.0, 0.0, 0.0, 1.0);
-                            }
-                        } 
-                        if (self.hot_item) |hi| {
-                            if (hi == widget.key) {
-                                break :blk zm.f32x4(0.0, 1.0, 0.0, 1.0);
-                            }
+                    if (self.hot_item) |hi| {
+                        if (hi == widget.key) {
+                            break :blk zm.f32x4(0.0, 1.0, 0.0, 1.0);
                         }
                     }
-                    break :blk background_colour;
-                };
-
-                if (widget.flags.hover_effect) {
-                    // TODO: find a better way of doing hover colouring
-                    colour += zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0);
                 }
+                break :blk background_colour;
+            };
 
-                self.quad_renderer.render_quad(
-                    widget.computed.rect(),
-                    .{
-                        .colour = colour,
-                        .border_colour = border_colour,
-                        .border_width_px = widget.border_width_px,
-                        .corner_radii_px = widget.corner_radii_px,
-                        .texture = quad_texture_props,
-                    },
-                    rtv.*,
-                    gfx
-                );
+            if (widget.flags.hover_effect) {
+                // TODO: find a better way of doing hover colouring
+                colour += zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0);
             }
-            
-            // render text
-            if (widget.text_content) |*text| {
-                const text_size_f32: f32 = @floatFromInt(text.size);
-                const font_metrics = self.get_font(text.font).font_metrics;
-                const x: i32 = @intFromFloat(widget.computed.offset_position[0]);
-                const top: i32 = @as(i32, @intFromFloat(widget.computed.offset_position[1] + (font_metrics.ascender * text_size_f32)));
-                const y: i32 = top;
-                self.render_text(
-                    text.font,
-                    text.text,
-                    .{
-                        .position = .{ .x = x, .y = y, },
-                        .colour = text.colour,
-                        .pixel_height = text.size,
-                    },
-                    rtv.*,
-                    gfx
-                );
-            }
+
+            self.quad_renderer.render_quad(
+                widget.computed.rect(),
+                .{
+                    .colour = colour,
+                    .border_colour = border_colour,
+                    .border_width_px = widget.border_width_px,
+                    .corner_radii_px = widget.corner_radii_px,
+                    .texture = quad_texture_props,
+                },
+                rtv.*,
+                &engine.engine().gfx
+            );
         }
+
+        // render text
+        if (widget.text_content) |*text| {
+            const text_size_f32: f32 = @floatFromInt(text.size);
+            const font_metrics = self.get_font(text.font).font_metrics;
+            const x: i32 = @intFromFloat(widget.computed.offset_position[0]);
+            const top: i32 = @as(i32, @intFromFloat(widget.computed.offset_position[1] + (font_metrics.ascender * text_size_f32)));
+            const y: i32 = top;
+            self.render_text(
+                text.font,
+                text.text,
+                .{
+                    .position = .{ .x = x, .y = y, },
+                    .colour = text.colour,
+                    .pixel_height = text.size,
+                },
+                rtv.*,
+                &engine.engine().gfx
+            );
+        }
+    }
+
+    fn render_imui_recursive(self: *Self, rtv: *_gfx.RenderTargetView, widget_id: usize) void {
+        const widget = self.get_widget(widget_id).?;
+        if (widget.flags.render) {
+            self.render_imui_widget(rtv, widget);
+        }
+        if (widget.first_child) |c| {
+            self.render_imui_recursive(rtv, c);
+        }
+        if (widget.next_sibling) |s| {
+            self.render_imui_recursive(rtv, s);
+        }
+    }
+
+    pub fn render_imui(self: *Self, rtv: *_gfx.RenderTargetView, gfx: *_gfx.GfxState) void {
+        _ = gfx;
+        self.render_imui_recursive(rtv, 0);
     }
 
     pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {
@@ -886,7 +900,9 @@ pub const Imui = struct {
 
     pub fn generate_widget_signals(self: *Self, widget_id: usize) WidgetSignal(usize) {
         const widget = self.get_widget(widget_id).?;
-        var widget_signal = WidgetSignal(usize) {.id = widget_id,};
+        var widget_signal = WidgetSignal(usize) {
+            .id = widget_id,
+        };
         const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
 
         if (last_frame_widget) |lfw| {
@@ -940,13 +956,19 @@ pub const Imui = struct {
         return widget_signal;
     }
 
-    pub fn combine_signals(signals_1: anytype, signals_2: anytype, id: anytype) WidgetSignal(@TypeOf(id)) {
-        return WidgetSignal(@TypeOf(id)) {
-            .clicked = signals_1.clicked or signals_2.clicked,
-            .hover = signals_1.hover or signals_2.hover,
-            .dragged = signals_1.dragged or signals_2.dragged,
+    pub fn combine_signals(signals: anytype, id: anytype) WidgetSignal(@TypeOf(id)) {
+        var combined = WidgetSignal(@TypeOf(id)) {
             .id = id,
         };
+
+        inline for (signals) |s| {
+            combined.clicked = combined.clicked or s.clicked;
+            combined.hover = combined.hover or s.hover;
+            combined.dragged = combined.dragged or s.dragged;
+            combined.data_changed = combined.data_changed or s.data_changed;
+        }
+
+        return combined;
     }
 
     pub fn push_pallete(self: *Self, p: Palette) void {
@@ -983,7 +1005,7 @@ pub const Imui = struct {
     }
 
     pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) usize {
-        return self.push_layout_widget(Widget {
+        const widget = Widget {
             .key = gen_key(key),
             .layout_axis = layout_axis,
             .semantic_size = [2]SemanticSize {
@@ -1001,7 +1023,10 @@ pub const Imui = struct {
                 .floating_x = true,
                 .floating_y = true,
             },
-        });
+        };
+        const widget_id = self.add_widget(widget);
+        self.push_layout_id(widget_id);
+        return widget_id;
     }
 
     pub fn pop_layout(self: *Self) void {
@@ -1078,8 +1103,10 @@ pub const Imui = struct {
 
         const text_widget_id = self.add_widget(text_widget);
         return combine_signals(
-            self.generate_widget_signals(box_layout),
-            self.generate_widget_signals(text_widget_id),
+            .{
+                self.generate_widget_signals(box_layout),
+                self.generate_widget_signals(text_widget_id),
+            },
             ButtonId{ .box = box_layout, .text = text_widget_id, }
         );
     }
@@ -1161,15 +1188,18 @@ pub const Imui = struct {
 
         self.pop_layout();
 
-        const combined_signals = combine_signals(
-            box_widget_signals, 
-            text_widget_signals, 
+        var combined_signals = combine_signals(
+            .{
+                box_widget_signals, 
+                text_widget_signals, 
+            },
             CheckboxId{ .box = box_widget_id, .text = text_widget_id, }
         );
 
         // checkbox behaviour
         if (combined_signals.clicked) {
             checked.* = !checked.*;
+            combined_signals.data_changed = true;
         }
 
         return combined_signals;
@@ -1283,8 +1313,10 @@ pub const Imui = struct {
         self.pop_layout();
 
         return combine_signals(
-            filled_bar_widget_signals, 
-            empty_bar_widget_signals, 
+            .{
+                filled_bar_widget_signals, 
+                empty_bar_widget_signals, 
+            },
             SliderId{ .filled_bar = filled_bar_widget_id, .background_bar = box, .middle_dot = middle_dot_widget_id, }
         );
     }
@@ -1590,8 +1622,10 @@ pub const Imui = struct {
         }
 
         return combine_signals(
-            box_signals,
-            text_signals,
+            .{
+                box_signals,
+                text_signals,
+            },
             TextInputId{ .text = text_input_widget_id, .box = l, }
         );
     }

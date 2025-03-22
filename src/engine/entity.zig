@@ -146,7 +146,7 @@ pub const EntityList = struct {
     }
 };
 
-pub const PhysicsOptions = union(enum) {
+pub const PhysicsOptions = union(PhysicsOptionsEnum) {
     Body: struct {
         descriptor: PhysicsOptionsDescriptor,
         id: physics.zphy.BodyId,
@@ -305,18 +305,24 @@ pub const PhysicsOptions = union(enum) {
     }
 };
 
-pub const PhysicsOptionsDescriptor = union(enum) {
+pub const PhysicsOptionsEnum = enum {
+    Body,
+    Character,
+    CharacterVirtual,
+};
+
+pub const PhysicsOptionsDescriptor = union(PhysicsOptionsEnum) {
     Body: struct {
-        settings: physics.ShapeSettings,
+        settings: physics.ShapeSettings = .{},
         is_static: bool = true,
         is_sensor: bool = false,
     },
     Character: struct {
-        settings: physics.CharacterSettings,
+        settings: physics.CharacterSettings = .{},
     },
     CharacterVirtual: struct {
-        settings: physics.CharacterVirtualSettings,
-        create_character: bool,
+        settings: physics.CharacterVirtualSettings = .{},
+        create_character: bool = false,
         extended_update_settings: ?zphy.CharacterVirtual.ExtendedUpdateSettings = null,
     },
 };

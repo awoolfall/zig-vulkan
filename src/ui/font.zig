@@ -346,6 +346,7 @@ pub const Font = struct {
                 '\n' => {
                     x_loc = x_start_loc;
                     y_loc -= self.font_metrics.line_height * screen_size;
+                    self.constant_buffer_data[instance_id] = .{};
                 },
                 else => {
                     const char_info = self.character_map.get(c) orelse continue; // TODO handle error

@@ -544,7 +544,7 @@ pub const ShapeSettings = struct {
             depth: f32,
         },
         ModelCompoundConvexHull: as.ModelAssetId,
-    },
+    } = .{ .Sphere = .{ .radius = 1.0 } },
     offset_transform: Transform = .{},
 };
 
@@ -552,13 +552,13 @@ pub const CharacterBaseSettings = struct {
     up: [4]f32 = [4]f32{ 0.0, 1.0, 0.0, 0.0 },
     supporting_volume: [4]f32 = [4]f32{ 0.0, 1.0, 0.0, -1.0e10 },
     max_slope_angle: f32 = std.math.degreesToRadians(50.0),
-    shape: ShapeSettings,
+    shape: ShapeSettings = .{},
 };
 
 pub const CharacterSettings = struct {
-    base: CharacterBaseSettings,
+    base: CharacterBaseSettings = .{},
 
-    layer: zphy.ObjectLayer,
+    layer: zphy.ObjectLayer = object_layers.moving,
     mass: f32 = 80.0,
     friction: f32 = 0.2,
     gravity_factor: f32 = 1.0,
@@ -595,7 +595,7 @@ pub const CharacterSettings = struct {
 };
 
 pub const CharacterVirtualSettings = struct {
-    base: CharacterBaseSettings,
+    base: CharacterBaseSettings = .{},
 
     mass: f32 = 70.0,
     max_strength: f32 = 100.0,
