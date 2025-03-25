@@ -43,6 +43,13 @@ pub const GfxStateD3D11 = struct {
     swapchain_flags: dxgi.SWAP_CHAIN_FLAG,
     vsync: bool = true,
 
+    rasterization_states_array: [16]?RasterizationState = [_]?RasterizationState{null} ** 16,
+
+    render_state: struct {
+        rasterization_desc: gf.RasterizationStateDesc = .{},
+        scissor_rect: ?gf.RectPixels = null,
+    } = .{},
+
     const enable_debug_layers = true;
     const swapchain_buffer_count: u32 = 3;
     const hdr_format = gf.TextureFormat.Rgba16_Float;
@@ -51,6 +58,12 @@ pub const GfxStateD3D11 = struct {
 
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
+
+        for (self.rasterization_states_array) |r| {
+            if (r) |*rs| {
+                rs.deinit();
+            }
+        }
 
         _ = self.swapchain.Release();
         self.context.Flush();
@@ -266,6 +279,21 @@ pub const GfxStateD3D11 = struct {
     pub inline fn clear_state(self: *Self) void {
         self.context.ClearState();
     }
+
+    fn get_rasterization_state(self: *Self, desc: gf.RasterizationStateDesc) RasterizationState {
+        const rasterization_state_desc = D3D11RasterizationStateDesc {
+            .gfx = desc,
+            .scissor_enable = (self.render_state.scissor_rect != null),
+        };
+        const index: usize = @intCast(@as(u4, @bitCast(rasterization_state_desc)));
+        if (self.rasterization_states_array[index]) |r| {
+            return r;
+        } else {
+            const r = RasterizationState.init(rasterization_state_desc, self) catch unreachable;
+            self.rasterization_states_array[index] = r;
+            return r;
+        }
+    }
     
     pub inline fn resize_swapchain(self: *Self, new_width: i32, new_height: i32) void {
         _ = new_width;
@@ -304,6 +332,22 @@ pub const GfxStateD3D11 = struct {
             .MaxDepth = viewport.max_depth,
         };
         self.context.RSSetViewports(1, @ptrCast(&d3d11_viewport));
+    }
+
+    pub inline fn cmd_set_scissor_rect(self: *Self, scissor: ?gf.RectPixels) void {
+        self.render_state.scissor_rect = scissor;
+    }
+
+    fn apply_scissor_rect(self: *Self) void {
+        if (self.render_state.scissor_rect) |s| {
+            self.context.RSSetScissorRects(1, @ptrCast(&d3d11.RECT {
+                .left = s.left,
+                .top = s.top,
+                .right = s.left + s.width,
+                .bottom = s.top + s.height,
+            }));
+        } else {
+        }
     }
 
     pub inline fn cmd_set_render_target(self: *Self, rtvs: []const ?*const gf.RenderTargetView, depth_stencil_view: ?*const gf.DepthStencilView) void {
@@ -392,8 +436,13 @@ pub const GfxStateD3D11 = struct {
         }
     }
 
-    pub inline fn cmd_set_rasterizer_state(self: *Self, rs: *gf.RasterizationState) void {
-        self.context.RSSetState(@ptrCast(rs.platform.state));
+    pub inline fn cmd_set_rasterizer_state(self: *Self, rs: gf.RasterizationStateDesc) void {
+        self.render_state.rasterization_desc = rs;
+    }
+
+    fn apply_rasterization_state(self: *Self) void {
+        const rasterization_state = self.get_rasterization_state(self.render_state.rasterization_desc);
+        self.context.RSSetState(@ptrCast(rasterization_state.state));
     }
 
     pub inline fn cmd_set_blend_state(self: *Self, blend_state: ?*const gf.BlendState) void {
@@ -426,15 +475,23 @@ pub const GfxStateD3D11 = struct {
         }
     }
 
+    fn apply_render_state(self: *Self) void {
+        self.apply_scissor_rect();
+        self.apply_rasterization_state();
+    }
+
     pub inline fn cmd_draw(self: *Self, vertex_count: u32, start_vertex: u32) void {
+        self.apply_render_state();
         self.context.Draw(@intCast(vertex_count), @intCast(start_vertex));
     }
 
     pub inline fn cmd_draw_indexed(self: *Self, index_count: u32, start_index: u32, base_vertex: i32) void {
+        self.apply_render_state();
         self.context.DrawIndexed(@intCast(index_count), @intCast(start_index), @intCast(base_vertex));
     }
 
     pub inline fn cmd_draw_instanced(self: *Self, vertex_count: u32, instance_count: u32, start_vertex: u32, start_instance: u32) void {
+        self.apply_render_state();
         self.context.DrawInstanced(@intCast(vertex_count), @intCast(instance_count), @intCast(start_vertex), @intCast(start_instance));
     }
 
@@ -1502,6 +1559,11 @@ pub const DepthStencilViewD3D11 = struct {
     }
 };
 
+const D3D11RasterizationStateDesc = packed struct(u4) {
+    gfx: gf.RasterizationStateDesc,
+    scissor_enable: bool = false,
+};
+
 pub const RasterizationStateD3D11 = struct {
     const Self = @This();
     state: *d3d11.IRasterizerState,
@@ -1510,29 +1572,30 @@ pub const RasterizationStateD3D11 = struct {
         _ = self.state.Release();
     }
 
-    pub inline fn init(desc: gf.RasterizationStateDesc, gfx: *gf.GfxState) !Self {
+    pub inline fn init(desc: D3D11RasterizationStateDesc, gfx: *GfxStateD3D11) !Self {
         var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
             .FillMode = blk: {
-                if (!desc.FillBack and !desc.FillFront) {
+                if (!desc.gfx.FillBack and !desc.gfx.FillFront) {
                     break :blk d3d11.FILL_MODE.WIREFRAME;
                 } else {
                     break :blk d3d11.FILL_MODE.SOLID;
                 }
             },
             .CullMode = blk: {
-                if (desc.FillBack == desc.FillFront) {
+                if (desc.gfx.FillBack == desc.gfx.FillFront) {
                     break :blk d3d11.CULL_MODE.NONE;
-                } else if (!desc.FillBack) {
+                } else if (!desc.gfx.FillBack) {
                     break :blk d3d11.CULL_MODE.BACK;
                 } else {
                     break :blk d3d11.CULL_MODE.FRONT;
                 }
             },
-            .FrontCounterClockwise = @intFromBool(desc.FrontCounterClockwise),
+            .FrontCounterClockwise = @intFromBool(desc.gfx.FrontCounterClockwise),
+            .ScissorEnable = @intFromBool(desc.scissor_enable),
         };
 
         var rasterization_state: *d3d11.IRasterizerState = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
+        try zwindows.hrErrorOnFail(gfx.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
         errdefer _ = rasterization_state.Release();
 
         return Self {

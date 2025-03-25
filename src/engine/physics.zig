@@ -529,8 +529,15 @@ pub const IgnoreIdsBodyFilter = extern struct {
     }
 };
 
+pub const ShapeSettingsEnum = enum {
+    Capsule,
+    Sphere,
+    Box,
+    ModelCompoundConvexHull,
+};
+
 pub const ShapeSettings = struct {
-    shape: union(enum) {
+    shape: union(ShapeSettingsEnum) {
         Capsule: struct {
             half_height: f32,
             radius: f32,

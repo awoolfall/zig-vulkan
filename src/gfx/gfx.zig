@@ -23,8 +23,6 @@ pub const GfxState = struct {
 
     swapchain_size: struct{width: i32, height: i32},
 
-    rasterization_states_array: [8]?RasterizationState = [_]?RasterizationState{null} ** 8,
-
     tone_mapping_filter: ToneMappingAndBloomFilter,
 
     default: struct {
@@ -50,12 +48,6 @@ pub const GfxState = struct {
 
     pub fn deinit(self: *Self) void {
         std.log.debug("D3D11 deinit", .{});
-
-        for (self.rasterization_states_array) |r| {
-            if (r) |*rs| {
-                rs.deinit();
-            }
-        }
 
         self.default.sampler.deinit();
         self.default.diffuse.deinit();
@@ -197,17 +189,6 @@ pub const GfxState = struct {
         return @as(f32, @floatFromInt(self.swapchain_size.width)) / @as(f32, @floatFromInt(self.swapchain_size.height));
     }
 
-    fn get_rasterization_state(self: *Self, desc: RasterizationStateDesc) RasterizationState {
-        const index: usize = @intCast(@as(u3, @bitCast(desc)));
-        if (self.rasterization_states_array[index]) |r| {
-            return r;
-        } else {
-            const r = RasterizationState.init(desc, self) catch unreachable;
-            self.rasterization_states_array[index] = r;
-            return r;
-        }
-    }
-
     pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {
         const w = @max(new_width, 1);
         const h = @max(new_height, 1);
@@ -269,6 +250,10 @@ pub const GfxState = struct {
         self.platform.cmd_set_viewport(viewport);
     }
 
+    pub fn cmd_set_scissor_rect(self: *Self, scissor: ?RectPixels) void {
+        self.platform.cmd_set_scissor_rect(scissor);
+    }
+
     pub fn cmd_set_render_target(self: *Self, rtvs: []const ?*const RenderTargetView, depth_stencil_view: ?*const DepthStencilView) void {
         self.platform.cmd_set_render_target(rtvs, depth_stencil_view);
     }
@@ -310,8 +295,7 @@ pub const GfxState = struct {
     }
 
     pub fn cmd_set_rasterizer_state(self: *Self, rs: RasterizationStateDesc) void {
-        var rasterization_state = self.get_rasterization_state(rs);
-        self.platform.cmd_set_rasterizer_state(&rasterization_state);
+        self.platform.cmd_set_rasterizer_state(rs);
     }
 
     pub fn cmd_set_blend_state(self: *Self, blend_state: ?*const BlendState) void {
@@ -1207,20 +1191,6 @@ pub const RasterizationStateDesc = packed struct(u3) {
     FrontCounterClockwise: bool = false,
 };
 
-pub const RasterizationState = struct {
-    platform: pl.GfxPlatform.RasterizationState,
-
-    pub fn deinit(self: *const RasterizationState) void {
-        self.platform.deinit();
-    }
-
-    pub fn init(desc: RasterizationStateDesc, gfx: *GfxState) !RasterizationState {
-        return RasterizationState {
-            .platform = try pl.GfxPlatform.RasterizationState.init(desc, gfx),
-        };
-    }
-};
-
 pub const SamplerDescriptor = struct {
     anisotropic_filter: bool = false,
     filter_min_mag: SamplerFilter = .Point,
@@ -1436,3 +1406,10 @@ const ToneMappingAndBloomFilter = struct {
         self.bloom_filter.framebuffer_resized(gfx);
     }
 };
+    pub const RectPixels = struct {
+        left: i32,
+        top: i32,
+        width: i32,
+        height: i32,
+    };
+

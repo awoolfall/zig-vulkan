@@ -185,7 +185,7 @@ pub const Imui = struct {
         text_content: ?struct {
             font: FontEnum = FontEnum.GeistMono,
             text: []const u8,
-            size: u16 = 15,
+            size: u16 = 13,
             colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
         } = null,
         background_colour: ?zm.F32x4 = null,
@@ -206,6 +206,7 @@ pub const Imui = struct {
         anchor: [2]f32 = .{0.0, 0.0},
         // pivot determines the coordinate on the widget's box that sticks to the anchor
         pivot: [2]f32 = .{0.0, 0.0},
+        pixel_offset: [2]f32 = .{0.0, 0.0},
         children_gap: f32 = 0.0,
 
         pub fn content_rect(self: *const Widget) RectPixels {
@@ -787,7 +788,8 @@ pub const Imui = struct {
             // pivot determines the coordinate on the widget's box that sticks to the anchor
             widget.computed.offset_position[axis] = widget.computed.relative_position[axis] 
                 - (widget.pivot[axis] * widget.computed.size[axis]) 
-                + (widget.anchor[axis] * potential_space_size);
+                + (widget.anchor[axis] * potential_space_size)
+                + widget.pixel_offset[axis];
         }
 
         // solve violations in parent if this is the last sibling
@@ -852,12 +854,21 @@ pub const Imui = struct {
         }
     }
 
-    fn render_imui_widget(self: *Self, rtv: *_gfx.RenderTargetView, widget: *const Widget) void {
+    fn render_imui_widget(self: *Self, rtv: *_gfx.RenderTargetView, widget: *const Widget, scissor_rect: RectPixels) void {
         // render rect
         const render_rect = 
             widget.background_colour != null or
             widget.border_colour != null or
             widget.texture != null;
+        
+        const scissor = _gfx.RectPixels {
+            .left = scissor_rect.left,
+            .width = scissor_rect.width,
+            .top = scissor_rect.top,
+            .height = scissor_rect.height,
+        };
+        engine.engine().gfx.cmd_set_scissor_rect(scissor);
+        defer engine.engine().gfx.cmd_set_scissor_rect(null);
 
         if (render_rect) {
             var background_colour = zm.f32x4s(1.0);
@@ -938,24 +949,75 @@ pub const Imui = struct {
         }
     }
 
-    fn render_imui_recursive(self: *Self, rtv: *_gfx.RenderTargetView, widget_id: WidgetId) void {
+    fn render_imui_recursive(self: *Self, rtv: *_gfx.RenderTargetView, widget_id: WidgetId, parent_scissor: RectPixels) void {
         const widget = self.get_widget(widget_id).?;
+
+        const widget_scissor = blk: {
+            var widget_scissor = widget.computed.rect();
+            // clamp widget scissor to parent scissor
+            widget_scissor.left = @max(widget_scissor.left, parent_scissor.left);
+            widget_scissor.top = @max(widget_scissor.top, parent_scissor.top);
+            widget_scissor.width = @min(widget_scissor.left + widget_scissor.width, parent_scissor.left + parent_scissor.width) - widget_scissor.left;
+            widget_scissor.height = @min(widget_scissor.top + widget_scissor.height, parent_scissor.top + parent_scissor.height) - widget_scissor.top;
+
+            // expand scissor if overflow is allowed
+            const swapchain_size = engine.engine().gfx.swapchain_size;
+            if (widget.flags.allows_overflow_x) {
+                widget_scissor.width = swapchain_size.width;
+                widget_scissor.left = 0;
+            }
+            if (widget.flags.allows_overflow_y) {
+                widget_scissor.height = swapchain_size.height;
+                widget_scissor.top = 0;
+            }
+
+            break :blk widget_scissor;
+        };
+
+        const widget_content_scissor = blk: {
+            var scissor = widget.content_rect();
+            // clamp widget scissor to parent scissor
+            scissor.left = @max(scissor.left, parent_scissor.left);
+            scissor.top = @max(scissor.top, parent_scissor.top);
+            scissor.width = @min(scissor.left + scissor.width, parent_scissor.left + parent_scissor.width) - scissor.left;
+            scissor.height = @min(scissor.top + scissor.height, parent_scissor.top + parent_scissor.height) - scissor.top;
+
+            // expand scissor if overflow is allowed
+            const swapchain_size = engine.engine().gfx.swapchain_size;
+            if (widget.flags.allows_overflow_x) {
+                scissor.width = swapchain_size.width;
+                scissor.left = 0;
+            }
+            if (widget.flags.allows_overflow_y) {
+                scissor.height = swapchain_size.height;
+                scissor.top = 0;
+            }
+
+            break :blk scissor;
+        };
+
         if (widget.flags.render) {
-            self.render_imui_widget(rtv, widget);
+            self.render_imui_widget(rtv, widget, widget_scissor);
         }
         if (widget.first_child) |c| {
-            self.render_imui_recursive(rtv, c);
+            self.render_imui_recursive(rtv, c, widget_content_scissor);
         }
         if (widget.next_sibling) |s| {
-            self.render_imui_recursive(rtv, s);
+            self.render_imui_recursive(rtv, s, parent_scissor);
         }
     }
 
     pub fn render_imui(self: *Self, rtv: *_gfx.RenderTargetView, gfx: *_gfx.GfxState) void {
         _ = gfx;
-        self.render_imui_recursive(rtv, .{ .location = .Standard, .index = 0 });
+        const screen_scissor = RectPixels {
+            .left = 0,
+            .top = 0,
+            .width = engine.engine().gfx.swapchain_size.width,
+            .height = engine.engine().gfx.swapchain_size.height,
+        };
+        self.render_imui_recursive(rtv, .{ .location = .Standard, .index = 0 }, screen_scissor);
         if (self.priority_widgets.items.len > 0) {
-            self.render_imui_recursive(rtv, .{ .location = .Priority, .index = 0 });
+            self.render_imui_recursive(rtv, .{ .location = .Priority, .index = 0 }, screen_scissor);
         }
     }
 
@@ -1132,6 +1194,8 @@ pub const Imui = struct {
                 .render = false,
                 .floating_x = true,
                 .floating_y = true,
+                .allows_overflow_x = true,
+                .allows_overflow_y = true,
             },
         };
     }
@@ -1327,14 +1391,58 @@ pub const Imui = struct {
         return combined_signals;
     }
 
+    pub fn collapsible(self: *Self, is_open: *bool, text: []const u8, key: anytype) WidgetSignal(WidgetId) {
+        const l = self.push_layout(.X, key ++ .{@src()});
+        if (self.get_widget(l)) |lw| {
+            lw.semantic_size[0].kind = .ParentPercentage;
+            lw.semantic_size[0].value = 1.0;
+            lw.children_gap = 8;
+            lw.flags.clickable = true;
+            lw.flags.render = true;
+        }
+        var l_interaction = self.generate_widget_signals(l);
+
+        _ = self.label(if (is_open.*) "▼" else "▶");
+        _ = self.label(text);
+        _ = self.add_widget(Widget {
+            .key = Self.LabelKey,
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = 1.0, .shrinkable_percent = 0.0, },
+            },
+            .background_colour = self.palette().border,
+            .flags = .{
+                .render = true,
+            },
+            .anchor = .{0.0, 0.5},
+            .pivot = .{0.0, 0.5},
+        });
+
+        self.pop_layout();
+
+        // behaviour
+        if (l_interaction.clicked) {
+            is_open.* = !is_open.*;
+            l_interaction.data_changed = true;
+        }
+
+        return l_interaction;
+    }
+
     pub const SliderId = struct {
         filled_bar: WidgetId, 
         background_bar: WidgetId,
         middle_dot: WidgetId,
     };
 
-    pub fn slider(self: *Self, value: f32, min: f32, max: f32, key: anytype) WidgetSignal(SliderId) {
-        const complete_percent = std.math.clamp((value - min) / (max - min), 0.0, 1.0);
+    pub const SliderOptions = struct {
+        min: f32 = 0.0,
+        max: f32 = 1.0,
+        step: f32 = 1.0,
+    };
+
+    pub fn slider(self: *Self, value: *f32, options: SliderOptions, key: anytype) WidgetSignal(SliderId) {
+        const complete_percent = std.math.clamp((value.* - options.min) / (options.max - options.min), 0.0, 1.0);
         const box = self.push_layout(.X, key ++ .{@src().line});
         if (self.get_widget(box)) |bw| {
             bw.semantic_size[0].kind = .ParentPercentage;
@@ -1369,7 +1477,6 @@ pub const Imui = struct {
             .pivot = .{0.0, 0.5},
         };
         const filled_bar_widget_id = self.add_widget(filled_bar_widget);
-        const filled_bar_widget_signals = self.generate_widget_signals(filled_bar_widget_id);
 
         const l1 = self.push_layout(.X, key ++ .{@src().line});
         if (self.get_widget(l1)) |lw| {
@@ -1405,7 +1512,6 @@ pub const Imui = struct {
             .pivot = .{0.0, 0.5},
         };
         const empty_bar_widget_id = self.add_widget(empty_bar_widget);
-        const empty_bar_widget_signals = self.generate_widget_signals(empty_bar_widget_id);
 
         const middle_dot_widget = Widget {
             .key = gen_key(key ++ .{@src().line}),
@@ -1415,7 +1521,9 @@ pub const Imui = struct {
             },
             .flags = .{
                 .render = true,
-                .clickable = false,
+                .clickable = true,
+                .allows_overflow_x = true,
+                .allows_overflow_y = true,
             },
             .background_colour = self.palette().background,
             .border_colour = self.palette().primary,
@@ -1434,28 +1542,26 @@ pub const Imui = struct {
         self.pop_layout(); // l1
         self.pop_layout();
 
-        return combine_signals(
+        var signals = combine_signals(
             .{
-                filled_bar_widget_signals, 
-                empty_bar_widget_signals, 
+                self.generate_widget_signals(filled_bar_widget_id),
+                self.generate_widget_signals(empty_bar_widget_id),
+                self.generate_widget_signals(middle_dot_widget_id),
             },
             SliderId{ .filled_bar = filled_bar_widget_id, .background_bar = box, .middle_dot = middle_dot_widget_id, }
         );
-    }
 
-    pub fn slider_default_behaviour(self: *Self, slider_id: WidgetSignal(SliderId), value: *f32, options: struct {
-        step: f32 = 1.0,
-        min: f32,
-        max: f32,
-    }) void {
-        if (slider_id.dragged) {
-            if (self.get_widget_from_last_frame(slider_id.id.background_bar)) |b| {
+        if (signals.dragged) {
+            if (self.get_widget_from_last_frame(signals.id.background_bar)) |b| {
                 const pixel_width: f32 = @floatFromInt(b.content_rect().width);
                 const percent = @as(f32, @floatFromInt(self.input.cursor_position[0] - b.computed.rect().left)) / pixel_width;
                 const a = std.math.round((1.0 / options.step) * percent * (options.max - options.min)) * options.step;
                 value.* = std.math.clamp(a + options.min, options.min, options.max);
+                signals.data_changed = true;
             }
         }
+
+        return signals;
     }
 
     pub const TextInputState = struct {
@@ -1496,7 +1602,6 @@ pub const Imui = struct {
         if (self.get_widget(l)) |lw| {
             lw.flags.render = true;
             lw.flags.clickable = true;
-            lw.layout_axis = null;
             lw.semantic_size[0].kind = .ParentPercentage;
             lw.semantic_size[0].value = 1.0;
             lw.semantic_size[1].kind = .Pixels;
@@ -1517,6 +1622,17 @@ pub const Imui = struct {
                 .bottom_right = 4,
             };
         }
+
+        const content_box = self.push_layout(.X, key ++ .{@src()});
+        if (self.get_widget(content_box)) |content_box_widget| {
+            content_box_widget.layout_axis = null;
+
+            content_box_widget.semantic_size[0].kind = .ParentPercentage;
+            content_box_widget.semantic_size[0].value = 1.0;
+            content_box_widget.semantic_size[1].kind = .ParentPercentage;
+            content_box_widget.semantic_size[1].value = 1.0;
+        }
+
         // Text to render
         const text_input_widget = Widget {
             .key = gen_key(key ++ .{@src()}),
@@ -1562,38 +1678,40 @@ pub const Imui = struct {
         const f = self.get_font(text_input_widget.text_content.?.font);
 
         // Cursor (and selection box)
-        if (line_edit_is_hot_widget or state.cursor != state.mark) {
-            // Push invisible spacer box to until start of selection
-            _ = self.push_layout(.X, key ++ .{@src()});
-            var phantom_text = text_input_widget;
-            phantom_text.key = gen_key(key ++ .{@src()});
-            phantom_text.flags.render = false;
-            phantom_text.text_content.?.text = state.text.items[0..l_sel];
-            _ = self.add_widget(phantom_text);
+        // Push invisible spacer box to until start of selection
+        _ = self.push_layout(.X, key ++ .{@src()});
+        var phantom_text = text_input_widget;
+        phantom_text.key = gen_key(key ++ .{@src()});
+        phantom_text.flags.render = false;
+        phantom_text.text_content.?.text = state.text.items[0..l_sel];
+        _ = self.add_widget(phantom_text);
 
-            // render cursor and selection box
-            const selection_bounds = f.text_bounds_2d_pixels(
-                state.text.items[l_sel..r_sel],
-                text_input_widget.text_content.?.size
-            );
-            const cursor = Widget {
-                .key = gen_key(key ++ .{@src()}),
-                .semantic_size = [2]SemanticSize{
-                    SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.width)) + 1.0, .shrinkable_percent = 0.0, },
-                    SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.height)), .shrinkable_percent = 0.0, },
-                },
-                .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
-                    (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
-                .border_colour = zm.f32x4s(0.0),
-                .flags = .{
-                    .render = true,
-                },
-            };
-            _ = self.add_widget(cursor);
-            self.pop_layout(); // phantom and cursor
-        }
+        // render cursor and selection box
+        const selection_bounds = f.text_bounds_2d_pixels(
+            state.text.items[l_sel..r_sel],
+            text_input_widget.text_content.?.size
+        );
+        const cursor_min_width = 1.0;
+        const cursor = Widget {
+            .key = gen_key(key ++ .{@src()}),
+            .semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.width)) + cursor_min_width, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.height)), .shrinkable_percent = 0.0, },
+            },
+            .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
+                (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
+            .border_colour = zm.f32x4s(0.0),
+            .flags = .{
+                .render = (line_edit_is_hot_widget or state.cursor != state.mark),
+            },
+        };
+        _ = self.add_widget(cursor);
+        self.pop_layout(); // phantom and cursor
 
+        self.pop_layout(); // content box
         self.pop_layout(); // background box
+
+        var data_has_changed = false;
 
         // Handle mouse input, click and drag
         if (box_signals.dragged or text_signals.dragged or box_signals.clicked or text_signals.clicked) {
@@ -1638,6 +1756,7 @@ pub const Imui = struct {
                     switch (c.?[0]) {
                         // Backspace (word or character)
                         8, 127 => {
+                            data_has_changed = true;
                             if (state.text.items.len > 0) {
                                 if (l_sel == r_sel) {
                                     if (c.?[0] == 127) {
@@ -1665,6 +1784,7 @@ pub const Imui = struct {
                         },
                         // Characters
                         32...126 => {
+                            data_has_changed = true;
                             if (c.?[1] == 0) {
                                 state.text.insert(state.cursor, c.?[0]) catch {};
                                 state.cursor += 1;
@@ -1735,6 +1855,7 @@ pub const Imui = struct {
 
                     // insert sanitized string into text input
                     state.text.insertSlice(state.cursor, sanitized[0..sanitized_cursor]) catch {};
+                    data_has_changed = true;
                     state.cursor += sanitized_cursor;
                     state.mark = state.cursor;
                 } else |err| {
@@ -1743,13 +1864,55 @@ pub const Imui = struct {
             }
         }
 
-        return combine_signals(
+        // Handle text overflow
+        // TODO: SPEED: only do this if data or cursor has changed in the line edit
+        blk: {
+            const background_widget = self.get_widget_from_last_frame(l) orelse break :blk;
+            const content_box_widget = self.get_widget(content_box) orelse break :blk;
+            const text_widget = self.get_widget_from_last_frame(text_input_widget_id) orelse break :blk;
+
+            // apply same pixel offset as last frame
+            if (self.get_widget_from_last_frame(content_box)) |lfw| {
+                content_box_widget.pixel_offset = lfw.pixel_offset;
+            }
+
+            // find the cursor position in pixels
+            // TODO: SPEED: iterate throgh text a little less
+            const cursor_pixel_position = @as(f32, @floatFromInt(f.text_bounds_2d_pixels(
+                        state.text.items[0..state.cursor],
+                        text_input_widget.text_content.?.size
+            ).width + text_widget.computed.rect().left)) + cursor_min_width;
+
+            const background_content = background_widget.content_rect();
+            const background_left: f32 = @floatFromInt(background_content.left);
+            const background_right: f32 = @floatFromInt(background_content.left + background_content.width);
+
+            const cursor_right: f32 = cursor_pixel_position;
+            // shift content box to the left if the cursor is to the left of the background
+            if (cursor_right < background_left) {
+                content_box_widget.pixel_offset[0] -= cursor_right - background_left;
+            }
+            // shift content box to the right if the cursor is to the right of the background
+            if (cursor_right > background_right) {
+                content_box_widget.pixel_offset[0] -= (cursor_right - background_right);
+            }
+
+            // clamp so that the last character is always at the right edge of the background 
+            // if text is long enough to exceed the background
+            const text_width = @as(f32, @floatFromInt(text_widget.computed.rect().width)) + cursor_min_width;
+            const offset_min = @min(-(text_width - @as(f32, @floatFromInt(background_content.width))), 0.0);
+            content_box_widget.pixel_offset[0] = std.math.clamp(content_box_widget.pixel_offset[0], offset_min, 0.0);
+        }
+
+        var signals = combine_signals(
             .{
                 box_signals,
                 text_signals,
             },
             TextInputId{ .text = text_input_widget_id, .box = l, }
         );
+        signals.data_changed = data_has_changed;
+        return signals;
     }
 
     pub fn image(self: *Self, texture_view: _gfx.TextureView2D, sampler: _gfx.Sampler, key: anytype) WidgetSignal(WidgetId) {
@@ -1798,6 +1961,7 @@ pub const Imui = struct {
 
     pub const ComboBoxData = struct {
         default_text: []const u8,
+        can_be_default: bool = true,
         options: []const []const u8,
         selected_index: ?usize = null,
         dropdown_is_open: bool = false,
@@ -1829,6 +1993,7 @@ pub const Imui = struct {
     pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) WidgetSignal(WidgetId) {
         // ensure data elements are valid
         if (data.selected_index) |*si| { si.* = @min(si.*, data.options.len - 1); }
+        if (!data.can_be_default and data.selected_index == null) { data.selected_index = 0; }
 
         // push the container layout
         const container_layout = self.push_layout(.Y, key ++ .{@src()});
@@ -1908,7 +2073,9 @@ pub const Imui = struct {
                 // if the option is clicked then set the data selected index
                 if (self.generate_widget_signals(option_background).clicked) {
                     if (data.selected_index == i) {
-                        data.selected_index = null;
+                        if (data.can_be_default) {
+                            data.selected_index = null;
+                        }
                     } else {
                         data.selected_index = i;
                     }

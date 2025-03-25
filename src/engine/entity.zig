@@ -185,13 +185,17 @@ pub const PhysicsOptions = union(PhysicsOptionsEnum) {
     pub fn init(desc: PhysicsOptionsDescriptor, transform: Transform, entity_id: gen.GenerationalIndex, phys: *physics.PhysicsSystem) !PhysicsOptions {
         const physics_options = blk: { switch (desc) {
             .Body => |b| {
-                const shape = try phys.create_shape(b.settings);
+                var settings = b.settings;
+                settings.offset_transform.scale *= transform.scale;
+                const shape = try phys.create_shape(settings);
                 defer shape.release();
 
                 const body = try phys.zphy.getBodyInterfaceMut().createAndAddBody(.{
                     .shape = shape,
+                    .object_layer = if (b.is_static) physics.object_layers.non_moving else physics.object_layers.moving,
                     .motion_type = if (b.is_static) .static else .dynamic, // TODO: fix this
-                }, .dont_activate);
+                    .is_sensor = b.is_sensor,
+                }, .activate);
 
                 break :blk PhysicsOptions {
                     .Body = .{ .id = body, .descriptor = desc },
