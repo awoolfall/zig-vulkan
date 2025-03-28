@@ -153,6 +153,7 @@ pub const QuadRenderer = struct {
         border_width_px: u32 = 0,
         corner_radii_px: CornerRadiiPx = .{},
         texture: ?QuadPropertiesTexture = null,
+        wireframe: bool = false,
     };
 
     pub fn render_quad(
@@ -205,7 +206,13 @@ pub const QuadRenderer = struct {
         gfx.cmd_set_vertex_shader(&self.quad_vso);
 
         gfx.cmd_set_topology(.TriangleList);
-        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+        if (props.wireframe) {
+            @branchHint(.unlikely);
+            gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FillFront = false, .FrontCounterClockwise = true, });
+        } else {
+            @branchHint(.likely);
+            gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+        }
 
         gfx.cmd_set_constant_buffers(.Vertex, 0, &.{&self.quad_buffer_vertex});
         gfx.cmd_set_constant_buffers(.Pixel, 1, &.{&self.quad_buffer_pixel});

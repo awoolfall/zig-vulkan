@@ -82,7 +82,7 @@ pub const Imui = struct {
     pub const SemanticSize = struct {
         kind: SizeKind,
         value: f32,
-        shrinkable_percent: f32 = 0.0,
+        shrinkable_percent: f32 = 1.0,
         minimum_pixel_size: f32 = 0.0,
     };
 
@@ -666,22 +666,27 @@ pub const Imui = struct {
     }
 
     fn solve_size_violations_in_children(self: *Self, parent_id: WidgetId) bool {
-        const parent = &self.widgets.items[parent_id];
+        const parent = self.get_widget(parent_id) orelse return false;
         if (parent.num_children == 0) { return false; }
         var violation_found = false;
-        
+
         for (0..parent.semantic_size.len) |axis| {
             if (parent.flags.get_allow_overflow_flag(@enumFromInt(axis))) { continue; }
 
+            var iteration: u64 = 0;
+
             var children_in_split: usize = parent.num_children;
             // violation in this axis
-            const last_child = &self.widgets.items[parent.last_child.?];
-            var overrun = last_child.computed.relative_position[axis] + last_child.computed.size[axis] - parent.computed.size[axis];
-            var last_overrun: f32 = overrun + 1.0;
-            while (overrun > 0.0) {
+            const last_child = self.get_widget(parent.last_child.?).?;
+            const parent_content_rect = parent.content_rect();
+            const parent_content_size = [2]f32{@floatFromInt(parent_content_rect.width), @floatFromInt(parent_content_rect.height)};
+            var overrun = last_child.computed.relative_position[axis] + last_child.computed.size[axis] - (parent.computed.relative_position[axis] + parent_content_size[axis]);
+            var last_overrun: f32 = overrun + 2.0;
+            while (overrun >= 1.0 and children_in_split > 0) {
+                iteration += 1;
                 violation_found = true;
                 // break if we find ourselves in infinite loop
-                if (@abs(overrun - last_overrun) < 0.05) {
+                if (@abs(overrun - last_overrun) <= 1.0) {
                     std.log.warn("widgets ran out of shrinkable space!", .{});
                     violation_found = false;
                     break;
@@ -694,31 +699,32 @@ pub const Imui = struct {
                 children_in_split = parent.num_children;
 
                 // iterate through all children attempting to shrink by the split amount
-                var child: ?*Widget = &self.widgets.items[parent.first_child.?];
-                while (child != null) {
+                var child_id = parent.first_child;
+                while (child_id != null) {
+                    const child = self.get_widget(child_id.?).?;
+
                     // determine how much this child may shink
-                    const amount_can_shrink = child.?.semantic_size[axis].shrinkable_percent * child.?.computed.size[axis];
+                    const amount_can_shrink = child.semantic_size[axis].shrinkable_percent * child.computed.size[axis];
                     if (amount_can_shrink >= split) {
                         // if it can shrink the full amount, do so.
                         overrun -= split;
-                        child.?.computed.size[axis] -= split;
-                        child.?.semantic_size[axis].shrinkable_percent -= (split / amount_can_shrink) * child.?.semantic_size[axis].shrinkable_percent;
+                        child.computed.size[axis] -= split;
+                        child.semantic_size[axis].shrinkable_percent -= (split / amount_can_shrink) * child.semantic_size[axis].shrinkable_percent;
                     } else { 
                         // if it cannot shrink the full amount, then shink as much as possible 
                         // and remove this child from the split count
                         overrun -= amount_can_shrink;
                         // disable further shinking on this child
-                        child.?.computed.size[axis] -= amount_can_shrink;
-                        child.?.semantic_size[axis].shrinkable_percent = 0.0;
+                        child.computed.size[axis] -= amount_can_shrink;
+                        child.semantic_size[axis].shrinkable_percent = 0.0;
                         children_in_split -= 1;
                     }
 
+                    // recompute the relative positions of the children
+                    self.compute_widget_relative_positions(child_id.?);
+
                     // go to next child
-                    if (child.?.next_sibling == null) {
-                        child = null;
-                    } else {
-                        child = &self.widgets.items[child.?.next_sibling.?];
-                    }
+                    child_id = child.next_sibling;
                 }
             }
         }
@@ -791,16 +797,26 @@ pub const Imui = struct {
                 + (widget.anchor[axis] * potential_space_size)
                 + widget.pixel_offset[axis];
         }
+    }
 
-        // solve violations in parent if this is the last sibling
-        if (widget.next_sibling == null) {
-            // const violation_found = self.solve_size_violations_in_children(widget.parent);
-            //
-            // // if we found a size violation we need to recalculate relative positions from parent id
-            // if (violation_found) {
-            //     widget_id = widget.parent;
-            //     continue;
-            // }
+    fn recurse_resolve_violations(self: *Self, widget_id: WidgetId) void {
+        var c = self.get_widget(widget_id).?.first_child;
+        while (c != null) {
+            self.solve_upward_dependant_sizes(self.get_widget(c.?).?);
+            c = self.get_widget(c.?).?.next_sibling;
+        }
+        c = self.get_widget(widget_id).?.first_child;
+        while (c != null) {
+            self.compute_widget_relative_positions(c.?);
+            c = self.get_widget(c.?).?.next_sibling;
+        }
+        _ = self.solve_size_violations_in_children(widget_id);
+
+        if (self.get_widget(widget_id).?.next_sibling) |ns| {
+            self.recurse_resolve_violations(ns);
+        }
+        if (self.get_widget(widget_id).?.first_child) |fc| {
+            self.recurse_resolve_violations(fc);
         }
     }
 
@@ -841,17 +857,7 @@ pub const Imui = struct {
             self.solve_downward_dependant_sizes(widget);
         }
 
-        // calculate relative positions and rects
-        // step through all widgets top down, if violations occur then we 
-        // re-calculate relative positions from parent
-        for (0..self.widgets.items.len) |idx| {
-            const id = WidgetId { .location = .Standard, .index = @truncate(idx) };
-            self.compute_widget_relative_positions(id);
-        }
-        for (0..self.priority_widgets.items.len) |idx| {
-            const id = WidgetId { .location = .Priority, .index = @truncate(idx) };
-            self.compute_widget_relative_positions(id);
-        }
+        self.recurse_resolve_violations(.{ .location = .Standard, .index = 0 });
     }
 
     fn render_imui_widget(self: *Self, rtv: *_gfx.RenderTargetView, widget: *const Widget, scissor_rect: RectPixels) void {
@@ -1222,8 +1228,8 @@ pub const Imui = struct {
         const widget = Widget {
             .key = Self.LabelKey,
             .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
-                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
+                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 0.0, },
             },
             .text_content = .{
                 .font = .Geist,
@@ -1232,6 +1238,8 @@ pub const Imui = struct {
             },
             .background_colour = zm.f32x4s(0.0),
             .border_colour = zm.f32x4s(0.0),
+            .anchor = .{ 0.0, 0.5 },
+            .pivot = .{ 0.0, 0.5 },
         };
 
         const widget_id = self.add_widget(widget);
@@ -1268,31 +1276,19 @@ pub const Imui = struct {
             w.flags.render = true;
         }
 
-        const text_widget = Widget {
-            .key = Self.LabelKey,
-            .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
-                SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
-            },
-            .text_content = .{
-                .font = .Geist,
-                .text = text,
-                .colour = self.palette().text_light,
-            },
-            .anchor = .{ 0.5, 0.5 },
-            .pivot = .{ 0.5, 0.5 },
-            .flags = .{
-                .clickable = true,
-            },
-        };
+        const label_id = self.label(text);
+        if (self.get_widget(label_id.id)) |text_widget| {
+            text_widget.text_content.?.colour = self.palette().text_light;
+            text_widget.anchor = .{0.5, 0.5};
+            text_widget.pivot = .{0.5, 0.5};
+        }
 
-        const text_widget_id = self.add_widget(text_widget);
         return combine_signals(
             .{
                 self.generate_widget_signals(box_layout),
-                self.generate_widget_signals(text_widget_id),
+                label_id,
             },
-            ButtonId{ .box = box_layout, .text = text_widget_id, }
+            ButtonId{ .box = box_layout, .text = label_id.id, }
         );
     }
 
@@ -1368,6 +1364,8 @@ pub const Imui = struct {
             .flags = .{ 
                 .clickable = true, 
             },
+            .anchor = .{ 0.0, 0.5 },
+            .pivot = .{ 0.0, 0.5 },
         };
         const text_widget_id = self.add_widget(text_widget);
         const text_widget_signals = self.generate_widget_signals(text_widget_id);
@@ -1407,7 +1405,7 @@ pub const Imui = struct {
         _ = self.add_widget(Widget {
             .key = Self.LabelKey,
             .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0, },
                 SemanticSize{ .kind = .Pixels, .value = 1.0, .shrinkable_percent = 0.0, },
             },
             .background_colour = self.palette().border,
@@ -1604,6 +1602,7 @@ pub const Imui = struct {
             lw.flags.clickable = true;
             lw.semantic_size[0].kind = .ParentPercentage;
             lw.semantic_size[0].value = 1.0;
+            lw.semantic_size[0].shrinkable_percent = 1.0;
             lw.semantic_size[1].kind = .Pixels;
             lw.semantic_size[1].value = 16.0;
             lw.background_colour = self.palette().secondary;
@@ -1999,7 +1998,7 @@ pub const Imui = struct {
         const container_layout = self.push_layout(.Y, key ++ .{@src()});
         if (self.get_widget(container_layout)) |container_widget| {
             container_widget.semantic_size[0] = .{
-                .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+                .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0,
             };
         }
         
@@ -2109,5 +2108,47 @@ pub const Imui = struct {
             .clicked = false, // TODO
             .dragged = false, // TODO
         };
+    }
+
+    pub fn number_slider(self: *Self, value: *f32, key: anytype) WidgetSignal(WidgetId) {
+        const background = self.push_layout(.X, key ++ .{@src()});
+        defer self.pop_layout();
+        if (self.get_widget(background)) |background_widget| {
+            background_widget.semantic_size = [2]SemanticSize{
+                SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0, },
+                SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            };
+            background_widget.flags.render = true;
+            background_widget.flags.hover_effect = false;
+            background_widget.flags.clickable = true;
+            background_widget.background_colour = self.palette().muted;
+            background_widget.border_colour = self.palette().border;
+            background_widget.border_width_px = 1;
+            background_widget.corner_radii_px = .{
+                .top_left = 4,
+                .top_right = 4,
+                .bottom_left = 4,
+                .bottom_right = 4,
+            };
+            background_widget.padding_px = .{
+                .left = 4,
+                .right = 4,
+                .top = 4,
+                .bottom = 4,
+            };
+        }
+        
+        var text_buffer: [32]u8 = undefined;
+        const text = self.label(std.fmt.bufPrint(&text_buffer, "{d:.2}", .{value.*}) catch unreachable);
+        if (self.get_widget(text.id)) |text_widget| {
+            _ = text_widget;
+        }
+
+        const background_signals = self.generate_widget_signals(background);
+        if (background_signals.dragged) {
+            value.* += engine.engine().input.mouse_delta[0] * 0.01;
+        }
+
+        return background_signals;
     }
 };
