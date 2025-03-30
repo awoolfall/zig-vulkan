@@ -732,6 +732,20 @@ pub const Imui = struct {
         return violation_found;
     }
 
+    fn widget_potential_space(self: *Self, widget_id: WidgetId) [2]f32 {
+        const widget = self.get_widget(widget_id) orelse unreachable;
+        const parent = self.get_widget(widget.parent) orelse unreachable;
+        const parent_c = parent.content_rect();
+        var parent_content_sizes = [2]f32{
+            @floatFromInt(parent_c.width),
+            @floatFromInt(parent_c.height)
+        };
+        if (parent.layout_axis) |layout_axis| {
+            parent_content_sizes[@intFromEnum(layout_axis)] = widget.computed.size[layout_axis];
+        }
+        return parent_content_sizes;
+    }
+
     fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId) void {
         const widget = self.get_widget(widget_id) orelse unreachable;
         if (widget.parent == widget_id) { return; }
@@ -820,7 +834,7 @@ pub const Imui = struct {
         }
     }
 
-    pub fn compute_widget_rects(self: *Self) void {
+    fn compute_widget_rects(self: *Self) void {
         // downward solve
         for (0..self.widgets.items.len) |inv_id| {
             const id = self.widgets.items.len - inv_id - 1;
@@ -959,12 +973,12 @@ pub const Imui = struct {
         const widget = self.get_widget(widget_id).?;
 
         const widget_scissor = blk: {
-            var widget_scissor = widget.computed.rect();
-            // clamp widget scissor to parent scissor
-            widget_scissor.left = @max(widget_scissor.left, parent_scissor.left);
-            widget_scissor.top = @max(widget_scissor.top, parent_scissor.top);
-            widget_scissor.width = @min(widget_scissor.left + widget_scissor.width, parent_scissor.left + parent_scissor.width) - widget_scissor.left;
-            widget_scissor.height = @min(widget_scissor.top + widget_scissor.height, parent_scissor.top + parent_scissor.height) - widget_scissor.top;
+            var widget_scissor = parent_scissor;
+            // // clamp widget scissor to parent scissor
+            // widget_scissor.left = @max(widget_scissor.left, parent_scissor.left);
+            // widget_scissor.top = @max(widget_scissor.top, parent_scissor.top);
+            // widget_scissor.width = @min(widget_scissor.left + widget_scissor.width, parent_scissor.left + parent_scissor.width) - widget_scissor.left;
+            // widget_scissor.height = @min(widget_scissor.top + widget_scissor.height, parent_scissor.top + parent_scissor.height) - widget_scissor.top;
 
             // expand scissor if overflow is allowed
             const swapchain_size = engine.engine().gfx.swapchain_size;
@@ -1005,6 +1019,17 @@ pub const Imui = struct {
         if (widget.flags.render) {
             self.render_imui_widget(rtv, widget, widget_scissor);
         }
+
+        // self.quad_renderer.render_quad(
+        //     widget.computed.rect(),
+        //     .{
+        //         .colour = zm.f32x4(0.0, 0.0, 1.0, 1.0),
+        //         .wireframe = true,
+        //     },
+        //     rtv.*,
+        //     &engine.engine().gfx
+        // );
+
         if (widget.first_child) |c| {
             self.render_imui_recursive(rtv, c, widget_content_scissor);
         }
@@ -1014,6 +1039,9 @@ pub const Imui = struct {
     }
 
     pub fn render_imui(self: *Self, rtv: *_gfx.RenderTargetView, gfx: *_gfx.GfxState) void {
+        // widget rects must be computed before rendering
+        self.compute_widget_rects();
+        
         _ = gfx;
         const screen_scissor = RectPixels {
             .left = 0,
@@ -1600,6 +1628,7 @@ pub const Imui = struct {
         if (self.get_widget(l)) |lw| {
             lw.flags.render = true;
             lw.flags.clickable = true;
+            lw.flags.hover_effect = false;
             lw.semantic_size[0].kind = .ParentPercentage;
             lw.semantic_size[0].value = 1.0;
             lw.semantic_size[0].shrinkable_percent = 1.0;

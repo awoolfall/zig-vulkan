@@ -15,6 +15,7 @@ const im = @import("engine/image.zig");
 const entity = @import("engine/entity.zig");
 const gen = @import("engine/gen_list.zig");
 const Transform = @import("engine/transform.zig");
+const ui = @import("ui/ui.zig");
 
 const path = @import("engine/path.zig");
 const db = @import("debug/debug.zig");
@@ -35,6 +36,7 @@ physics: ph.PhysicsSystem,
 input: in.InputState,
 time: tm.TimeState,
 debug: db.Debug,
+imui: ui.Imui,
 asset_manager: assets.AssetManager,
 app: *App,
 entities: EntityList,
@@ -56,6 +58,7 @@ pub fn run() !void {
         .input = undefined,
         .time = undefined,
         .debug = undefined,
+        .imui = undefined,
         .asset_manager = undefined,
         .app = undefined,
         .entities = undefined,
@@ -115,6 +118,9 @@ pub fn run() !void {
     };
     defer engine.asset_manager.deinit();
 
+    engine.imui = try ui.Imui.init(alloc, &engine.input, &engine.time, &engine.window, &engine.gfx);
+    defer engine.imui.deinit();
+
     engine.debug = try db.Debug.init(alloc, &engine.gfx);
     defer engine.debug.deinit();
 
@@ -139,24 +145,33 @@ pub fn run() !void {
     defer engine.app.deinit();
 
     engine.window.run(@ptrCast(&engine), &Self.window_event_received);
+    engine.gfx.flush();
 }
 
-fn window_event_received(engine_void_ptr: *anyopaque, event: wd.WindowEvent) void {
-    const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
+fn pre_app_update(self: *Self) !void {
     // Reset the frame allocator
     if (!self.frame_arena.reset(.retain_capacity)) {
         std.log.err("failed to reset frame arena", .{});
         _ = self.frame_arena.reset(.free_all);
     }
 
+    // reset imui for next frame
+    self.imui.end_frame(&self.gfx);
+
+    // Update physics
+    self.physics.update();
+}
+
+fn window_event_received(engine_void_ptr: *anyopaque, event: wd.WindowEvent) void {
+    const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
+
     // Timing needs to be updated at the very beginning of a frame
     self.time.received_window_event(&event);
 
     switch (event) {
         .RESIZED => |new_size| { self.gfx.window_resized(new_size.width, new_size.height); },
-        .EVENTS_CLEARED => {
-            // Update physics
-            self.physics.update();
+        .EVENTS_CLEARED => self.pre_app_update() catch |err| {
+            std.log.err("pre app update failed: {}", .{err});
         },
         else => {},
     }
