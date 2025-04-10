@@ -140,10 +140,12 @@ pub const PhysicsSystem = struct {
             }
         }
 
+        const delta_time: f32 = (1.0 / UpdateRateHz) * @as(f32, @floatCast(engine().time.time_scale));
+
         // Update at UpdateRateHz, this may happen zero or more than one times before returning
         for (0..@intCast(times_to_update)) |_| {
             // Run physics update
-            self.zphy.update(1.0 / UpdateRateHz, .{}) 
+            self.zphy.update(delta_time, .{}) 
                 catch std.log.err("Unable to update physics", .{});
 
             // After physics update set all entity transforms to match physics bodies
@@ -168,7 +170,7 @@ pub const PhysicsSystem = struct {
                                 // Run update for virtual character
                                 if (character.extended_update_settings) |ext| {
                                     character.virtual.extendedUpdate(
-                                        1.0 / UpdateRateHz,
+                                        delta_time,
                                         self.zphy.getGravity(),
                                         &ext,
                                         .{
@@ -177,7 +179,7 @@ pub const PhysicsSystem = struct {
                                     );
                                 } else {
                                     character.virtual.update(
-                                        1.0 / UpdateRateHz,
+                                        delta_time,
                                         self.zphy.getGravity(),
                                         .{
                                             .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,

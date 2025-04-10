@@ -1358,6 +1358,19 @@ pub const Model = struct {
         return try init_from_shape(alloc, &shape, gfx);
     }
 
+    pub fn cube(alloc: std.mem.Allocator, gfx: *gf.GfxState) !Self {
+        // Generate cube shape
+        var shape = zmesh.Shape.initCube();
+        defer shape.deinit();
+
+        shape.translate(-0.5, -0.5, -0.5);
+
+        // flat shaded
+        shape.unweld();
+
+        return try init_from_shape(alloc, &shape, gfx);
+    }
+
     pub const AnimationEntry = struct {
         animation: *an.BoneAnimation,
         strength: f32,

@@ -144,6 +144,19 @@ pub const EntityList = struct {
         }
         return null;
     }
+
+    pub fn find_entity_by_name(self: *const EntityList, name_to_find: []const u8) ?gen.GenerationalIndex {
+        for (self.list.data.items, 0..) |*it, idx| {
+            if (it.item_data) |*ent| {
+                if (ent.name) |entity_name| {
+                    if (std.mem.eql(u8, name_to_find, entity_name)) {
+                        return gen.GenerationalIndex { .index = idx, .generation = it.generation };
+                    }
+                }
+            }
+        }
+        return null;
+    }
 };
 
 pub const PhysicsOptions = union(PhysicsOptionsEnum) {
@@ -221,13 +234,19 @@ pub const PhysicsOptions = union(PhysicsOptionsEnum) {
                 var zphy_character: ?*zphy.Character = null;
                 var body_filter: ?physics.IgnoreIdsBodyFilter = null;
                 if (settings.create_character) {
-                    const character_settings = physics.CharacterSettings {
+                    var character_settings = physics.CharacterSettings {
                         .base = settings.settings.base,
                         .mass = settings.settings.mass,
                         .layer = physics.object_layers.moving,
                         .friction = 0.0,
                         .gravity_factor = 0.0,
                     };
+                    switch (character_settings.base.shape.shape) {
+                        .Capsule => |*c| {
+                            c.half_height /= 2.0;
+                        },
+                        else => {},
+                    }
 
                     zphy_character = try character_settings.create_character(transform, phys);
                     zphy_character.?.addToPhysicsSystem(.{});

@@ -3,6 +3,7 @@ const zm = @import("zmath");
 const zn = @import("znoise");
 const Transform = @import("transform.zig");
 const tm = @import("time.zig");
+const en = @import("../root.zig");
 const gf = @import("../gfx/gfx.zig");
 const es = @import("../easings.zig");
 const ms = @import("../engine/mesh.zig");
@@ -58,7 +59,7 @@ pub const ParticleSystem = struct {
         self.constant_buffer.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, max_particles: u32, settings: ParticleSystemSettings, gfx: *gf.GfxState) !Self {
+    pub fn init(alloc: std.mem.Allocator, settings: ParticleSystemSettings) !Self {
         const vertex_shader = try gf.VertexShader.init_buffer(
             SHADER_HLSL,
             "vs_main",
@@ -72,7 +73,7 @@ pub const ParticleSystem = struct {
                 .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
             })[0..],
             .{},
-            gfx
+            &en.engine().gfx
         );
         errdefer vertex_shader.deinit();
         
@@ -80,15 +81,15 @@ pub const ParticleSystem = struct {
             SHADER_HLSL,
             "ps_main",
             .{},
-            gfx
+            &en.engine().gfx
         );
         errdefer pixel_shader.deinit();
 
         const model_matrix_vertex_buffer = try gf.Buffer.init(
-            @sizeOf(VertexBufferData) * max_particles,
+            @sizeOf(VertexBufferData) * settings.max_particles,
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx
+            &en.engine().gfx
         );
         errdefer model_matrix_vertex_buffer.deinit();
 
@@ -96,18 +97,18 @@ pub const ParticleSystem = struct {
             @sizeOf(ConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx
+            &en.engine().gfx
         );
         errdefer constant_buffer.deinit();
 
-        var blend_state = gf.BlendState.init(([_]gf.BlendType{.Simple})[0..], gfx) catch unreachable;
+        var blend_state = gf.BlendState.init(([_]gf.BlendType{.Simple})[0..], &en.engine().gfx) catch unreachable;
         errdefer blend_state.deinit();
 
-        const particles = try alloc.alloc(?ParticleData, max_particles);
+        const particles = try alloc.alloc(?ParticleData, settings.max_particles);
         errdefer alloc.free(particles);
         @memset(particles, null);
 
-        const sort_particles = try alloc.alloc(ArrDat, max_particles);
+        const sort_particles = try alloc.alloc(ArrDat, settings.max_particles);
         errdefer alloc.free(sort_particles);
 
         return Self {
@@ -366,11 +367,13 @@ pub const ParticleData = struct {
 };
 
 pub const ParticleSystemSettings = struct {
+    max_particles: u32,
+
     alignment: ParticleAlignment = .Transform,
     shape: ParticleShape = .Box,
 
-    spawn_origin: zm.F32x4,
-    spawn_offset: zm.F32x4,
+    spawn_origin: zm.F32x4 = zm.f32x4s(0.0),
+    spawn_offset: zm.F32x4 = zm.f32x4s(0.0),
     spawn_radius: f32,
     spawn_rate: f32,
     spawn_rate_variance: f32 = 0.0,
@@ -395,7 +398,7 @@ pub const ParticleAlignment = union(enum) {
 pub const ParticleShape = union(enum) {
     Box: void,
     Circle: void,
-    Texture: *const gf.TextureView2D, // @TODO
+    //Texture: *const gf.TextureView2D, // @TODO
 };
 
 pub const ForceEnum = union(enum) {

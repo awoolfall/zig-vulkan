@@ -7,6 +7,14 @@ pub const GenerationalIndex = struct {
     pub fn eql(self: GenerationalIndex, other: GenerationalIndex) bool {
         return self.index == other.index and self.generation == other.generation;
     }
+
+    pub fn invalid() GenerationalIndex {
+        return GenerationalIndex { .index = 0, .generation = 0 };
+    }
+
+    pub fn is_invalid(self: GenerationalIndex) bool {
+        return self.index == 0 and self.generation == 0;
+    }
 };
 
 /// An expanding list allowing lookup by both index and generation.
@@ -63,6 +71,7 @@ pub fn GenerationalList(comptime T: type) type {
 
         /// Removes an item from the list provided the supplied handle is valid.
         pub fn remove(self: *Self, idx: GenerationalIndex) !void {
+            if (idx.is_invalid()) { return error.InvalidIndex; }
             if (idx.index >= self.data.items.len) {
                 return error.OutOfBoundsIndex;
             }
@@ -82,6 +91,7 @@ pub fn GenerationalList(comptime T: type) type {
 
         /// Gets an item from the list by handle.
         pub fn get(self: *const Self, idx: GenerationalIndex) ?*T {
+            if (idx.is_invalid()) { return null; }
             if (idx.index >= self.data.items.len) {
                 return null;
             }

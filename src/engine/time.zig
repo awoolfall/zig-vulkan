@@ -13,6 +13,7 @@ pub const TimeState = struct {
     target_frame_time_ns: i128,
     target_lost_focus_frame_time_ns: i128 = 1e8, // 10fps
     is_focused: bool = true,
+    time_scale: f64 = 1.0,
     
     pub fn init() Self {
         const start_time = std.time.Instant.now() catch unreachable;
@@ -70,11 +71,19 @@ pub const TimeState = struct {
     }
 
     pub inline fn delta_time(self: *const Self) f64 {
-        return self.last_frame_time_s;
+        return self.last_frame_time_s * self.time_scale;
     }
 
     pub inline fn delta_time_f32(self: *const Self) f32 {
-        return @floatCast(self.last_frame_time_s);
+        return @floatCast(self.delta_time());
+    }
+
+    pub inline fn delta_time_unscaled(self: *const Self) f64 {
+        return self.last_frame_time_s;
+    }
+
+    pub inline fn delta_time_unscaled_f32(self: *const Self) f32 {
+        return @floatCast(self.delta_time_unscaled());
     }
 
     pub fn set_target_frame_rate(self: *Self, target_fps: f32) void {

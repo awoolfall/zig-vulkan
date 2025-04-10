@@ -2139,7 +2139,11 @@ pub const Imui = struct {
         };
     }
 
-    pub fn number_slider(self: *Self, value: *f32, key: anytype) WidgetSignal(WidgetId) {
+    pub const NumberSliderSettings = struct {
+        scale: f32 = 0.01,
+    };
+
+    pub fn number_slider(self: *Self, value: *f32, settings: NumberSliderSettings, key: anytype) WidgetSignal(WidgetId) {
         const background = self.push_layout(.X, key ++ .{@src()});
         defer self.pop_layout();
         if (self.get_widget(background)) |background_widget| {
@@ -2173,9 +2177,10 @@ pub const Imui = struct {
             _ = text_widget;
         }
 
-        const background_signals = self.generate_widget_signals(background);
+        var background_signals = self.generate_widget_signals(background);
         if (background_signals.dragged) {
-            value.* += engine.engine().input.mouse_delta[0] * 0.01;
+            value.* += engine.engine().input.mouse_delta[0] * settings.scale;
+            background_signals.data_changed = true;
         }
 
         return background_signals;

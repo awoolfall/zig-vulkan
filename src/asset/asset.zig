@@ -103,6 +103,12 @@ pub const AssetManager = struct {
                         try ms.Model.sphere(self.allocator, s.slices, s.stacks, gfx)
                     );
                 },
+                .Cube => {
+                    try loaded_asset_pack.models.put(
+                        name_hash, 
+                        try ms.Model.cube(self.allocator, gfx)
+                    );
+                },
             }
         }
 
@@ -273,6 +279,7 @@ pub const AssetPack = struct {
             slices: i32 = 32,
             stacks: i32 = 16,
         },
+        Cube: struct {},
     };
 
     pub const AnimationAsset = struct {

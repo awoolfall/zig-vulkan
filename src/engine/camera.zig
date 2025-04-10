@@ -49,13 +49,13 @@ pub const Camera = struct {
         self.local_transform = self.transform;
 
         { // Camera Movement
-            const move_amount = self.move_speed * time.delta_time_f32();
+            const move_amount = self.move_speed * time.delta_time_unscaled_f32();
             const cam_x = 
-                float_from_bool(input.get_key(kc.KeyCode.ArrowLeft)) * -move_amount + 
-                float_from_bool(input.get_key(kc.KeyCode.ArrowRight)) * move_amount;
+                float_from_bool(input.get_key(kc.KeyCode.A)) * -move_amount + 
+                float_from_bool(input.get_key(kc.KeyCode.D)) * move_amount;
             const cam_z = 
-                float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) * -move_amount + 
-                float_from_bool(input.get_key(kc.KeyCode.ArrowUp)) * move_amount;
+                float_from_bool(input.get_key(kc.KeyCode.S)) * -move_amount + 
+                float_from_bool(input.get_key(kc.KeyCode.W)) * move_amount;
 
             self.local_transform.position += self.local_transform.forward_direction() * zm.f32x4s(cam_z);
             self.local_transform.position += self.local_transform.right_direction() * zm.f32x4s(cam_x);
@@ -111,7 +111,7 @@ pub const Camera = struct {
         // translate orbit distance by input
         const orbit_distance_change = float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) 
             - float_from_bool(input.get_key(kc.KeyCode.ArrowUp));
-        self.orbit_distance = self.orbit_distance + self.orbit_distance * (orbit_distance_change * 0.5 * time.delta_time_f32());
+        self.orbit_distance = self.orbit_distance + self.orbit_distance * (orbit_distance_change * 0.5 * time.delta_time_unscaled_f32());
         self.orbit_distance = @max(@min(self.orbit_distance, self.max_orbit_distance), self.min_orbit_distance);
 
         // camera rotation
@@ -119,8 +119,8 @@ pub const Camera = struct {
             self.damping_movement[0] = input.mouse_delta[0] * self.mouse_sensitivity;
             self.damping_movement[1] = input.mouse_delta[1] * self.mouse_sensitivity;
         } else {
-            self.damping_movement[0] = std.math.lerp(self.damping_movement[0], 0.0, self.damping_amount * time.delta_time_f32());
-            self.damping_movement[1] = std.math.lerp(self.damping_movement[1], 0.0, self.damping_amount * time.delta_time_f32());
+            self.damping_movement[0] = std.math.lerp(self.damping_movement[0], 0.0, self.damping_amount * time.delta_time_unscaled_f32());
+            self.damping_movement[1] = std.math.lerp(self.damping_movement[1], 0.0, self.damping_amount * time.delta_time_unscaled_f32());
         }
 
         var target_offset = self.local_transform.position;
