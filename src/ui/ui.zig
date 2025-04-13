@@ -705,11 +705,12 @@ pub const Imui = struct {
 
                     // determine how much this child may shink
                     const amount_can_shrink = child.semantic_size[axis].shrinkable_percent * child.computed.size[axis];
+                    const minimum_size = child.computed.size[axis] - amount_can_shrink;
                     if (amount_can_shrink >= split) {
                         // if it can shrink the full amount, do so.
                         overrun -= split;
                         child.computed.size[axis] -= split;
-                        child.semantic_size[axis].shrinkable_percent -= (split / amount_can_shrink) * child.semantic_size[axis].shrinkable_percent;
+                        child.semantic_size[axis].shrinkable_percent = (1.0 - (minimum_size / child.computed.size[axis]));
                     } else { 
                         // if it cannot shrink the full amount, then shink as much as possible 
                         // and remove this child from the split count
@@ -1020,6 +1021,7 @@ pub const Imui = struct {
             self.render_imui_widget(rtv, widget, widget_scissor);
         }
 
+        // // debug wireframe
         // self.quad_renderer.render_quad(
         //     widget.computed.rect(),
         //     .{

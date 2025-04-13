@@ -553,7 +553,7 @@ pub const ShapeSettings = struct {
             depth: f32,
         },
         ModelCompoundConvexHull: as.ModelAssetId,
-    } = .{ .Sphere = .{ .radius = 1.0 } },
+    } = .{ .Box = .{ .width = 1.0, .height = 1.0, .depth = 1.0 } },
     offset_transform: Transform = .{},
 };
 

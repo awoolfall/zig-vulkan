@@ -150,7 +150,7 @@ pub const ParticleSystem = struct {
             .rand_vec = random_v(self.rand.random()),
             .transform = Transform {
                 .position = self.f32x4_variance(self.settings.spawn_origin + self.settings.spawn_offset, zm.f32x4s(self.settings.spawn_radius)),
-                .scale = KeyFrame(zm.F32x4).calc(self.settings.scale[0..], 0.0),
+                .scale = KeyFrame(zm.F32x4).calc(self.settings.scale.slice(), 0.0),
             },
             .velocity = self.settings.initial_velocity,
             .life_remaining = self.f32_variance(self.settings.particle_lifetime, self.settings.particle_lifetime_variance),
@@ -170,8 +170,7 @@ pub const ParticleSystem = struct {
                 }
                 const t = 1.0 - (p.life_remaining / self.settings.particle_lifetime);
 
-                for (self.settings.forces) |f| {
-                    if (f) |fo| {
+                for (self.settings.forces.slice()) |fo| {
                         switch (fo) {
                             .Constant => |v| { p.velocity += (v * delta_time); },
                             .ConstantRand => |force| { 
@@ -192,18 +191,17 @@ pub const ParticleSystem = struct {
                             .Vortex => |d| {
                                 const vec_to_p = p.transform.position - self.settings.spawn_origin;
                                 // vortex
-                                var force = zm.cross3(zm.normalize3(vec_to_p), d.axis) * zm.f32x4s(d.force);
+                                var force = zm.cross3(zm.normalize3(vec_to_p), zm.normalize3(d.axis)) * zm.f32x4s(d.force);
                                 // origin pull, @TODO: maybe make this pull to the axis line?
                                 force += -zm.normalize3(vec_to_p) * zm.f32x4s(d.origin_pull);
                                 
                                 p.velocity += force * delta_time;
                             },
-                        }
                     }
                 }
 
-                p.transform.scale = KeyFrame(zm.F32x4).calc(self.settings.scale[0..], t);
-                p.colour = KeyFrame(zm.F32x4).hsv_calc(self.settings.colour[0..], t);
+                p.transform.scale = KeyFrame(zm.F32x4).calc(self.settings.scale.slice(), t);
+                p.colour = KeyFrame(zm.F32x4).hsv_calc(self.settings.colour.slice(), t);
                 p.transform.position += p.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0) * delta_time;
             }
 
@@ -366,16 +364,24 @@ pub const ParticleData = struct {
     last_curl: zm.F32x4,
 };
 
+pub const MAX_KEYFRAMES: usize = 6;
+pub const ScaleKeyFrame = KeyFrame(zm.F32x4);
+pub const ColourKeyFrame = KeyFrame(zm.F32x4);
+pub const ScaleKeyFrameArray = std.BoundedArray(ScaleKeyFrame, MAX_KEYFRAMES);
+pub const ColourKeyFrameArray = std.BoundedArray(ColourKeyFrame, MAX_KEYFRAMES);
+pub const MAX_FORCES: usize = 6;
+pub const ForceArray = std.BoundedArray(ForceEnum, MAX_FORCES);
+
 pub const ParticleSystemSettings = struct {
-    max_particles: u32,
+    max_particles: u32 = 1000,
 
     alignment: ParticleAlignment = .Transform,
     shape: ParticleShape = .Box,
 
     spawn_origin: zm.F32x4 = zm.f32x4s(0.0),
     spawn_offset: zm.F32x4 = zm.f32x4s(0.0),
-    spawn_radius: f32,
-    spawn_rate: f32,
+    spawn_radius: f32 = 1.0,
+    spawn_rate: f32 = 1.0,
     spawn_rate_variance: f32 = 0.0,
     burst_count: u32 = 1,
 
@@ -384,9 +390,9 @@ pub const ParticleSystemSettings = struct {
 
     initial_velocity: zm.F32x4 = zm.f32x4s(0.0),
 
-    scale: [4]?KeyFrame(zm.F32x4) = [1]?KeyFrame(zm.F32x4){null} ** 4,
-    colour: [4]?KeyFrame(zm.F32x4) = [1]?KeyFrame(zm.F32x4){null} ** 4,
-    forces: [4]?ForceEnum = [1]?ForceEnum{null} ** 4,
+    scale: ScaleKeyFrameArray = .{},
+    colour: ColourKeyFrameArray = .{},
+    forces: ForceArray = .{},
 };
 
 pub const ParticleAlignment = union(enum) {
@@ -424,42 +430,32 @@ pub fn KeyFrame(comptime T: type) type {
             }
         }
 
-        pub fn calc(arr: []?KeyFrame(T), t: f32) T {
+        pub fn calc(arr: []KeyFrame(T), t: f32) T {
+            if (arr.len == 0) return default_value();
+            if (arr.len == 1) return arr[0].value;
             for (1..arr.len) |i| {
-                if (arr[i] == null) {
-                    if (arr[i - 1]) |*v| {
-                        return v.value;
-                    } else {
-                        return default_value();
-                    } 
-                }
-                if (arr[i].?.key_time >= t) {
+                if (arr[i].key_time >= t) {
                     if (i == 0) { 
-                        return arr[i].?.value;
+                        return arr[i].value;
                     } else {
-                        return arr[i].?.calc_(&arr[i-1].?, t);
+                        return arr[i].calc_(&arr[i-1], t);
                     }
                 }
             }
             return default_value();
         }
 
-        pub fn hsv_calc(arr: []?KeyFrame(zm.F32x4), t: f32) zm.F32x4 {
+        pub fn hsv_calc(arr: []KeyFrame(zm.F32x4), t: f32) zm.F32x4 {
+            if (arr.len == 0) return zm.f32x4s(0.0);
+            if (arr.len == 1) return arr[0].value;
             for (1..arr.len) |i| {
-                if (arr[i] == null) {
-                    if (arr[i - 1]) |*v| {
-                        return v.value;
-                    } else {
-                        return zm.f32x4s(0.0);
-                    } 
-                }
-                if (arr[i].?.key_time >= t) {
+                if (arr[i].key_time >= t) {
                     if (i == 0) { 
-                        return arr[i].?.value;
+                        return arr[i].value;
                     } else {
-                        var s = arr[i].?;
+                        var s = arr[i];
                         s.value = zm.rgbToHsv(s.value);
-                        var p = arr[i-1].?;
+                        var p = arr[i-1];
                         p.value = zm.rgbToHsv(p.value);
                         return zm.hsvToRgb(s.calc_(&p, t));
                     }

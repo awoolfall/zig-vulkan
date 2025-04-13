@@ -9,10 +9,12 @@ pub fn Serializable(comptime T: type) type {
             } else {
                 var fields: [std.meta.fields(T).len]std.builtin.Type.StructField = undefined;
                 for (std.meta.fields(T), 0..) |field, i| {
+                    const SerializableType = Serializable(field.type);
                     fields[i] = .{
                         .name = field.name,
-                        .type = Serializable(field.type),
-                        .default_value = null,
+                        .type = SerializableType,
+                        // TODO: convert the default value to SerializableType at compile time...
+                        .default_value = if (field.type == SerializableType) field.default_value else null,
                         .is_comptime = false,
                         .alignment = field.alignment,
                     };
