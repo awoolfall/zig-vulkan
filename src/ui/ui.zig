@@ -932,7 +932,12 @@ pub const Imui = struct {
 
             if (widget.flags.hover_effect) {
                 // TODO: find a better way of doing hover colouring
-                colour += zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0);
+                if (background_colour[3] == 0.0) {
+                    colour = background_colour;
+                    colour[3] = es.ease_out_expo(widget.hot_t) * 0.2;
+                } else {
+                    colour += zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0);
+                }
             }
 
             self.quad_renderer.render_quad(
@@ -1144,14 +1149,14 @@ pub const Imui = struct {
 
         if (self.last_frame_widgets.getPtr(widget.key)) |lw| {
             if (self.hot_item == widget.key) {
-                widget.hot_t = @min(lw.hot_t + self.time.delta_time_f32() / widget.hot_t_timescale, 1.0);
+                widget.hot_t = @min(lw.hot_t + self.time.delta_time_unscaled_f32() / widget.hot_t_timescale, 1.0);
             } else {
-                widget.hot_t = @max(lw.hot_t - self.time.delta_time_f32() / widget.hot_t_timescale, 0.0);
+                widget.hot_t = @max(lw.hot_t - self.time.delta_time_unscaled_f32() / widget.hot_t_timescale, 0.0);
             }
             if (self.active_item == widget.key) {
-                widget.active_t = @min(lw.active_t + self.time.delta_time_f32() / widget.active_t_timescale, 1.0);
+                widget.active_t = @min(lw.active_t + self.time.delta_time_unscaled_f32() / widget.active_t_timescale, 1.0);
             } else {
-                widget.active_t = @max(lw.active_t - self.time.delta_time_f32() / widget.active_t_timescale, 0.0);
+                widget.active_t = @max(lw.active_t - self.time.delta_time_unscaled_f32() / widget.active_t_timescale, 0.0);
             }
         }
 
@@ -2050,9 +2055,24 @@ pub const Imui = struct {
         }
 
         // print the selected label
-        const selected_label = if (data.selected_index) |si| data.options[si] else data.default_text;
-        _ = self.label("▽ ");
-        _ = self.label(selected_label);
+        {
+            const label_layout = self.push_layout(.X, key ++ .{@src()});
+            defer self.pop_layout();
+            if (self.get_widget(label_layout)) |label_widget| {
+                label_widget.layout_axis = null;
+                label_widget.semantic_size[0] = .{
+                    .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+                };
+            }
+
+            const selected_label = if (data.selected_index) |si| data.options[si] else data.default_text;
+            _ = self.label(selected_label);
+            const arrow_label = self.label("▽");
+            if (self.get_widget(arrow_label.id)) |arrow_label_widget| {
+                arrow_label_widget.anchor = .{1.0, 0.5};
+                arrow_label_widget.pivot = .{1.0, 0.5};
+            }
+        }
         self.pop_layout(); // background layout
 
         var new_option_selected = false;
