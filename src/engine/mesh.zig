@@ -1109,24 +1109,25 @@ pub const Model = struct {
                 ) catch |err| {
                     std.log.err("Failed to generate tangents and binormals for shape: {}", .{err});
                 };
+            } else {
+                // @TODO: make this more robust, currently only works for planes
+                var zmn = zm.f32x4s(0.0);
+                var zmt = zm.f32x4s(0.0);
+                var zmb = zm.f32x4s(0.0);
+                for (normals, 0..) |*n, i| {
+                    zmn = zm.loadArr3(n.*);
+                    if (zm.dot3(zmn, zm.f32x4(0.0, 0.0, 1.0, 0.0))[0] < 0.9999) {
+                        zmb = zm.cross3(zmn, zm.f32x4(0.0, 0.0, 1.0, 0.0));
+                    } else {
+                        zmb = zm.cross3(zmn, zm.f32x4(0.0, 1.0, 0.0, 0.0));
+                    }
+                    zmt = zm.cross3(zmb, zmn);
+                    zmb = zm.cross3(zmt, zmn);
+
+                    zm.storeArr3(&tangents[i], zmb);
+                    zm.storeArr3(&bitangents[i], zmt);
+                }
             }
-            // @TODO: make this more robust, currently only works for planes
-            // var zmn = zm.f32x4s(0.0);
-            // var zmt = zm.f32x4s(0.0);
-            // var zmb = zm.f32x4s(0.0);
-            // for (normals, 0..) |*n, i| {
-            //     zmn = zm.loadArr3(n.*);
-            //     if (zm.dot3(zmn, zm.f32x4(0.0, 0.0, 1.0, 0.0))[0] < 0.9999) {
-            //         zmb = zm.cross3(zmn, zm.f32x4(0.0, 0.0, 1.0, 0.0));
-            //     } else {
-            //         zmb = zm.cross3(zmn, zm.f32x4(0.0, 1.0, 0.0, 0.0));
-            //     }
-            //     zmt = zm.cross3(zmb, zmn);
-            //     zmb = zm.cross3(zmt, zmn);
-            //
-            //     zm.storeArr3(&tangents[i], zmb);
-            //     zm.storeArr3(&bitangents[i], zmt);
-            // }
         }
 
         const bone_ids = try alloc.alloc([4]i32, shape.positions.len);

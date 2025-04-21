@@ -42,6 +42,8 @@ pub const ParticleSystem = struct {
 
     vertex_shader: gf.VertexShader,
     pixel_shader: gf.PixelShader,
+    shader_watcher: en.assets.FileAsset,
+
     model_matrix_vertex_buffer: gf.Buffer,
     constant_buffer: gf.Buffer,
     blend_state: gf.BlendState,
@@ -57,33 +59,31 @@ pub const ParticleSystem = struct {
         self.blend_state.deinit();
         self.model_matrix_vertex_buffer.deinit();
         self.constant_buffer.deinit();
+        self.shader_watcher.deinit();
     }
 
     pub fn init(alloc: std.mem.Allocator, settings: ParticleSystemSettings) !Self {
-        const vertex_shader = try gf.VertexShader.init_buffer(
-            SHADER_HLSL,
-            "vs_main",
-            ([_]gf.VertexInputLayoutEntry {
-                .{ .name = "RowX", .slot = 0, .format = .F32x4, .per = .Instance },
-                .{ .name = "RowY", .slot = 1, .format = .F32x4, .per = .Instance },
-                .{ .name = "RowZ", .slot = 2, .format = .F32x4, .per = .Instance },
-                .{ .name = "RowW", .slot = 3, .format = .F32x4, .per = .Instance },
-                .{ .name = "Colour", .slot = 4, .format = .F32x4, .per = .Instance },
-                .{ .name = "Velocity", .slot = 5, .format = .F32x4, .per = .Instance },
-                .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
-            })[0..],
-            .{},
-            &en.engine().gfx
-        );
-        errdefer vertex_shader.deinit();
-        
-        const pixel_shader = try gf.PixelShader.init_buffer(
-            SHADER_HLSL,
-            "ps_main",
-            .{},
-            &en.engine().gfx
-        );
-        errdefer pixel_shader.deinit();
+        const particle_path = try std.fs.path.join(alloc, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" });
+        defer alloc.free(particle_path);
+
+        const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
+            std.log.err("failed to open file: {}", .{err});
+            return error.FileNotFound;
+        };
+        defer shader_file.close();
+
+        const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator.allocator(), 1024 * 1024) catch |err| {
+            std.log.err("failed to read file: {}", .{err});
+            return error.UnableToRead;
+        };
+        defer en.engine().general_allocator.allocator().free(shader_hlsl);
+
+        const shaders = try init_shaders(shader_hlsl);
+        const vertex_shader = shaders[0];
+        const pixel_shader = shaders[1];
+
+        var shader_watcher = try en.assets.FileAsset.init(alloc, particle_path, 500);
+        errdefer shader_watcher.deinit();
 
         const model_matrix_vertex_buffer = try gf.Buffer.init(
             @sizeOf(VertexBufferData) * settings.max_particles,
@@ -119,10 +119,43 @@ pub const ParticleSystem = struct {
             .noise = zn.FnlGenerator{},
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
+            .shader_watcher = shader_watcher,
             .model_matrix_vertex_buffer = model_matrix_vertex_buffer,
             .constant_buffer = constant_buffer,
             .blend_state = blend_state,
             .sort_particles = sort_particles,
+        };
+    }
+
+    pub fn init_shaders(hlsl: []const u8) !struct {gf.VertexShader, gf.PixelShader} {
+        const vertex_shader = try gf.VertexShader.init_buffer(
+            hlsl,
+            "vs_main",
+            ([_]gf.VertexInputLayoutEntry {
+                .{ .name = "RowX", .slot = 0, .format = .F32x4, .per = .Instance },
+                .{ .name = "RowY", .slot = 1, .format = .F32x4, .per = .Instance },
+                .{ .name = "RowZ", .slot = 2, .format = .F32x4, .per = .Instance },
+                .{ .name = "RowW", .slot = 3, .format = .F32x4, .per = .Instance },
+                .{ .name = "Colour", .slot = 4, .format = .F32x4, .per = .Instance },
+                .{ .name = "Velocity", .slot = 5, .format = .F32x4, .per = .Instance },
+                .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
+            })[0..],
+            .{},
+            &en.engine().gfx
+        );
+        errdefer vertex_shader.deinit();
+        
+        const pixel_shader = try gf.PixelShader.init_buffer(
+            hlsl,
+            "ps_main",
+            .{},
+            &en.engine().gfx
+        );
+        errdefer pixel_shader.deinit();
+
+        return .{
+            vertex_shader,
+            pixel_shader,
         };
     }
 
@@ -159,6 +192,37 @@ pub const ParticleSystem = struct {
     }
 
     pub fn update(self: *Self, time: *const tm.TimeState) void {
+        if (self.shader_watcher.was_modified_since_last_check()) {
+            blk: {
+                const particle_path = std.fs.path.join(en.engine().general_allocator.allocator(), &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" }) catch |err| {
+                    std.log.err("failed to join paths: {}", .{err});
+                    break :blk;
+                };
+                defer en.engine().general_allocator.allocator().free(particle_path);
+
+                const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
+                    std.log.err("failed to open file: {}", .{err});
+                    break :blk;
+                };
+                defer shader_file.close();
+
+                const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator.allocator(), 1024 * 1024) catch |err| {
+                    std.log.err("failed to read file: {}", .{err});
+                    break :blk;
+                };
+                defer en.engine().general_allocator.allocator().free(shader_hlsl);
+
+                const new_shaders = init_shaders(shader_hlsl) catch |err| {
+                    std.log.err("failed to reload shaders: {}", .{err});
+                    break :blk;
+                };
+                self.vertex_shader.deinit();
+                self.pixel_shader.deinit();
+                self.vertex_shader = new_shaders[0];
+                self.pixel_shader = new_shaders[1];
+            }
+        }
+
         const delta_time = zm.f32x4s(time.delta_time_f32());
         const current_time = zm.f32x4s(@floatCast(time.time_since_start_of_app()));
         for (self.particles, 0..) |*maybe_particle, i| {

@@ -39,6 +39,8 @@ pub fn build(b: *std.Build) void {
         "graphics_backend", 
         "Graphics backend to use",
     ) orelse default_backend);
+    // TODO: remove this in a distribution build
+    options.addOption([]const u8, "engine_src_path", b.pathFromRoot("src"));
 
     const engine = b.addModule("root", .{
         .root_source_file = b.path("src/root.zig"),

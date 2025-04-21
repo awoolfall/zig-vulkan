@@ -13,8 +13,18 @@ pub fn Serializable(comptime T: type) type {
                     fields[i] = .{
                         .name = field.name,
                         .type = SerializableType,
-                        // TODO: convert the default value to SerializableType at compile time...
-                        .default_value = if (field.type == SerializableType) field.default_value else null,
+                        // TODO: convert the default value to SerializableType at compile time.
+                        // for types that are not optionals
+                        .default_value = blk: {
+                            if (field.default_value) |_| {
+                                switch (@typeInfo(field.type)) {
+                                    .@"optional" => { break :blk &@as(SerializableType, null); },
+                                    else => break :blk null,
+                                }
+                            } else {
+                                break :blk null;
+                            }
+                        },
                         .is_comptime = false,
                         .alignment = field.alignment,
                     };
