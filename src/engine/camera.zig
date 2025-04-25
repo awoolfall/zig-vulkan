@@ -154,7 +154,7 @@ pub const Camera = struct {
     }
 
     pub fn horizontal_to_vertical_fov(horizontal_fov: f32, aspect_ratio: f32) f32 {
-        return 2.0 * std.math.atan2(std.math.tan(horizontal_fov / 2.0), aspect_ratio);
+        return 2.0 * std.math.atan(std.math.tan(horizontal_fov / 2.0) * (1.0 / aspect_ratio));
     }
 };
 

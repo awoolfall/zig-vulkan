@@ -1256,61 +1256,49 @@ const ToneMappingAndBloomFilter = struct {
 \\  Texture2D bloom_buffer;
 \\  SamplerState hdr_sampler;
 \\
-\\  cbuffer exposure_buffer : register(b0)
-\\  {
-\\      float exposure;
-\\      float __unused0;
-\\      float __unused1;
-\\      float __unused2;
-\\  }
-\\
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
 \\      float3 hdr_colour = hdr_buffer.Sample(hdr_sampler, input.uv).rgb;
 \\      float3 bloom_colour = bloom_buffer.Sample(hdr_sampler, input.uv).rgb;
 \\      float3 mixed_colour = lerp(hdr_colour, bloom_colour, 0.04);
 \\      
-\\      bool use_aces = true;
-\\      bool use_exposure = false;
+\\      // ACES tonemapping
+\\      float3 c = mixed_colour;
+\\      float3 mapped_aces = (c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14);
+\\      float4 toned_colour = float4(saturate(mapped_aces), 1.0);
 \\
-\\      float4 toned_colour;
-\\      if (use_aces) {
-\\          float3 c = mixed_colour;
-\\          float3 mapped_aces = (c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14);
-\\          toned_colour = float4(saturate(mapped_aces), 1.0);
-\\      } 
-\\      else if (use_exposure) {
-\\          float3 mapped = float3(1.0, 1.0, 1.0) - exp(-mixed_colour * exposure);
-\\          toned_colour = float4(saturate(mapped), 1.0);
-\\      }
-\\      else {
-\\          // otherwise just use LDR clamped
-\\          toned_colour = float4(saturate(mixed_colour), 1.0);
-\\      }
+\\ #ifdef BLACK_AND_WHITE
+\\      // gamma correct and convert to grayscale
+\\      toned_colour = pow(toned_colour, float4(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2, 1.0));
+\\      float value = toned_colour.r * 0.299 + toned_colour.g * 0.587 + toned_colour.b * 0.114;
+\\      value = saturate(value);
+\\      toned_colour = float4(value, value, value, 1.0);
+\\
+\\      // return to linear space
+\\      toned_colour = pow(toned_colour, float4(2.2, 2.2, 2.2, 1.0));
+\\ #endif
 \\
 \\      return toned_colour;
 \\  }
 ;
 
-    const ExposureConstantBuffer = extern struct {
-        exposure: f32,
-        __unused0: f32 = 0.0,
-        __unused1: f32 = 0.0,
-        __unused2: f32 = 0.0,
+    pub const ToneMappingOptions = packed struct(u32) {
+        black_and_white: bool = false,
+        __padding: u31 = 0,
     };
 
     vertex_shader: VertexShader,
     pixel_shader: PixelShader,
+    black_and_white_pixel_shader: PixelShader,
     sampler: Sampler,
-    buffer: Buffer,
 
     bloom_filter: bloom.BloomFilter,
 
     pub fn deinit(self: *ToneMappingAndBloomFilter) void {
         self.bloom_filter.deinit();
-        self.buffer.deinit();
         self.vertex_shader.deinit();
         self.pixel_shader.deinit();
+        self.black_and_white_pixel_shader.deinit();
         self.sampler.deinit();
     }
 
@@ -1332,19 +1320,23 @@ const ToneMappingAndBloomFilter = struct {
         );
         errdefer pixel_shader.deinit();
 
+        var black_and_white_pixel_shader = try PixelShader.init_buffer(
+            GfxState.FULL_SCREEN_QUAD_VS ++ HLSL,
+            "ps_main",
+            .{
+                .defines = &.{
+                    .{ "BLACK_AND_WHITE", "1" },
+                },
+            },
+            gfx
+        );
+        errdefer black_and_white_pixel_shader.deinit();
+
         var sampler = try Sampler.init(
             SamplerDescriptor {},
             gfx
         );
         errdefer sampler.deinit();
-
-        var buffer = try Buffer.init(
-            @sizeOf(ExposureConstantBuffer),
-            .{ .ConstantBuffer = true, },
-            .{ .CpuWrite = true, },
-            gfx
-        );
-        errdefer buffer.deinit();
 
         var bloom_filter = try bloom.BloomFilter.init(gfx);
         errdefer bloom_filter.deinit();
@@ -1352,25 +1344,20 @@ const ToneMappingAndBloomFilter = struct {
         return ToneMappingAndBloomFilter {
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
+            .black_and_white_pixel_shader = black_and_white_pixel_shader,
             .sampler = sampler,
             .bloom_filter = bloom_filter,
-            .buffer = buffer,
         };
     }
 
     pub fn apply_filter(
         self: *ToneMappingAndBloomFilter,
         hdr_buffer: *TextureView2D,
-        exposure: f32,
+        options: ToneMappingOptions,
         rtv: *RenderTargetView,
         gfx: *GfxState
     ) void {
         self.bloom_filter.render_bloom_texture(hdr_buffer, 0.005, gfx);
-
-        if (self.buffer.map(ExposureConstantBuffer, gfx)) |mapped_buffer| {
-            defer mapped_buffer.unmap();
-            mapped_buffer.data().exposure = exposure;
-        } else |_| {}
 
         const viewport = Viewport {
             .width = @floatFromInt(rtv.size.width),
@@ -1389,10 +1376,13 @@ const ToneMappingAndBloomFilter = struct {
 
         gfx.cmd_set_vertex_shader(&self.vertex_shader);
 
-        gfx.cmd_set_pixel_shader(&self.pixel_shader);
+        if (options.black_and_white) {
+            gfx.cmd_set_pixel_shader(&self.black_and_white_pixel_shader);
+        } else {
+            gfx.cmd_set_pixel_shader(&self.pixel_shader);
+        }
         gfx.cmd_set_samplers(.Pixel, 0, &.{&self.sampler});
         gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_buffer, self.bloom_filter.get_bloom_view()});
-        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.buffer});
 
         gfx.cmd_set_topology(.TriangleList);
 
