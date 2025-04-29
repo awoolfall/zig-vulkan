@@ -72,11 +72,11 @@ pub const ParticleSystem = struct {
         };
         defer shader_file.close();
 
-        const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator.allocator(), 1024 * 1024) catch |err| {
+        const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator, 1024 * 1024) catch |err| {
             std.log.err("failed to read file: {}", .{err});
             return error.UnableToRead;
         };
-        defer en.engine().general_allocator.allocator().free(shader_hlsl);
+        defer en.engine().general_allocator.free(shader_hlsl);
 
         const shaders = try init_shaders(shader_hlsl);
         const vertex_shader = shaders[0];
@@ -200,11 +200,11 @@ pub const ParticleSystem = struct {
     pub fn update(self: *Self, time: *const tm.TimeState) void {
         if (self.shader_watcher.was_modified_since_last_check()) {
             blk: {
-                const particle_path = std.fs.path.join(en.engine().general_allocator.allocator(), &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" }) catch |err| {
+                const particle_path = std.fs.path.join(en.engine().general_allocator, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" }) catch |err| {
                     std.log.err("failed to join paths: {}", .{err});
                     break :blk;
                 };
-                defer en.engine().general_allocator.allocator().free(particle_path);
+                defer en.engine().general_allocator.free(particle_path);
 
                 const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
                     std.log.err("failed to open file: {}", .{err});
@@ -212,11 +212,11 @@ pub const ParticleSystem = struct {
                 };
                 defer shader_file.close();
 
-                const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator.allocator(), 1024 * 1024) catch |err| {
+                const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator, 1024 * 1024) catch |err| {
                     std.log.err("failed to read file: {}", .{err});
                     break :blk;
                 };
-                defer en.engine().general_allocator.allocator().free(shader_hlsl);
+                defer en.engine().general_allocator.free(shader_hlsl);
 
                 const new_shaders = init_shaders(shader_hlsl) catch |err| {
                     std.log.err("failed to reload shaders: {}", .{err});

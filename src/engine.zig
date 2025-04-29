@@ -42,11 +42,11 @@ app: *App,
 entities: EntityList,
 exe_path: []u8,
 
-general_allocator: std.heap.GeneralPurposeAllocator(.{}),
+general_allocator: std.mem.Allocator,
 frame_arena: std.heap.ArenaAllocator,
 frame_allocator: std.mem.Allocator,
 
-pub fn run() !void {
+pub fn run(alloc: std.mem.Allocator) !void {
     Log.debug("Engine init!", .{});
     defer std.log.debug("Engine deinit!", .{});
 
@@ -71,14 +71,7 @@ pub fn run() !void {
     // set the global engine pointer
     @import("global_engine.zig").__global_engine = @ptrCast(&engine);
 
-    engine.general_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        const check = engine.general_allocator.deinit();
-        if (check != std.heap.Check.ok) {
-            std.log.err("General allocator leak check: {}", .{check});
-        }
-    }
-    const alloc = engine.general_allocator.allocator();
+    engine.general_allocator = alloc;
 
     engine.frame_arena = std.heap.ArenaAllocator.init(alloc);
     defer engine.frame_arena.deinit();
@@ -111,8 +104,8 @@ pub fn run() !void {
     defer engine.gfx.deinit();
 
     engine.asset_manager = blk: {
-        const resources_path = try std.fs.path.join(engine.general_allocator.allocator(), &[_][]const u8{engine.exe_path, "../../res"});
-        defer engine.general_allocator.allocator().free(resources_path);
+        const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "../../res"});
+        defer engine.general_allocator.free(resources_path);
 
         break :blk try assets.AssetManager.init(alloc, resources_path);
     };
@@ -132,8 +125,8 @@ pub fn run() !void {
     defer engine.entities.deinit();
 
     Log.debug("Creating app!", .{});
-    engine.app = try engine.general_allocator.allocator().create(App);
-    defer engine.general_allocator.allocator().destroy(engine.app);
+    engine.app = try engine.general_allocator.create(App);
+    defer engine.general_allocator.destroy(engine.app);
 
     Log.debug("Engine inited!", .{});
 

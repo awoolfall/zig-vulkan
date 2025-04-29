@@ -23,7 +23,7 @@ pub const EntitySuperStruct = struct {
         self.app.deinit();
 
         if (self.name) |name| {
-            engine().general_allocator.allocator().free(name);
+            engine().general_allocator.free(name);
         }
 
         if (self.physics) |*phys| {
@@ -35,7 +35,7 @@ pub const EntitySuperStruct = struct {
     pub fn init_no_physics(desc: EntityDescriptor) !EntitySuperStruct {
         var name: ?[]const u8 = null;
         if (desc.name) |n| {
-            name = try engine().general_allocator.allocator().dupe(u8, n);
+            name = try engine().general_allocator.dupe(u8, n);
         }
 
         return EntitySuperStruct {
@@ -43,7 +43,7 @@ pub const EntitySuperStruct = struct {
             .should_serialize = desc.should_serialize,
             .serialize_id = desc.serialize_id,
             .transform = desc.transform,
-            .model = if (desc.model) |m| try as.ModelAssetId.Serde.deserialize(engine().general_allocator.allocator(), m) else null,
+            .model = if (desc.model) |m| try as.ModelAssetId.Serde.deserialize(engine().general_allocator, m) else null,
             .physics = null,
             .app = try App.EntityData.init(desc.app),
         };
