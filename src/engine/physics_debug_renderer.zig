@@ -28,11 +28,12 @@ pub const D3D11DebugRenderer = extern struct {
             return self.num_indices != 0;
         }
     };
+    const MaxPrimitives = 2048;
 
     usingnamespace zphy.DebugRenderer.Methods(@This());
     __v: *const zphy.DebugRenderer.VTable(@This()) = &vtable,
 
-    primitives: [2048]MyRenderPrimitive = [_]MyRenderPrimitive{.{}} ** 2048,
+    primitives: [MaxPrimitives]MyRenderPrimitive = [_]MyRenderPrimitive{.{}} ** MaxPrimitives,
     prim_head: i32 = -1,
     gfx: *_gfx.GfxState,
     gfx_data: extern struct {

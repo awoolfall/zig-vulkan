@@ -100,8 +100,15 @@ pub const EntityList = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator) !EntityList {
+        var list = try gen.GenerationalList(EntitySuperStruct).init(alloc);
+        errdefer list.deinit();
+
+        // index 0 is reserved
+        // this was done so that the selection texture can set the value 0 to mean 'no entity'
+        try list.data.append(.{ .item_data = null, .generation = 1 });
+
         return EntityList {
-            .list = try gen.GenerationalList(EntitySuperStruct).init(alloc),
+            .list = list,
         };
     }
 
@@ -135,6 +142,7 @@ pub const EntityList = struct {
         return self.list.get(entity_id);
     }
 
+    /// Gets the entity at the given index if it exists regardless of generation
     pub fn get_dont_check_generation(self: *EntityList, index: usize) ?*EntitySuperStruct {
         if (index >= self.list.data.items.len) {
             return null;
@@ -145,6 +153,7 @@ pub const EntityList = struct {
         return null;
     }
 
+    /// Finds an entity by name, returns null if not found
     pub fn find_entity_by_name(self: *const EntityList, name_to_find: []const u8) ?gen.GenerationalIndex {
         for (self.list.data.items, 0..) |*it, idx| {
             if (it.item_data) |*ent| {

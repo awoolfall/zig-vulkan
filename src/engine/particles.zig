@@ -42,7 +42,7 @@ pub const ParticleSystem = struct {
 
     vertex_shader: gf.VertexShader,
     pixel_shader: gf.PixelShader,
-    shader_watcher: en.assets.FileAsset,
+    shader_watcher: en.assets.FileWatcher,
 
     model_matrix_vertex_buffer: gf.Buffer,
     constant_buffer: gf.Buffer,
@@ -82,7 +82,7 @@ pub const ParticleSystem = struct {
         const vertex_shader = shaders[0];
         const pixel_shader = shaders[1];
 
-        var shader_watcher = try en.assets.FileAsset.init(alloc, particle_path, 500);
+        var shader_watcher = try en.assets.FileWatcher.init(alloc, particle_path, 500);
         errdefer shader_watcher.deinit();
 
         const model_matrix_vertex_buffer = try gf.Buffer.init(
@@ -178,11 +178,17 @@ pub const ParticleSystem = struct {
             }
         }
 
+        const spawn_direction = zm.normalize3(random_v(self.rand.random()) * zm.f32x4s(2.0) - zm.f32x4s(1.0));
+        const initial_position = 
+            self.settings.spawn_origin +
+            self.settings.spawn_offset +
+            spawn_direction * zm.f32x4s(self.settings.spawn_radius * self.rand.random().float(f32));
+
         self.particles[self.next_particle_index] = ParticleData {
             .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
             .rand_vec = random_v(self.rand.random()),
             .transform = Transform {
-                .position = self.f32x4_variance(self.settings.spawn_origin + self.settings.spawn_offset, zm.f32x4s(self.settings.spawn_radius)),
+                .position = initial_position,
                 .scale = KeyFrame(zm.F32x4).calc(self.settings.scale.slice(), 0.0),
             },
             .velocity = self.settings.initial_velocity,

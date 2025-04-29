@@ -1,12 +1,15 @@
 const std = @import("std");
-const ms = @import("../engine/mesh.zig");
+const en = @import("../root.zig");
+const ms = en.mesh;
 const an = @import("../engine/animation.zig");
-const pt = @import("../engine/path.zig");
-const gf = @import("../gfx/gfx.zig");
+const pt = en.path;
+const gf = en.gfx;
 const gen = @import("../engine/gen_list.zig");
 
+const EnableHotReload = true;
+
 // TODO: convert this to @embedFile in a distribution build
-pub const FileAsset = struct {
+pub const FileWatcher = struct {
     const Self = @This();
     arena: std.heap.ArenaAllocator,
     dir: []const u8,
@@ -77,6 +80,10 @@ pub const FileAsset = struct {
         self.last_modified = stat.mtime;
         return modified;
     }
+
+    pub fn construct_path(self: *const Self, alloc: std.mem.Allocator) ![]u8 {
+        return std.mem.join(alloc, "/", &.{ self.dir, self.filename });
+    }
 };
 
 pub const AssetManager = struct {
@@ -116,8 +123,9 @@ pub const AssetManager = struct {
             .asset_names = std.AutoHashMap(u64, []const u8).init(self.allocator),
             .unique_name = try self.allocator.dupe(u8, asset_pack.unique_name),
             .unique_name_hash = asset_pack.unique_name_hash,
-            .models = std.AutoHashMap(u64, ?ms.Model).init(self.allocator),
+            .models = std.AutoHashMap(u64, LoadedModel).init(self.allocator),
             .animations = std.AutoHashMap(u64, LoadedAnimation).init(self.allocator),
+            .textures2D = std.AutoHashMap(u64, LoadedTexture2D).init(self.allocator),
         });
         const loaded_asset_pack = self.loaded_asset_packs.get(asset_pack_id) orelse return error.AssetPackNotLoaded;
 
@@ -132,58 +140,23 @@ pub const AssetManager = struct {
             }
 
             // @TODO move actual loading of models to another thread
-            switch (path.asset_path) {
-                .Path => |p| {
-                    const asset_path = try std.fs.path.join(self.allocator, &[_][]const u8{self.resources_directory, p});
-                    defer self.allocator.free(asset_path);
+            try loaded_asset_pack.models.put(
+                name_hash, 
+                .{
+                    .watcher = if (EnableHotReload) 
+                        blk: switch (path.asset_path) {
+                            .Path => |p| {
+                                const asset_path = try self.resolve_asset_path(self.allocator, p);
+                                defer self.allocator.free(asset_path);
 
-                    try loaded_asset_pack.models.put(
-                        name_hash, 
-                        try ms.Model.init_from_file_assimp(self.allocator, pt.Path{ .Absolute = asset_path }, gfx)
-                    );
+                                break :blk try FileWatcher.init(self.allocator, asset_path, 500);
+                            },
+                            else => null,
+                        }
+                    else null,
+                    .model = try self.load_model(self.allocator, path, gfx),
                 },
-                .Plane => |d| {
-                    try loaded_asset_pack.models.put(
-                        name_hash, 
-                        try ms.Model.plane(self.allocator, d.slices, d.stacks, gfx)
-                    );
-                },
-                .PlaneOnSphere => |d| {
-                    try loaded_asset_pack.models.put(
-                        name_hash, 
-                        try ms.Model.plane_on_sphere(self.allocator, d.slices, d.stacks, d.plane_extent_radians, gfx)
-                    );
-                },
-                .HeightMap => |h| {
-                    try loaded_asset_pack.models.put(
-                        name_hash, 
-                        try ms.Model.heightmap_plane_on_sphere(self.allocator, &h.height_map, .{
-                            .slices = h.slices,
-                            .stacks = h.stacks,
-                            .plane_extent_radians = h.plane_extent_radians,
-                            .heightmap_scale = h.height_map_scale,
-                        }, gfx)
-                    );
-                },
-                .Cone => |d| {
-                    try loaded_asset_pack.models.put(
-                        name_hash, 
-                        try ms.Model.cone(self.allocator, d.slices, gfx)
-                    );
-                },
-                .Sphere => |s| {
-                    try loaded_asset_pack.models.put(
-                        name_hash, 
-                        try ms.Model.sphere(self.allocator, s.slices, s.stacks, gfx)
-                    );
-                },
-                .Cube => {
-                    try loaded_asset_pack.models.put(
-                        name_hash, 
-                        try ms.Model.cube(self.allocator, gfx)
-                    );
-                },
-            }
+            );
         }
 
         // animations
@@ -208,6 +181,63 @@ pub const AssetManager = struct {
 
         return asset_pack_id;
     }
+
+    fn resolve_asset_path(self: *const Self, alloc: std.mem.Allocator, path: []const u8) ![]const u8 {
+        return std.fs.path.join(alloc, &.{self.resources_directory, path});
+    }
+
+    fn load_model(
+        self: *const Self,
+        alloc: std.mem.Allocator, 
+        path: AssetPath(AssetPack.ModelAsset),
+        gfx: *gf.GfxState,
+    ) !ms.Model {
+        switch (path.asset_path) {
+            .Path => |p| {
+                const asset_path = try self.resolve_asset_path(alloc, p);
+                defer alloc.free(asset_path);
+
+                return try ms.Model.init_from_file_assimp(alloc, pt.Path{ .Absolute = asset_path }, gfx);
+            },
+            .Plane => |d| {
+                return try ms.Model.plane(alloc, d.slices, d.stacks, gfx);
+            },
+            .PlaneOnSphere => |d| {
+                return try ms.Model.plane_on_sphere(alloc, d.slices, d.stacks, d.plane_extent_radians, gfx);
+            },
+            .HeightMap => |h| {
+                return try ms.Model.heightmap_plane_on_sphere(alloc, &h.height_map, .{
+                    .slices = h.slices,
+                    .stacks = h.stacks,
+                    .plane_extent_radians = h.plane_extent_radians,
+                    .heightmap_scale = h.height_map_scale,
+                }, gfx);
+            },
+            .Cone => |d| {
+                return try ms.Model.cone(alloc, d.slices, gfx);
+            },
+            .Sphere => |s| {
+                return try ms.Model.sphere(alloc, s.slices, s.stacks, gfx);
+            },
+            .Cube => {
+                return try ms.Model.cube(alloc, gfx);
+            },
+        }
+    }
+
+    // fn load_texture2D(
+    //     self: *const Self,
+    //     alloc: std.mem.Allocator, 
+    //     data: AssetPack.Texture2DAsset,
+    //     gfx: *gf.GfxState,
+    // ) !gf.Texture2D {
+    //     const new_texture = try gf.Texture2D.init(
+    //         data.descriptor,
+    //         data.bind_flags,
+    //         data.access_flags,
+    //
+    //     );
+    // }
 
     pub fn unload_asset_pack(self: *Self, asset_pack_id: AssetPackId) !void {
         const asset_pack = self.loaded_asset_packs.get(asset_pack_id) orelse return error.AssetPackNotLoaded;
@@ -249,14 +279,31 @@ pub const AssetManager = struct {
         return null;
     }
 
-    pub fn get_model(self: *const Self, model_id: ModelAssetId) !*ms.Model {
+    pub fn get_model(self: *Self, model_id: ModelAssetId) !*ms.Model {
         const pack = self.loaded_asset_packs.get(model_id.asset_id.asset_pack_id) orelse return error.AssetPackNotLoaded;
-        const mm = try (pack.models.getPtr(model_id.asset_id.id) orelse error.ModelDoesNotExistInPack);
-        if (mm.*) |*m| {
-            return m;
-        } else {
-            return error.ModelNotYetLoaded;
+        const lm = try (pack.models.getPtr(model_id.asset_id.id) orelse error.ModelDoesNotExistInPack);
+        if (EnableHotReload) blk: {
+            if (lm.watcher) |*watcher| {
+                if (watcher.was_modified_since_last_check()) {
+                    const path = watcher.construct_path(self.allocator) catch |err| {
+                        std.log.err("Failed to join paths: {}", .{err});
+                        break :blk;
+                    };
+                    defer self.allocator.free(path);
+
+                    const asset_path = AssetPath(AssetPack.ModelAsset){ .unique_name = "", .asset_path = .{ .Path = path, } };
+                    const new_model = self.load_model(self.allocator, asset_path, &en.engine().gfx) catch |err| {
+                        std.log.err("Failed to reload model '{s}': {}", .{ path, err });
+                        break :blk;
+                    };
+                    std.log.info("Reloaded model '{s}'", .{path});
+
+                    lm.model.deinit();
+                    lm.model = new_model;
+                }
+            }
         }
+        return &lm.model;
     }
 
     pub fn find_animation_id(self: *const Self, animation_name: []const u8) ?AnimationAssetId {
@@ -282,12 +329,49 @@ pub const AssetManager = struct {
     pub fn get_animation(self: *const Self, animation_id: AnimationAssetId) !*an.BoneAnimation {
         const pack = self.loaded_asset_packs.get(animation_id.asset_id.asset_pack_id) orelse return error.AssetPackNotLoaded;
         const aa = try (pack.animations.getPtr(animation_id.asset_id.id) orelse error.AnimationDoesNotExistInPack);
-        const mm = try (pack.models.getPtr(aa.model) orelse error.ModelDoesNotExistInPack);
-        if (mm.*) |*m| {
-            return &m.animations[aa.animation];
-        } else {
-            return error.ModelNotYetLoaded;
+        const lm = try (pack.models.getPtr(aa.model) orelse error.ModelDoesNotExistInPack);
+        return &lm.model.animations[aa.animation];
+    }
+
+    pub fn find_texture2d_id(self: *const Self, texture_name: []const u8) ?Texture2DAssetId {
+        const texture_name_hash = std.hash_map.hashString(texture_name);
+        for (self.loaded_asset_packs.data.items, 0..) |*it, idx| {
+            if (it.item_data) |*pack| {
+                if (pack.textures2D.contains(texture_name_hash)) {
+                    return Texture2DAssetId {
+                        .asset_id = .{
+                            .asset_pack_id = gen.GenerationalIndex {
+                                .index = idx,
+                                .generation = it.generation,
+                            },
+                            .id = texture_name_hash,
+                        },
+                    };
+                }
+            }
         }
+        return null;
+    }
+
+    pub fn get_texture2d(self: *Self, texture_id: Texture2DAssetId) !*ms.Model {
+        const pack = self.loaded_asset_packs.get(texture_id.asset_id.asset_pack_id) orelse return error.AssetPackNotLoaded;
+        const lm = try (pack.textures2D.getPtr(texture_id.asset_id.id) orelse error.Texture2DDoesNotExistInPack);
+        if (EnableHotReload) blk: {
+            if (lm.watcher) |*watcher| {
+                if (watcher.was_modified_since_last_check()) {
+                    const path = watcher.construct_path(self.allocator) catch |err| {
+                        std.log.err("Failed to join paths: {}", .{err});
+                        break :blk;
+                    };
+                    defer self.allocator.free(path);
+
+                    const asset_path = AssetPath(AssetPack.Texture2DAsset){ .unique_name = "", .asset_path = .{ .path = path, } };
+                    // @TODO load texture
+                    _ = asset_path;
+                }
+            }
+        }
+        return &lm.model;
     }
 
     pub fn num_loaded_asset_packs(self: *const Self) usize {
@@ -308,12 +392,14 @@ pub const AssetPack = struct {
     arena: std.heap.ArenaAllocator,
     model_assets: std.ArrayList(AssetPath(ModelAsset)),
     animations: std.ArrayList(AssetPath(AnimationAsset)),
+    textures2D: std.ArrayList(AssetPath(Texture2DAsset)),
     unique_name: []u8,
     unique_name_hash: u64,
 
     pub fn deinit(self: *AssetPack) void {
         self.model_assets.deinit();
         self.animations.deinit();
+        self.textures2D.deinit();
         self.arena.child_allocator.free(self.unique_name);
         self.arena.deinit();
     }
@@ -322,6 +408,7 @@ pub const AssetPack = struct {
         return AssetPack {
             .model_assets = std.ArrayList(AssetPath(ModelAsset)).init(alloc),
             .animations = std.ArrayList(AssetPath(AnimationAsset)).init(alloc),
+            .textures2D = std.ArrayList(AssetPath(Texture2DAsset)).init(alloc),
             .arena = std.heap.ArenaAllocator.init(alloc),
             .unique_name = try alloc.dupe(u8, unique_name),
             .unique_name_hash = std.hash_map.hashString(unique_name),
@@ -361,6 +448,13 @@ pub const AssetPack = struct {
         animation_id: usize,
     };
 
+    pub const Texture2DAsset = struct {
+        path: []const u8,
+        descriptor: gf.Texture2D.Descriptor,
+        bind_flags: gf.BindFlag,
+        access_flags: gf.AccessFlags,
+    };
+
     pub fn add_model(self: *AssetPack, name: []const u8, path: ModelAsset) !void {
         const owned_name = try self.arena.allocator().dupe(u8, name);
         var owned_path = path;
@@ -395,6 +489,27 @@ pub const AssetPack = struct {
             },
         });
     }
+
+    pub fn add_texture2D(self: *AssetPack, name: []const u8, data: Texture2DAsset) !void {
+        const owned_name = try self.arena.allocator().dupe(u8, name);
+        errdefer self.arena.allocator().free(owned_name);
+
+        const owned_path = try self.arena.allocator().dupe(u8, data.path);
+        errdefer self.arena.allocator().free(owned_path);
+
+        var owned_data = data;
+        owned_data.path = owned_path;
+
+        try self.textures2D.append(.{
+            .unique_name = owned_name,
+            .asset_path = owned_data,
+        });
+    }
+};
+
+pub const LoadedModel = struct {
+    watcher: ?FileWatcher,
+    model: ms.Model,
 };
 
 pub const LoadedAnimation = struct {
@@ -402,10 +517,16 @@ pub const LoadedAnimation = struct {
     animation: usize,
 };
 
+pub const LoadedTexture2D = struct {
+    watcher: ?FileWatcher,
+    model: gf.Texture2D,
+};
+
 pub const LoadedAssetPack = struct {
     allocator: std.mem.Allocator,
-    models: std.AutoHashMap(u64, ?ms.Model),
+    models: std.AutoHashMap(u64, LoadedModel),
     animations: std.AutoHashMap(u64, LoadedAnimation),
+    textures2D: std.AutoHashMap(u64, LoadedTexture2D),
     asset_names: std.AutoHashMap(u64, []const u8),
     unique_name: []const u8,
     unique_name_hash: u64,
@@ -418,14 +539,15 @@ pub const LoadedAssetPack = struct {
         self.asset_names.deinit();
 
         var m_iter = self.models.valueIterator();
-        while (m_iter.next()) |model| {
-            if (model.*) |*m| {
-                m.deinit();
+        while (m_iter.next()) |loaded_model| {
+            if (loaded_model.watcher) |*watcher| {
+                watcher.deinit();
             }
+            loaded_model.model.deinit();
         }
         self.models.deinit();
-
         self.animations.deinit();
+        self.textures2D.deinit();
 
         self.allocator.free(self.unique_name);
     }
@@ -496,6 +618,27 @@ pub const AnimationAssetId = struct {
         pub fn deserialize(alloc: std.mem.Allocator, serialized: T) !AnimationAssetId {
             _ = alloc;
             return AnimationAssetId {
+                .asset_id = try AssetId.deserialize(serialized, &@import("../root.zig").engine().asset_manager),
+            };
+        }
+    };
+};
+
+pub const Texture2DAssetId = struct {
+    const Self = @This();
+
+    asset_id: AssetId,
+
+    pub const Serde = struct {
+        pub const T = []const u8;
+
+        pub fn serialize(alloc: std.mem.Allocator, asset_id: Self) !T {
+            return asset_id.asset_id.serialize(alloc, &@import("../root.zig").engine().asset_manager);
+        }
+
+        pub fn deserialize(alloc: std.mem.Allocator, serialized: T) !Self {
+            _ = alloc;
+            return Self {
                 .asset_id = try AssetId.deserialize(serialized, &@import("../root.zig").engine().asset_manager),
             };
         }

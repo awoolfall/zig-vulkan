@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn Serializable(comptime T: type) type {
+    @setEvalBranchQuota(10000);
     switch (@typeInfo(T)) {
         .@"struct" => |s| {
             if (@hasDecl(T, "Serde")) {
