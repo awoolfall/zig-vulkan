@@ -45,7 +45,7 @@ pub fn GenerationalList(comptime T: type) type {
 
         /// Finds a free index in the list.
         fn find_free(self: *Self) ?usize {
-            return self.free_list.popOrNull();
+            return self.free_list.pop();
         }
 
         /// Inserts an item into the list returning a handle to the item.

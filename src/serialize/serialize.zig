@@ -16,8 +16,8 @@ pub fn Serializable(comptime T: type) type {
                         .type = SerializableType,
                         // TODO: convert the default value to SerializableType at compile time.
                         // for types that are not optionals
-                        .default_value = blk: {
-                            if (field.default_value) |_| {
+                        .default_value_ptr = blk: {
+                            if (field.default_value_ptr) |_| {
                                 switch (@typeInfo(field.type)) {
                                     .@"optional" => { break :blk &@as(SerializableType, null); },
                                     else => break :blk null,
@@ -65,7 +65,7 @@ pub fn Serializable(comptime T: type) type {
             });
         },
         .pointer => |p| {
-            if (p.size != .Slice) {
+            if (p.size != .slice) {
                 @compileError("pointers and arbitrary length arrays cannot be serialized");
             }
             var new_p = p;
@@ -142,7 +142,7 @@ pub fn serialize(comptime T: type, allocator: std.mem.Allocator, value: T) !Seri
             return ar;
         },
         .pointer => |p| {
-            std.debug.assert(p.size == .Many or p.size == .Slice);
+            std.debug.assert(p.size == .many or p.size == .slice);
             const ar = try allocator.alloc(Serializable(p.child), value.len);
             for (0..value.len) |i| {
                 ar[i] = try serialize(p.child, allocator, value[i]);
@@ -199,7 +199,7 @@ pub fn deserialize(comptime T: type, allocator: std.mem.Allocator, value: Serial
             return ar;
         },
         .pointer => |p| {
-            std.debug.assert(p.size == .Many or p.size == .Slice);
+            std.debug.assert(p.size == .many or p.size == .slice);
             const ar = try allocator.alloc(p.child, value.len);
             for (0..value.len) |i| {
                 ar[i] = try deserialize(p.child, allocator, value[i]);

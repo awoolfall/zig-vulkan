@@ -1,5 +1,5 @@
 .{
-    .name = "zig_dx11",
+    .name = .zig_dx11_engine,
     .version = "0.0.1",
     .dependencies = .{
         .zwindows = .{ .path = "libs/zwindows" },

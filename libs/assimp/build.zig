@@ -328,7 +328,7 @@ pub fn build(b: *std.Build) void {
             src_dir ++ "/AssetLib/FBX/FBXProperties.cpp",
             src_dir ++ "/AssetLib/FBX/FBXTokenizer.cpp",
             src_dir ++ "/AssetLib/FBX/FBXUtil.cpp",
-            src_dir ++ "/AssetLib/glTF/glTFCommon.cpp",
+            src_dir ++ "/AssetLib/glTFCommon/glTFCommon.cpp",
             src_dir ++ "/AssetLib/glTF/glTFExporter.cpp",
             src_dir ++ "/AssetLib/glTF/glTFImporter.cpp",
             src_dir ++ "/AssetLib/glTF2/glTF2Exporter.cpp",

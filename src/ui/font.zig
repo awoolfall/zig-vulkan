@@ -115,7 +115,8 @@ pub const Font = struct {
                 planeBounds: Bounds = .{},
                 atlasBounds: Bounds = .{},
             },
-            kerning: []struct {},
+            // @TODO: figure out how to parse kerning data
+            //kerning: []struct {},
         };
 
         // deserialize font json
