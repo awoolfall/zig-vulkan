@@ -914,7 +914,7 @@ pub const Texture2D = struct {
                 self.platform.unmap();
             }
             
-            pub fn data(self: *const MappedTexture(T)) [*]align(1)T {
+            pub fn data(self: *const MappedTexture(T)) [*]align(16)T {
                 return self.platform.data();
             }
         };

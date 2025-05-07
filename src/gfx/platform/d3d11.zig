@@ -1230,7 +1230,7 @@ pub const Texture2DD3D11 = struct {
 
     pub fn MappedTexture(comptime T: type) type {
         return struct {
-            data_ptr: *T,
+            data_ptr: *align(16)T,
             texture: *d3d11.ITexture2D,
             context: *d3d11.IDeviceContext,
 
@@ -1238,8 +1238,8 @@ pub const Texture2DD3D11 = struct {
                 self.context.Unmap(@ptrCast(self.texture), 0);
             }
             
-            pub inline fn data(self: *const MappedTexture(T)) [*]align(1)T {
-                return @as([*]align(1)T, @ptrCast(self.data_ptr));
+            pub inline fn data(self: *const MappedTexture(T)) [*]align(16)T {
+                return @as([*]align(16)T, @ptrCast(self.data_ptr));
             }
         };
     }

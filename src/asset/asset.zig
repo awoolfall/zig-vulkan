@@ -5,86 +5,10 @@ const an = @import("../engine/animation.zig");
 const pt = en.path;
 const gf = en.gfx;
 const gen = @import("../engine/gen_list.zig");
+const im = en.image;
+pub const FileWatcher = @import("file_watcher.zig");
 
 const EnableHotReload = true;
-
-// TODO: convert this to @embedFile in a distribution build
-pub const FileWatcher = struct {
-    const Self = @This();
-    arena: std.heap.ArenaAllocator,
-    dir: []const u8,
-    filename: []const u8,
-    last_modified: i128,
-    last_check_time: std.time.Instant,
-    check_interval_ns: u64,
-
-    pub fn deinit(self: *Self) void {
-        self.arena.deinit();
-    }
-
-    pub fn init(alloc: std.mem.Allocator, path: []const u8, check_interval_ms: u64) !Self {
-        var arena = std.heap.ArenaAllocator.init(alloc);
-        errdefer arena.deinit();
-
-        const path_copy = try arena.allocator().dupe(u8, path);
-        errdefer arena.allocator().free(path_copy);
-
-        std.mem.replaceScalar(u8, path_copy, '\\', '/');
-
-        const dirstr = std.fs.path.dirname(path_copy) orelse {
-            std.log.err("Invalid path '{s}'", .{path_copy});
-            return error.InvalidPath;
-        };
-        const filename = std.fs.path.basename(path_copy);
-
-        var dir = std.fs.openDirAbsolute(dirstr, .{}) catch |err| {
-            std.log.err("Failed to open directory '{s}': {}", .{ dirstr, err });
-            return error.DirectoryNotFound;
-        };
-        defer dir.close();
-
-        const stat = dir.statFile(filename) catch |err| {
-            std.log.err("Failed to stat file '{s}': {}", .{ filename, err });
-            return error.FileNotFound;
-        };
-
-        return Self {
-            .arena = arena,
-            .dir = dirstr,
-            .filename = filename,
-            .last_modified = stat.mtime,
-            .last_check_time = try std.time.Instant.now(),
-            .check_interval_ns = check_interval_ms * std.time.ns_per_ms,
-        };
-    }
-
-    pub fn was_modified_since_last_check(self: *Self) bool {
-        const now = std.time.Instant.now() catch { return false; };
-        if (now.since(self.last_check_time) < self.check_interval_ns) {
-            return false;
-        }
-        self.last_check_time = now;
-
-        var dir = std.fs.openDirAbsolute(self.dir, .{}) catch |err| {
-            std.log.err("Failed to open directory '{s}': {}", .{ self.dir, err });
-            return false;
-        };
-        defer dir.close();
-
-        const stat = dir.statFile(self.filename) catch |err| {
-            std.log.err("Failed to stat file '{s}': {}", .{ self.filename, err });
-            return false;
-        };
-
-        const modified = stat.mtime != self.last_modified;
-        self.last_modified = stat.mtime;
-        return modified;
-    }
-
-    pub fn construct_path(self: *const Self, alloc: std.mem.Allocator) ![]u8 {
-        return std.mem.join(alloc, "/", &.{ self.dir, self.filename });
-    }
-};
 
 pub const AssetManager = struct {
     const Self = @This();
@@ -179,11 +103,41 @@ pub const AssetManager = struct {
             );
         }
 
+        // Texture2Ds
+        for (asset_pack.textures2D.items) |path| {
+            const name_hash = std.hash_map.hashString(path.unique_name);
+            
+            try loaded_asset_pack.asset_names.put(name_hash, try self.allocator.dupe(u8, path.unique_name));
+            errdefer {
+                self.allocator.free(loaded_asset_pack.asset_names.get(name_hash).?);
+                _ = loaded_asset_pack.asset_names.remove(name_hash);
+            }
+
+            try loaded_asset_pack.textures2D.put(
+                name_hash,
+                .{
+                    .watcher = if (EnableHotReload) 
+                        blk: {
+                            const asset_path = try self.resolve_asset_path(self.allocator, path.asset_path.path);
+                            defer self.allocator.free(asset_path);
+
+                            break :blk try FileWatcher.init(self.allocator, asset_path, 500);
+                        }
+                    else null,
+                    .texture = try self.load_texture2D(self.allocator, path.asset_path),
+                },
+            );
+        }
+
         return asset_pack_id;
     }
 
     fn resolve_asset_path(self: *const Self, alloc: std.mem.Allocator, path: []const u8) ![]const u8 {
-        return std.fs.path.join(alloc, &.{self.resources_directory, path});
+        if (std.fs.path.isAbsolute(path)) {
+            return try alloc.dupe(u8, path);
+        } else {
+            return std.fs.path.join(alloc, &.{self.resources_directory, path});
+        }
     }
 
     fn load_model(
@@ -225,19 +179,50 @@ pub const AssetManager = struct {
         }
     }
 
-    // fn load_texture2D(
-    //     self: *const Self,
-    //     alloc: std.mem.Allocator, 
-    //     data: AssetPack.Texture2DAsset,
-    //     gfx: *gf.GfxState,
-    // ) !gf.Texture2D {
-    //     const new_texture = try gf.Texture2D.init(
-    //         data.descriptor,
-    //         data.bind_flags,
-    //         data.access_flags,
-    //
-    //     );
-    // }
+    fn load_texture2D(
+        self: *const Self,
+        alloc: std.mem.Allocator, 
+        data: AssetPack.Texture2DAsset,
+    ) !gf.Texture2D {
+        const asset_path = try self.resolve_asset_path(alloc, data.path);
+        defer alloc.free(asset_path);
+
+        var image = im.ImageLoader.load_from_file(alloc, pt.Path{ .Absolute = asset_path }, .{}) catch |err| {
+            std.log.err("Failed to load texture '{s}': {}", .{ data.path, err });
+            return error.TextureLoadFailed;
+        };
+        defer image.deinit();
+
+        const format = blk: {
+            if (image.is_hdr) {
+                switch (image.num_components) {
+                    1 => break :blk gf.TextureFormat.R32_Float,
+                    2 => break :blk gf.TextureFormat.Rg32_Float,
+                    4 => break :blk gf.TextureFormat.Rgba32_Float,
+                    else => return error.UnsupportedTextureFormat,
+                }
+            } else {
+                switch (image.num_components) {
+                    4 => break :blk gf.TextureFormat.Rgba8_Unorm,
+                    else => return error.UnsupportedTextureFormat,
+                }
+            }
+        };
+
+        return gf.Texture2D.init(
+            .{
+                .height = image.height,
+                .width = image.width,
+                .format = format,
+                .array_length = 1,
+                .mip_levels = 1,
+            },
+            .{ .ShaderResource = true, },
+            .{},
+            image.data,
+            &en.engine().gfx
+        );
+    }
 
     pub fn unload_asset_pack(self: *Self, asset_pack_id: AssetPackId) !void {
         const asset_pack = self.loaded_asset_packs.get(asset_pack_id) orelse return error.AssetPackNotLoaded;
@@ -353,11 +338,11 @@ pub const AssetManager = struct {
         return null;
     }
 
-    pub fn get_texture2d(self: *Self, texture_id: Texture2DAssetId) !*ms.Model {
+    pub fn get_texture2d(self: *Self, texture_id: Texture2DAssetId) !*const gf.Texture2D {
         const pack = self.loaded_asset_packs.get(texture_id.asset_id.asset_pack_id) orelse return error.AssetPackNotLoaded;
-        const lm = try (pack.textures2D.getPtr(texture_id.asset_id.id) orelse error.Texture2DDoesNotExistInPack);
+        const lt = try (pack.textures2D.getPtr(texture_id.asset_id.id) orelse error.Texture2DDoesNotExistInPack);
         if (EnableHotReload) blk: {
-            if (lm.watcher) |*watcher| {
+            if (lt.watcher) |*watcher| {
                 if (watcher.was_modified_since_last_check()) {
                     const path = watcher.construct_path(self.allocator) catch |err| {
                         std.log.err("Failed to join paths: {}", .{err});
@@ -366,12 +351,18 @@ pub const AssetManager = struct {
                     defer self.allocator.free(path);
 
                     const asset_path = AssetPath(AssetPack.Texture2DAsset){ .unique_name = "", .asset_path = .{ .path = path, } };
-                    // @TODO load texture
-                    _ = asset_path;
+                    const new_texture = self.load_texture2D(self.allocator, asset_path.asset_path) catch |err| {
+                        std.log.err("Failed to reload texture '{s}': {}", .{ path, err });
+                        break :blk;
+                    };
+                    std.log.info("Reloaded texture '{s}'", .{path});
+
+                    lt.texture.deinit();
+                    lt.texture = new_texture;
                 }
             }
         }
-        return &lm.model;
+        return &lt.texture;
     }
 
     pub fn num_loaded_asset_packs(self: *const Self) usize {
@@ -450,9 +441,6 @@ pub const AssetPack = struct {
 
     pub const Texture2DAsset = struct {
         path: []const u8,
-        descriptor: gf.Texture2D.Descriptor,
-        bind_flags: gf.BindFlag,
-        access_flags: gf.AccessFlags,
     };
 
     pub fn add_model(self: *AssetPack, name: []const u8, path: ModelAsset) !void {
@@ -519,7 +507,7 @@ pub const LoadedAnimation = struct {
 
 pub const LoadedTexture2D = struct {
     watcher: ?FileWatcher,
-    model: gf.Texture2D,
+    texture: gf.Texture2D,
 };
 
 pub const LoadedAssetPack = struct {
@@ -547,6 +535,14 @@ pub const LoadedAssetPack = struct {
         }
         self.models.deinit();
         self.animations.deinit();
+
+        var t_iter = self.textures2D.valueIterator();
+        while (t_iter.next()) |lt| {
+            if (lt.watcher) |*watcher| {
+                watcher.deinit();
+            }
+            lt.texture.deinit();
+        }
         self.textures2D.deinit();
 
         self.allocator.free(self.unique_name);
