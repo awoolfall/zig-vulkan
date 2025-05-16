@@ -43,7 +43,8 @@ pub const EntitySuperStruct = struct {
             .should_serialize = desc.should_serialize,
             .serialize_id = desc.serialize_id,
             .transform = desc.transform,
-            .model = if (desc.model) |m| try as.ModelAssetId.Serde.deserialize(engine().general_allocator, m) else null,
+            .model = if (desc.model) |model_asset_str| 
+                try as.ModelAssetId.deserialize(model_asset_str) else null,
             .physics = null,
             .app = try App.EntityData.init(desc.app),
         };
@@ -55,7 +56,7 @@ pub const EntitySuperStruct = struct {
             .serialize_id = self.serialize_id,
             .name = self.name,
             .transform = self.transform,
-            .model = if (self.model) |m| try m.asset_id.serialize(alloc, &engine().asset_manager) else null,
+            .model = if (self.model) |model_asset_id| try model_asset_id.serialize(alloc) else null,
             .physics = if (self.physics) |phys| phys.descriptor() else null,
             .app = try self.app.descriptor(alloc),
         };

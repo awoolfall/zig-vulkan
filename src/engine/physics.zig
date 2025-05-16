@@ -218,7 +218,7 @@ pub const PhysicsSystem = struct {
             .Box => |*b| 
                 (try zphy.BoxShapeSettings.create([3]f32{b.width/2.0, b.height/2.0, b.depth/2.0})).asShapeSettingsMut(),
             .ModelCompoundConvexHull => |m|
-                (try (try self.asset_manager.get_model(m)).gen_static_compound_physics_shape()).asShapeSettingsMut(),
+                (try (try self.asset_manager.get_asset(as.ModelAsset, m)).gen_static_compound_physics_shape()).asShapeSettingsMut(),
             };
         defer shape_settings.release();
 

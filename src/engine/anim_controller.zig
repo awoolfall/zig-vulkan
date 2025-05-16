@@ -80,31 +80,37 @@ pub const AnimController = struct {
         @memset(out_transforms[0..], Transform{});
 
         // calcualte base animation transforms at full strength
-        if (self.base_animation) |base_animation_id| {
-            if (asset_manager.get_animation(base_animation_id)) |base_animation| {
-                base_animation.set_animation_to_time(self.base_animation_time);
-                model.blend_animation_bone_transforms(base_animation, 1.0, out_transforms[0..]);
-            } else |_| {}
+        if (self.base_animation) |base_animation_id| blk: {
+            const animation_asset = asset_manager.get_asset(as.AnimationAsset, base_animation_id)
+                catch break :blk;
+            const base_animation = animation_asset.get_animation()
+                catch break :blk;
+
+            base_animation.set_animation_to_time(self.base_animation_time);
+            model.blend_animation_bone_transforms(base_animation, 1.0, out_transforms[0..]);
         }
 
         // blend in node animations
         switch (node.node) {
-            .Basic => |basic| {
+            .Basic => |basic| blk: {
                 // blend in the single basic animation based on the provided strength variable
-                if (asset_manager.get_animation(basic.animation)) |animation| {
-                    if (self.base_animation == null or !basic.animation.asset_id.eql(self.base_animation.?.asset_id)) {
-                        animation.set_animation_to_time(node.time);
-                    }
+                const animation_asset = asset_manager.get_asset(as.AnimationAsset, basic.animation)
+                    catch break :blk;
+                const animation = animation_asset.get_animation()
+                    catch break :blk;
 
-                    var strength: f32 = 1.0;
-                    if (basic.strength_variable) |strength_variable| {
-                        strength = self.get_variable_by_id(strength_variable) orelse 1.0;
-                    }
+                if (self.base_animation == null or !basic.animation.eql(self.base_animation.?)) {
+                    animation.set_animation_to_time(node.time);
+                }
 
-                    model.blend_animation_bone_transforms(animation, strength, out_transforms[0..]);
-                } else |_| {}
+                var strength: f32 = 1.0;
+                if (basic.strength_variable) |strength_variable| {
+                    strength = self.get_variable_by_id(strength_variable) orelse 1.0;
+                }
+
+                model.blend_animation_bone_transforms(animation, strength, out_transforms[0..]);
             },
-            .Blend1D => |blend| {
+            .Blend1D => |blend| blk: {
                 // replace base animation with blended animation between two animations based on the provided blend variable
                 var blend_variable: f32 = 0.0;
                 if (blend.variable) |variable| {
@@ -115,32 +121,38 @@ pub const AnimController = struct {
                 const blend_value = std.math.clamp((blend_variable - blend.left_value) / (blend.right_value - blend.left_value), 0.0, 1.0);
 
                 // replace base animation with left animation at full strength
-                if (asset_manager.get_animation(blend.left_animation)) |animation| {
-                    if (self.base_animation == null or !blend.left_animation.asset_id.eql(self.base_animation.?.asset_id)) {
-                        animation.set_animation_to_time(node.time);
-                    }
+                const left_animation_asset = asset_manager.get_asset(as.AnimationAsset, blend.left_animation)
+                    catch break :blk;
+                const left_animation = left_animation_asset.get_animation()
+                    catch break :blk;
 
-                    var strength: f32 = 1.0;
-                    if (blend.left_strength_variable) |strength_variable| {
-                        strength = self.get_variable_by_id(strength_variable) orelse 1.0;
-                    }
+                if (self.base_animation == null or !blend.left_animation.eql(self.base_animation.?)) {
+                    left_animation.set_animation_to_time(node.time);
+                }
 
-                    model.blend_animation_bone_transforms(animation, 1.0 * strength, out_transforms[0..]);
-                } else |_| {}
+                var strength: f32 = 1.0;
+                if (blend.left_strength_variable) |strength_variable| {
+                    strength = self.get_variable_by_id(strength_variable) orelse 1.0;
+                }
+
+                model.blend_animation_bone_transforms(left_animation, 1.0 * strength, out_transforms[0..]);
 
                 // blend in right animation based on blend variable
-                if (asset_manager.get_animation(blend.right_animation)) |animation| {
-                    if (self.base_animation == null or !blend.right_animation.asset_id.eql(self.base_animation.?.asset_id)) {
-                        animation.set_animation_to_time(node.time);
-                    }
+                const right_animation_asset = asset_manager.get_asset(as.AnimationAsset, blend.right_animation)
+                    catch break :blk;
+                const right_animation = right_animation_asset.get_animation()
+                    catch break :blk;
 
-                    var strength: f32 = 1.0;
-                    if (blend.right_strength_variable) |strength_variable| {
-                        strength = self.get_variable_by_id(strength_variable) orelse 1.0;
-                    }
+                if (self.base_animation == null or !blend.right_animation.eql(self.base_animation.?)) {
+                    right_animation.set_animation_to_time(node.time);
+                }
 
-                    model.blend_animation_bone_transforms(animation, blend_value * strength, out_transforms[0..]);
-                } else |_| {}
+                strength = 1.0;
+                if (blend.right_strength_variable) |strength_variable| {
+                    strength = self.get_variable_by_id(strength_variable) orelse 1.0;
+                }
+
+                model.blend_animation_bone_transforms(right_animation, blend_value * strength, out_transforms[0..]);
             },
         }
     }
@@ -209,11 +221,15 @@ pub const AnimController = struct {
         forblk: for (self.nodes[self.active_node].next) |t| {
             const should_transition = cblk: { switch (t.condition) {
                 .Always => {
-                    const animation_asset = switch (self.nodes[self.active_node].node) {
+                    const animation_id = switch (self.nodes[self.active_node].node) {
                         .Basic => |basic| basic.animation,
                         .Blend1D => |blend| blend.left_animation,
                     };
-                    const animation = asset_manager.get_animation(animation_asset) catch break :cblk false;
+                    const animation_asset = asset_manager.get_asset(as.AnimationAsset, animation_id)
+                        catch break :cblk false;
+                    const animation = animation_asset.get_animation()
+                        catch break :cblk false;
+
                     const current_ticks = animation.time_to_ticks(self.nodes[self.active_node].time);
                     const transition_start_ticks = animation.time_to_ticks(t.transition_duration);
                     break :cblk (current_ticks >= animation.duration_ticks - transition_start_ticks);
