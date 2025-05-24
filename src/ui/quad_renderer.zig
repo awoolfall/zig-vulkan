@@ -38,9 +38,9 @@ pub const Bounds = extern struct {
     right: f32 = 0.0,
     top: f32 = 0.0,
 
-    pub fn from_rect(rect: ui.RectPixels, max_width: u32, max_height: u32) Bounds {
+    pub fn from_rect(rect: ui.RectPixels, max_width: f32, max_height: f32) Bounds {
         const top_left = ui.position_pixels_to_screen_space(rect.left, rect.top, max_width, max_height);
-        const bottom_right = ui.position_pixels_to_screen_space(rect.left + rect.width, rect.top + rect.height, max_width, max_height);
+        const bottom_right = ui.position_pixels_to_screen_space(rect.right, rect.bottom, max_width, max_height);
         return Bounds {
             .left = top_left[0],
             .top = top_left[1],
@@ -188,7 +188,7 @@ pub const QuadRenderer = struct {
             defer mapped_buffer.unmap();
 
             mapped_buffer.data().* = QuadBufferVertexBuffer {
-                .quad_bounds = Bounds.from_rect(rect_pixels, rtv.size.width, rtv.size.height),
+                .quad_bounds = Bounds.from_rect(rect_pixels, @floatFromInt(rtv.size.width), @floatFromInt(rtv.size.height)),
             };
         }
         { // Setup quad pixel info buffer
@@ -199,8 +199,8 @@ pub const QuadRenderer = struct {
                 .bg_colour = props.colour,
                 .border_colour = props.border_colour,
                 .border_width_px = props.border_width_px,
-                .quad_width_pixels = @floatFromInt(rect_pixels.width),
-                .quad_height_pixels = @floatFromInt(rect_pixels.height),
+                .quad_width_pixels = rect_pixels.width(),
+                .quad_height_pixels = rect_pixels.height(),
                 .corner_radii = props.corner_radii_px,
                 .flags = @bitCast(QuadBufferFlags{
                     .has_texture = (props.texture != null),

@@ -15,17 +15,25 @@ const QuadRenderer = qr.QuadRenderer;
 
 // pixels, top left of screen is 0, 0. moving down and right increases
 pub const RectPixels = struct {
-    left: i32,
-    top: i32,
-    width: i32,
-    height: i32,
+    left: f32 = 0.0,
+    top: f32 = 0.0,
+    right: f32 = 0.0,
+    bottom: f32 = 0.0,
+
+    pub inline fn all(v: f32) RectPixels {
+        return .{ .left = v, .right = v, .top = v, .bottom = v, };
+    }
+
+    pub inline fn lr_tb(lr: f32, tb: f32) RectPixels {
+        return .{ .left = lr, .right = lr, .top = tb, .bottom = tb, };
+    }
 
     pub inline fn translate(self: *const RectPixels, x: i32, y: i32) RectPixels {
         return RectPixels {
             .left = self.left + x,
             .top = self.top + y,
-            .width = self.width,
-            .height = self.height,
+            .right = self.right,
+            .bottom = self.bottom,
         };
     }
 
@@ -33,16 +41,24 @@ pub const RectPixels = struct {
         return RectPixels {
             .left = self.left,
             .top = self.top,
-            .width = self.width + x,
-            .height = self.height + y,
+            .right = self.right + x,
+            .bottom = self.bottom + y,
         };
     }
 
-    pub fn contains(self: *const RectPixels, coord: [2]i32) bool {
+    pub fn contains(self: *const RectPixels, coord: [2]f32) bool {
         return  coord[0] >= self.left and
-                coord[0] <= self.left + self.width and
+                coord[0] <= self.right and
                 coord[1] >= self.top and
-                coord[1] <= self.top + self.height;
+                coord[1] <= self.bottom;
+    }
+
+    pub inline fn width(self: *const RectPixels) f32 {
+        return @abs(self.right - self.left);
+    }
+
+    pub inline fn height(self: *const RectPixels) f32 {
+        return @abs(self.top - self.bottom);
     }
 };
 
@@ -66,14 +82,10 @@ pub const FontEnum = enum(usize) {
     }
 };
 
-pub fn position_pixels_to_screen_space(x: i32, y: i32, max_width: u32, max_height: u32) [2]f32 {
-    const x_f32: f32 = @floatFromInt(x);
-    const y_f32: f32 = @floatFromInt(y);
-    const max_width_f32: f32 = @floatFromInt(max_width);
-    const max_height_f32: f32 = @floatFromInt(max_height);
+pub fn position_pixels_to_screen_space(x: f32, y: f32, max_width: f32, max_height: f32) [2]f32 {
     return [2]f32{
-        ((x_f32 / max_width_f32) * 2.0) - 1.0,
-        -(((y_f32 / max_height_f32) * 2.0) - 1.0)
+        ((x / max_width) * 2.0) - 1.0,
+        -(((y / max_height) * 2.0) - 1.0)
     };
 }
 
@@ -114,6 +126,7 @@ pub const Imui = struct {
 
     pub const WidgetFlags = packed struct(u32) {
         render: bool = true,
+        render_quad: bool = true,
         hover_effect: bool = true,
 
         allows_overflow_x: bool = false,
@@ -124,7 +137,7 @@ pub const Imui = struct {
 
         clickable: bool = false,
 
-        __unused: u25 = 0,
+        __unused: u24 = 0,
 
         pub inline fn get_allow_overflow_flag(flags: *const WidgetFlags, axis: Axis) bool {
             switch (axis) {
@@ -168,18 +181,42 @@ pub const Imui = struct {
         first_child: ?WidgetId = null,
         last_child: ?WidgetId = null,
         num_children: usize = 0,
+        children_gap: f32 = 0.0,
 
         computed: struct {
             relative_position: [2]f32 = .{0.0, 0.0},
-            offset_position: [2]f32 = .{0.0, 0.0},
+            pixel_offset: [2]f32 = .{0.0, 0.0},
+            left_top_margin: [2]f32 = .{0.0, 0.0},
+            right_bottom_margin: [2]f32 = .{0.0, 0.0},
             size: [2]f32 = .{0.0, 0.0},
             children_size: [2]f32 = .{0.0, 0.0},
+
+            pub inline fn total_size(self: *const @This()) [2]f32 {
+                return .{
+                    self.size[0] + self.left_top_margin[0] + self.right_bottom_margin[0],
+                    self.size[1] + self.left_top_margin[1] + self.right_bottom_margin[1],
+                };
+            }
+
             pub fn rect(self: *const @This()) RectPixels {
+                const left = self.relative_position[0] + self.left_top_margin[0] + self.pixel_offset[0];
+                const top = self.relative_position[1] + self.left_top_margin[1] + self.pixel_offset[1];
                 return RectPixels {
-                    .left = @intFromFloat(self.offset_position[0]),
-                    .top = @intFromFloat(self.offset_position[1]),
-                    .width = @intFromFloat(self.size[0]),
-                    .height = @intFromFloat(self.size[1])
+                    .left = left,
+                    .top = top,
+                    .right = left + self.size[0],
+                    .bottom = top + self.size[1]
+                };
+            }
+
+            pub fn total_rect(self: *const @This()) RectPixels {
+                const left = self.relative_position[0] + self.pixel_offset[0];
+                const top = self.relative_position[1] + self.pixel_offset[1];
+                return RectPixels {
+                    .left = left,
+                    .top = top,
+                    .right = left + self.size[0] + self.left_top_margin[0] + self.right_bottom_margin[0],
+                    .bottom = top + self.size[1] + self.left_top_margin[1] + self.right_bottom_margin[1]
                 };
             }
         } = .{},
@@ -194,9 +231,10 @@ pub const Imui = struct {
         text_content: ?struct {
             font: FontEnum = FontEnum.GeistMono,
             text: []const u8,
-            size: u16 = 13,
-            colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+            size: f32 = 13.0,
+            colour: ?zm.F32x4 = null,
         } = null,
+
         background_colour: ?zm.F32x4 = null,
         border_colour: ?zm.F32x4 = null,
         border_width_px: qr.RectEdges = .{},
@@ -205,21 +243,22 @@ pub const Imui = struct {
             texture_view: _gfx.TextureView2D,
             sampler: _gfx.Sampler,
         } = null,
-        padding_px: qr.RectEdges = .{},
+
+        margin_px: RectPixels = .{},
+        padding_px: RectPixels = .{},
         // anchor determines the position within the potential space allowed by the layout
         anchor: [2]f32 = .{0.0, 0.0},
         // pivot determines the coordinate on the widget's box that sticks to the anchor
         pivot: [2]f32 = .{0.0, 0.0},
         pixel_offset: [2]f32 = .{0.0, 0.0},
-        children_gap: f32 = 0.0,
 
         pub fn content_rect(self: *const Widget) RectPixels {
             const rect = self.computed.rect();
             return RectPixels {
                 .left = rect.left + self.padding_px.left,
                 .top = rect.top + self.padding_px.top,
-                .width = rect.width - self.padding_px.left - self.padding_px.right,
-                .height = rect.height - self.padding_px.top - self.padding_px.bottom,
+                .right = rect.right - self.padding_px.right,
+                .bottom = rect.bottom - self.padding_px.bottom,
             };
         }
     };
@@ -419,19 +458,6 @@ pub const Imui = struct {
         return &self.fonts[@intFromEnum(font_enum)];
     }
 
-    pub fn render_text(
-        self: *const Self,
-        font_enum: FontEnum,
-        text: []const u8,
-        props: font.Font.FontRenderProperties2D,
-        rtv: _gfx.RenderTargetView, 
-        gfx: *_gfx.GfxState,
-    ) void {
-        self.get_font(font_enum).render_text_2d(
-            text, props, rtv, gfx
-        );
-    }
-
     fn arena(self: *Self) *std.heap.ArenaAllocator {
         return &self.arenas[(@as(usize, @intCast(self.last_frame_arena)) + 1) % 2];
     }
@@ -463,10 +489,10 @@ pub const Imui = struct {
         parent.num_children += 1;
     }
 
-    fn apply_padding(widget: *Widget, axis: usize) void {
+    inline fn apply_padding(widget: *Widget, axis: usize) void {
         switch (axis) {
-            0 => widget.computed.size[0] += @floatFromInt(widget.padding_px.left + widget.padding_px.right),
-            1 => widget.computed.size[1] += @floatFromInt(widget.padding_px.top + widget.padding_px.bottom),
+            0 => widget.computed.size[0] += widget.padding_px.left + widget.padding_px.right,
+            1 => widget.computed.size[1] += widget.padding_px.top + widget.padding_px.bottom,
             else => {}
         }
     }
@@ -486,8 +512,8 @@ pub const Imui = struct {
                             text.size
                         );
                         switch (axis) {
-                            0 => widget.computed.size[0] = @floatFromInt(text_bounds.width),
-                            1 => widget.computed.size[1] = @as(f32,@floatFromInt(text_bounds.height)) - self.get_font(text.font).font_metrics.descender,
+                            0 => widget.computed.size[0] = text_bounds.width(),
+                            1 => widget.computed.size[1] = text_bounds.height() - self.get_font(text.font).font_metrics.descender,
                             else => {unreachable;}
                         }
                     } else {
@@ -615,8 +641,8 @@ pub const Imui = struct {
             switch (s.kind) {
                 .ParentPercentage => {
                     switch (axis) {
-                        @intFromEnum(Axis.X) => widget.computed.size[axis] = @as(f32, @floatFromInt(parent.content_rect().width)) * s.value,
-                        @intFromEnum(Axis.Y) => widget.computed.size[axis] = @as(f32, @floatFromInt(parent.content_rect().height)) * s.value,
+                        @intFromEnum(Axis.X) => widget.computed.size[axis] = parent.content_rect().width() * s.value,
+                        @intFromEnum(Axis.Y) => widget.computed.size[axis] = parent.content_rect().height() * s.value,
                         else => {unreachable;},
                     }
                     widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
@@ -640,8 +666,8 @@ pub const Imui = struct {
                     continue;
                 }
 
-                top_size = @max(child.computed.size[axis], top_size);
-                total_size += child.computed.size[axis] + widget.children_gap;
+                top_size = @max(child.computed.total_size()[axis], top_size);
+                total_size += child.computed.total_size()[axis] + widget.children_gap;
                 child_id = child.next_sibling;
             }
 
@@ -677,7 +703,7 @@ pub const Imui = struct {
             // violation in this axis
             const last_child = self.get_widget(parent.last_child.?).?;
             const parent_content_rect = parent.content_rect();
-            const parent_content_size = [2]f32{@floatFromInt(parent_content_rect.width), @floatFromInt(parent_content_rect.height)};
+            const parent_content_size = [2]f32{parent_content_rect.width(), parent_content_rect.height()};
             var overrun = last_child.computed.relative_position[axis] + last_child.computed.size[axis] - (parent.computed.relative_position[axis] + parent_content_size[axis]);
             var last_overrun: f32 = overrun + 2.0;
             while (overrun >= 1.0 and children_in_split > 0) {
@@ -752,8 +778,8 @@ pub const Imui = struct {
         const parent = self.get_widget(widget.parent) orelse unreachable;
         const parent_content_rect = parent.content_rect();
         const parent_content_anchor_pos = [2]f32{
-            @floatFromInt(parent_content_rect.left),
-            @floatFromInt(parent_content_rect.top)
+            parent_content_rect.left,
+            parent_content_rect.top
         };
 
         // calculate relative position of widget on each axis
@@ -772,7 +798,7 @@ pub const Imui = struct {
 
                     if (parent.layout_axis) |layout_axis| {
                         if (@intFromEnum(layout_axis) == axis) {
-                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.size[axis] + parent.children_gap;
+                            widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.total_size()[axis] + parent.children_gap;
                         } else {
                             widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
                         }
@@ -787,8 +813,8 @@ pub const Imui = struct {
 
             // adjust relative position to account for anchor and pivot
             const parent_content_size = [2]f32{
-                @floatFromInt(parent_content_rect.width),
-                @floatFromInt(parent_content_rect.height)
+                parent_content_rect.width(),
+                parent_content_rect.height()
             };
             // find the potential space that the widget can take up according to the layout .
             // This contains a compromise which allows a widget to wiggle a bit inside its allowed space 
@@ -805,7 +831,7 @@ pub const Imui = struct {
             // apply anchor and pivot.
             // anchor determines the position within the potential space allowed by the layout
             // pivot determines the coordinate on the widget's box that sticks to the anchor
-            widget.computed.offset_position[axis] = widget.computed.relative_position[axis] 
+            widget.computed.pixel_offset[axis] =
                 - (widget.pivot[axis] * widget.computed.size[axis]) 
                 + (widget.anchor[axis] * potential_space_size)
                 + widget.pixel_offset[axis];
@@ -838,6 +864,12 @@ pub const Imui = struct {
         for (0..self.widgets.items.len) |inv_id| {
             const id = self.widgets.items.len - inv_id - 1;
             const widget = &self.widgets.items[id];
+
+            widget.computed.left_top_margin[0] += widget.margin_px.left;
+            widget.computed.left_top_margin[1] += widget.margin_px.top;
+            widget.computed.right_bottom_margin[0] = widget.margin_px.right;
+            widget.computed.right_bottom_margin[1] = widget.margin_px.bottom;
+
             self.compute_standalone_widget_size(widget);
             self.solve_downward_dependant_sizes(widget);
         }
@@ -873,33 +905,23 @@ pub const Imui = struct {
         self.recurse_resolve_violations(.{ .location = .Standard, .index = 0 });
     }
 
-    fn render_imui_widget(self: *Self, rtv: *_gfx.RenderTargetView, widget: *const Widget, scissor_rect: RectPixels) void {
-        // render rect
-        const render_rect = 
-            widget.background_colour != null or
-            widget.border_colour != null or
-            widget.texture != null;
-        
+    fn render_imui_widget(
+        self: *Self, 
+        rtv: *_gfx.RenderTargetView, 
+        widget: *const Widget,
+        scissor_rect: RectPixels,
+        render_palette: Palette
+    ) void {
         const scissor = _gfx.RectPixels {
-            .left = scissor_rect.left,
-            .width = scissor_rect.width,
-            .top = scissor_rect.top,
-            .height = scissor_rect.height,
+            .left = @intFromFloat(@floor(scissor_rect.left)),
+            .top = @intFromFloat(@floor(scissor_rect.top)),
+            .width = @intFromFloat(@ceil(scissor_rect.width())),
+            .height = @intFromFloat(@ceil(scissor_rect.height())),
         };
         engine.engine().gfx.cmd_set_scissor_rect(scissor);
         defer engine.engine().gfx.cmd_set_scissor_rect(null);
 
-        if (render_rect) {
-            var background_colour = zm.f32x4s(1.0);
-            if (widget.background_colour) |bc| {
-                background_colour = bc;
-            }
-
-            var border_colour = zm.f32x4s(1.0);
-            if (widget.border_colour) |bc| {
-                border_colour = bc;
-            }
-
+        if (widget.flags.render_quad) {
             const quad_texture_props = blk: { 
                 if (widget.texture) |tex_props| {
                     break :blk QuadRenderer.QuadPropertiesTexture {
@@ -909,40 +931,13 @@ pub const Imui = struct {
                 } else { 
                     break :blk null;
                 } 
-            }; 
-
-            var colour = blk: { 
-                const debug_colours = false;
-                if (debug_colours) {
-                    if (self.active_item) |ai| { 
-                        if (ai == widget.key) {
-                            break :blk zm.f32x4(1.0, 0.0, 0.0, 1.0);
-                        }
-                    } 
-                    if (self.hot_item) |hi| {
-                        if (hi == widget.key) {
-                            break :blk zm.f32x4(0.0, 1.0, 0.0, 1.0);
-                        }
-                    }
-                }
-                break :blk background_colour;
             };
-
-            if (widget.flags.hover_effect) {
-                // TODO: find a better way of doing hover colouring
-                if (background_colour[3] == 0.0) {
-                    colour = background_colour;
-                    colour[3] = es.ease_out_expo(widget.hot_t) * 0.2;
-                } else {
-                    colour += zm.f32x4(0.2, 0.2, 0.2, 0.0) * zm.f32x4s(es.ease_out_expo(widget.hot_t)) * if (background_colour[0] > 0.5) zm.f32x4s(-1.0) else zm.f32x4s(1.0);
-                }
-            }
 
             self.quad_renderer.render_quad(
                 widget.computed.rect(),
                 .{
-                    .colour = colour,
-                    .border_colour = border_colour,
+                    .colour = render_palette.background,
+                    .border_colour = render_palette.border,
                     .border_width_px = widget.border_width_px,
                     .corner_radii_px = widget.corner_radii_px,
                     .texture = quad_texture_props,
@@ -954,17 +949,18 @@ pub const Imui = struct {
 
         // render text
         if (widget.text_content) |*text| {
-            const text_size_f32: f32 = @floatFromInt(text.size);
             const font_metrics = self.get_font(text.font).font_metrics;
-            const x: i32 = @intFromFloat(widget.computed.offset_position[0]);
-            const top: i32 = @as(i32, @intFromFloat(widget.computed.offset_position[1] + (font_metrics.ascender * text_size_f32)));
-            const y: i32 = top;
-            self.render_text(
-                text.font,
+            const rect = widget.computed.rect();
+            const x = rect.left;
+            const y = rect.top + (font_metrics.ascender * text.size);
+
+            self.get_font(text.font).render_text_2d(
                 text.text,
                 .{
                     .position = .{ .x = x, .y = y, },
-                    .colour = text.colour,
+                    .colour = 
+                        if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
+                        else render_palette.text_dark,
                     .pixel_height = text.size,
                 },
                 rtv.*,
@@ -973,8 +969,14 @@ pub const Imui = struct {
         }
     }
 
-    fn render_imui_recursive(self: *Self, rtv: *_gfx.RenderTargetView, widget_id: WidgetId, parent_scissor: RectPixels) void {
-        const widget = self.get_widget(widget_id).?;
+    fn render_imui_recursive(
+        self: *Self, 
+        rtv: *_gfx.RenderTargetView, 
+        widget_id: WidgetId, 
+        parent_scissor: RectPixels,
+        render_palette: Palette
+    ) void {
+        const widget = self.get_widget(widget_id) orelse return;
 
         const widget_scissor = blk: {
             var widget_scissor = parent_scissor;
@@ -987,11 +989,11 @@ pub const Imui = struct {
             // expand scissor if overflow is allowed
             const swapchain_size = engine.engine().gfx.swapchain_size;
             if (widget.flags.allows_overflow_x) {
-                widget_scissor.width = swapchain_size.width;
+                widget_scissor.right = @floatFromInt(swapchain_size.width);
                 widget_scissor.left = 0;
             }
             if (widget.flags.allows_overflow_y) {
-                widget_scissor.height = swapchain_size.height;
+                widget_scissor.bottom = @floatFromInt(swapchain_size.height);
                 widget_scissor.top = 0;
             }
 
@@ -1003,25 +1005,35 @@ pub const Imui = struct {
             // clamp widget scissor to parent scissor
             scissor.left = @max(scissor.left, parent_scissor.left);
             scissor.top = @max(scissor.top, parent_scissor.top);
-            scissor.width = @min(scissor.left + scissor.width, parent_scissor.left + parent_scissor.width) - scissor.left;
-            scissor.height = @min(scissor.top + scissor.height, parent_scissor.top + parent_scissor.height) - scissor.top;
+            scissor.right = @min(scissor.right, parent_scissor.right);
+            scissor.bottom = @min(scissor.bottom, parent_scissor.bottom);
 
             // expand scissor if overflow is allowed
             const swapchain_size = engine.engine().gfx.swapchain_size;
             if (widget.flags.allows_overflow_x) {
-                scissor.width = swapchain_size.width;
+                scissor.right = @floatFromInt(swapchain_size.width);
                 scissor.left = 0;
             }
             if (widget.flags.allows_overflow_y) {
-                scissor.height = swapchain_size.height;
+                scissor.bottom = @floatFromInt(swapchain_size.height);
                 scissor.top = 0;
             }
 
             break :blk scissor;
         };
 
+        var rpalette = render_palette;
+        if (widget.background_colour) |bc| { rpalette.background = bc; }
+        if (widget.border_colour) |bc| { rpalette.border = bc; }
+        if (widget.text_content) |tx| {
+            if (tx.colour) |tc| {
+                rpalette.text_light = tc;
+                rpalette.text_dark = tc;
+            }
+        }
+
         if (widget.flags.render) {
-            self.render_imui_widget(rtv, widget, widget_scissor);
+            self.render_imui_widget(rtv, widget, widget_scissor, rpalette);
         }
 
         // // debug wireframe
@@ -1036,10 +1048,10 @@ pub const Imui = struct {
         // );
 
         if (widget.first_child) |c| {
-            self.render_imui_recursive(rtv, c, widget_content_scissor);
+            self.render_imui_recursive(rtv, c, widget_content_scissor, rpalette);
         }
         if (widget.next_sibling) |s| {
-            self.render_imui_recursive(rtv, s, parent_scissor);
+            self.render_imui_recursive(rtv, s, parent_scissor, rpalette);
         }
     }
 
@@ -1049,15 +1061,15 @@ pub const Imui = struct {
         
         _ = gfx;
         const screen_scissor = RectPixels {
-            .left = 0,
-            .top = 0,
-            .width = engine.engine().gfx.swapchain_size.width,
-            .height = engine.engine().gfx.swapchain_size.height,
+            .left = 0.0,
+            .top = 0.0,
+            .right = @floatFromInt(engine.engine().gfx.swapchain_size.width),
+            .bottom = @floatFromInt(engine.engine().gfx.swapchain_size.height),
         };
-        self.render_imui_recursive(rtv, .{ .location = .Standard, .index = 0 }, screen_scissor);
-        if (self.priority_widgets.items.len > 0) {
-            self.render_imui_recursive(rtv, .{ .location = .Priority, .index = 0 }, screen_scissor);
-        }
+        const render_palette = self.palette();
+
+        self.render_imui_recursive(rtv, .{ .location = .Standard, .index = 0 }, screen_scissor, render_palette);
+        self.render_imui_recursive(rtv, .{ .location = .Priority, .index = 0 }, screen_scissor, render_palette);
     }
 
     pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {
@@ -1108,7 +1120,10 @@ pub const Imui = struct {
         const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
 
         if (last_frame_widget) |lfw| {
-            const lfw_contains_cursor = lfw.computed.rect().contains(self.input.cursor_position);
+            const lfw_contains_cursor = lfw.computed.rect().contains([2]f32{
+                @floatFromInt(self.input.cursor_position[0]),
+                @floatFromInt(self.input.cursor_position[1]),
+            });
 
             // hover detection
             if (lfw_contains_cursor) {
@@ -1266,13 +1281,14 @@ pub const Imui = struct {
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 0.0, },
                 SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 0.0, },
             },
+            .flags = .{
+                .render_quad = false,
+            },
             .text_content = .{
                 .font = .Geist,
                 .text = text,
                 .colour = self.palette().text_dark,
             },
-            .background_colour = zm.f32x4s(0.0),
-            .border_colour = zm.f32x4s(0.0),
             .anchor = .{ 0.0, 0.5 },
             .pivot = .{ 0.0, 0.5 },
         };
@@ -1299,6 +1315,17 @@ pub const Imui = struct {
             w.corner_radii_px = .all(6);
             w.flags.clickable = true;
             w.flags.render = true;
+            w.active_t_timescale = 0.05;
+            w.margin_px = .{
+                .top = @floatCast((std.math.sin(engine.engine().time.time_since_start_of_app()) + 1.0) * 10.0),
+                .bottom = @floatCast((2.0 - (std.math.sin(engine.engine().time.time_since_start_of_app()) + 1.0)) * 10.0),
+            };
+            // if (self.get_widget_from_last_frame(box_layout)) |lw| {
+            //     w.margin_px = .{
+            //         .top = es.ease_out_expo(lw.active_t) * 3.0,
+            //         .bottom = (1.0 - es.ease_out_expo(lw.active_t)) * 3.0,
+            //     };
+            // }
         }
 
         const label_id = self.label(text);
@@ -1308,13 +1335,15 @@ pub const Imui = struct {
             text_widget.pivot = .{0.5, 0.5};
         }
 
-        return combine_signals(
+        const signals = combine_signals(
             .{
                 self.generate_widget_signals(box_layout),
                 label_id,
             },
             ButtonId{ .box = box_layout, .text = label_id.id, }
         );
+
+        return signals;
     }
 
     pub fn badge(self: *Self, text: []const u8, key: anytype) WidgetSignal(ButtonId) {
@@ -1374,10 +1403,9 @@ pub const Imui = struct {
                 .text = text,
                 .colour = self.palette().text_dark,
             },
-            .background_colour = zm.f32x4s(0.0),
-            .border_colour = zm.f32x4s(0.0),
             .flags = .{ 
                 .clickable = true, 
+                .render_quad = false,
             },
             .anchor = .{ 0.0, 0.5 },
             .pivot = .{ 0.0, 0.5 },
@@ -1584,13 +1612,12 @@ pub const Imui = struct {
         text: WidgetId,
     };
 
-    fn character_advance_at_cursor(self: *Self, text_input_widget: *const Widget, text_input_state: *const TextInputState) i32 {
+    fn character_advance_at_cursor(self: *Self, text_input_widget: *const Widget, text_input_state: *const TextInputState) f32 {
         if (text_input_state.cursor == 0) { return 0; }
         const f = self.get_font(text_input_widget.text_content.?.font);
-        return @intFromFloat(
+        return 
             f.character_map.get(text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]).?.advance *  // TODO handle error
-            @as(f32, @floatFromInt(text_input_widget.text_content.?.size))
-        );
+            text_input_widget.text_content.?.size;
     }
 
     pub fn line_edit(self: *Self, state: *TextInputState, key: anytype) WidgetSignal(TextInputId) {
@@ -1636,8 +1663,6 @@ pub const Imui = struct {
                 .text = state.text.items,
                 .colour = self.palette().text_dark,
             },
-            .background_colour = zm.f32x4s(0.0),
-            .border_colour = zm.f32x4s(0.0),
             .border_width_px = .all(1),
             .corner_radii_px = .all(4),
             .flags = .{
@@ -1681,8 +1706,8 @@ pub const Imui = struct {
         const cursor = Widget {
             .key = gen_key(key ++ .{@src()}),
             .semantic_size = [2]SemanticSize{
-                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.width)) + cursor_min_width, .shrinkable_percent = 0.0, },
-                SemanticSize{ .kind = .Pixels, .value = @as(f32, @floatFromInt(selection_bounds.height)), .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = selection_bounds.width() + cursor_min_width, .shrinkable_percent = 0.0, },
+                SemanticSize{ .kind = .Pixels, .value = selection_bounds.height(), .shrinkable_percent = 0.0, },
             },
             .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
                 (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
@@ -1701,11 +1726,14 @@ pub const Imui = struct {
 
         // Handle mouse input, click and drag
         if (box_signals.dragged or text_signals.dragged or box_signals.clicked or text_signals.clicked) {
-            const cursor_pos = [2]i32{self.input.cursor_position[0], self.input.cursor_position[1]};
+            const cursor_pos = [2]f32{
+                @floatFromInt(self.input.cursor_position[0]), 
+                @floatFromInt(self.input.cursor_position[1])
+            };
             const text_rel_pos = self.get_widget_from_last_frame(text_input_widget_id).?.computed.relative_position;
-            const cursor_in_box_pos = [2]i32 {
-                cursor_pos[0] - @as(i32, @intFromFloat(text_rel_pos[0])),
-                cursor_pos[1] - @as(i32, @intFromFloat(text_rel_pos[1]))
+            const cursor_in_box_pos = [2]f32 {
+                cursor_pos[0] - text_rel_pos[0],
+                cursor_pos[1] - text_rel_pos[1]
             };
 
             // Set cursor to closest character to mouse position
@@ -1713,7 +1741,7 @@ pub const Imui = struct {
             while (f.text_bounds_2d_pixels(
                 state.text.items[0..state.cursor],
                 text_input_widget.text_content.?.size
-            ).width - @divTrunc(self.character_advance_at_cursor(&text_input_widget, state), 2) < cursor_in_box_pos[0]) {
+            ).width() - (self.character_advance_at_cursor(&text_input_widget, state) / 2.0) < cursor_in_box_pos[0]) {
                 if (state.cursor == state.text.items.len) {
                     break;
                 }
@@ -1722,7 +1750,7 @@ pub const Imui = struct {
             while (self.get_font(text_input_widget.text_content.?.font).text_bounds_2d_pixels(
                 state.text.items[0..state.cursor],
                 text_input_widget.text_content.?.size
-            ).width - @divTrunc(self.character_advance_at_cursor(&text_input_widget, state), 2) > cursor_in_box_pos[0]) {
+            ).width() - @divTrunc(self.character_advance_at_cursor(&text_input_widget, state), 2) > cursor_in_box_pos[0]) {
                 if (state.cursor == 0) {
                     break;
                 }
@@ -1864,14 +1892,14 @@ pub const Imui = struct {
 
             // find the cursor position in pixels
             // TODO: SPEED: iterate throgh text a little less
-            const cursor_pixel_position = @as(f32, @floatFromInt(f.text_bounds_2d_pixels(
+            const cursor_pixel_position = f.text_bounds_2d_pixels(
                         state.text.items[0..state.cursor],
                         text_input_widget.text_content.?.size
-            ).width + text_widget.computed.rect().left)) + cursor_min_width;
+            ).width() + text_widget.computed.rect().left + cursor_min_width;
 
             const background_content = background_widget.content_rect();
-            const background_left: f32 = @floatFromInt(background_content.left);
-            const background_right: f32 = @floatFromInt(background_content.left + background_content.width);
+            const background_left = background_content.left;
+            const background_right = background_content.right;
 
             const cursor_right: f32 = cursor_pixel_position;
             // shift content box to the left if the cursor is to the left of the background
@@ -1885,8 +1913,8 @@ pub const Imui = struct {
 
             // clamp so that the last character is always at the right edge of the background 
             // if text is long enough to exceed the background
-            const text_width = @as(f32, @floatFromInt(text_widget.computed.rect().width)) + cursor_min_width;
-            const offset_min = @min(-(text_width - @as(f32, @floatFromInt(background_content.width))), 0.0);
+            const text_width = text_widget.computed.rect().width() + cursor_min_width;
+            const offset_min = @min(-(text_width - background_content.width()), 0.0);
             content_box_widget.pixel_offset[0] = std.math.clamp(content_box_widget.pixel_offset[0], offset_min, 0.0);
         }
 
@@ -1912,7 +1940,6 @@ pub const Imui = struct {
                 .texture_view = texture_view,
                 .sampler = sampler,
             },
-            //.background_colour = zm.f32x4(1.0, 0.0, 0.0, 1.0),
             .flags = .{
                 .render = true,
             },
@@ -1954,12 +1981,11 @@ pub const Imui = struct {
     };
 
     fn set_combobox_background_layout(self: *const Self, widget: *Widget) void {
+        _ = self;
         widget.semantic_size[0] = .{
             .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
         };
         widget.flags.render = true;
-        widget.background_colour = self.palette().background;
-        widget.border_colour = self.palette().border;
         widget.border_width_px = .all(1);
         widget.padding_px = .all(4);
         widget.children_gap = 2;
@@ -2022,11 +2048,11 @@ pub const Imui = struct {
         dropdown_is_open: { if (data.dropdown_is_open) {
             // determine the position of the dropdown options based on the primary combobox rect
             const dropdown_pos = if (self.get_widget_from_last_frame(background)) |b| 
-                .{ b.computed.rect().left, b.computed.rect().top + b.computed.rect().height + 4 }
+                .{ b.computed.rect().left, b.computed.rect().bottom + 4 }
              else break :dropdown_is_open;
 
             // push the options background layout
-            const options_background = self.push_priority_floating_layout(.Y, @floatFromInt(dropdown_pos[0]), @floatFromInt(dropdown_pos[1]), key ++ .{@src()});
+            const options_background = self.push_priority_floating_layout(.Y, dropdown_pos[0], dropdown_pos[1], key ++ .{@src()});
             if (self.get_widget(options_background)) |options_background_widget| {
                 self.set_combobox_background_layout(options_background_widget);
                 options_background_widget.semantic_size[0] = .{
@@ -2046,7 +2072,6 @@ pub const Imui = struct {
                     };
                     option_background_widget.flags.clickable = true;
                     option_background_widget.flags.render = true;
-                    option_background_widget.background_colour = self.palette().background;
                     option_background_widget.padding_px = .all(4);
                     option_background_widget.corner_radii_px = .all(4);
                 }

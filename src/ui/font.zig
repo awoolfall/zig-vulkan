@@ -261,8 +261,8 @@ pub const Font = struct {
     }
 
     pub const FontRenderProperties2D = struct {
-        position: struct { x: i32, y: i32 },
-        pixel_height: u32 = 20,
+        position: struct { x: f32, y: f32 },
+        pixel_height: f32 = 20.0,
         colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
     };
 
@@ -276,12 +276,17 @@ pub const Font = struct {
         if (text.len == 0) { return; }
         
         const aspect = (@as(f32, @floatFromInt(rtv.size.width)) / @as(f32, @floatFromInt(rtv.size.height)));
-        const xy_screen_space = ui.position_pixels_to_screen_space(props.position.x, props.position.y, rtv.size.width, rtv.size.height);
+        const xy_screen_space = ui.position_pixels_to_screen_space(
+            props.position.x,
+            props.position.y,
+            @floatFromInt(rtv.size.width),
+            @floatFromInt(rtv.size.height)
+        );
         var y_loc = xy_screen_space[1];
         var x_loc = xy_screen_space[0];
         const x_start_loc = x_loc;
 
-        const percpx = @as(f32, @floatFromInt(props.pixel_height)) / @as(f32, @floatFromInt(rtv.size.height));
+        const percpx = props.pixel_height / @as(f32, @floatFromInt(rtv.size.height));
         const screen_size = (percpx * 2.0);
 
         const viewport = _gfx.Viewport {
@@ -387,10 +392,8 @@ pub const Font = struct {
     pub fn text_bounds_2d_pixels(
         self: *const Font,
         text: []const u8,
-        pixel_height: u32,
+        pixel_height: f32,
     ) ui.RectPixels {
-        const pixel_height_f32: f32 = @floatFromInt(pixel_height);
-        
         var line_count: f32 = 0.0;
         var x_loc: f32 = 0.0;
 
@@ -416,11 +419,12 @@ pub const Font = struct {
             }
         }
 
+        const top = -self.font_metrics.ascender * pixel_height;
         return ui.RectPixels {
             .left = 0,
-            .top = @intFromFloat(-self.font_metrics.ascender * pixel_height_f32),
-            .width = @intFromFloat(max_x * pixel_height_f32),
-            .height = @intFromFloat((self.font_metrics.ascender + self.font_metrics.descender + (line_count * self.font_metrics.line_height)) * pixel_height_f32),
+            .top = -self.font_metrics.ascender * pixel_height,
+            .right = max_x * pixel_height,
+            .bottom = top + (self.font_metrics.ascender + self.font_metrics.descender + (line_count * self.font_metrics.line_height)) * pixel_height,
         };
     }
 };
