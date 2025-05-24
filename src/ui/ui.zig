@@ -29,6 +29,15 @@ pub const RectPixels = struct {
         };
     }
 
+    pub inline fn resize(self: *const RectPixels, x: i32, y: i32) RectPixels {
+        return RectPixels {
+            .left = self.left,
+            .top = self.top,
+            .width = self.width + x,
+            .height = self.height + y,
+        };
+    }
+
     pub fn contains(self: *const RectPixels, coord: [2]i32) bool {
         return  coord[0] >= self.left and
                 coord[0] <= self.left + self.width and
@@ -190,18 +199,13 @@ pub const Imui = struct {
         } = null,
         background_colour: ?zm.F32x4 = null,
         border_colour: ?zm.F32x4 = null,
-        border_width_px: u16 = 0,
+        border_width_px: qr.RectEdges = .{},
         corner_radii_px: qr.CornerRadiiPx = .{},
         texture: ?struct {
             texture_view: _gfx.TextureView2D,
             sampler: _gfx.Sampler,
         } = null,
-        padding_px: struct {
-            left: u16 = 0,
-            right: u16 = 0,
-            top: u16 = 0,
-            bottom: u16 = 0,
-        } = .{},
+        padding_px: qr.RectEdges = .{},
         // anchor determines the position within the potential space allowed by the layout
         anchor: [2]f32 = .{0.0, 0.0},
         // pivot determines the coordinate on the widget's box that sticks to the anchor
@@ -404,6 +408,13 @@ pub const Imui = struct {
         return self;
     }
 
+    pub inline fn root_widget_id(location: WidgetLocation) WidgetId {
+        return WidgetId {
+            .location = location,
+            .index = 0,
+        };
+    }
+
     pub fn get_font(self: *const Self, font_enum: FontEnum) *const font.Font {
         return &self.fonts[@intFromEnum(font_enum)];
     }
@@ -430,6 +441,8 @@ pub const Imui = struct {
     }
 
     fn add_heirarchy_links(self: *Self, parent_id: WidgetId, widget_id: WidgetId) !void {
+        std.debug.assert(parent_id != widget_id);
+
         const parent = self.get_widget(parent_id) orelse return error.ParentDoesNotExist;
         const widget = self.get_widget(widget_id) orelse return error.WidgetDoesNotExist;
 
@@ -488,27 +501,14 @@ pub const Imui = struct {
         }
     }
 
-    pub fn add_widget_priority(self: *Self, widget: Widget) WidgetId {
-        var widget_to_add = widget;
-        // we need to own the text content so duplicate it using this frame's arena before adding the widget
-        if (widget_to_add.text_content) |*text| {
-            text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
-        }
+    pub const AddWidgetOptions = struct {
+        destination: union(enum) {
+            Auto: void,
+            Manual: WidgetLocation,
+        } = .Auto,
+    };
 
-        const parent_id = self.parent_stack.getLast();
-
-        const widget_index = self.priority_widgets.items.len;
-        self.priority_widgets.append(widget_to_add) catch unreachable;
-        const widget_id = WidgetId {
-            .location = .Priority,
-            .index = @truncate(widget_index),
-        };
-
-        self.add_heirarchy_links(parent_id, widget_id) catch unreachable;
-        return widget_id;
-    }
-
-    pub fn add_widget(self: *Self, widget: Widget) WidgetId {
+    pub fn add_widget(self: *Self, widget: Widget, opt: AddWidgetOptions) WidgetId {
         var widget_to_add = widget;
         // we need to own the text content so duplicate it using this frame's arena before adding the widget
         if (widget_to_add.text_content) |*text| {
@@ -518,26 +518,21 @@ pub const Imui = struct {
         const parent_id = self.parent_stack.getLast();
 
         const widget_id = blk: {
-            switch (parent_id.location) {
-                .Standard => {
-                    @branchHint(.likely);
-                    const widget_index = self.widgets.items.len;
-                    self.widgets.append(widget_to_add) catch unreachable;
-                    break :blk WidgetId {
-                        .location = .Standard,
-                        .index = @truncate(widget_index),
-                    };
-                },
-                .Priority => {
-                    @branchHint(.unlikely);
-                    const widget_index = self.priority_widgets.items.len;
-                    self.priority_widgets.append(widget_to_add) catch unreachable;
-                    break :blk WidgetId {
-                        .location = .Priority,
-                        .index = @truncate(widget_index),
-                    };
-                },
-            }
+            const destination = switch (opt.destination) {
+                .Auto => parent_id.location,
+                .Manual => |manual_location| manual_location,
+            };
+            const destination_array = switch (destination) {
+                .Priority => &self.priority_widgets,
+                .Standard => &self.widgets,
+            };
+
+            const widget_index = destination_array.items.len;
+            destination_array.append(widget_to_add) catch unreachable;
+            break :blk WidgetId {
+                .location = destination,
+                .index = @truncate(widget_index),
+            };
         };
 
         self.add_heirarchy_links(parent_id, widget_id) catch unreachable;
@@ -592,7 +587,8 @@ pub const Imui = struct {
 
     fn add_root_widget(self: *Self, gfx: *const _gfx.GfxState) void {
         std.debug.assert(self.widgets.items.len == 0);
-        self.widgets.append(Widget {
+
+        const root_widget = Widget {
             .semantic_size = [_]SemanticSize{.{.kind = .None, .value = 0.0, }} ** 2,
             .key = gen_key(.{@src()}),
             .computed = .{
@@ -607,7 +603,9 @@ pub const Imui = struct {
                 .allows_overflow_x = false,
                 .allows_overflow_y = false,
             },
-        }) catch unreachable;
+        };
+        self.widgets.append(root_widget) catch unreachable;
+
         self.parent_stack.append(.{ .location = .Standard, .index = 0 }) catch unreachable;
     }
 
@@ -1187,13 +1185,13 @@ pub const Imui = struct {
     }
 
     pub fn push_layout_widget_priority(self: *Self, widget: Widget) WidgetId {
-        const widget_id = self.add_widget_priority(widget);
+        const widget_id = self.add_widget(widget, .{ .destination = .{ .Manual = .Priority } });
         self.parent_stack.append(widget_id) catch unreachable;
         return widget_id;
     }
 
     pub fn push_layout_widget(self: *Self, widget: Widget) WidgetId {
-        const widget_id = self.add_widget(widget);
+        const widget_id = self.add_widget(widget, .{});
         self.parent_stack.append(widget_id) catch unreachable;
         return widget_id;
     }
@@ -1243,14 +1241,16 @@ pub const Imui = struct {
 
     pub fn push_priority_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) WidgetId {
         const widget = Self.floating_layout_widget(layout_axis, floating_x, floating_y, key);
-        const widget_id = self.add_widget_priority(widget);
+        const widget_id = self.add_widget(widget, .{ 
+            .destination = .{ .Manual = .Priority },
+        });
         self.push_layout_id(widget_id);
         return widget_id;
     }
 
     pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) WidgetId {
         const widget = Self.floating_layout_widget(layout_axis, floating_x, floating_y, key);
-        const widget_id = self.add_widget(widget);
+        const widget_id = self.add_widget(widget, .{});
         self.push_layout_id(widget_id);
         return widget_id;
     }
@@ -1277,7 +1277,7 @@ pub const Imui = struct {
             .pivot = .{ 0.0, 0.5 },
         };
 
-        const widget_id = self.add_widget(widget);
+        const widget_id = self.add_widget(widget, .{});
         return self.generate_widget_signals(widget_id);
     }
 
@@ -1294,19 +1294,9 @@ pub const Imui = struct {
             w.layout_axis = null;
             w.background_colour = self.palette().primary;
             w.border_colour = self.palette().border;
-            w.border_width_px = 1;
-            w.padding_px = .{
-                .left = 16,
-                .right = 16,
-                .top = 8,
-                .bottom = 8,
-            };
-            w.corner_radii_px = .{
-                .top_left = 6,
-                .top_right = 6,
-                .bottom_left = 6,
-                .bottom_right = 6,
-            };
+            w.border_width_px = .all(1);
+            w.padding_px = .lr_tb(16, 8);
+            w.corner_radii_px = .all(6);
             w.flags.clickable = true;
             w.flags.render = true;
         }
@@ -1330,12 +1320,7 @@ pub const Imui = struct {
     pub fn badge(self: *Self, text: []const u8, key: anytype) WidgetSignal(ButtonId) {
         const button_sig = self.button(text, key);
         if (self.get_widget(button_sig.id.box)) |w| {
-            w.padding_px = .{
-                .left = 10,
-                .right = 10,
-                .top = 2,
-                .bottom = 2,
-            };
+            w.padding_px = .lr_tb(10, 2);
         }
         return button_sig;
     }
@@ -1359,13 +1344,8 @@ pub const Imui = struct {
             },
             .background_colour = blk: {if (checked.*) { break :blk self.palette().primary; } else { break :blk zm.f32x4s(0.0); }},
             .border_colour = self.palette().primary,
-            .border_width_px = 1,
-            .corner_radii_px = .{
-                .top_left = 4,
-                .top_right = 4,
-                .bottom_left = 4,
-                .bottom_right = 4,
-            },
+            .border_width_px = .all(1),
+            .corner_radii_px = .all(4),
             .texture = blk: { 
                 if (checked.*) { 
                     break :blk .{
@@ -1380,7 +1360,7 @@ pub const Imui = struct {
                 .clickable = true,
             },
         };
-        const box_widget_id = self.add_widget(box_widget);
+        const box_widget_id = self.add_widget(box_widget, .{});
         const box_widget_signals = self.generate_widget_signals(box_widget_id);
 
         const text_widget = Widget {
@@ -1402,7 +1382,7 @@ pub const Imui = struct {
             .anchor = .{ 0.0, 0.5 },
             .pivot = .{ 0.0, 0.5 },
         };
-        const text_widget_id = self.add_widget(text_widget);
+        const text_widget_id = self.add_widget(text_widget, .{});
         const text_widget_signals = self.generate_widget_signals(text_widget_id);
 
         self.pop_layout();
@@ -1437,7 +1417,7 @@ pub const Imui = struct {
 
         _ = self.label(if (is_open.*) "▼" else "▶");
         _ = self.label(text);
-        _ = self.add_widget(Widget {
+        const line_widget = Widget {
             .key = Self.LabelKey,
             .semantic_size = [2]SemanticSize{
                 SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0, },
@@ -1449,7 +1429,8 @@ pub const Imui = struct {
             },
             .anchor = .{0.0, 0.5},
             .pivot = .{0.0, 0.5},
-        });
+        };
+        _ = self.add_widget(line_widget, .{});
 
         self.pop_layout();
 
@@ -1495,13 +1476,8 @@ pub const Imui = struct {
             },
             .background_colour = self.palette().primary,
             .border_colour = self.palette().primary,
-            .border_width_px = 1,
-            .corner_radii_px = .{
-                .top_left = 4,
-                .top_right = 4,
-                .bottom_left = 4,
-                .bottom_right = 4,
-            },
+            .border_width_px = .all(1),
+            .corner_radii_px = .all(4),
             .flags = .{
                 .clickable = true,
                 .hover_effect = false,
@@ -1509,7 +1485,7 @@ pub const Imui = struct {
             .anchor = .{0.0, 0.5},
             .pivot = .{0.0, 0.5},
         };
-        const filled_bar_widget_id = self.add_widget(filled_bar_widget);
+        const filled_bar_widget_id = self.add_widget(filled_bar_widget, .{});
 
         const l1 = self.push_layout(.X, key ++ .{@src().line});
         if (self.get_widget(l1)) |lw| {
@@ -1534,17 +1510,12 @@ pub const Imui = struct {
             },
             .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.2),
             .border_colour = self.palette().border,
-            .border_width_px = 1,
-            .corner_radii_px = .{
-                .top_left = 4,
-                .top_right = 4,
-                .bottom_left = 4,
-                .bottom_right = 4,
-            },
+            .border_width_px = .all(1),
+            .corner_radii_px = .all(4),
             .anchor = .{0.0, 0.5},
             .pivot = .{0.0, 0.5},
         };
-        const empty_bar_widget_id = self.add_widget(empty_bar_widget);
+        const empty_bar_widget_id = self.add_widget(empty_bar_widget, .{});
 
         const middle_dot_widget = Widget {
             .key = gen_key(key ++ .{@src().line}),
@@ -1560,17 +1531,12 @@ pub const Imui = struct {
             },
             .background_colour = self.palette().background,
             .border_colour = self.palette().primary,
-            .border_width_px = 1,
-            .corner_radii_px = .{
-                .top_left = 8,
-                .top_right = 8,
-                .bottom_left = 8,
-                .bottom_right = 8,
-            },
+            .border_width_px = .all(1),
+            .corner_radii_px = .all(8),
             .anchor = .{0.0, 0.5},
             .pivot = .{0.5, 0.5},
         };
-        const middle_dot_widget_id = self.add_widget(middle_dot_widget);
+        const middle_dot_widget_id = self.add_widget(middle_dot_widget, .{});
 
         self.pop_layout(); // l1
         self.pop_layout();
@@ -1643,19 +1609,9 @@ pub const Imui = struct {
             lw.semantic_size[1].value = 16.0;
             lw.background_colour = self.palette().secondary;
             lw.border_colour = self.palette().border;
-            lw.border_width_px = 1;
-            lw.padding_px = .{
-                .left = 4,
-                .right = 4,
-                .top = 4,
-                .bottom = 4,
-            };
-            lw.corner_radii_px = .{
-                .top_left = 4,
-                .top_right = 4,
-                .bottom_left = 4,
-                .bottom_right = 4,
-            };
+            lw.border_width_px = .all(1);
+            lw.padding_px = .all(4);
+            lw.corner_radii_px = .all(4);
         }
 
         const content_box = self.push_layout(.X, key ++ .{@src()});
@@ -1682,18 +1638,13 @@ pub const Imui = struct {
             },
             .background_colour = zm.f32x4s(0.0),
             .border_colour = zm.f32x4s(0.0),
-            .border_width_px = 1,
-            .corner_radii_px = .{
-                .top_left = 4,
-                .top_right = 4,
-                .bottom_left = 4,
-                .bottom_right = 4,
-            },
+            .border_width_px = .all(1),
+            .corner_radii_px = .all(4),
             .flags = .{
                 .clickable = true,
             },
         };
-        const text_input_widget_id = self.add_widget(text_input_widget);
+        const text_input_widget_id = self.add_widget(text_input_widget, .{});
 
         // ensure data is in a valid state
         state.cursor = @min(state.cursor, state.text.items.len);
@@ -1719,7 +1670,7 @@ pub const Imui = struct {
         phantom_text.key = gen_key(key ++ .{@src()});
         phantom_text.flags.render = false;
         phantom_text.text_content.?.text = state.text.items[0..l_sel];
-        _ = self.add_widget(phantom_text);
+        _ = self.add_widget(phantom_text, .{});
 
         // render cursor and selection box
         const selection_bounds = f.text_bounds_2d_pixels(
@@ -1740,7 +1691,7 @@ pub const Imui = struct {
                 .render = (line_edit_is_hot_widget or state.cursor != state.mark),
             },
         };
-        _ = self.add_widget(cursor);
+        _ = self.add_widget(cursor, .{});
         self.pop_layout(); // phantom and cursor
 
         self.pop_layout(); // content box
@@ -1990,7 +1941,7 @@ pub const Imui = struct {
             }
         }
 
-        const image_widget_id = self.add_widget(image_widget);
+        const image_widget_id = self.add_widget(image_widget, .{});
         return self.generate_widget_signals(image_widget_id);
     }
 
@@ -2009,20 +1960,10 @@ pub const Imui = struct {
         widget.flags.render = true;
         widget.background_colour = self.palette().background;
         widget.border_colour = self.palette().border;
-        widget.border_width_px = 1;
-        widget.padding_px = .{
-            .left = 4,
-            .right = 4,
-            .top = 4,
-            .bottom = 4,
-        };
+        widget.border_width_px = .all(1);
+        widget.padding_px = .all(4);
         widget.children_gap = 2;
-        widget.corner_radii_px = .{
-            .top_left = 4,
-            .top_right = 4,
-            .bottom_left = 4,
-            .bottom_right = 4,
-        };
+        widget.corner_radii_px = .all(4);
     }
 
     pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) WidgetSignal(WidgetId) {
@@ -2106,18 +2047,8 @@ pub const Imui = struct {
                     option_background_widget.flags.clickable = true;
                     option_background_widget.flags.render = true;
                     option_background_widget.background_colour = self.palette().background;
-                    option_background_widget.padding_px = .{
-                        .left = 4,
-                        .right = 4,
-                        .top = 4,
-                        .bottom = 4,
-                    };
-                    option_background_widget.corner_radii_px = .{
-                        .top_left = 4,
-                        .top_right = 4,
-                        .bottom_left = 4,
-                        .bottom_right = 4,
-                    };
+                    option_background_widget.padding_px = .all(4);
+                    option_background_widget.corner_radii_px = .all(4);
                 }
 
                 // if the option is clicked then set the data selected index
@@ -2178,19 +2109,9 @@ pub const Imui = struct {
             background_widget.flags.clickable = true;
             background_widget.background_colour = self.palette().muted;
             background_widget.border_colour = self.palette().border;
-            background_widget.border_width_px = 1;
-            background_widget.corner_radii_px = .{
-                .top_left = 4,
-                .top_right = 4,
-                .bottom_left = 4,
-                .bottom_right = 4,
-            };
-            background_widget.padding_px = .{
-                .left = 4,
-                .right = 4,
-                .top = 4,
-                .bottom = 4,
-            };
+            background_widget.border_width_px = .all(1);
+            background_widget.corner_radii_px = .all(4);
+            background_widget.padding_px = .all(4);
         }
         
         var text_buffer: [32]u8 = undefined;

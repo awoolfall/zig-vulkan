@@ -46,87 +46,97 @@ general_allocator: std.mem.Allocator,
 frame_arena: std.heap.ArenaAllocator,
 frame_allocator: std.mem.Allocator,
 
-pub fn run(alloc: std.mem.Allocator) !void {
-    Log.debug("Engine init!", .{});
-    defer std.log.debug("Engine deinit!", .{});
+pub export fn deinit(self: *Self) void {
+    self.gfx.flush();
 
-    var engine = Self {
-        .window = undefined,
-        .gfx = undefined,
-        .image = undefined,
-        .physics = undefined,
-        .input = undefined,
-        .time = undefined,
-        .debug = undefined,
-        .imui = undefined,
-        .asset_manager = undefined,
-        .app = undefined,
-        .entities = undefined,
-        .exe_path = undefined,
-        .general_allocator = undefined,
-        .frame_arena = undefined,
-        .frame_allocator = undefined,
-    };
+    defer self.general_allocator.destroy(self);
+    defer self.frame_arena.deinit();
+    defer self.general_allocator.free(self.exe_path);
+    defer zmesh.deinit();
+    defer self.time.deinit();
+    defer self.input.deinit();
+    defer self.image.deinit();
+    defer self.window.deinit();
+    defer self.gfx.deinit();
+    defer self.asset_manager.deinit();
+    defer self.imui.deinit();
+    defer self.debug.deinit();
+    defer self.physics.deinit();
+    defer self.entities.deinit();
+    defer self.general_allocator.destroy(self.app);
+    defer self.app.deinit();
+}
+
+pub export fn init_engine(alloc: *std.mem.Allocator) ?*Self {
+    return init(alloc.*) catch return null;
+}
+
+pub fn init(alloc: std.mem.Allocator) !*Self {
+    Log.debug("Engine init!", .{});
+    errdefer std.log.debug("Engine deinit!", .{});
+
+    const engine = try alloc.create(Self);
+    errdefer alloc.destroy(engine);
 
     // set the global engine pointer
-    @import("global_engine.zig").__global_engine = @ptrCast(&engine);
+    @import("global_engine.zig").__global_engine = engine;
 
     engine.general_allocator = alloc;
 
-    engine.frame_arena = std.heap.ArenaAllocator.init(alloc);
-    defer engine.frame_arena.deinit();
+    engine.frame_arena = std.heap.ArenaAllocator.init(engine.general_allocator);
+    errdefer engine.frame_arena.deinit();
     engine.frame_allocator = engine.frame_arena.allocator();
 
-    engine.exe_path = try std.fs.selfExeDirPathAlloc(alloc);
+    engine.exe_path = try std.fs.selfExeDirPathAlloc(engine.general_allocator);
     engine.exe_path = try alloc.realloc(engine.exe_path, engine.exe_path.len + 1);
     engine.exe_path[engine.exe_path.len - 1] = '\\';
-    defer alloc.free(engine.exe_path);
+    errdefer engine.general_allocator.free(engine.exe_path);
 
-    zmesh.init(alloc);
-    defer zmesh.deinit();
+    zmesh.init(engine.general_allocator);
+    errdefer zmesh.deinit();
 
     engine.time = tm.TimeState.init();
-    defer engine.time.deinit();
+    errdefer engine.time.deinit();
 
     Log.debug("Calling Input init", .{});
     engine.input = try in.InputState.init();
-    defer engine.input.deinit();
+    errdefer engine.input.deinit();
 
-    engine.image = try im.ImageLoader.init(alloc);
-    defer engine.image.deinit();
+    engine.image = try im.ImageLoader.init(engine.general_allocator);
+    errdefer engine.image.deinit();
 
     Log.debug("Calling Window init!", .{});
     engine.window = try platform.Window.init();
-    defer engine.window.deinit();
+    errdefer engine.window.deinit();
 
     Log.debug("Calling GFX init!", .{});
-    engine.gfx = try gf.GfxState.init(alloc, &engine.window);
-    defer engine.gfx.deinit();
+    engine.gfx = try gf.GfxState.init(engine.general_allocator, &engine.window);
+    errdefer engine.gfx.deinit();
 
     engine.asset_manager = blk: {
         const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "../../res"});
         defer engine.general_allocator.free(resources_path);
 
-        break :blk try assets.AssetManager.init(alloc, resources_path);
+        break :blk try assets.AssetManager.init(engine.general_allocator, resources_path);
     };
-    defer engine.asset_manager.deinit();
+    errdefer engine.asset_manager.deinit();
 
-    engine.imui = try ui.Imui.init(alloc, &engine.input, &engine.time, &engine.window, &engine.gfx);
-    defer engine.imui.deinit();
+    engine.imui = try ui.Imui.init(engine.general_allocator, &engine.input, &engine.time, &engine.window, &engine.gfx);
+    errdefer engine.imui.deinit();
 
-    engine.debug = try db.Debug.init(alloc, &engine.gfx);
-    defer engine.debug.deinit();
+    engine.debug = try db.Debug.init(engine.general_allocator, &engine.gfx);
+    errdefer engine.debug.deinit();
 
     Log.debug("Calling physics init", .{});
-    engine.physics = try ph.PhysicsSystem.init(alloc, &engine.asset_manager, &engine.gfx);
-    defer engine.physics.deinit();
+    engine.physics = try ph.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager, &engine.gfx);
+    errdefer engine.physics.deinit();
 
-    engine.entities = try EntityList.init(alloc);
-    defer engine.entities.deinit();
+    engine.entities = try EntityList.init(engine.general_allocator);
+    errdefer engine.entities.deinit();
 
     Log.debug("Creating app!", .{});
     engine.app = try engine.general_allocator.create(App);
-    defer engine.general_allocator.destroy(engine.app);
+    errdefer engine.general_allocator.destroy(engine.app);
 
     Log.debug("Engine inited!", .{});
 
@@ -135,10 +145,14 @@ pub fn run(alloc: std.mem.Allocator) !void {
         Log.err("App init failed! Error: {s}", .{@errorName(err)});
         return err;
     };
-    defer engine.app.deinit();
+    errdefer engine.app.deinit();
 
-    engine.window.run(@ptrCast(&engine), &Self.window_event_received);
     engine.gfx.flush();
+    return engine;
+}
+
+pub export fn run(engine: *Self) void {
+    engine.window.run(engine, &Self.window_event_received);
 }
 
 fn pre_app_update(self: *Self) !void {

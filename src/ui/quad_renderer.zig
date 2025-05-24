@@ -4,12 +4,32 @@ const engine = @import("../root.zig");
 const _gfx = engine.gfx;
 const ui = @import("ui.zig");
 
+pub const RectEdges = packed struct {
+    left: u8 = 0,
+    right: u8 = 0,
+    top: u8 = 0,
+    bottom: u8 = 0,
+
+    pub inline fn all(value: u8) RectEdges {
+        return RectEdges { .left = value, .right = value, .top = value, .bottom = value, };
+    }
+
+    pub inline fn lr_tb(left_right: u8, top_bottom: u8) RectEdges {
+        return RectEdges { .left = left_right, .right = left_right, .top = top_bottom, .bottom = top_bottom, };
+    }
+};
+
 pub const CornerRadiiPx = packed struct {
     top_left: u8 = 0,
     top_right: u8 = 0,
     bottom_left: u8 = 0,
     bottom_right: u8 = 0,
+
+    pub inline fn all(value: u8) CornerRadiiPx {
+        return .{ .top_left = value, .top_right = value, .bottom_left = value, .bottom_right = value, };
+    }
 };
+
 
 // -1.0 to 1.0, left and bottom of screen is -1.0, right and top is 1.0
 pub const Bounds = extern struct {
@@ -37,7 +57,7 @@ pub const QuadBufferPixelBuffer = packed struct {
     quad_width_pixels: f32,
     quad_height_pixels: f32,
     corner_radii: CornerRadiiPx,
-    border_width_px: f32,
+    border_width_px: RectEdges,
 
     flags: u32,
     __padding0: u32 = 0,
@@ -150,7 +170,7 @@ pub const QuadRenderer = struct {
     pub const QuadProperties = struct {
         colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
         border_colour: zm.F32x4 = zm.f32x4s(0.0),
-        border_width_px: u32 = 0,
+        border_width_px: RectEdges = .{},
         corner_radii_px: CornerRadiiPx = .{},
         texture: ?QuadPropertiesTexture = null,
         wireframe: bool = false,
@@ -178,7 +198,7 @@ pub const QuadRenderer = struct {
             mapped_buffer.data().* = QuadBufferPixelBuffer {
                 .bg_colour = props.colour,
                 .border_colour = props.border_colour,
-                .border_width_px = @floatFromInt(props.border_width_px),
+                .border_width_px = props.border_width_px,
                 .quad_width_pixels = @floatFromInt(rect_pixels.width),
                 .quad_height_pixels = @floatFromInt(rect_pixels.height),
                 .corner_radii = props.corner_radii_px,

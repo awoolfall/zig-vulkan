@@ -9,12 +9,17 @@ cbuffer pixel_buffer : register(b1)
     float4 border_colour;
     float2 quad_size_px;
     uint packed_corner_radii_px;
-    float border_width_px;
+    uint packed_border_width_px;
     uint flags;
 }
 
 Texture2D quad_texture;
 SamplerState quad_sampler;
+
+inline uint unpack(uint packed_value, uint position)
+{
+    return (packed_value >> (position * 8)) & 0xff;
+}
 
 struct vs_out
 {
@@ -53,32 +58,41 @@ float4 ps_main(vs_out input) : SV_TARGET
 
     // calculate pixels from border with corner radii
     {
-        // top right corner
-        float corner_radii = (packed_corner_radii_px >> (1*8)) & 0xff;
-        if (uvpx.x > quad_size_px.x - corner_radii && uvpx.y > quad_size_px.y - corner_radii) {
-            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-            px_from_border = float2(d, d);
+        float2 cuv_dir = float2(1.0, 1.0);
+        float corner_radius = 0.0;
+
+        if (input.tex_coord.x > 0.5 && input.tex_coord.y > 0.5) {
+            // top right corner
+            corner_radius = unpack(packed_corner_radii_px, 1);
+            cuv_dir = float2(1.0, 1.0);
+        }
+        else if (input.tex_coord.x < 0.5 && input.tex_coord.y > 0.5) {
+            // top left corner
+            corner_radius = unpack(packed_corner_radii_px, 0);
+            cuv_dir = float2(-1.0, 1.0);
+        }
+        else if (input.tex_coord.x > 0.5 && input.tex_coord.y < 0.5) {
+            // bottom right corner
+            corner_radius = unpack(packed_corner_radii_px, 3);
+            cuv_dir = float2(1.0, -1.0);
+        }
+        else if (input.tex_coord.x < 0.5 && input.tex_coord.y < 0.5) {
+            // bottom left corner
+            corner_radius = unpack(packed_corner_radii_px, 2);
+            cuv_dir = float2(-1.0, -1.0);
         }
 
-        // top left corner
-        corner_radii = (packed_corner_radii_px >> (0*8)) & 0xff;
-        if (uvpx.x < corner_radii && uvpx.y > quad_size_px.y - corner_radii) {
-            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-            px_from_border = float2(d, d);
-        }
+        if (corner_radius > 0.0) {
+            float2 corner_origin = (saturate(cuv_dir) * quad_size_px) - (corner_radius * cuv_dir);
+            float2 px = uvpx - corner_origin;
+            float2 cuv = saturate((px / corner_radius) * cuv_dir);
 
-        // bottom right corner
-        corner_radii = (packed_corner_radii_px >> (3*8)) & 0xff;
-        if (uvpx.x > quad_size_px.x - corner_radii && uvpx.y < corner_radii) {
-            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-            px_from_border = float2(d, d);
-        }
-
-        // bottom left corner
-        corner_radii = (packed_corner_radii_px >> (2*8)) & 0xff;
-        if (uvpx.x < corner_radii && uvpx.y < corner_radii) {
-            float d = corner_radii - distance(float2(corner_radii, corner_radii), px_from_border);
-            px_from_border = float2(d, d);
+            float2 cuv2 = cuv * cuv;
+            float2 b = float2(sqrt(1.0 - cuv2.y), sqrt(1.0 - cuv2.x));
+            float2 d = b - cuv;
+            if ((cuv.x * cuv.y) != 0.0) {
+                px_from_border = min(px_from_border, (d * corner_radius) + 0.5);
+            }
         }
     }
 
@@ -97,7 +111,23 @@ float4 ps_main(vs_out input) : SV_TARGET
     }
 
     // border colour
-    float border_alpha = saturate(border_width_px - min_px_from_border + 1.0);
+    float2 uv = input.tex_coord - 0.5;
+    float2 border_widths;
+    if (uv.x < 0.0) {
+        border_widths.x = unpack(packed_border_width_px, 0);
+    }
+    if (uv.x > 0.0) {
+        border_widths.x = unpack(packed_border_width_px, 1);
+    }
+    if (uv.y > 0.0) {
+        border_widths.y = unpack(packed_border_width_px, 2);
+    }
+    if (uv.y < 0.0) {
+        border_widths.y = unpack(packed_border_width_px, 3);
+    }
+
+    float2 border_alphas = saturate(border_widths - px_from_border + 1.0);
+    float border_alpha = max(border_alphas.x, border_alphas.y);
     colour = colour * (1.0 - border_colour.a * border_alpha) + border_colour * border_alpha;
 
     // corner anti-aliasing
