@@ -5,27 +5,36 @@ const _gfx = engine.gfx;
 const ui = @import("ui.zig");
 
 pub const RectEdges = packed struct {
-    left: u8 = 0,
-    right: u8 = 0,
-    top: u8 = 0,
-    bottom: u8 = 0,
+    left: f32 = 0.0,
+    right: f32 = 0.0,
+    bottom: f32 = 0.0,
+    top: f32 = 0.0,
 
-    pub inline fn all(value: u8) RectEdges {
+    pub inline fn all(value: f32) RectEdges {
         return RectEdges { .left = value, .right = value, .top = value, .bottom = value, };
     }
 
-    pub inline fn lr_tb(left_right: u8, top_bottom: u8) RectEdges {
+    pub inline fn lr_tb(left_right: f32, top_bottom: f32) RectEdges {
         return RectEdges { .left = left_right, .right = left_right, .top = top_bottom, .bottom = top_bottom, };
+    }
+
+    pub inline fn from_rect_pixels(rp: ui.RectPixels) RectEdges {
+        return .{ 
+            .left = @floatCast(rp.left),
+            .right = @floatCast(rp.right),
+            .top = @floatCast(rp.top),
+            .bottom = @floatCast(rp.bottom),
+        };
     }
 };
 
 pub const CornerRadiiPx = packed struct {
-    top_left: u8 = 0,
-    top_right: u8 = 0,
-    bottom_left: u8 = 0,
-    bottom_right: u8 = 0,
+    bottom_left: f32 = 0.0,
+    bottom_right: f32 = 0.0,
+    top_left: f32 = 0.0,
+    top_right: f32 = 0.0,
 
-    pub inline fn all(value: u8) CornerRadiiPx {
+    pub inline fn all(value: f32) CornerRadiiPx {
         return .{ .top_left = value, .top_right = value, .bottom_left = value, .bottom_right = value, };
     }
 };
@@ -53,17 +62,14 @@ pub const Bounds = extern struct {
 pub const QuadBufferPixelBuffer = packed struct {
     bg_colour: zm.F32x4,
     border_colour: zm.F32x4,
-    
-    quad_width_pixels: f32,
-    quad_height_pixels: f32,
+
     corner_radii: CornerRadiiPx,
     border_width_px: RectEdges,
 
+    quad_width_pixels: f32,
+    quad_height_pixels: f32,
     flags: u32,
     __padding0: u32 = 0,
-    __padding1: u32 = 0,
-    __padding2: u32 = 0,
-    //__padding3: u32 = 0,
 };
 
 pub const QuadBufferVertexBuffer = extern struct {
