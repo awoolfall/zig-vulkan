@@ -1,7 +1,7 @@
 const std = @import("std");
-const en = @import("../root.zig");
-const ms = en.mesh;
-const pt = en.path;
+const eng = @import("../root.zig");
+const ms = eng.mesh;
+const pt = eng.path;
 const FileWatcher = @import("file_watcher.zig");
 
 pub const ModelAssetPath = union(enum) {
@@ -92,7 +92,7 @@ pub const ModelAsset = struct {
 
         var watcher = switch (self.path) {
             .Path => |p| blk: {
-                const asset_path = try en.engine().asset_manager.resolve_asset_path(alloc, p);
+                const asset_path = try eng.get().asset_manager.resolve_asset_path(alloc, p);
                 defer alloc.free(asset_path);
 
                 break :blk try FileWatcher.init(alloc, asset_path, 500);
@@ -123,17 +123,17 @@ pub const ModelAsset = struct {
     fn load_model(self: *const ModelAssetPath, alloc: std.mem.Allocator) !ms.Model {
         switch (self.*) {
             .Path => |p| {
-                const asset_path = try en.engine().asset_manager.resolve_asset_path(alloc, p);
+                const asset_path = try eng.get().asset_manager.resolve_asset_path(alloc, p);
                 defer alloc.free(asset_path);
 
                 return try ms.Model.init_from_file_assimp(
                     alloc, 
                     pt.Path{ .Absolute = asset_path }, 
-                    &en.engine().gfx
+                    &eng.get().gfx
                 );
             },
             .Plane => |d| {
-                return try ms.Model.plane(alloc, d.slices, d.stacks, &en.engine().gfx);
+                return try ms.Model.plane(alloc, d.slices, d.stacks, &eng.get().gfx);
             },
             .PlaneOnSphere => |d| {
                 return try ms.Model.plane_on_sphere(
@@ -141,7 +141,7 @@ pub const ModelAsset = struct {
                     d.slices, 
                     d.stacks, 
                     d.plane_extent_radians, 
-                    &en.engine().gfx
+                    &eng.get().gfx
                 );
             },
             .HeightMap => |h| {
@@ -150,16 +150,16 @@ pub const ModelAsset = struct {
                     .stacks = h.stacks,
                     .plane_extent_radians = h.plane_extent_radians,
                     .heightmap_scale = h.height_map_scale,
-                }, &en.engine().gfx);
+                }, &eng.get().gfx);
             },
             .Cone => |d| {
-                return try ms.Model.cone(alloc, d.slices, &en.engine().gfx);
+                return try ms.Model.cone(alloc, d.slices, &eng.get().gfx);
             },
             .Sphere => |s| {
-                return try ms.Model.sphere(alloc, s.slices, s.stacks, &en.engine().gfx);
+                return try ms.Model.sphere(alloc, s.slices, s.stacks, &eng.get().gfx);
             },
             .Cube => {
-                return try ms.Model.cube(alloc, &en.engine().gfx);
+                return try ms.Model.cube(alloc, &eng.get().gfx);
             },
         }
     }

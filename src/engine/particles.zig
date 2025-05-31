@@ -3,7 +3,7 @@ const zm = @import("zmath");
 const zn = @import("znoise");
 const Transform = @import("transform.zig");
 const tm = @import("time.zig");
-const en = @import("../root.zig");
+const eng = @import("../root.zig");
 const gf = @import("../gfx/gfx.zig");
 const es = @import("../easings.zig");
 const ms = @import("../engine/mesh.zig");
@@ -42,7 +42,7 @@ pub const ParticleSystem = struct {
 
     vertex_shader: gf.VertexShader,
     pixel_shader: gf.PixelShader,
-    shader_watcher: en.assets.FileWatcher,
+    shader_watcher: eng.assets.FileWatcher,
 
     model_matrix_vertex_buffer: gf.Buffer,
     constant_buffer: gf.Buffer,
@@ -72,24 +72,24 @@ pub const ParticleSystem = struct {
         };
         defer shader_file.close();
 
-        const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator, 1024 * 1024) catch |err| {
+        const shader_hlsl = shader_file.readToEndAlloc(eng.get().general_allocator, 1024 * 1024) catch |err| {
             std.log.err("failed to read file: {}", .{err});
             return error.UnableToRead;
         };
-        defer en.engine().general_allocator.free(shader_hlsl);
+        defer eng.get().general_allocator.free(shader_hlsl);
 
         const shaders = try init_shaders(shader_hlsl);
         const vertex_shader = shaders[0];
         const pixel_shader = shaders[1];
 
-        var shader_watcher = try en.assets.FileWatcher.init(alloc, particle_path, 500);
+        var shader_watcher = try eng.assets.FileWatcher.init(alloc, particle_path, 500);
         errdefer shader_watcher.deinit();
 
         const model_matrix_vertex_buffer = try gf.Buffer.init(
             @sizeOf(VertexBufferData) * settings.max_particles,
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
-            &en.engine().gfx
+            &eng.get().gfx
         );
         errdefer model_matrix_vertex_buffer.deinit();
 
@@ -97,11 +97,11 @@ pub const ParticleSystem = struct {
             @sizeOf(ConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            &en.engine().gfx
+            &eng.get().gfx
         );
         errdefer constant_buffer.deinit();
 
-        var blend_state = gf.BlendState.init(([_]gf.BlendType{.Simple})[0..], &en.engine().gfx) catch unreachable;
+        var blend_state = gf.BlendState.init(([_]gf.BlendType{.Simple})[0..], &eng.get().gfx) catch unreachable;
         errdefer blend_state.deinit();
 
         const particles = try alloc.alloc(?ParticleData, settings.max_particles);
@@ -141,7 +141,7 @@ pub const ParticleSystem = struct {
                 .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
             })[0..],
             .{},
-            &en.engine().gfx
+            &eng.get().gfx
         );
         errdefer vertex_shader.deinit();
         
@@ -149,7 +149,7 @@ pub const ParticleSystem = struct {
             hlsl,
             "ps_main",
             .{},
-            &en.engine().gfx
+            &eng.get().gfx
         );
         errdefer pixel_shader.deinit();
 
@@ -200,11 +200,11 @@ pub const ParticleSystem = struct {
     pub fn update(self: *Self, time: *const tm.TimeState) void {
         if (self.shader_watcher.was_modified_since_last_check()) {
             blk: {
-                const particle_path = std.fs.path.join(en.engine().general_allocator, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" }) catch |err| {
+                const particle_path = std.fs.path.join(eng.get().general_allocator, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" }) catch |err| {
                     std.log.err("failed to join paths: {}", .{err});
                     break :blk;
                 };
-                defer en.engine().general_allocator.free(particle_path);
+                defer eng.get().general_allocator.free(particle_path);
 
                 const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
                     std.log.err("failed to open file: {}", .{err});
@@ -212,11 +212,11 @@ pub const ParticleSystem = struct {
                 };
                 defer shader_file.close();
 
-                const shader_hlsl = shader_file.readToEndAlloc(en.engine().general_allocator, 1024 * 1024) catch |err| {
+                const shader_hlsl = shader_file.readToEndAlloc(eng.get().general_allocator, 1024 * 1024) catch |err| {
                     std.log.err("failed to read file: {}", .{err});
                     break :blk;
                 };
-                defer en.engine().general_allocator.free(shader_hlsl);
+                defer eng.get().general_allocator.free(shader_hlsl);
 
                 const new_shaders = init_shaders(shader_hlsl) catch |err| {
                     std.log.err("failed to reload shaders: {}", .{err});

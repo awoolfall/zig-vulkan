@@ -5,7 +5,7 @@ const Transform = @import("transform.zig");
 const as = @import("../asset/asset.zig");
 const physics = @import("physics.zig");
 const zphy = physics.zphy;
-const engine = @import("../root.zig").engine;
+const eng = @import("../root.zig");
 const Engine = @import("../engine.zig");
 const App = @import("app");
 
@@ -23,11 +23,11 @@ pub const EntitySuperStruct = struct {
         self.app.deinit();
 
         if (self.name) |name| {
-            engine().general_allocator.free(name);
+            eng.get().general_allocator.free(name);
         }
 
         if (self.physics) |*phys| {
-            phys.deinit(&engine().physics);
+            phys.deinit(&eng.get().physics);
             self.physics = null;
         }
     }
@@ -35,7 +35,7 @@ pub const EntitySuperStruct = struct {
     pub fn init_no_physics(desc: EntityDescriptor) !EntitySuperStruct {
         var name: ?[]const u8 = null;
         if (desc.name) |n| {
-            name = try engine().general_allocator.dupe(u8, n);
+            name = try eng.get().general_allocator.dupe(u8, n);
         }
 
         return EntitySuperStruct {
@@ -119,7 +119,7 @@ pub const EntityList = struct {
         const inserted_entity_id = try self.list.insert(entity);
 
         if (desc.physics) |desc_physics| {
-            self.get(inserted_entity_id).?.set_physics(inserted_entity_id, desc_physics, &engine().physics) catch {
+            self.get(inserted_entity_id).?.set_physics(inserted_entity_id, desc_physics, &eng.get().physics) catch {
                 self.list.remove(inserted_entity_id) catch unreachable;
                 return error.FailedToAddPhysics;
             };

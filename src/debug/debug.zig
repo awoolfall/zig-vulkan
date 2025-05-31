@@ -90,7 +90,7 @@ pub const Debug = struct {
     }
 
     pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: *const gfx.RenderTargetView) void {
-        const gfx_state = &@import("../root.zig").engine().gfx;
+        const gfx_state = &@import("../root.zig").get().gfx;
 
         const lines_slice = self.lines.constSlice();
 

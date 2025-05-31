@@ -1,5 +1,5 @@
 const std = @import("std");
-const en = @import("../root.zig");
+const eng = @import("../root.zig");
 const an = @import("../engine/animation.zig");
 const FileWatcher = @import("file_watcher.zig");
 
@@ -13,7 +13,7 @@ pub const AnimationAsset = struct {
         animation_id: u64,
 
         pub fn get_animation(self: *const Self.BaseType) !*an.BoneAnimation {
-            const model = try en.engine().asset_manager.get_asset(ModelAsset, self.base_model);
+            const model = try eng.get().asset_manager.get_asset(ModelAsset, self.base_model);
             if (self.animation_id >= model.animations.len) {
                 return error.AnimationIdOutOfBounds;
             }

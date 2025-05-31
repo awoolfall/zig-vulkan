@@ -2,8 +2,7 @@ const std = @import("std");
 pub const zphy = @import("zphysics");
 const zm = @import("zmath");
 pub const BodyId = zphy.BodyId;
-const en = @import("../root.zig");
-const engine = en.engine;
+const eng = @import("../root.zig");
 const ms = @import("../engine/mesh.zig");
 const as = @import("../asset/asset.zig");
 const tm = @import("../engine/time.zig");
@@ -99,8 +98,8 @@ pub const PhysicsSystem = struct {
     }
 
     pub fn update(self: *Self) void {
-        const entity_list = &engine().entities;
-        const time = &engine().time;
+        const entity_list = &eng.get().entities;
+        const time = &eng.get().time;
 
         // find out how many times we need to update to hit UpdateRateHz
         const ns_since_with_offset = time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
@@ -140,7 +139,7 @@ pub const PhysicsSystem = struct {
             }
         }
 
-        const delta_time: f32 = (1.0 / UpdateRateHz) * @as(f32, @floatCast(engine().time.time_scale));
+        const delta_time: f32 = (1.0 / UpdateRateHz) * @as(f32, @floatCast(eng.get().time.time_scale));
 
         // Update at UpdateRateHz, this may happen zero or more than one times before returning
         for (0..@intCast(times_to_update)) |_| {
@@ -314,7 +313,7 @@ pub const PhysicsSystem = struct {
         return ret;
     }
 
-    pub fn construct_entity_user_data(generational_idx: en.gen.GenerationalIndex, additional_data: u16) u64 {
+    pub fn construct_entity_user_data(generational_idx: eng.gen.GenerationalIndex, additional_data: u16) u64 {
         var ret: u64 = 0x00;
         ret |= @as(u64, @intCast(generational_idx.index));
         ret |= @as(u64, @intCast(generational_idx.generation)) << 32;
@@ -322,9 +321,9 @@ pub const PhysicsSystem = struct {
         return ret;
     }
 
-    pub fn extract_entity_from_user_data(user_data: u64) struct{ entity: en.gen.GenerationalIndex, additional_data: u16 } {
+    pub fn extract_entity_from_user_data(user_data: u64) struct{ entity: eng.gen.GenerationalIndex, additional_data: u16 } {
         return .{
-            .entity = en.gen.GenerationalIndex {
+            .entity = eng.gen.GenerationalIndex {
                 .index = @intCast(user_data & 0xffffffff),
                 .generation = @intCast((user_data >> 32) & 0xffff),
             },

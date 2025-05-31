@@ -31,7 +31,7 @@ pub const window = @import("window.zig");
 
 pub const serialize = @import("serialize/serialize.zig");
 
-pub fn engine() *Engine {
+pub fn get() *Engine {
     return @import("global_engine.zig").__global_engine;
 }
 

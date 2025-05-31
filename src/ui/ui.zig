@@ -954,8 +954,8 @@ pub const Imui = struct {
             .width = @intFromFloat(@ceil(scissor_rect.width())),
             .height = @intFromFloat(@ceil(scissor_rect.height())),
         };
-        engine.engine().gfx.cmd_set_scissor_rect(scissor);
-        defer engine.engine().gfx.cmd_set_scissor_rect(null);
+        engine.get().gfx.cmd_set_scissor_rect(scissor);
+        defer engine.get().gfx.cmd_set_scissor_rect(null);
 
         if (widget.flags.render_quad) {
             const quad_texture_props = blk: { 
@@ -979,7 +979,7 @@ pub const Imui = struct {
                     .texture = quad_texture_props,
                 },
                 rtv.*,
-                &engine.engine().gfx
+                &engine.get().gfx
             );
         }
 
@@ -1000,7 +1000,7 @@ pub const Imui = struct {
                     .pixel_height = text.size,
                 },
                 rtv.*,
-                &engine.engine().gfx
+                &engine.get().gfx
             );
         }
     }
@@ -1023,7 +1023,7 @@ pub const Imui = struct {
             // widget_scissor.height = @min(widget_scissor.top + widget_scissor.height, parent_scissor.top + parent_scissor.height) - widget_scissor.top;
 
             // expand scissor if overflow is allowed
-            const swapchain_size = engine.engine().gfx.swapchain_size;
+            const swapchain_size = engine.get().gfx.swapchain_size;
             if (widget.flags.allows_overflow_x) {
                 widget_scissor.right = @floatFromInt(swapchain_size.width);
                 widget_scissor.left = 0;
@@ -1045,7 +1045,7 @@ pub const Imui = struct {
             scissor.bottom = @min(scissor.bottom, parent_scissor.bottom);
 
             // expand scissor if overflow is allowed
-            const swapchain_size = engine.engine().gfx.swapchain_size;
+            const swapchain_size = engine.get().gfx.swapchain_size;
             if (widget.flags.allows_overflow_x) {
                 scissor.right = @floatFromInt(swapchain_size.width);
                 scissor.left = 0;
@@ -1080,7 +1080,7 @@ pub const Imui = struct {
         //         .wireframe = true,
         //     },
         //     rtv.*,
-        //     &engine.engine().gfx
+        //     &engine.get().gfx
         // );
 
         if (widget.first_child) |c| {
@@ -1099,8 +1099,8 @@ pub const Imui = struct {
         const screen_scissor = RectPixels {
             .left = 0.0,
             .top = 0.0,
-            .right = @floatFromInt(engine.engine().gfx.swapchain_size.width),
-            .bottom = @floatFromInt(engine.engine().gfx.swapchain_size.height),
+            .right = @floatFromInt(engine.get().gfx.swapchain_size.width),
+            .bottom = @floatFromInt(engine.get().gfx.swapchain_size.height),
         };
         const render_palette = self.palette();
 
@@ -1350,16 +1350,22 @@ pub const Imui = struct {
             w.flags.clickable = true;
             w.flags.render = true;
             w.active_t_timescale = 0.05;
-            w.margin_px = .{
-                .top = @floatCast((std.math.sin(engine.engine().time.time_since_start_of_app() + @as(f64, @floatFromInt(w.key & 0xffff))) + 1.0) * 10.0),
-                .bottom = @floatCast((2.0 - (std.math.sin(engine.engine().time.time_since_start_of_app() + @as(f64, @floatFromInt(w.key & 0xffff))) + 1.0)) * 10.0),
-            };
-            // if (self.get_widget_from_last_frame(box_layout)) |lw| {
-            //     w.margin_px = .{
-            //         .top = es.ease_out_expo(lw.active_t) * 3.0,
-            //         .bottom = (1.0 - es.ease_out_expo(lw.active_t)) * 3.0,
-            //     };
-            // }
+            // w.margin_px = .{
+            //     .top = @floatCast((std.math.sin(engine.get().time.time_since_start_of_app() + @as(f64, @floatFromInt(w.key & 0xffff))) + 1.0) * 10.0),
+            //     .bottom = @floatCast((2.0 - (std.math.sin(engine.get().time.time_since_start_of_app() + @as(f64, @floatFromInt(w.key & 0xffff))) + 1.0)) * 10.0),
+            // };
+            if (self.get_widget_from_last_frame(box_layout)) |lw| {
+                w.margin_px = .{
+                    .top = es.ease_out_expo(lw.active_t) * 3.0,
+                    //.bottom = (1.0 - es.ease_out_expo(lw.active_t)) * 3.0,
+                };
+                w.border_width_px = .{
+                    .left = 1,
+                    .right = 1,
+                    .top = 1,
+                    .bottom = 1.0 + (1.0 - es.ease_out_expo(lw.active_t)) * 3.0,
+                };
+            }
         }
 
         const label_id = self.label(text);
@@ -2134,7 +2140,7 @@ pub const Imui = struct {
 
         // close the dropdown if the mouse is clicked anywhere
         // unless the primary combobox was clicked
-        if (!clicked_on_widget and engine.engine().input.get_key_down(engine.input.KeyCode.MouseLeft)) {
+        if (!clicked_on_widget and engine.get().input.get_key_down(engine.input.KeyCode.MouseLeft)) {
             data.dropdown_is_open = false;
         }
 
@@ -2177,7 +2183,7 @@ pub const Imui = struct {
 
         var background_signals = self.generate_widget_signals(background);
         if (background_signals.dragged) {
-            value.* += engine.engine().input.mouse_delta[0] * settings.scale;
+            value.* += engine.get().input.mouse_delta[0] * settings.scale;
             background_signals.data_changed = true;
         }
 

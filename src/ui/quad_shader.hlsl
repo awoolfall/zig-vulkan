@@ -49,10 +49,6 @@ vs_out vs_main(uint vertId : SV_VertexID)
     return output;
 }
 
-float ease_sin(float x) {
-    return -(cos(3.14159 * x) - 1.0) / 2.0;
-}
-
 float4 ps_main(vs_out input) : SV_TARGET
 {
     float2 uvpx = input.tex_coord.xy * quad_size_px;
@@ -71,14 +67,10 @@ float4 ps_main(vs_out input) : SV_TARGET
     float2 c_px = uvpx - corner_origin;
     float2 c_uv = saturate((c_px / corner_radius) * cuv_dir);
 
-    //float2 c_uv2 = c_uv * c_uv;
-    //float2 b = float2(sqrt(1.0 - c_uv2.y), sqrt(1.0 - c_uv2.x));
-    //float2 d = b - c_uv;
-    if ((c_uv.x * c_uv.y) != 0.0) {
-        //px_from_border = min(px_from_border, (d * corner_radius) + 0.5);
-        px_from_border.x = (1.0 - length(c_uv)) * corner_radius + 0.5;
-        px_from_border.y = px_from_border.x;
-    }
+    float2 c_uv2 = c_uv * c_uv;
+    float2 b = 1.0 - float2(sqrt(1.0 - c_uv2.y), sqrt(1.0 - c_uv2.x));
+    px_from_border -= (b * corner_radius);
+    float2 d = b - c_uv;
 
     float min_px_from_border = min(px_from_border.x, px_from_border.y);
     // cull if outside of quad
@@ -99,16 +91,8 @@ float4 ps_main(vs_out input) : SV_TARGET
         unpack(packed_border_width_px, quad.x),
         unpack(packed_border_width_px, 2 + quad.y)
     );
-    float angle = atan2(c_uv.y, c_uv.x);
-    float perc = 1.0 - (angle / 1.5707);
-
-    float2 border_widths = bw;
-    if ((c_uv.x * c_uv.y) != 0.0) {
-        float bwa = bw.x * ease_sin(perc) + bw.y * (1.0 - ease_sin(perc));
-        border_widths = float2(bwa, bwa);
-    }
-    float2 border_alphas = saturate(border_widths - px_from_border + saturate(px_from_border));
-    float border_alpha = max(border_alphas.x, border_alphas.y);
+    float2 ba = saturate(bw - px_from_border + saturate(px_from_border));
+    float border_alpha = max(ba.x, ba.y);
 
     colour = colour * (1.0 - border_colour.a * border_alpha) + border_colour * border_alpha;
 

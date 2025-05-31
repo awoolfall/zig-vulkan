@@ -1,5 +1,5 @@
 const std = @import("std");
-const en = @import("../root.zig");
+const eng = @import("../root.zig");
 
 pub fn AssetId(comptime AssetType: type) type {
     const SerializeSplitChar = '|';
@@ -12,7 +12,7 @@ pub fn AssetId(comptime AssetType: type) type {
         }
 
         pub fn serialize(self: *const AssetId(AssetType), alloc: std.mem.Allocator) ![]u8 {
-            const asset_manager = &en.engine().asset_manager;
+            const asset_manager = &eng.get().asset_manager;
 
             const pack = asset_manager.asset_packs.getPtr(self.pack_id) orelse return error.AssetPackNotLoaded;
             const asset_hashmap = try pack.get_asset_hashmap(AssetType);

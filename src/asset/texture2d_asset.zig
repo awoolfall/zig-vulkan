@@ -1,8 +1,8 @@
 const std = @import("std");
-const en = @import("../root.zig");
-const im = en.image;
-const gf = en.gfx;
-const pt = en.path;
+const eng = @import("../root.zig");
+const im = eng.image;
+const gf = eng.gfx;
+const pt = eng.path;
 const FileWatcher = @import("file_watcher.zig");
 
 pub const Texture2dPath = union(enum) {
@@ -60,7 +60,7 @@ pub const Texture2dAsset = struct {
 
         var watcher = switch (self.path) {
             .Path => |p| blk: {
-                const asset_path = try en.engine().asset_manager.resolve_asset_path(alloc, p);
+                const asset_path = try eng.get().asset_manager.resolve_asset_path(alloc, p);
                 defer alloc.free(asset_path);
 
                 break :blk try FileWatcher.init(alloc, asset_path, 500);
@@ -97,7 +97,7 @@ pub const Texture2dAsset = struct {
     pub fn load_texture(alloc: std.mem.Allocator, path: *const Texture2dPath) !gf.Texture2D {
         switch (path.*) {
             .Path => |p| {
-                const asset_path = try en.engine().asset_manager.resolve_asset_path(alloc, p);
+                const asset_path = try eng.get().asset_manager.resolve_asset_path(alloc, p);
                 defer alloc.free(asset_path);
 
                 var image = im.ImageLoader.load_from_file(
@@ -137,7 +137,7 @@ pub const Texture2dAsset = struct {
                     .{ .ShaderResource = true, },
                     .{},
                     image.data,
-                    &en.engine().gfx
+                    &eng.get().gfx
                 );
             },
         }
