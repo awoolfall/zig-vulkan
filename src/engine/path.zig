@@ -1,12 +1,41 @@
 const std = @import("std");
+const eng = @import("../root.zig");
 
-pub const Path = union(enum) {
+pub const PathOption = union(enum) {
     ExeRelative: []const u8,
     CwdRelative: []const u8,
     Absolute: []const u8,
+    Asset: []const u8,
+};
+
+pub const Path = struct {
+    arena: std.heap.ArenaAllocator,
+    path: PathOption,
+
+    pub fn deinit(self: *const Path) void {
+        self.arena.deinit();
+    }
+
+    pub fn init(alloc: std.mem.Allocator, option: PathOption) !Path {
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        errdefer arena.deinit();
+
+        const aalloc = arena.allocator();
+        const owned_option = switch (option) {
+            .ExeRelative => |e| PathOption{ .ExeRelative = try aalloc.dupe(u8, e) },
+            .CwdRelative => |e| PathOption{ .CwdRelative = try aalloc.dupe(u8, e) },
+            .Absolute => |e| PathOption{ .Absolute = try aalloc.dupe(u8, e) },
+            .Asset => |e| PathOption{ .Asset = try aalloc.dupe(u8, e) },
+        };
+
+        return Path {
+            .arena = arena,
+            .path = owned_option,
+        };
+    }
 
     pub fn resolve_path(self: *const Path, alloc: std.mem.Allocator) ![]u8 {
-        switch (self.*) {
+        switch (self.path) {
             .ExeRelative => |v| {
                 const exe_path = try std.fs.selfExeDirPathAlloc(alloc);
                 defer alloc.free(exe_path);
@@ -15,6 +44,7 @@ pub const Path = union(enum) {
             },
             .CwdRelative => |v| { return try alloc.dupe(u8, v); },
             .Absolute => |v| { return try alloc.dupe(u8, v); }, 
+            .Asset => |v| { return try eng.get().asset_manager.resolve_asset_path(alloc, v); }, 
         }
     }
 
@@ -22,11 +52,7 @@ pub const Path = union(enum) {
         const resolved_path = try self.resolve_path(alloc);
         defer alloc.free(resolved_path);
 
-        const sentinel_path = try alloc.alloc(u8, resolved_path.len + 1);
-        @memcpy(sentinel_path[0..resolved_path.len], resolved_path[0..]);
-        sentinel_path[sentinel_path.len - 1] = 0;
-
-        return sentinel_path[0..resolved_path.len:0];
+        return try alloc.dupeZ(u8, resolved_path);
     }
 };
 

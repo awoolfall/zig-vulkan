@@ -67,15 +67,15 @@ pub const FontEnum = enum(usize) {
     Geist,
     Count,
 
-    fn font_paths(font_enum: FontEnum) struct {json: path.Path, png: path.Path} {
+    fn font_paths(font_enum: FontEnum, alloc: std.mem.Allocator) !struct {json: path.Path, png: path.Path} {
         switch (font_enum) {
             FontEnum.GeistMono => return .{
-                .json = path.Path{.ExeRelative = "../../res/GeistMono-Regular.json"},
-                .png = path.Path{.ExeRelative = "../../res/GeistMono-Regular.png"},
+                .json = try path.Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.json"}),
+                .png = try path.Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.png"}),
             },
             FontEnum.Geist => return .{
-                .json = path.Path{.ExeRelative = "../../res/Geist-Regular.json"},
-                .png = path.Path{.ExeRelative = "../../res/Geist-Regular.png"},
+                .json = try path.Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.json"}),
+                .png = try path.Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.png"}),
             },
             FontEnum.Count => unreachable,
         }
@@ -414,7 +414,13 @@ pub const Imui = struct {
         }
     }
 
-    pub fn init(alloc: std.mem.Allocator, input: *const in.InputState, time: *const tm.TimeState, window: *const platform.Window, gfx: *_gfx.GfxState) !Self {
+    pub fn init(
+        alloc: std.mem.Allocator, 
+        input: *const in.InputState, 
+        time: *const tm.TimeState, 
+        window: *const platform.Window, 
+        gfx: *_gfx.GfxState
+    ) !Self {
         var scuffed_x_image = try zstbi.Image.loadFromFile("res/scuffed_x.png", 4);
         defer scuffed_x_image.deinit();
 
@@ -441,7 +447,10 @@ pub const Imui = struct {
         var fonts: [@intFromEnum(FontEnum.Count)]font.Font = [_]font.Font{undefined} ** @intFromEnum(FontEnum.Count);
         for (0..@intFromEnum(FontEnum.Count)) |idx| {
             const font_enum = @as(FontEnum, @enumFromInt(idx));
-            const font_paths = font_enum.font_paths();
+
+            const font_paths = try font_enum.font_paths(alloc);
+            defer { font_paths.json.deinit(); font_paths.png.deinit(); }
+
             const font_obj = try font.Font.init(
                 alloc,
                 font_paths.json,

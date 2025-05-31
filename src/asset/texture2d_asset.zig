@@ -97,12 +97,12 @@ pub const Texture2dAsset = struct {
     pub fn load_texture(alloc: std.mem.Allocator, path: *const Texture2dPath) !gf.Texture2D {
         switch (path.*) {
             .Path => |p| {
-                const asset_path = try eng.get().asset_manager.resolve_asset_path(alloc, p);
-                defer alloc.free(asset_path);
+                const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
+                defer asset_path.deinit();
 
                 var image = im.ImageLoader.load_from_file(
                     alloc, 
-                    pt.Path{ .Absolute = asset_path }, 
+                    asset_path,
                     .{}
                 ) catch |err| {
                     std.log.err("Failed to load texture '{s}': {}", .{ p, err });

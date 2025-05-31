@@ -123,12 +123,12 @@ pub const ModelAsset = struct {
     fn load_model(self: *const ModelAssetPath, alloc: std.mem.Allocator) !ms.Model {
         switch (self.*) {
             .Path => |p| {
-                const asset_path = try eng.get().asset_manager.resolve_asset_path(alloc, p);
-                defer alloc.free(asset_path);
+                const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
+                defer asset_path.deinit();
 
                 return try ms.Model.init_from_file_assimp(
                     alloc, 
-                    pt.Path{ .Absolute = asset_path }, 
+                    asset_path,
                     &eng.get().gfx
                 );
             },

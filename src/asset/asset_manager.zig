@@ -55,7 +55,7 @@ pub fn unload_asset_pack(self: *Self, asset_pack_id: u64) !void {
     asset_pack.unload();
 }
 
-pub fn resolve_asset_path(self: *const Self, alloc: std.mem.Allocator, path: []const u8) ![]const u8 {
+pub fn resolve_asset_path(self: *const Self, alloc: std.mem.Allocator, path: []const u8) ![]u8 {
     if (std.fs.path.isAbsolute(path)) {
         return try alloc.dupe(u8, path);
     } else {
