@@ -1,7 +1,7 @@
 const std = @import("std");
 const zstbi = @import("zstbi");
 const zm = @import("zmath");
-const engine = @import("../root.zig");
+const engine = @import("self");
 const _gfx = engine.gfx;
 const tm = engine.time;
 const in = engine.input;
@@ -12,55 +12,7 @@ const path = engine.path;
 pub const font = @import("font.zig");
 pub const qr = @import("quad_renderer.zig");
 const QuadRenderer = qr.QuadRenderer;
-
-// pixels, top left of screen is 0, 0. moving down and right increases
-pub const RectPixels = struct {
-    left: f32 = 0.0,
-    top: f32 = 0.0,
-    right: f32 = 0.0,
-    bottom: f32 = 0.0,
-
-    pub inline fn all(v: f32) RectPixels {
-        return .{ .left = v, .right = v, .top = v, .bottom = v, };
-    }
-
-    pub inline fn lr_tb(lr: f32, tb: f32) RectPixels {
-        return .{ .left = lr, .right = lr, .top = tb, .bottom = tb, };
-    }
-
-    pub inline fn translate(self: *const RectPixels, x: i32, y: i32) RectPixels {
-        return RectPixels {
-            .left = self.left + x,
-            .top = self.top + y,
-            .right = self.right,
-            .bottom = self.bottom,
-        };
-    }
-
-    pub inline fn resize(self: *const RectPixels, x: i32, y: i32) RectPixels {
-        return RectPixels {
-            .left = self.left,
-            .top = self.top,
-            .right = self.right + x,
-            .bottom = self.bottom + y,
-        };
-    }
-
-    pub fn contains(self: *const RectPixels, coord: [2]f32) bool {
-        return  coord[0] >= self.left and
-                coord[0] <= self.right and
-                coord[1] >= self.top and
-                coord[1] <= self.bottom;
-    }
-
-    pub inline fn width(self: *const RectPixels) f32 {
-        return @abs(self.right - self.left);
-    }
-
-    pub inline fn height(self: *const RectPixels) f32 {
-        return @abs(self.top - self.bottom);
-    }
-};
+const RectPixels = engine.Rect;
 
 pub const FontEnum = enum(usize) {
     GeistMono = 0,
@@ -957,13 +909,7 @@ pub const Imui = struct {
         scissor_rect: RectPixels,
         render_palette: Palette
     ) void {
-        const scissor = _gfx.RectPixels {
-            .left = @intFromFloat(@floor(scissor_rect.left)),
-            .top = @intFromFloat(@floor(scissor_rect.top)),
-            .width = @intFromFloat(@ceil(scissor_rect.width())),
-            .height = @intFromFloat(@ceil(scissor_rect.height())),
-        };
-        engine.get().gfx.cmd_set_scissor_rect(scissor);
+        engine.get().gfx.cmd_set_scissor_rect(scissor_rect);
         defer engine.get().gfx.cmd_set_scissor_rect(null);
 
         if (widget.flags.render_quad) {

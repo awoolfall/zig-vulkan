@@ -4,6 +4,7 @@ const _gfx = @import("../gfx/gfx.zig");
 const zm = @import("zmath");
 const ui = @import("ui.zig");
 const path = @import("../engine/path.zig");
+const RectPixels = @import("../root.zig").Rect;
 
 pub const AtlasDetails = struct {
     distance_range: f32,
@@ -393,7 +394,7 @@ pub const Font = struct {
         self: *const Font,
         text: []const u8,
         pixel_height: f32,
-    ) ui.RectPixels {
+    ) RectPixels {
         var line_count: f32 = 0.0;
         var x_loc: f32 = 0.0;
 
@@ -420,7 +421,7 @@ pub const Font = struct {
         }
 
         const top = -self.font_metrics.ascender * pixel_height;
-        return ui.RectPixels {
+        return RectPixels {
             .left = 0,
             .top = -self.font_metrics.ascender * pixel_height,
             .right = max_x * pixel_height,

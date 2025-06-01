@@ -3,6 +3,7 @@ const zm = @import("zmath");
 const engine = @import("../root.zig");
 const _gfx = engine.gfx;
 const ui = @import("ui.zig");
+const RectPixels = @import("../root.zig").Rect;
 
 pub const RectEdges = packed struct {
     left: f32 = 0.0,
@@ -18,7 +19,7 @@ pub const RectEdges = packed struct {
         return RectEdges { .left = left_right, .right = left_right, .top = top_bottom, .bottom = top_bottom, };
     }
 
-    pub inline fn from_rect_pixels(rp: ui.RectPixels) RectEdges {
+    pub inline fn from_rect_pixels(rp: RectPixels) RectEdges {
         return .{ 
             .left = @floatCast(rp.left),
             .right = @floatCast(rp.right),
@@ -47,7 +48,7 @@ pub const Bounds = extern struct {
     right: f32 = 0.0,
     top: f32 = 0.0,
 
-    pub fn from_rect(rect: ui.RectPixels, max_width: f32, max_height: f32) Bounds {
+    pub fn from_rect(rect: RectPixels, max_width: f32, max_height: f32) Bounds {
         const top_left = ui.position_pixels_to_screen_space(rect.left, rect.top, max_width, max_height);
         const bottom_right = ui.position_pixels_to_screen_space(rect.right, rect.bottom, max_width, max_height);
         return Bounds {
@@ -184,7 +185,7 @@ pub const QuadRenderer = struct {
 
     pub fn render_quad(
         self: *QuadRenderer,
-        rect_pixels: ui.RectPixels,
+        rect_pixels: RectPixels,
         props: QuadProperties,
         rtv: _gfx.RenderTargetView, 
         gfx: *_gfx.GfxState,

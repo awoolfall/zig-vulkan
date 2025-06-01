@@ -9,6 +9,7 @@ const wb = @import("../../window.zig");
 const win32window = @import("../../platform/windows.zig");
 const path = @import("../../engine/path.zig");
 const bloom = @import("../bloom.zig");
+const RectPixels = @import("../../root.zig").Rect;
 
 inline fn is_dbg() bool {
     return (builtin.mode == std.builtin.Mode.Debug);
@@ -47,7 +48,7 @@ pub const GfxStateD3D11 = struct {
 
     render_state: struct {
         rasterization_desc: gf.RasterizationStateDesc = .{},
-        scissor_rect: ?gf.RectPixels = null,
+        scissor_rect: ?RectPixels = null,
     } = .{},
 
     const enable_debug_layers = true;
@@ -334,18 +335,13 @@ pub const GfxStateD3D11 = struct {
         self.context.RSSetViewports(1, @ptrCast(&d3d11_viewport));
     }
 
-    pub inline fn cmd_set_scissor_rect(self: *Self, scissor: ?gf.RectPixels) void {
+    pub inline fn cmd_set_scissor_rect(self: *Self, scissor: ?RectPixels) void {
         self.render_state.scissor_rect = scissor;
     }
 
     fn apply_scissor_rect(self: *Self) void {
         if (self.render_state.scissor_rect) |s| {
-            self.context.RSSetScissorRects(1, @ptrCast(&d3d11.RECT {
-                .left = s.left,
-                .top = s.top,
-                .right = s.left + s.width,
-                .bottom = s.top + s.height,
-            }));
+            self.context.RSSetScissorRects(1, @ptrCast(&rect_to_d3d11(s)));
         } else {
         }
     }
@@ -1683,3 +1679,11 @@ pub const BlendStateD3D11 = struct {
     }
 };
 
+inline fn rect_to_d3d11(rect: RectPixels) d3d11.RECT {
+    return .{
+        .left = @intFromFloat(@round(rect.left)),
+        .right = @intFromFloat(@round(rect.right)),
+        .top = @intFromFloat(@round(rect.top)),
+        .bottom = @intFromFloat(@round(rect.bottom)),
+    };
+}

@@ -3,14 +3,15 @@ const builtin = @import("builtin");
 
 pub const GraphicsBackend = enum {
     Direct3D11,
-    OpenGL,
+    Vulkan,
+    OpenGL_ES3,
     Noop,
 };
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -29,16 +30,14 @@ pub fn build(b: *std.Build) void {
         .windows => .Direct3D11,
         else => .Noop,
     };
-    std.log.info("Defaulting to {} backend", .{default_backend});
+    const graphics_backend = b.option(GraphicsBackend, "graphics_backend", "Graphics backend to use")
+        orelse default_backend;
+    std.log.info("Graphics backend is {}", .{graphics_backend});
 
     const options = b.addOptions();
     options.addOption(u32, "engine_gitrev", find_git_revision((std.Build.LazyPath { .cwd_relative = ".", }).getPath(b)));
     options.addOption(bool, "engine_gitchanged", find_git_changed((std.Build.LazyPath { .cwd_relative = ".", }).getPath(b)));
-    options.addOption(GraphicsBackend, "graphics_backend", b.option(
-        GraphicsBackend,
-        "graphics_backend", 
-        "Graphics backend to use",
-    ) orelse default_backend);
+    options.addOption(GraphicsBackend, "graphics_backend", graphics_backend);
     // TODO: remove this in a distribution build
     options.addOption([]const u8, "engine_src_path", b.pathFromRoot("src"));
 
@@ -48,6 +47,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "build_options", .module = options.createModule() },
         },
     });
+    engine.addImport("self", engine);
 
     // declare app module, this is imported from the super project
     engine.addImport("app", b.createModule(.{}));
@@ -60,10 +60,25 @@ pub fn build(b: *std.Build) void {
         // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
         // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
         // try @import("zwin32").install_directml(&tests.step, .bin, zwin32_path);
-    } else {
-        const zopengl = b.dependency("zopengl", .{
-        });
-        engine.addImport("zopengl", zopengl.module("root"));
+    }
+
+    switch (graphics_backend) {
+        .Direct3D11 => {
+            std.debug.assert(os == .windows);
+        },
+        .Vulkan => {
+            const env_map = try std.process.getEnvMap(b.allocator);
+            if (env_map.get("VK_SDK_PATH")) |path| {
+                engine.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Lib", .{ path }) catch @panic("OOM") });
+                engine.addIncludePath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Include", .{ path }) catch @panic("OOM") });
+            }
+        },
+        .OpenGL_ES3 => {
+            const zopengl = b.dependency("zopengl", .{
+            });
+            engine.addImport("zopengl", zopengl.module("root"));
+        },
+        else => {},
     }
 
     const zmath = b.dependency("zmath", .{

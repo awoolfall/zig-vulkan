@@ -9,7 +9,8 @@ pub const Window = switch (builtin.os.tag) {
 
 pub const GfxPlatform = switch (graphics_backend) {
     .Direct3D11 => @import("../gfx/platform/d3d11.zig").GfxStateD3D11,
-    .OpenGL => @compileError("Not yet implemented"),
+    .Vulkan => @import("../gfx/platform/vulkan.zig").GfxStateVulkan,
+    .OpenGL_ES3 => @compileError("Not yet implemented"),
     .Noop => @import("../gfx/platform/noop.zig").GfxStateNoop,
 };
 
