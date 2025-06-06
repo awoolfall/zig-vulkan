@@ -4,6 +4,7 @@ const vkt = @import("vulkan_error.zig").vulkan_result_to_zig_error;
 const std = @import("std");
 const zm = @import("zmath");
 const eng = @import("self");
+const slang = @import("slang");
 const gf = eng.gfx;
 const pl = eng.platform;
 const Rect = eng.Rect;
@@ -85,6 +86,17 @@ pub const GfxStateVulkan = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
+        const slang_global = slang.c.initialise();
+        defer slang.c.deinitialise(slang_global);
+
+        const session_create_info = slang.c.SessionCreateInfo {
+            .compile_target = slang.c.TARGET_SPIRV,
+            .profile = "spirv-5.0",
+        };
+
+        const slang_session = try slang.check(slang.c.create_session(slang_global, session_create_info));
+        defer slang.c.destroy_session(slang_session);
+
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));
         std.log.info("vulkan version is {}.{}.{}", .{

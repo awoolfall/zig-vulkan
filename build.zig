@@ -117,6 +117,11 @@ pub fn build(b: *std.Build) !void {
     engine.addImport("assimp", assimp_module.module("root"));
     engine.linkLibrary(assimp_module.artifact("assimp"));
 
+    const slang_module = b.dependency("slang", .{
+    });
+    engine.addImport("slang", slang_module.module("root"));
+    engine.linkLibrary(slang_module.artifact("slang"));
+
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{

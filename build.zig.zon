@@ -9,6 +9,7 @@
         .zstbi = .{ .path = "libs/zstbi" },
         .znoise = .{ .path = "libs/znoise" },
         .assimp = .{ .path = "libs/assimp" },
+        .slang = .{ .path = "libs/slang" },
     },
     .paths = .{
         "build.zig",
