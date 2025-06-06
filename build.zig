@@ -27,7 +27,8 @@ pub fn build(b: *std.Build) !void {
     std.log.info("Target OS: {s}", .{@tagName(os)});
 
     const default_backend: GraphicsBackend = switch (os) {
-        .windows => .Direct3D11,
+        //.windows => .Direct3D11,
+        .windows => .Vulkan,
         else => .Noop,
     };
     const graphics_backend = b.option(GraphicsBackend, "graphics_backend", "Graphics backend to use")
@@ -46,6 +47,7 @@ pub fn build(b: *std.Build) !void {
         .imports = &.{
             .{ .name = "build_options", .module = options.createModule() },
         },
+        .target = target,
     });
     engine.addImport("self", engine);
 
@@ -72,6 +74,8 @@ pub fn build(b: *std.Build) !void {
                 engine.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Lib", .{ path }) catch @panic("OOM") });
                 engine.addIncludePath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Include", .{ path }) catch @panic("OOM") });
             }
+
+            engine.linkSystemLibrary("vulkan-1", .{});
         },
         .OpenGL_ES3 => {
             const zopengl = b.dependency("zopengl", .{

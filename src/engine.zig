@@ -68,7 +68,7 @@ pub export fn deinit(self: *Self) void {
 }
 
 pub export fn init_engine(alloc: *std.mem.Allocator) ?*Self {
-    return init(alloc.*) catch return null;
+    return init(alloc.*) catch unreachable;
 }
 
 pub fn init(alloc: std.mem.Allocator) !*Self {
