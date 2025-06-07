@@ -91,11 +91,80 @@ pub const GfxStateVulkan = struct {
 
         const session_create_info = slang.c.SessionCreateInfo {
             .compile_target = slang.c.TARGET_SPIRV,
-            .profile = "spirv-5.0",
+            .profile = "spirv_1_6",
         };
 
         const slang_session = try slang.check(slang.c.create_session(slang_global, session_create_info));
         defer slang.c.destroy_session(slang_session);
+
+        const diagnostics_blob = try slang.check(slang.c.create_blob());
+        defer slang.c.destroy_blob(diagnostics_blob);
+
+        const module_create_info = slang.c.ModuleCreateInfo {
+            .module_name = "test",
+            .shader_source = \\
+            \\ [shader("pixel")]
+            \\ float4 px_main() {
+            \\   return float4(1.0, 2.0, 3.0, 1.0);
+            \\ }
+            ,
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        const slang_module = slang.check(slang.c.create_and_load_module(slang_session, module_create_info)) catch {
+            std.log.info("slang error creating module: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToCreateSlangModule;
+        };
+        defer slang.c.destroy_module(slang_module);
+
+        const entry_point_create_info = slang.c.EntryPointCreateInfo {
+            .entry_point_name = "px_main",
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        const slang_entry_point = slang.check(slang.c.find_and_create_entry_point(slang_module, entry_point_create_info)) catch {
+            std.log.info("slang error creating entrypoint: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToCreateSlangEntryPoint;
+        };
+        defer slang.c.destroy_entry_point(slang_entry_point);
+
+        const composed_create_info = slang.ComposedProgramCreateInfo {
+            .diagnostics_blob = diagnostics_blob,
+            .modules = &.{
+                slang_module,
+            },
+            .entry_points = &.{
+                slang_entry_point,
+            },
+        };
+
+        const composed_program = try slang.check(slang.c.create_composed_program(slang_session, composed_create_info.to_slang()));
+        defer slang.c.destroy_composed_program(composed_program);
+
+        const link_program_create_info = slang.c.LinkedProgramCreateInfo {
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        const linked_program = slang.check(slang.c.create_linked_program(composed_program, link_program_create_info)) catch {
+            std.log.info("slang error linking program: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToLinkSlangProgram;
+        };
+        defer slang.c.destroy_linked_program(linked_program);
+
+        const output_blob = slang.c.create_blob();
+        defer slang.c.destroy_blob(output_blob);
+
+        const get_target_create_info = slang.c.GetTargetCodeCreateInfo {
+            .output_blob = output_blob,
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        if (!slang.c.get_target_code(linked_program, get_target_create_info)) {
+            std.log.info("slang error target code: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToGetSlangTargetCode;
+        }
+
+        std.log.info("slang output blob is:##{s}##", .{slang.blob_slice(output_blob)});
 
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));

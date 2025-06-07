@@ -230,8 +230,12 @@ slang::CompilerOptionEntry convert_compiler_option(CompilerOption option)
 Session* create_session(SlangGlobal* global, SessionCreateInfo create_info)
 {
     slang::TargetDesc targetDesc = {};
-    targetDesc.format = convert_compile_target(create_info.compile_target);
     targetDesc.profile = global->session->findProfile(create_info.profile);
+    if (targetDesc.profile == SlangProfileID::SLANG_PROFILE_UNKNOWN) {
+        return nullptr;
+    }
+
+    targetDesc.format = convert_compile_target(create_info.compile_target);
 
     std::vector<slang::PreprocessorMacroDesc> preprocessor_macro_descriptions;
     preprocessor_macro_descriptions.reserve(create_info.preprocessor_macros_count);
@@ -292,11 +296,13 @@ void destroy_blob(struct Blob* blob)
 
 const void* blob_get_buffer_ptr(struct Blob* blob)
 {
+    if (blob->blob == nullptr) { return nullptr; }
     return blob->blob->getBufferPointer();
 }
 
 uint64_t blob_get_buffer_size(struct Blob* blob)
 {
+    if (blob->blob == nullptr) { return 0; }
     return blob->blob->getBufferSize();
 }
 
@@ -305,7 +311,7 @@ struct Module
     Slang::ComPtr<slang::IModule> module;
 };
 
-struct Module* session_load_module(struct Session* session, struct ModuleCreateInfo create_info)
+struct Module* create_and_load_module(struct Session* session, struct ModuleCreateInfo create_info)
 {
     assert(session != nullptr);
     assert(create_info.module_name != nullptr);
@@ -319,8 +325,9 @@ struct Module* session_load_module(struct Session* session, struct ModuleCreateI
     if (create_info.shader_source == nullptr) {
         mod = session->session->loadModule(create_info.module_name, diagnostics_blob);
     } else {
-        assert(create_info.module_path != nullptr);
-        mod = session->session->loadModuleFromSourceString(create_info.module_name, create_info.module_path, create_info.shader_source, diagnostics_blob);
+        const char* module_path = "";
+        if (create_info.module_path != nullptr) { module_path = create_info.module_path; }
+        mod = session->session->loadModuleFromSourceString(create_info.module_name, module_path, create_info.shader_source, diagnostics_blob);
     }
 
     if (!mod) {

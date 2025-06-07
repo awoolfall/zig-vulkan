@@ -275,7 +275,7 @@ struct ModuleCreateInfo
     struct Blob* diagnostics_blob; // can be nullptr
 };
 
-SLANGC_API struct Module* session_load_module(struct Session* session, struct ModuleCreateInfo create_info);
+SLANGC_API struct Module* create_and_load_module(struct Session* session, struct ModuleCreateInfo create_info);
 SLANGC_API void destroy_module(struct Module* module);
 
 struct EntryPoint;
@@ -293,13 +293,13 @@ struct ComposedProgram;
 
 struct ComposedProgramCreateInfo
 {
-    struct Module** p_modules;
+    struct Module* const* p_modules;
     uint32_t modules_count;
 
-    struct EntryPoint** p_entry_points;
+    struct EntryPoint* const* p_entry_points;
     uint32_t entry_points_count;
 
-    struct ComposedProgram** p_composed_programs;
+    struct ComposedProgram* const* p_composed_programs;
     uint32_t composed_programs_count;
 
     struct Blob* diagnostics_blob; // can be nullptr
