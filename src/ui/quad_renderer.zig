@@ -91,7 +91,7 @@ pub const QuadRenderer = struct {
     quad_buffer_vertex: _gfx.Buffer,
     quad_buffer_pixel: _gfx.Buffer,
 
-    const QUAD_SHADER_HLSL = @embedFile("quad_shader.hlsl");
+    const QUAD_SHADER_HLSL = @embedFile("quad_shader.slang");
 
     pub fn deinit(self: *QuadRenderer) void {
         self.blend_state.deinit();
@@ -191,18 +191,18 @@ pub const QuadRenderer = struct {
         gfx: *_gfx.GfxState,
     ) void {
         { // Setup quad vertex info buffer
-            const mapped_buffer = self.quad_buffer_vertex.map(QuadBufferVertexBuffer, gfx) catch unreachable;
+            const mapped_buffer = self.quad_buffer_vertex.map(gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data().* = QuadBufferVertexBuffer {
+            mapped_buffer.data(QuadBufferVertexBuffer).* = QuadBufferVertexBuffer {
                 .quad_bounds = Bounds.from_rect(rect_pixels, @floatFromInt(rtv.size.width), @floatFromInt(rtv.size.height)),
             };
         }
         { // Setup quad pixel info buffer
-            const mapped_buffer = self.quad_buffer_pixel.map(QuadBufferPixelBuffer, gfx) catch unreachable;
+            const mapped_buffer = self.quad_buffer_pixel.map(gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data().* = QuadBufferPixelBuffer {
+            mapped_buffer.data(QuadBufferPixelBuffer).* = QuadBufferPixelBuffer {
                 .bg_colour = props.colour,
                 .border_colour = props.border_colour,
                 .border_width_px = props.border_width_px,

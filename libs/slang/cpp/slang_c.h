@@ -248,10 +248,10 @@ struct SessionCreateInfo
 
     const char* profile;
 
-    struct PreprocessorMacro* p_preprocessor_macros;
+    const struct PreprocessorMacro* p_preprocessor_macros;
     uint32_t preprocessor_macros_count;
 
-    struct CompilerOption* p_compile_options;
+    const struct CompilerOption* p_compile_options;
     uint32_t compile_options_count;
 };
 

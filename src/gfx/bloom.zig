@@ -155,11 +155,12 @@ pub const BloomFilter = struct {
         for (0..MIP_LEVELS) |mip_level| {
             const mip_level_minus_one = @max(@as(i32, @intCast(mip_level)) - 1, 0);
             {
-                var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx) catch unreachable;
+                var mapped_buffer = self.constant_buffer.map(gfx) catch unreachable;
                 defer mapped_buffer.unmap();
-                mapped_buffer.data().resolution_or_radius[0] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.width));
-                mapped_buffer.data().resolution_or_radius[1] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.height));
-                mapped_buffer.data().resolution_or_radius[2] = @floatFromInt(mip_level_minus_one);
+                const data = mapped_buffer.data(ConstantBufferData);
+                data.resolution_or_radius[0] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.width));
+                data.resolution_or_radius[1] = 1.0 / @as(f32, @floatFromInt(rtv[mip_level_minus_one].size.height));
+                data.resolution_or_radius[2] = @floatFromInt(mip_level_minus_one);
             }
 
             const viewport = gf.Viewport {
@@ -209,11 +210,12 @@ pub const BloomFilter = struct {
             };
             
             {
-                var mapped_buffer = self.constant_buffer.map(ConstantBufferData, gfx) catch unreachable;
+                var mapped_buffer = self.constant_buffer.map(gfx) catch unreachable;
                 defer mapped_buffer.unmap();
-                mapped_buffer.data().resolution_or_radius[0] = filter_radius;
-                mapped_buffer.data().resolution_or_radius[1] = @floatFromInt(mip_level + 1);
-                mapped_buffer.data().resolution_or_radius[2] = viewport.width / viewport.height;
+                const data = mapped_buffer.data(ConstantBufferData);
+                data.resolution_or_radius[0] = filter_radius;
+                data.resolution_or_radius[1] = @floatFromInt(mip_level + 1);
+                data.resolution_or_radius[2] = viewport.width / viewport.height;
             }
 
             gfx.cmd_set_render_target(&.{&rtv[mip_level]}, null);
@@ -241,6 +243,7 @@ const BLOOM_DOWNSAMPLE_HLSL = \\
 \\  Texture2D src_buffer;
 \\  SamplerState src_sampler;
 \\
+\\  [shader("pixel")]
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
 \\      float x = src_texel_size.x;
@@ -291,6 +294,7 @@ const BLOOM_UPSAMPLE_HLSL = \\
 \\  Texture2D src_buffer;
 \\  SamplerState src_sampler;
 \\
+\\  [shader("pixel")]
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
 \\      float x = filter_radius;

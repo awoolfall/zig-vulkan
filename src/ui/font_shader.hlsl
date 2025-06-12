@@ -22,6 +22,7 @@ struct vs_out
 
 // generate quad in shader 
 // from https://stackoverflow.com/questions/2588875/whats-the-best-way-to-draw-a-fullscreen-quad-in-opengl-3-2/51625078#51625078
+[shader("vertex")]
 vs_out vs_main(uint vertId : SV_VertexID, float4 quad_bounds : TEXCOORD0, float4 atlas_bounds : TEXCOORD1)
 {
     vs_out output = (vs_out) 0;
@@ -54,6 +55,7 @@ float screenPxRange(float2 uvCoord) {
 }
 
 // converted from https://github.com/Chlumsky/msdfgen
+[shader("pixel")]
 float4 ps_main(vs_out input) : SV_TARGET
 {
     float4 msd = msdf_font_texture.Sample(MsdfSampler, input.tex_coord.xy);

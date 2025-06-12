@@ -319,10 +319,10 @@ pub const Font = struct {
         });
 
         { // Setup font text info buffer
-            const mapped_buffer = self.font_text_buffer.map(FontConstantBuffer, gfx) catch unreachable;
+            const mapped_buffer = self.font_text_buffer.map(gfx) catch unreachable;
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data().* = FontConstantBuffer {
+            mapped_buffer.data(FontConstantBuffer).* = FontConstantBuffer {
                 .msdf_unit_range = zm.f32x4s(self.atlas_details.distance_range) 
                     / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),
                 .fg_colour = props.colour,
@@ -337,10 +337,10 @@ pub const Font = struct {
         while (text_utf8_iter.nextCodepoint()) |c| {
             if (instance_id >= RENDER_INSTANCE_COUNT) {
                 {
-                    const mapped_buffer = self.character_buffer.map(([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer), gfx) catch unreachable;
+                    const mapped_buffer = self.character_buffer.map(gfx) catch unreachable;
                     defer mapped_buffer.unmap();
 
-                    @memcpy(mapped_buffer.data()[0..], self.constant_buffer_data[0..]);
+                    @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
                 }
 
                 gfx.cmd_draw_instanced(6, RENDER_INSTANCE_COUNT, 0, 0);
@@ -380,10 +380,10 @@ pub const Font = struct {
         // render the remaining characters
         if (instance_id > 0) {
             {
-                const mapped_buffer = self.character_buffer.map(([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer), gfx) catch unreachable;
+                const mapped_buffer = self.character_buffer.map(gfx) catch unreachable;
                 defer mapped_buffer.unmap();
 
-                @memcpy(mapped_buffer.data()[0..], self.constant_buffer_data[0..]);
+                @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
             }
 
             gfx.cmd_draw_instanced(6, @truncate(instance_id), 0, 0);

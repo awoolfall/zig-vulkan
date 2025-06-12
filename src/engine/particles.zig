@@ -357,20 +357,20 @@ pub const ParticleSystem = struct {
         gfx: *gf.GfxState
     ) void {
         // update all particle model matrices
-        if (self.model_matrix_vertex_buffer.map(VertexBufferData, gfx)) |mapped_buffer| {
+        if (self.model_matrix_vertex_buffer.map(gfx)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
-            const data = mapped_buffer.data_array(self.sort_particles.len);
+            const data = mapped_buffer.data_array(VertexBufferData, self.sort_particles.len);
             for (self.sort_particles, 0..) |*p, i| {
                 data[i] = p.dat;
             }
         } else |_| {}
 
         // update camera constant buffer
-        if (self.constant_buffer.map(ConstantBuffer, gfx)) |mapped_buffer| {
+        if (self.constant_buffer.map(gfx)) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
-            mapped_buffer.data().* = ConstantBuffer {
+            mapped_buffer.data(ConstantBuffer).* = ConstantBuffer {
                 .view_matrix = view_matrix,
                 .proj_matrix = proj_matrix,
                 .flags = @bitCast(ConstantBufferFlags { 

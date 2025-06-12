@@ -238,7 +238,7 @@ pub const GfxStateD3D11 = struct {
                 .height = @intCast(gfx.swapchain_size.height),
                 .format = gf.TextureFormat.Rgba8_Unorm_Srgb,
             },
-            .bind_flags = .{ .RenderTarget = true },
+            .usage_flags = .{ .RenderTarget = true },
             .access_flags = .{},
         };
     }
@@ -561,18 +561,19 @@ fn texture_format_to_d3d11(self: gf.TextureFormat) dxgi.FORMAT {
     };
 }
 
-fn bind_flag_to_d3d11(self: gf.BindFlag) d3d11.BIND_FLAG {
+fn buffer_usage_flags_to_d3d11(self: gf.BufferUsageFlags) d3d11.BIND_FLAG {
     return d3d11.BIND_FLAG {
         .VERTEX_BUFFER = self.VertexBuffer,
         .INDEX_BUFFER = self.IndexBuffer,
         .CONSTANT_BUFFER = self.ConstantBuffer,
         .SHADER_RESOURCE = self.ShaderResource,
-        .STREAM_OUTPUT = self.StreamOutput,
+    };
+}
+fn texture_usage_flags_to_d3d11(self: gf.TextureUsageFlags) d3d11.BIND_FLAG {
+    return d3d11.BIND_FLAG {
+        .SHADER_RESOURCE = self.ShaderResource,
         .RENDER_TARGET = self.RenderTarget,
         .DEPTH_STENCIL = self.DepthStencil,
-        .UNORDERED_ACCESS = self.UnorderedAccess,
-        .DECODER = self.Decoder,
-        .VIDEO_ENCODER = self.VideoEncoder,
     };
 }
 
@@ -1077,14 +1078,14 @@ pub const BufferD3D11 = struct {
 
     pub inline fn init(
         byte_size: u32,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
         gfx: *gf.GfxState,
     ) !Self {
         const buffer_desc = d3d11.BUFFER_DESC {
             .Usage = access_flags_to_d3d11_usage(access_flags),
             .ByteWidth = @intCast(byte_size),
-            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .BindFlags = buffer_usage_flags_to_d3d11(usage_flags),
             .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
         };
         var buffer: *d3d11.IBuffer = undefined;
@@ -1098,14 +1099,14 @@ pub const BufferD3D11 = struct {
     
     pub inline fn init_with_data(
         data: []const u8,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
         gfx: *gf.GfxState,
     ) !Self {
         const buffer_desc = d3d11.BUFFER_DESC {
             .Usage = access_flags_to_d3d11_usage(access_flags),
             .ByteWidth = @intCast(data.len),
-            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .BindFlags = buffer_usage_flags_to_d3d11(usage_flags),
             .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
         };
         var buffer: *d3d11.IBuffer = undefined;
@@ -1117,36 +1118,33 @@ pub const BufferD3D11 = struct {
         };
     }
 
-    pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedBuffer(OutType) {
+    pub inline fn map(self: *const Self, gfx: *gf.GfxState) !MappedBuffer {
         var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
         try zwindows.hrErrorOnFail(gfx.platform.context.Map(@ptrCast(self.buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-        return MappedBuffer(OutType) {
+        return MappedBuffer {
             .context = gfx.platform.context,
             .buffer = self.buffer,
-            .data_ptr = @ptrCast(@alignCast(mapped_subresource.pData)),
+            .data_ptr = mapped_subresource.pData,
         };
     }
 
-    pub fn MappedBuffer(comptime T: type) type {
-        return struct {
-            data_ptr: *T,
-            buffer: *d3d11.IBuffer,
-            context: *d3d11.IDeviceContext,
+    pub const MappedBuffer = struct {
+        data_ptr: *anyopaque,
+        buffer: *d3d11.IBuffer,
+        context: *d3d11.IDeviceContext,
 
-            pub inline fn unmap(self: *const MappedBuffer(T)) void {
-                self.context.Unmap(@ptrCast(self.buffer), 0);
-            }
-            
-            pub inline fn data(self: *const MappedBuffer(T)) *T {
-                return self.data_ptr;
-            }
+        pub inline fn unmap(self: *const MappedBuffer) void {
+            self.context.Unmap(@ptrCast(self.buffer), 0);
+        }
 
-            pub inline fn data_array(self: *const MappedBuffer(T), length: usize) [*]align(1)T {
-                _ = length;
-                return @as([*]align(1)T, @ptrCast(self.data()));
-            }
-        };
-    }
+        pub inline fn data(self: *const MappedBuffer, comptime Type: type) *Type {
+            return @alignCast(@ptrCast(self.data_ptr));
+        }
+
+        pub inline fn data_array(self: *const MappedBuffer, comptime Type: type, length: usize) []Type {
+            return @as([*]Type, @ptrCast(self.data_ptr))[0..(length)];
+        }
+    };
 
 };
 
@@ -1160,7 +1158,7 @@ pub const Texture2DD3D11 = struct {
 
     pub inline fn init(
         desc: gf.Texture2D.Descriptor,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.TextureUsageFlags,
         access_flags: gf.AccessFlags,
         data: ?[]const u8,
         gfx: *gf.GfxState
@@ -1176,7 +1174,7 @@ pub const Texture2DD3D11 = struct {
                 .Quality = 0,
             },
             .Usage = access_flags_to_d3d11_usage(access_flags),
-            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .BindFlags = texture_usage_flags_to_d3d11(usage_flags),
             .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
             .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
         };
@@ -1253,7 +1251,7 @@ pub const TextureView2DD3D11 = struct {
 
     pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
         var srv: ?*d3d11.IShaderResourceView = null;
-        if (texture.bind_flags.ShaderResource) {
+        if (texture.usage_flags.ShaderResource) {
             const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
                 .Format = texture_format_to_d3d11(texture.desc.format),
                 .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE2D,
@@ -1273,7 +1271,7 @@ pub const TextureView2DD3D11 = struct {
         errdefer { if (srv) |v| _ = v.Release(); }
 
         var uav: ?*d3d11.IUnorderedAccessView = null;
-        if (texture.bind_flags.UnorderedAccess) {
+        if (texture.usage_flags.UnorderedAccess) {
             const uav_desc = d3d11.UNORDERED_ACCESS_VIEW_DESC {
                 .Format = texture_format_to_d3d11(texture.desc.format),
                 .ViewDimension = d3d11.UAV_DIMENSION.TEXTURE2D,
@@ -1320,7 +1318,7 @@ pub const TextureView3DD3D11 = struct {
 
     pub inline fn init_from_texture3d(texture: *const gf.Texture3D, gfx: *gf.GfxState) !Self {
         var srv: ?*d3d11.IShaderResourceView = null;
-        if (texture.bind_flags.ShaderResource) {
+        if (texture.usage_flags.ShaderResource) {
             const texture_resource_view_desc = d3d11.SHADER_RESOURCE_VIEW_DESC {
                 .Format = texture_format_to_d3d11(texture.desc.format),
                 .ViewDimension = d3d11.SRV_DIMENSION.TEXTURE3D,
@@ -1340,7 +1338,7 @@ pub const TextureView3DD3D11 = struct {
         errdefer { if (srv) |v| _ = v.Release(); }
 
         var uav: ?*d3d11.IUnorderedAccessView = null;
-        if (texture.bind_flags.UnorderedAccess) {
+        if (texture.usage_flags.UnorderedAccess) {
             const uav_desc = d3d11.UNORDERED_ACCESS_VIEW_DESC {
                 .Format = texture_format_to_d3d11(texture.desc.format),
                 .ViewDimension = d3d11.UAV_DIMENSION.TEXTURE3D,
@@ -1387,7 +1385,7 @@ pub const Texture3DD3D11 = struct {
 
     pub inline fn init(
         desc: gf.Texture3D.Descriptor,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.TextureUsageFlags,
         access_flags: gf.AccessFlags,
         data: ?[]const u8,
         gfx: *gf.GfxState
@@ -1399,7 +1397,7 @@ pub const Texture3DD3D11 = struct {
             .MipLevels = @intCast(desc.mip_levels),
             .Format = texture_format_to_d3d11(desc.format),
             .Usage = access_flags_to_d3d11_usage(access_flags),
-            .BindFlags = bind_flag_to_d3d11(bind_flags),
+            .BindFlags = texture_usage_flags_to_d3d11(usage_flags),
             .CPUAccessFlags = access_flags_to_d3d11_cpu_access(access_flags),
             .MiscFlags = d3d11.RESOURCE_MISC_FLAG {},
         };

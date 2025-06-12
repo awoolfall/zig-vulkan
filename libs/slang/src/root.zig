@@ -22,6 +22,24 @@ pub fn blob_slice(blob: ?*c.Blob) []const u8 {
     return blob_bytes_ptr[0..c.blob_get_buffer_size(blob)];
 }
 
+pub const SessionCreateInfo = struct {
+    compile_target: c.CompileTargets,
+    profile: []const u8,
+    preprocessor_macros: []const c.PreprocessorMacro = &.{},
+    compile_options: []const c.CompilerOption = &.{},
+    
+    pub fn to_slang(self: *const @This()) c.SessionCreateInfo {
+        return .{
+            .compile_target = self.compile_target,
+            .profile = @ptrCast(self.profile.ptr),
+            .p_preprocessor_macros = if (self.preprocessor_macros.len > 0) @ptrCast(self.preprocessor_macros.ptr) else null,
+            .preprocessor_macros_count = @intCast(self.preprocessor_macros.len),
+            .p_compile_options = if (self.compile_options.len > 0) @ptrCast(self.compile_options.ptr) else null,
+            .compile_options_count = @intCast(self.compile_options.len),
+        };
+    }
+};
+
 pub const ComposedProgramCreateInfo = struct {
     modules: []const ?*c.Module = &.{},
     entry_points: []const ?*c.EntryPoint = &.{},

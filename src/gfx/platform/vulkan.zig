@@ -29,6 +29,7 @@ pub const GfxStateVulkan = struct {
     pub const RasterizationState = RasterizationStateVulkan;
     pub const Sampler = SamplerVulkan;
     pub const BlendState = BlendStateVulkan;
+    pub const GraphicsPipeline = GraphicsPipelineVulkan;
     pub const ShaderResourceView = u32;//d3d11.IShaderResourceView;
     pub const UnorderedAccessView = u32;//d3d11.IUnorderedAccessView;
 
@@ -39,6 +40,10 @@ pub const GfxStateVulkan = struct {
         present_family_index: u32,
         cpu_gpu_transfer: c.VkQueue,
         cpu_gpu_transfer_family_index: u32,
+
+        pub inline fn has_distinct_transfer_queue(self: *const VkQueues) bool {
+            return (self.all_family_index != self.cpu_gpu_transfer_family_index);
+        }
     };
 
     const SwapchainInfo = struct {
@@ -62,6 +67,9 @@ pub const GfxStateVulkan = struct {
 
     alloc: std.mem.Allocator,
 
+    // @TODO move this to assets?
+    slang_global: ?*slang.c.SlangGlobal,
+
     vk_version: u32,
     instance: c.VkInstance,
     surface: c.VkSurfaceKHR,
@@ -69,102 +77,32 @@ pub const GfxStateVulkan = struct {
     device: c.VkDevice,
     queues: VkQueues,
 
+    all_command_pool: c.VkCommandPool,
+    transfer_command_pool: c.VkCommandPool,
+
     swapchain: SwapchainInfo,
 
     pub fn deinit(self: *Self) void {
         vkt(c.vkDeviceWaitIdle(self.device)) catch |err| {
             std.log.err("Unable to wait for device idle: {}", .{err});
         };
-
         //c.vkDestroyCommandPool(self.device, vk_command_pool, null);
         
         self.swapchain.deinit(self.device);
 
+        c.vkDestroyCommandPool(self.device, self.all_command_pool, null);
+        c.vkDestroyCommandPool(self.device, self.transfer_command_pool, null);
         c.vkDestroyDevice(self.device, null);
         c.vkDestroySurfaceKHR(self.instance, self.surface, null);
         c.vkDestroyInstance(self.instance, null);
+
+        slang.c.deinitialise(self.slang_global);
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
+        // @TODO move this to assets?
         const slang_global = slang.c.initialise();
-        defer slang.c.deinitialise(slang_global);
-
-        const session_create_info = slang.c.SessionCreateInfo {
-            .compile_target = slang.c.TARGET_SPIRV,
-            .profile = "spirv_1_6",
-        };
-
-        const slang_session = try slang.check(slang.c.create_session(slang_global, session_create_info));
-        defer slang.c.destroy_session(slang_session);
-
-        const diagnostics_blob = try slang.check(slang.c.create_blob());
-        defer slang.c.destroy_blob(diagnostics_blob);
-
-        const module_create_info = slang.c.ModuleCreateInfo {
-            .module_name = "test",
-            .shader_source = \\
-            \\ [shader("pixel")]
-            \\ float4 px_main() {
-            \\   return float4(1.0, 2.0, 3.0, 1.0);
-            \\ }
-            ,
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        const slang_module = slang.check(slang.c.create_and_load_module(slang_session, module_create_info)) catch {
-            std.log.info("slang error creating module: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToCreateSlangModule;
-        };
-        defer slang.c.destroy_module(slang_module);
-
-        const entry_point_create_info = slang.c.EntryPointCreateInfo {
-            .entry_point_name = "px_main",
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        const slang_entry_point = slang.check(slang.c.find_and_create_entry_point(slang_module, entry_point_create_info)) catch {
-            std.log.info("slang error creating entrypoint: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToCreateSlangEntryPoint;
-        };
-        defer slang.c.destroy_entry_point(slang_entry_point);
-
-        const composed_create_info = slang.ComposedProgramCreateInfo {
-            .diagnostics_blob = diagnostics_blob,
-            .modules = &.{
-                slang_module,
-            },
-            .entry_points = &.{
-                slang_entry_point,
-            },
-        };
-
-        const composed_program = try slang.check(slang.c.create_composed_program(slang_session, composed_create_info.to_slang()));
-        defer slang.c.destroy_composed_program(composed_program);
-
-        const link_program_create_info = slang.c.LinkedProgramCreateInfo {
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        const linked_program = slang.check(slang.c.create_linked_program(composed_program, link_program_create_info)) catch {
-            std.log.info("slang error linking program: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToLinkSlangProgram;
-        };
-        defer slang.c.destroy_linked_program(linked_program);
-
-        const output_blob = slang.c.create_blob();
-        defer slang.c.destroy_blob(output_blob);
-
-        const get_target_create_info = slang.c.GetTargetCodeCreateInfo {
-            .output_blob = output_blob,
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        if (!slang.c.get_target_code(linked_program, get_target_create_info)) {
-            std.log.info("slang error target code: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToGetSlangTargetCode;
-        }
-
-        std.log.info("slang output blob is:##{s}##", .{slang.blob_slice(output_blob)});
+        errdefer slang.c.deinitialise(slang_global);
 
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));
@@ -486,14 +424,37 @@ pub const GfxStateVulkan = struct {
             .cpu_gpu_transfer_family_index = if (vk_cpu_gpu_transfer_queue) |_| transfer_queue_idx else all_queue_idx,
         };
 
+        const transfer_command_pool_create_info = c.VkCommandPoolCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .queueFamilyIndex = queues.cpu_gpu_transfer_family_index,
+        };
+
+        var vk_transfer_command_pool: c.VkCommandPool = undefined;
+        try vkt(c.vkCreateCommandPool(vk_device, &transfer_command_pool_create_info, null, &vk_transfer_command_pool));
+        errdefer c.vkDestroyCommandPool(vk_device, vk_transfer_command_pool, null);
+        errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
+
+        const all_command_pool_create_info = c.VkCommandPoolCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .queueFamilyIndex = queues.all_family_index,
+        };
+
+        var vk_all_command_pool: c.VkCommandPool = undefined;
+        try vkt(c.vkCreateCommandPool(vk_device, &all_command_pool_create_info, null, &vk_all_command_pool));
+        errdefer c.vkDestroyCommandPool(vk_device, vk_all_command_pool, null);
+        errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
+
         var self = Self {
             .alloc = alloc,
+            .slang_global = slang_global,
             .vk_version = vk_version,
             .instance = vk_instance,
             .physical_device = vk_physical_device,
             .device = vk_device,
             .surface = vk_surface,
             .queues = queues,
+            .transfer_command_pool = vk_transfer_command_pool,
+            .all_command_pool = vk_all_command_pool,
             .swapchain = undefined,
         };
 
@@ -502,16 +463,6 @@ pub const GfxStateVulkan = struct {
             .present_mode = present_mode,
         });
         errdefer self.swapchain.deinit(self.device);
-
-        const command_pool_info = c.VkCommandPoolCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .queueFamilyIndex = queues.all_family_index,
-        };
-
-        var vk_command_pool: c.VkCommandPool = undefined;
-        try vkt(c.vkCreateCommandPool(vk_device, &command_pool_info, null, &vk_command_pool));
-        errdefer c.vkDestroyCommandPool(vk_device, vk_command_pool, null);
-        errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
 
         std.log.info("success!", .{});
         //return error.Unimplemented;
@@ -842,14 +793,93 @@ const ShaderModule = struct {
     ) !Self {
         const alloc = gfx.platform.alloc;
 
+        const session_create_info = slang.SessionCreateInfo {
+            .compile_target = slang.c.TARGET_SPIRV,
+            .profile = "spirv_1_3",
+            .preprocessor_macros = &.{
+            },
+        };
+
+        const slang_session = try slang.check(slang.c.create_session(gfx.platform.slang_global, session_create_info.to_slang()));
+        defer slang.c.destroy_session(slang_session);
+
+        const diagnostics_blob = try slang.check(slang.c.create_blob());
+        defer slang.c.destroy_blob(diagnostics_blob);
+
+        const shader_data_z = try gfx.platform.alloc.dupeZ(u8, shader_data);
+        defer gfx.platform.alloc.free(shader_data_z);
+
+        const module_create_info = slang.c.ModuleCreateInfo {
+            .module_name = "shader",
+            .module_path = "",
+            .shader_source = @ptrCast(shader_data_z.ptr),
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        const slang_module = slang.check(slang.c.create_and_load_module(slang_session, module_create_info)) catch {
+            std.log.info("slang error creating module: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToCreateSlangModule;
+        };
+        defer slang.c.destroy_module(slang_module);
+
+        const entry_point_z = try gfx.platform.alloc.dupeZ(u8, shader_entry_point);
+        defer gfx.platform.alloc.free(entry_point_z);
+
+        const entry_point_create_info = slang.c.EntryPointCreateInfo {
+            .entry_point_name = @ptrCast(entry_point_z.ptr),
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        const slang_entry_point = slang.check(slang.c.find_and_create_entry_point(slang_module, entry_point_create_info)) catch {
+            std.log.info("slang error creating entrypoint: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToCreateSlangEntryPoint;
+        };
+        defer slang.c.destroy_entry_point(slang_entry_point);
+
+        const composed_create_info = slang.ComposedProgramCreateInfo {
+            .diagnostics_blob = diagnostics_blob,
+            .modules = &.{
+                slang_module,
+            },
+            .entry_points = &.{
+                slang_entry_point,
+            },
+        };
+
+        const composed_program = try slang.check(slang.c.create_composed_program(slang_session, composed_create_info.to_slang()));
+        defer slang.c.destroy_composed_program(composed_program);
+
+        const link_program_create_info = slang.c.LinkedProgramCreateInfo {
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        const linked_program = slang.check(slang.c.create_linked_program(composed_program, link_program_create_info)) catch {
+            std.log.info("slang error linking program: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToLinkSlangProgram;
+        };
+        defer slang.c.destroy_linked_program(linked_program);
+
+        const output_blob = slang.c.create_blob();
+        defer slang.c.destroy_blob(output_blob);
+
+        const get_target_create_info = slang.c.GetTargetCodeCreateInfo {
+            .output_blob = output_blob,
+            .diagnostics_blob = diagnostics_blob,
+        };
+
+        if (!slang.c.get_target_code(linked_program, get_target_create_info)) {
+            std.log.info("slang error target code: {s}", .{slang.blob_str(diagnostics_blob)});
+            return error.UnableToGetSlangTargetCode;
+        }
+
+        const spirv_shader_code = slang.blob_slice(output_blob);
+
         const entry_point = try alloc.dupeZ(u8, shader_entry_point);
         errdefer alloc.free(entry_point);
 
-        // @TODO: compile to spirv using slang. c headers and libs are in the vulkan SDK! :)
-        // @TODO: convert all shaders into slang. get that working with D3D11 
-        const aligned_data = try alloc.alignedAlloc(u8, 4, shader_data.len);
+        const aligned_data = try alloc.alignedAlloc(u8, 4, spirv_shader_code.len);
         defer alloc.free(aligned_data);
-        @memcpy(aligned_data, shader_data);
+        @memcpy(aligned_data, spirv_shader_code);
 
         const shader_create_info = c.VkShaderModuleCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -898,8 +928,8 @@ pub const VertexShaderVulkan = struct {
     }
 
     pub inline fn init_buffer(
-        vs_data: []const u8, 
-        vs_func: []const u8, 
+        vs_data: []const u8,
+        vs_func: []const u8,
         vs_layout: []const gf.VertexInputLayoutEntry,
         options: gf.VertexShaderOptions,
         gfx: *gf.GfxState,
@@ -1066,73 +1096,205 @@ pub const ComputeShaderVulkan = struct {
     }
 };
 
+fn convert_buffer_usage_flags_to_vulkan(usage: gf.BufferUsageFlags) u32 {
+    var flags: u32 = 0;
+
+    if (usage.VertexBuffer) {
+        flags |= c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    }
+    if (usage.IndexBuffer) {
+        flags |= c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    }
+    if (usage.ConstantBuffer) {
+        flags |= c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    }
+    if (usage.TransferSrc) {
+        flags |= c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    }
+    if (usage.TransferDst) {
+        flags |= c.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    }
+    if (usage.ShaderResource) {
+        unreachable;
+    }
+
+    return flags;
+}
+
+fn find_vulkan_memory_type(type_filter: u32, property_flags: c.VkMemoryPropertyFlags, gfx: *GfxStateVulkan) !u32 {
+    var vk_mem_properties: c.VkPhysicalDeviceMemoryProperties = undefined;
+    c.vkGetPhysicalDeviceMemoryProperties(gfx.physical_device, &vk_mem_properties);
+
+    for (vk_mem_properties.memoryTypes[0..(vk_mem_properties.memoryTypeCount)], 0..) |mem_type, idx| {
+        const contains_all_properties = ((mem_type.propertyFlags & property_flags) == property_flags);
+        if ((type_filter & (@as(u32, 1) << @intCast(idx)) != 0) and contains_all_properties) {
+            return @intCast(idx);
+        }
+    }
+
+    return error.CouldNotFindSuitableVulkanMemory;
+}
+
 pub const BufferVulkan = struct {
     const Self = @This();
 
-    alloc: std.mem.Allocator,
-    false_data: []u8,
+    vk_buffer_info: c.VkBufferCreateInfo,
+    vk_buffer: c.VkBuffer,
+    vk_device_memory: c.VkDeviceMemory,
 
     pub inline fn deinit(self: *const Self) void {
-        self.alloc.free(self.false_data);
+        c.vkFreeMemory(eng.get().gfx.platform.device, self.vk_device_memory, null);
+        c.vkDestroyBuffer(eng.get().gfx.platform.device, self.vk_buffer, null);
     }
 
     pub inline fn init(
         byte_size: u32,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
         gfx: *gf.GfxState,
     ) !Self {
-        _ = bind_flags;
-        _ = access_flags;
-        const alloc = gfx.platform.alloc;
-        const false_data = try alloc.alloc(u8, byte_size);
+        // @TODO: use the dedicated transfer queue
+        const use_shared = false; // gfx.platform.queues.has_distinct_transfer_queue() and
+            // (access_flags.CpuRead or access_flags.CpuWrite);
+        const family_indices: []const u32 = &.{ gfx.platform.queues.all_family_index, gfx.platform.queues.cpu_gpu_transfer_family_index };
+
+        const buffer_create_info = c.VkBufferCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .sharingMode = if (use_shared) c.VK_SHARING_MODE_CONCURRENT else c.VK_SHARING_MODE_EXCLUSIVE,
+            .pQueueFamilyIndices = @ptrCast(family_indices.ptr),
+            .queueFamilyIndexCount = if (use_shared) @intCast(family_indices.len) else 1,
+            .size = @intCast(byte_size),
+            .usage = convert_buffer_usage_flags_to_vulkan(usage_flags),
+        };
+        std.debug.assert(buffer_create_info.usage != 0);
+
+        var vk_buffer: c.VkBuffer = undefined;
+        try vkt(c.vkCreateBuffer(gfx.platform.device, &buffer_create_info, null, &vk_buffer));
+        errdefer c.vkDestroyBuffer(gfx.platform.device, vk_buffer, null);
+
+        var vk_memory_requirements: c.VkMemoryRequirements = undefined;
+        c.vkGetBufferMemoryRequirements(gfx.platform.device, vk_buffer, &vk_memory_requirements);
+
+        const memory_properties: c.VkMemoryPropertyFlags = if (access_flags.CpuRead or access_flags.CpuWrite)
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            else c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+        const memory_allocate_info = c.VkMemoryAllocateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = vk_memory_requirements.size,
+            .memoryTypeIndex = try find_vulkan_memory_type(
+                vk_memory_requirements.memoryTypeBits,
+                memory_properties,
+                &gfx.platform
+            ),
+        };
+
+        var vk_device_memory: c.VkDeviceMemory = undefined;
+        try vkt(c.vkAllocateMemory(gfx.platform.device, &memory_allocate_info, null, &vk_device_memory));
+        errdefer c.vkFreeMemory(gfx.platform.device, vk_device_memory, null);
+
+        try vkt(c.vkBindBufferMemory(gfx.platform.device, vk_buffer, vk_device_memory, 0));
+
         return .{
-            .alloc = alloc,
-            .false_data = false_data,
+            .vk_buffer_info = buffer_create_info,
+            .vk_buffer = vk_buffer,
+            .vk_device_memory = vk_device_memory,
         };
     }
     
     pub inline fn init_with_data(
         data: []const u8,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
         gfx: *gf.GfxState,
     ) !Self {
-        _ = bind_flags;
-        _ = access_flags;
-        const alloc = gfx.platform.alloc;
-        const false_data = try alloc.dupe(u8, data);
-        return .{
-            .alloc = alloc,
-            .false_data = false_data,
+        var usage_flags_plus = usage_flags;
+        usage_flags_plus.TransferDst = true;
+
+        const self = try Self.init(@intCast(data.len), usage_flags_plus, access_flags, gfx);
+        errdefer self.deinit();
+
+        const staging = try Self.init(
+            @intCast(data.len), 
+            .{ .TransferSrc = true, },
+            .{ .CpuWrite = true, },
+            gfx
+        );
+        defer staging.deinit();
+
+        {
+            var data_ptr: ?*anyopaque = undefined;
+            try vkt(c.vkMapMemory(gfx.platform.device, staging.vk_device_memory, 0, staging.vk_buffer_info.size, 0, &data_ptr));
+            defer c.vkUnmapMemory(gfx.platform.device, staging.vk_device_memory);
+
+            @memcpy(@as([*]u8, @ptrCast(data_ptr))[0..(staging.vk_buffer_info.size)], data[0..]);
+        }
+
+        const command_buffer_allocate_info = c.VkCommandBufferAllocateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandBufferCount = 1,
+            .commandPool = gfx.platform.all_command_pool,
+            .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        };
+
+        var command_buffer: c.VkCommandBuffer = undefined;
+        try vkt(c.vkAllocateCommandBuffers(gfx.platform.device, &command_buffer_allocate_info, &command_buffer));
+        defer c.vkFreeCommandBuffers(gfx.platform.device, gfx.platform.all_command_pool, 1, &command_buffer);
+
+        const begin_info = c.VkCommandBufferBeginInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+
+        try vkt(c.vkBeginCommandBuffer(command_buffer, &begin_info));
+        const buffer_copy_region = c.VkBufferCopy {
+            .size = staging.vk_buffer_info.size,
+            .dstOffset = 0,
+            .srcOffset = 0,
+        };
+        c.vkCmdCopyBuffer(command_buffer, staging.vk_buffer, self.vk_buffer, 1, &buffer_copy_region);
+        try vkt(c.vkEndCommandBuffer(command_buffer));
+
+        const submit_info = c.VkSubmitInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command_buffer,
+        };
+
+        try vkt(c.vkQueueSubmit(gfx.platform.queues.all, 1, &submit_info, @ptrCast(c.VK_NULL_HANDLE)));
+        try vkt(c.vkQueueWaitIdle(gfx.platform.queues.all));
+
+        return self;
+    }
+
+    pub inline fn map(self: *const Self, gfx: *gf.GfxState) !MappedBuffer {
+        var data_ptr: ?*anyopaque = undefined;
+        try vkt(c.vkMapMemory(gfx.platform.device, self.vk_device_memory, 0, self.vk_buffer_info.size, 0, &data_ptr));
+
+        return MappedBuffer {
+            .data_ptr = data_ptr,
+            .device_memory = self.vk_device_memory,
+            .gfx = &gfx.platform,
         };
     }
 
-    pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedBuffer(OutType) {
-        _ = gfx;
-        return MappedBuffer(OutType) {
-            .data_ptr = @alignCast(@ptrCast(self.false_data.ptr)),
-        };
-    }
+    pub const MappedBuffer = struct {
+        data_ptr: ?*anyopaque,
+        device_memory: c.VkDeviceMemory,
+        gfx: *GfxStateVulkan,
 
-    pub fn MappedBuffer(comptime T: type) type {
-        return struct {
-            data_ptr: *T,
+        pub inline fn unmap(self: *const MappedBuffer) void {
+            c.vkUnmapMemory(self.gfx.device, self.device_memory);
+        }
 
-            pub inline fn unmap(self: *const MappedBuffer(T)) void {
-                _ = self;
-            }
-            
-            pub inline fn data(self: *const MappedBuffer(T)) *T {
-                return self.data_ptr;
-            }
+        pub inline fn data(self: *const MappedBuffer, comptime Type: type) *Type {
+            return @alignCast(@ptrCast(self.data_ptr));
+        }
 
-            pub inline fn data_array(self: *const MappedBuffer(T), length: usize) [*]align(1)T {
-                _ = length;
-                return @as([*]align(1)T, @ptrCast(self.data()));
-            }
-        };
-    }
+        pub inline fn data_array(self: *const MappedBuffer, comptime Type: type, length: usize) []Type {
+            return @as([*]Type, @alignCast(@ptrCast(self.data_ptr)))[0..(length)];
+        }
+    };
 
 };
 
@@ -1148,12 +1310,12 @@ pub const Texture2DVulkan = struct {
 
     pub inline fn init(
         desc: gf.Texture2D.Descriptor,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.TextureUsageFlags,
         access_flags: gf.AccessFlags,
         data: ?[]const u8,
         gfx: *gf.GfxState
     ) !Self {
-        _ = bind_flags;
+        _ = usage_flags;
         _ = access_flags;
         const alloc = gfx.platform.alloc;
         const false_data = if (data) |d| try alloc.dupe(u8, d) 
@@ -1251,12 +1413,12 @@ pub const Texture3DVulkan = struct {
 
     pub inline fn init(
         desc: gf.Texture3D.Descriptor,
-        bind_flags: gf.BindFlag,
+        usage_flags: gf.TextureUsageFlags,
         access_flags: gf.AccessFlags,
         data: ?[]const u8,
         gfx: *gf.GfxState
     ) !Self {
-        _ = bind_flags;
+        _ = usage_flags;
         _ = access_flags;
         const alloc = gfx.platform.alloc;
         const false_data = if (data) |d| try alloc.dupe(u8, d) 
@@ -1375,3 +1537,295 @@ pub const BlendStateVulkan = struct {
     }
 };
 
+inline fn topology_to_vulkan(topology: gf.Topology) c.VkPrimitiveTopology {
+    return switch (topology) {
+        .LineList => c.VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+        .LineStrip => c.VK_PRIMITIVE_TOPOLOGY_LINE_STRIP,
+        .PointList => c.VK_PRIMITIVE_TOPOLOGY_POINT_LIST,
+        .TriangleList => c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .TriangleStrip => c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP,
+    };
+}
+
+inline fn cullmode_to_vulkan(cullmode: gf.CullMode) c.VkCullModeFlags {
+    return switch (cullmode) {
+        .CullBack => c.VK_CULL_MODE_BACK_BIT,
+        .CullFront => c.VK_CULL_MODE_FRONT_BIT,
+        .CullFrontAndBack => c.VK_CULL_MODE_FRONT_AND_BACK,
+        .CullNone => c.VK_CULL_MODE_NONE,
+    };
+}
+
+inline fn frontface_to_vulkan(frontface: gf.FrontFace) c.VkFrontFace {
+    return switch (frontface) {
+        .Clockwise => c.VK_FRONT_FACE_CLOCKWISE,
+        .CounterClockwise => c.VK_FRONT_FACE_COUNTER_CLOCKWISE,
+    };
+}
+
+inline fn fillmode_to_vulkan(fillmode: gf.FillMode) c.VkPolygonMode {
+    return switch (fillmode) {
+        .Fill => c.VK_POLYGON_MODE_FILL,
+        .Line => c.VK_POLYGON_MODE_LINE,
+        .Point => c.VK_POLYGON_MODE_POINT,
+    };
+}
+
+inline fn bool_to_vulkan(b: bool) u32 {
+    return switch (b) {
+        .true => c.VK_TRUE,
+        .false => c.VK_FALSE,
+    };
+}
+
+inline fn compareop_to_vulkan(compareop: gf.CompareOp) c.VkCompareOp {
+    return switch (compareop) {
+        .Always => c.VK_COMPARE_OP_ALWAYS,
+        .Equal => c.VK_COMPARE_OP_EQUAL,
+        .Greater => c.VK_COMPARE_OP_GREATER,
+        .GreaterOrEqual => c.VK_COMPARE_OP_GREATER_OR_EQUAL,
+        .Less => c.VK_COMPARE_OP_LESS,
+        .LessOrEqual => c.VK_COMPARE_OP_LESS_OR_EQUAL,
+        .Never => c.VK_COMPARE_OP_NEVER,
+        .NotEqual => c.VK_COMPARE_OP_NOT_EQUAL,
+    };
+}
+
+pub const GraphicsPipelineVulkan = struct {
+    const Self = @This();
+
+    vk_pipeline_layout: c.VkPipelineLayout,
+    vk_render_pass: c.VkRenderPass,
+    vk_graphics_pipeline: c.VkPipeline,
+
+    pub fn deinit(self: *const Self) void {
+        const device = eng.get().gfx.platform.device;
+        c.vkDestroyPipeline(device, self.vk_graphics_pipeline, null);
+        c.vkDestroyRenderPass(device, self.vk_render_pass, null);
+        c.vkDestroyPipelineLayout(device, self.vk_pipeline_layout, null);
+    }
+    
+    pub fn init(info: gf.GraphicsPipelineInfo) !Self {
+        const alloc = eng.get().frame_allocator;
+        var arena_struct = std.heap.ArenaAllocator.init(alloc);
+        defer arena_struct.deinit();
+        const arena = arena_struct.allocator();
+        
+        const dynamic_states = []c.VkDynamicState {
+            c.VK_DYNAMIC_STATE_VIEWPORT,
+            c.VK_DYNAMIC_STATE_SCISSOR,
+        };
+
+        const dynamic_state_info = c.VkPipelineDynamicStateCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .pDynamicStates = @ptrCast(dynamic_states.ptr),
+            .dynamicStateCount = @intCast(dynamic_states.len),
+        };
+
+        const vertex_shader: *const VertexShaderVulkan = &info.vertex_shader.platform;
+        const vertex_input_info = c.VkPipelineVertexInputStateCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+
+            .pVertexBindingDescriptions = @ptrCast(vertex_shader.vk_vertex_input_binding_description.ptr),
+            .vertexBindingDescriptionCount = @intCast(vertex_shader.vk_vertex_input_binding_description.len),
+
+            .pVertexAttributeDescriptions = @ptrCast(vertex_shader.vk_vertex_input_attrib_description.ptr),
+            .vertexAttributeDescriptionCount = @intCast(vertex_shader.vk_vertex_input_attrib_description.len),
+        };
+
+        const input_assembly_info = c.VkPipelineInputAssemblyStateCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .primitiveRestartEnable = c.VK_FALSE,
+            .topology = topology_to_vulkan(info.topology),
+        };
+
+        const viewport_info = c.VkPipelineViewportStateCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1, // @TODO: attachment count?
+            .scissorCount = 1,
+        };
+
+        const rasterizer_info = c.VkPipelineRasterizationStateCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .rasterizerDiscardEnable = c.VK_FALSE,
+            .cullMode = cullmode_to_vulkan(info.cull_mode),
+            .depthBiasEnable = bool_to_vulkan(info.depth_bias != null),
+            .depthBiasClamp = if (info.depth_bias) |b| b.clamp else 0.0,
+            .depthBiasConstantFactor = if (info.depth_bias) |b| b.constant_factor else 0.0,
+            .depthBiasSlopeFactor = if (info.depth_bias) |b| b.slope_factor else 0.0,
+            .depthClampEnable = bool_to_vulkan(info.depth_clamp),
+            .frontFace = frontface_to_vulkan(info.front_face),
+            .lineWidth = info.rasterization_line_width,
+            .polygonMode = fillmode_to_vulkan(info.rasterization_fill_mode),
+        };
+
+        const multisample_info = c.VkPipelineMultisampleStateCreateInfo {
+            // @TODO: add multisample support?
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .alphaToCoverageEnable = c.VK_FALSE,
+            .alphaToOneEnable = c.VK_FALSE,
+            .minSampleShading = 1.0,
+            .pSampleMask = null,
+            .rasterizationSamples = c.VK_SAMPLE_COUNT_1_BIT,
+            .sampleShadingEnable = c.VK_FALSE,
+        };
+
+        const depth_info = c.VkPipelineDepthStencilStateCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable = bool_to_vulkan(info.depth_test != null),
+            .depthCompareOp = if (info.depth_test) |d| d.compare_op else c.VK_COMPARE_OP_ALWAYS,
+            .depthWriteEnable = if (info.depth_test) |d| bool_to_vulkan(d.write) else c.VK_FALSE,
+            .stencilTestEnable = c.VK_FALSE, // @TODO
+            .depthBoundsTestEnable = c.VK_FALSE,
+        };
+
+        var attachments = try std.ArrayList(gf.AttachmentInfo).initCapacity(arena, 32);
+        defer attachments.deinit();
+
+        const SubpassRefInfo = struct {
+            attachment_refs: []usize,
+        };
+        var subpass_refs = try arena.alloc(SubpassRefInfo, info.subpasses.len);
+        arena.free(subpass_refs);
+
+        for (info.subpasses, 0..) |subpass, sidx| {
+            subpass_refs[sidx].attachment_refs = try arena.alloc(usize, subpass.attachments.len);
+
+            for (subpass.attachments, 0..) |a, aidx| {
+                var attachment_found = false;
+                for (attachments.slice(), 0..) |*stored, stored_aidx| {
+                    if (!std.mem.eql(u8, stored.name, a.name)) { continue; }
+                    if (a.format != stored.format) { continue; }
+                    if (a.load_op != stored.load_op) { continue; }
+                    if (a.store_op != stored.store_op) { continue; }
+                    if (a.stencil_load_op != stored.stencil_load_op) { continue; }
+                    if (a.stencil_store_op != stored.stencil_store_op) { continue; }
+
+                    // subpass attachment matches this one!
+                    subpass_refs[sidx].attachment_refs[aidx] = stored_aidx;
+                    attachment_found = true;
+                    break;
+                }
+                if (!attachment_found) {
+                    try attachments.append(a);
+                    subpass_refs[sidx].attachment_refs[aidx] = (attachments.items.len - 1);
+                }
+            }
+        }
+
+        var color_blend_attachments = try arena.alloc(c.VkPipelineColorBlendAttachmentState, attachments.items.len);
+        defer arena.free(color_blend_attachments);
+
+        for (attachments.items, 0..) |*a, idx| {
+            color_blend_attachments[idx] = switch (a.blend_type) {
+                // @TODO
+                .None => c.VkPipelineColorBlendAttachmentState {
+                },
+                else => unreachable,
+            };
+        }
+
+        const color_blend_info = c.VkPipelineColorBlendStateCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .pAttachments = @ptrCast(color_blend_attachments.ptr),
+            .attachmentCount = @intCast(color_blend_attachments.len),
+            .logicOpEnable = c.VK_FALSE,
+            .logicOp = c.VK_LOGIC_OP_COPY,
+            .blendConstants = .{ 0.0, 0.0, 0.0, 0.0 },
+        };
+
+        const pipeline_layout_info = c.VkPipelineLayoutCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .pSetLayouts = null, // @TODO
+            .setLayoutCount = 0,
+            .pPushConstantRanges = null,
+            .pushConstantRangeCount = 0,
+        };
+
+        var vk_pipeline_layout: c.VkPipelineLayout = undefined;
+        try vkt(c.vkCreatePipelineLayout(eng.get().gfx.platform.device, &pipeline_layout_info, null, &vk_pipeline_layout));
+        errdefer c.vkDestroyPipelineLayout(eng.get().gfx.platform.device, vk_pipeline_layout, null);
+
+        var attachment_descriptions = try arena.alloc(c.VkAttachmentDescription, attachments.items.len);
+        defer arena.free(attachment_descriptions);
+
+        for (attachments.items, 0..) |*a, idx| {
+            _ = a;
+            attachment_descriptions[idx] = c.VkAttachmentDescription {
+                // @TODO
+            };
+        }
+
+        var subpass_descriptions = try arena.alloc(c.VkSubpassDescription, subpass_refs.len);
+        defer arena.free(subpass_descriptions);
+
+        for (subpass_refs, 0..) |ref, idx| {
+            var attachment_refs = try arena.alloc(c.VkAttachmentReference, ref.attachment_refs.len);
+            // freed by arena allocator
+            
+            for (ref.attachment_refs, 0..) |aidx, ridx| {
+                attachment_refs[aidx] = .{
+                    .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // @TODO: depth? other layouts?
+                    .attachment = @intCast(ridx),
+                };
+            }
+
+            subpass_descriptions[idx] = c.VkSubpassDescription{
+                .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS, // @TODO: compute? other?
+                .pColorAttachments = @ptrCast(attachment_refs.ptr),
+                .colorAttachmentCount = @intCast(attachment_refs.len),
+                // @TODO: depth attachment, resolve attachments
+            };
+        }
+
+        const render_pass_info = c.VkRenderPassCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+
+            .pAttachments = @ptrCast(attachment_descriptions.ptr),
+            .attachmentCount = @intCast(attachment_descriptions.len),
+
+            .pSubpasses = @ptrCast(subpass_descriptions.ptr),
+            .subpassCount = @intCast(subpass_descriptions.len),
+
+            // @TODO: dependencies
+        };
+
+        var vk_render_pass: c.VkRenderPass = undefined;
+        try vkt(c.vkCreateRenderPass(eng.get().gfx.platform.device, &render_pass_info, null, &vk_render_pass));
+        errdefer c.vkDestroyRenderPass(eng.get().gfx.platform.device, vk_render_pass, null);
+
+        const graphics_pipeline_info = c.VkGraphicsPipelineCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+
+            .pStages = null, // @TODO
+            .stageCount = 0, //
+
+            .pVertexInputState = &vertex_input_info,
+            .pInputAssemblyState = &input_assembly_info,
+            .pViewportState = &viewport_info,
+            .pRasterizationState = &rasterizer_info,
+            .pTessellationState = null, // @TODO
+            .pMultisampleState = &multisample_info,
+            .pDepthStencilState = &depth_info,
+            .pColorBlendState = &color_blend_info,
+            .pDynamicState = &dynamic_state_info,
+
+            .layout = vk_pipeline_layout,
+            .renderPass = vk_render_pass,
+            .subpass = 0,
+
+            .basePipelineIndex = -1,
+            .basePipelineHandle = c.VK_NULL_HANDLE,
+        };
+
+        var vk_graphics_pipeline: c.VkPipeline = undefined;
+        try vkt(c.vkCreateGraphicsPipelines(eng.get().gfx.platform.device, c.VK_NULL_HANDLE, 1, &graphics_pipeline_info, null, &vk_graphics_pipeline));
+        errdefer c.vkDestroyPipeline(eng.get().gfx.platform.device, vk_graphics_pipeline, null);
+
+        return Self {
+            .vk_pipeline_layout = vk_pipeline_layout,
+            .vk_render_pass = vk_render_pass,
+            .vk_graphics_pipeline = vk_graphics_pipeline,
+        };
+    }
+};

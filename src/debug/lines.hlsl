@@ -21,6 +21,7 @@ struct vs_out
 
 // generate quad in shader 
 // from https://stackoverflow.com/questions/2588875/whats-the-best-way-to-draw-a-fullscreen-quad-in-opengl-3-2/51625078#51625078
+[shader("vertex")]
 vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
 {
     vs_out output = (vs_out) 0;
@@ -67,6 +68,7 @@ vs_out vs_main(vs_in input, uint vertId : SV_VertexID)
     return output;
 }
 
+[shader("pixel")]
 float4 ps_main(vs_out input) : SV_Target
 {
 	return input.colour;

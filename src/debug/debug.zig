@@ -95,11 +95,11 @@ pub const Debug = struct {
         const lines_slice = self.lines.constSlice();
 
         {
-            var mapped_buffer = self.lines_instance_buffer.map(LineDetails, gfx_state) catch unreachable;
+            var mapped_buffer = self.lines_instance_buffer.map(gfx_state) catch unreachable;
             defer mapped_buffer.unmap();
 
             for (lines_slice, 0..) |line, i| {
-                mapped_buffer.data_array(MAX_LINES)[i] = LineDetails {
+                mapped_buffer.data_array(LineDetails, MAX_LINES)[i] = LineDetails {
                     .start_point = zm.f32x4(line.p0[0], line.p0[1], line.p0[2], 1.0),
                     .end_point = zm.f32x4(line.p1[0], line.p1[1], line.p1[2], 1.0),
                     .colour = line.colour,

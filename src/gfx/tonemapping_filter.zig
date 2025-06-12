@@ -10,6 +10,7 @@ const HLSL = //
 \\  Texture2D bloom_buffer;
 \\  SamplerState hdr_sampler;
 \\
+\\  [shader("pixel")]
 \\  float4 ps_main(vs_out input) : SV_TARGET
 \\  {
 \\      float3 hdr_colour = hdr_buffer.Sample(hdr_sampler, input.uv).rgb;

@@ -24,6 +24,7 @@ cbuffer camera_constant_buffer: register(b0)
     uint flags;
 }
 
+[shader("vertex")]
 vs_out vs_main(uint vertId : SV_VertexID, vs_in input)
 {
     vs_out output = (vs_out) 0;
@@ -88,6 +89,7 @@ vs_out vs_main(uint vertId : SV_VertexID, vs_in input)
     return output;
 }
 
+[shader("pixel")]
 float4 ps_main(vs_out input) : SV_TARGET
 {
     float distance = 0.0;

@@ -787,49 +787,47 @@ pub const Buffer = struct {
 
     pub fn init(
         byte_size: u32,
-        bind_flags: BindFlag,
+        usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
         gfx: *GfxState,
     ) !Buffer {
         return Buffer {
-            .platform = try pl.GfxPlatform.Buffer.init(byte_size, bind_flags, access_flags, gfx),
+            .platform = try pl.GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags, gfx),
         };
     }
     
     pub fn init_with_data(
         data: []const u8,
-        bind_flags: BindFlag,
+        usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
         gfx: *GfxState,
     ) !Buffer {
         return Buffer {
-            .platform = try pl.GfxPlatform.Buffer.init_with_data(data, bind_flags, access_flags, gfx),
+            .platform = try pl.GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags, gfx),
         };
     }
 
-    pub fn map(self: *const Buffer, comptime OutType: type, gfx: *GfxState) !MappedBuffer(OutType) {
-        return MappedBuffer(OutType) {
-            .platform = self.platform.map(OutType, gfx) catch unreachable,
+    pub fn map(self: *const Buffer, gfx: *GfxState) !MappedBuffer {
+        return MappedBuffer {
+            .platform = try self.platform.map(gfx),
         };
     }
 
-    pub fn MappedBuffer(comptime T: type) type {
-        return struct {
-            platform: pl.GfxPlatform.Buffer.MappedBuffer(T),
+    pub const MappedBuffer = struct {
+        platform: pl.GfxPlatform.Buffer.MappedBuffer,
 
-            pub fn unmap(self: *const MappedBuffer(T)) void {
-                self.platform.unmap();
-            }
-            
-            pub fn data(self: *const MappedBuffer(T)) *T {
-                return self.platform.data();
-            }
+        pub fn unmap(self: *const MappedBuffer) void {
+            self.platform.unmap();
+        }
 
-            pub fn data_array(self: *const MappedBuffer(T), length: usize) [*]align(1)T {
-                return self.platform.data_array(length);
-            }
-        };
-    }
+        pub fn data(self: *const MappedBuffer, comptime Type: type) *Type {
+            return self.platform.data(Type);
+        }
+
+        pub fn data_array(self: *const MappedBuffer, comptime Type: type, length: usize) []Type {
+            return self.platform.data_array(Type, length);
+        }
+    };
 };
 
 pub const ShaderResourceView = *const pl.GfxPlatform.ShaderResourceView;
@@ -838,7 +836,7 @@ pub const UnorderedAccessView = *const pl.GfxPlatform.UnorderedAccessView;
 pub const Texture2D = struct {
     platform: pl.GfxPlatform.Texture2D,
     desc: Descriptor,
-    bind_flags: BindFlag,
+    usage_flags: TextureUsageFlags,
     access_flags: AccessFlags,
 
     pub fn deinit(self: *const Texture2D) void {
@@ -847,7 +845,7 @@ pub const Texture2D = struct {
 
     pub fn init(
         desc: Descriptor,
-        bind_flags: BindFlag,
+        usage_flags: TextureUsageFlags,
         access_flags: AccessFlags,
         data: ?[]const u8,
         gfx: *GfxState
@@ -863,16 +861,16 @@ pub const Texture2D = struct {
         }
 
         return Texture2D {
-            .platform = try pl.GfxPlatform.Texture2D.init(desc, bind_flags, access_flags, data, gfx),
+            .platform = try pl.GfxPlatform.Texture2D.init(desc, usage_flags, access_flags, data, gfx),
             .desc = desc,
-            .bind_flags = bind_flags,
+            .usage_flags = usage_flags,
             .access_flags = access_flags,
         };
     }
 
     pub fn init_colour(
         desc: Descriptor,
-        bind_flags: BindFlag,
+        usage_flags: TextureUsageFlags,
         access_flags: AccessFlags,
         colour: [4]u8,
         gfx: *GfxState
@@ -887,7 +885,7 @@ pub const Texture2D = struct {
 
         @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
 
-        return init(desc, bind_flags, access_flags, data, gfx);
+        return init(desc, usage_flags, access_flags, data, gfx);
     }
 
     pub const Descriptor = struct {
@@ -928,7 +926,7 @@ pub const Texture2D = struct {
 pub const TextureView2D = struct {
     platform: pl.GfxPlatform.TextureView2D,
     desc: Texture2D.Descriptor,
-    bind_flags: BindFlag,
+    usage_flags: TextureUsageFlags,
     access_flags: AccessFlags,
 
     pub fn deinit(self: *const TextureView2D) void {
@@ -939,18 +937,18 @@ pub const TextureView2D = struct {
         return TextureView2D {
             .platform = try pl.GfxPlatform.TextureView2D.init_from_texture2d(texture, gfx),
             .desc = texture.desc,
-            .bind_flags = texture.bind_flags,
+            .usage_flags = texture.usage_flags,
             .access_flags = texture.access_flags,
         };
     }
 
     pub fn shader_resource_view(self: *const TextureView2D) ShaderResourceView {
-        std.debug.assert(self.bind_flags.ShaderResource);
+        std.debug.assert(self.usage_flags.ShaderResource);
         return self.platform.shader_resource_view();
     }
 
     pub fn unordered_access_view(self: *const TextureView2D) UnorderedAccessView {
-        std.debug.assert(self.bind_flags.UnorderedAccess);
+        std.debug.assert(self.usage_flags.UnorderedAccess);
         return self.platform.unordered_access_view();
     }
 };
@@ -958,7 +956,7 @@ pub const TextureView2D = struct {
 pub const Texture3D = struct {
     platform: pl.GfxPlatform.Texture3D,
     desc: Descriptor,
-    bind_flags: BindFlag,
+    usage_flags: TextureUsageFlags,
     access_flags: AccessFlags,
 
     pub fn deinit(self: *const Texture3D) void {
@@ -967,7 +965,7 @@ pub const Texture3D = struct {
 
     pub fn init(
         desc: Descriptor,
-        bind_flags: BindFlag,
+        usage_flags: TextureUsageFlags,
         access_flags: AccessFlags,
         data: ?[]const u8,
         gfx: *GfxState
@@ -983,16 +981,16 @@ pub const Texture3D = struct {
         }
 
         return Texture3D {
-            .platform = try pl.GfxPlatform.Texture3D.init(desc, bind_flags, access_flags, data, gfx),
+            .platform = try pl.GfxPlatform.Texture3D.init(desc, usage_flags, access_flags, data, gfx),
             .desc = desc,
-            .bind_flags = bind_flags,
+            .usage_flags = usage_flags,
             .access_flags = access_flags,
         };
     }
 
     pub fn init_colour(
         desc: Descriptor,
-        bind_flags: BindFlag,
+        usage_flags: TextureUsageFlags,
         access_flags: AccessFlags,
         colour: [4]u8,
         gfx: *GfxState
@@ -1007,7 +1005,7 @@ pub const Texture3D = struct {
 
         @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
 
-        return init(desc, bind_flags, access_flags, data, gfx);
+        return init(desc, usage_flags, access_flags, data, gfx);
     }
 
     pub const Descriptor = struct {
@@ -1042,7 +1040,7 @@ pub const Texture3D = struct {
 pub const TextureView3D = struct {
     platform: pl.GfxPlatform.TextureView3D,
     desc: Texture3D.Descriptor,
-    bind_flags: BindFlag,
+    usage_flags: TextureUsageFlags,
     access_flags: AccessFlags,
 
     pub fn deinit(self: *const TextureView3D) void {
@@ -1053,18 +1051,18 @@ pub const TextureView3D = struct {
         return TextureView3D {
             .platform = try pl.GfxPlatform.TextureView3D.init_from_texture3d(texture, gfx),
             .desc = texture.desc,
-            .bind_flags = texture.bind_flags,
+            .usage_flags = texture.usage_flags,
             .access_flags = texture.access_flags,
         };
     }
 
     pub fn shader_resource_view(self: *const TextureView3D) ShaderResourceView {
-        std.debug.assert(self.bind_flags.ShaderResource);
+        std.debug.assert(self.usage_flags.ShaderResource);
         return self.platform.shader_resource_view();
     }
 
     pub fn unordered_access_view(self: *const TextureView3D) UnorderedAccessView {
-        std.debug.assert(self.bind_flags.UnorderedAccess);
+        std.debug.assert(self.usage_flags.UnorderedAccess);
         return self.platform.unordered_access_view();
     }
 };
@@ -1168,18 +1166,21 @@ pub const TextureFormat = enum {
     }
 };
 
-pub const BindFlag = packed struct(u32) {
+pub const BufferUsageFlags = packed struct {
     VertexBuffer: bool = false,
     IndexBuffer: bool = false,
     ConstantBuffer: bool = false,
     ShaderResource: bool = false,
-    StreamOutput: bool = false,
+    TransferSrc: bool = false,
+    TransferDst: bool = false,
+};
+
+pub const TextureUsageFlags = packed struct {
+    ShaderResource: bool = false,
     RenderTarget: bool = false,
     DepthStencil: bool = false,
-    UnorderedAccess: bool = false,
-    Decoder: bool = false,
-    VideoEncoder: bool = false,
-    __unused: u22 = 0,
+    TransferSrc: bool = false,
+    TransferDst: bool = false,
 };
 
 pub const AccessFlags = packed struct(u32) {
@@ -1250,6 +1251,109 @@ pub const BlendState = struct {
         }
         return BlendState {
             .platform = try pl.GfxPlatform.BlendState.init(render_target_blend_types, gfx),
+        };
+    }
+};
+
+pub const FillMode = enum {
+    Fill,
+    Line,
+    Point,
+};
+
+pub const CullMode = enum {
+    CullNone,
+    CullFront,
+    CullBack,
+    CullFrontAndBack,
+};
+
+pub const FrontFace = enum {
+    CounterClockwise,
+    Clockwise,
+};
+
+pub const CompareOp = enum {
+    Never,
+    Less,
+    Equal,
+    LessOrEqual,
+    Greater,
+    NotEqual,
+    GreaterOrEqual,
+    Always,
+};
+
+pub const AttachmentLoadOp = enum {
+    Load,
+    Clear,
+    DontCare,
+};
+
+pub const AttachmentStoreOp = enum {
+    Store,
+    DontCare,
+};
+
+pub const AttachmentInfo = struct {
+    name: []const u8, // an identifier to relate this attachment to attachments in other subpasses
+    format: TextureFormat,
+    blend_type: BlendType = BlendType.None,
+
+    load_op: AttachmentLoadOp = AttachmentLoadOp.Load,
+    store_op: AttachmentStoreOp = AttachmentStoreOp.Store,
+
+    stencil_load_op: AttachmentLoadOp = AttachmentLoadOp.Load,
+    stencil_store_op: AttachmentStoreOp = AttachmentStoreOp.Store,
+};
+
+pub const SubpassInfo = struct {
+    attachments: []AttachmentInfo,
+};
+
+pub const GraphicsPipelineInfo = struct {
+    vertex_shader: *const VertexShader,
+    pixel_shader: *const PixelShader,
+
+    topology: Topology = Topology.TriangleList,
+
+    cull_mode: CullMode = CullMode.CullBack,
+    front_face: FrontFace = FrontFace.CounterClockwise,
+
+    rasterization_fill_mode: FillMode = FillMode.Fill,
+    rasterization_line_width: f32 = 1.0,
+
+    depth_test: ?struct {
+        write: bool = true,
+        compare_op: CompareOp = CompareOp.GreaterOrEqual,
+    } = null,
+
+    stencil_test: ?struct {
+        // @TODO
+    } = null,
+
+    depth_clamp: bool = false,
+    depth_bias: ?struct {
+        constant_factor: f32,
+        clamp: f32,
+        slope_factor: f32,
+    } = null,
+
+    subpasses: []SubpassInfo,
+};
+
+pub const GraphicsPipeline = struct {
+    platform: pl.GfxPlatform.GraphicsPipeline,
+    info: GraphicsPipelineInfo,
+
+    pub fn deinit(self: *const GraphicsPipeline) void {
+        self.platform.deinit();
+    }
+    
+    pub fn init(info: GraphicsPipelineInfo) !GraphicsPipeline {
+        return GraphicsPipeline {
+            .platform = try pl.GfxPlatform.GraphicsPipeline.init(info),
+            .info = info,
         };
     }
 };

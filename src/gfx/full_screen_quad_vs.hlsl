@@ -4,6 +4,7 @@ struct vs_out
     float2 uv: TEXCOORD0;
 };
 
+[shader("vertex")]
 vs_out vs_main(uint vertId : SV_VertexID)
 {
     vs_out output = (vs_out) 0;

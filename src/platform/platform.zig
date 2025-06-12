@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const graphics_backend = @import("build_options").graphics_backend;
+pub const os = builtin.os;
+pub const graphics_backend = @import("build_options").graphics_backend;
 
 pub const Window = switch (builtin.os.tag) {
     .windows => @import("windows.zig").Win32Window,
