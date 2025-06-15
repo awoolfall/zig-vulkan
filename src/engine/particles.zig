@@ -46,7 +46,9 @@ pub const ParticleSystem = struct {
 
     model_matrix_vertex_buffer: gf.Buffer,
     constant_buffer: gf.Buffer,
-    blend_state: gf.BlendState,
+
+    pipeline: gf.GraphicsPipeline.Ref,
+    framebuffer: gf.FrameBuffer.Ref,
 
     sort_particles: []ArrDat,
 
@@ -54,9 +56,10 @@ pub const ParticleSystem = struct {
         self.alloc.free(self.particles);
         self.alloc.free(self.sort_particles);
 
+        self.framebuffer.deinit();
+        self.pipeline.deinit();
         self.vertex_shader.deinit();
         self.pixel_shader.deinit();
-        self.blend_state.deinit();
         self.model_matrix_vertex_buffer.deinit();
         self.constant_buffer.deinit();
         self.shader_watcher.deinit();
@@ -89,7 +92,6 @@ pub const ParticleSystem = struct {
             @sizeOf(VertexBufferData) * settings.max_particles,
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
-            &eng.get().gfx
         );
         errdefer model_matrix_vertex_buffer.deinit();
 
@@ -97,12 +99,43 @@ pub const ParticleSystem = struct {
             @sizeOf(ConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            &eng.get().gfx
         );
         errdefer constant_buffer.deinit();
 
-        var blend_state = gf.BlendState.init(([_]gf.BlendType{.Simple})[0..], &eng.get().gfx) catch unreachable;
-        errdefer blend_state.deinit();
+        var graphics_pipeline = try gf.GraphicsPipeline.init(.{
+            .vertex_shader = &vertex_shader,
+            .pixel_shader = &pixel_shader,
+            .depth_test = .{ .write = true, },
+            .attachments = &[_]gf.AttachmentInfo {
+                .{
+                    .name = "colour",
+                    .format = gf.GfxState.hdr_format,
+                    .blend_type = .Simple,
+                },
+                .{
+                    .name = "depth",
+                    .format = gf.GfxState.depth_format,
+                },
+            },
+            .subpasses = &[_]gf.SubpassInfo {
+                gf.SubpassInfo {
+                    .attachments = &.{
+                        "colour",
+                    },
+                    .depth_attachment = "depth",
+                },
+            },
+        });
+        errdefer graphics_pipeline.deinit();
+
+        var framebuffer = try gf.FrameBuffer.init(.{
+            .attachments = &.{
+                .Swapchain,
+                .SwapchainDepth,
+            },
+            .graphics_pipeline = graphics_pipeline,
+        });
+        errdefer framebuffer.deinit();
 
         const particles = try alloc.alloc(?ParticleData, settings.max_particles);
         errdefer alloc.free(particles);
@@ -120,9 +153,10 @@ pub const ParticleSystem = struct {
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
             .shader_watcher = shader_watcher,
+            .pipeline = graphics_pipeline,
+            .framebuffer = framebuffer,
             .model_matrix_vertex_buffer = model_matrix_vertex_buffer,
             .constant_buffer = constant_buffer,
-            .blend_state = blend_state,
             .sort_particles = sort_particles,
         };
     }
@@ -141,7 +175,6 @@ pub const ParticleSystem = struct {
                 .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
             })[0..],
             .{},
-            &eng.get().gfx
         );
         errdefer vertex_shader.deinit();
         
@@ -149,7 +182,6 @@ pub const ParticleSystem = struct {
             hlsl,
             "ps_main",
             .{},
-            &eng.get().gfx
         );
         errdefer pixel_shader.deinit();
 
@@ -352,12 +384,13 @@ pub const ParticleSystem = struct {
         self: *Self, 
         view_matrix: zm.Mat, 
         proj_matrix: zm.Mat, 
-        rtv: *const gf.RenderTargetView, 
-        depth_view: *const gf.DepthStencilView, 
-        gfx: *gf.GfxState
+        rtv: gf.ImageView.Ref, 
+        depth_view: gf.ImageView.Ref, 
     ) void {
+        const gfx = gf.GfxState.get();
+
         // update all particle model matrices
-        if (self.model_matrix_vertex_buffer.map(gfx)) |mapped_buffer| {
+        if (self.model_matrix_vertex_buffer.map(.{ .write = true, })) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
             const data = mapped_buffer.data_array(VertexBufferData, self.sort_particles.len);
@@ -367,7 +400,7 @@ pub const ParticleSystem = struct {
         } else |_| {}
 
         // update camera constant buffer
-        if (self.constant_buffer.map(gfx)) |mapped_buffer| {
+        if (self.constant_buffer.map(.{ .write = true, })) |mapped_buffer| {
             defer mapped_buffer.unmap();
 
             mapped_buffer.data(ConstantBuffer).* = ConstantBuffer {
@@ -384,7 +417,6 @@ pub const ParticleSystem = struct {
         gfx.cmd_set_pixel_shader(&self.pixel_shader);
 
         gfx.cmd_set_render_target(&.{rtv}, depth_view);
-        gfx.cmd_set_blend_state(&self.blend_state);
 
         gfx.cmd_set_vertex_shader(&self.vertex_shader);
         gfx.cmd_set_constant_buffers(.Vertex, 0, &.{&self.constant_buffer});
@@ -569,4 +601,3 @@ pub fn ValueTimeline(comptime T: type) type {
     };
 }
 
-const SHADER_HLSL = @embedFile("particles.hlsl");

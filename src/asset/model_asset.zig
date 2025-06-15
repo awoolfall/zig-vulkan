@@ -128,12 +128,11 @@ pub const ModelAsset = struct {
 
                 return try ms.Model.init_from_file_assimp(
                     alloc, 
-                    asset_path,
-                    &eng.get().gfx
+                    asset_path
                 );
             },
             .Plane => |d| {
-                return try ms.Model.plane(alloc, d.slices, d.stacks, &eng.get().gfx);
+                return try ms.Model.plane(alloc, d.slices, d.stacks);
             },
             .PlaneOnSphere => |d| {
                 return try ms.Model.plane_on_sphere(
@@ -141,7 +140,6 @@ pub const ModelAsset = struct {
                     d.slices, 
                     d.stacks, 
                     d.plane_extent_radians, 
-                    &eng.get().gfx
                 );
             },
             .HeightMap => |h| {
@@ -150,16 +148,16 @@ pub const ModelAsset = struct {
                     .stacks = h.stacks,
                     .plane_extent_radians = h.plane_extent_radians,
                     .heightmap_scale = h.height_map_scale,
-                }, &eng.get().gfx);
+                });
             },
             .Cone => |d| {
-                return try ms.Model.cone(alloc, d.slices, &eng.get().gfx);
+                return try ms.Model.cone(alloc, d.slices);
             },
             .Sphere => |s| {
-                return try ms.Model.sphere(alloc, s.slices, s.stacks, &eng.get().gfx);
+                return try ms.Model.sphere(alloc, s.slices, s.stacks);
             },
             .Cube => {
-                return try ms.Model.cube(alloc, &eng.get().gfx);
+                return try ms.Model.cube(alloc);
             },
         }
     }

@@ -101,7 +101,7 @@ pub const EntityList = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator) !EntityList {
-        var list = try gen.GenerationalList(EntitySuperStruct).init(alloc);
+        var list = gen.GenerationalList(EntitySuperStruct).init(alloc);
         errdefer list.deinit();
 
         // index 0 is reserved

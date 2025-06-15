@@ -5,177 +5,212 @@ const wb = @import("../window.zig");
 const path = @import("../engine/path.zig");
 const bloom = @import("bloom.zig");
 const pl = @import("../platform/platform.zig");
+const gen = @import("self").gen;
 const ToneMappingAndBloomFilter = @import("tonemapping_filter.zig");
 
 const eng = @import("../root.zig");
 const RectPixels = eng.Rect;
 
-inline fn is_dbg() bool {
-    return (builtin.mode == std.builtin.Mode.Debug);
-}
-
 pub const GfxState = struct {
     const Self = @This();
+    const Platform = pl.GfxPlatform;
+
     pub const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.hlsl");
 
-    platform: pl.GfxPlatform,
+    platform: Platform,
 
-    framebuffer_rtv: RenderTargetView,
-    hdr_rtv: RenderTargetView,
-    hdr_texture: Texture2D,
-    hdr_texture_view: TextureView2D,
-
-    swapchain_size: struct{width: i32, height: i32},
+    images: gen.GenerationalList(Image),
+    image_views: gen.GenerationalList(ImageView),
+    samplers: gen.GenerationalList(Sampler),
+    graphics_pipelines: gen.GenerationalList(GraphicsPipeline),
+    framebuffers: gen.GenerationalList(FrameBuffer),
 
     tone_mapping_filter: ToneMappingAndBloomFilter,
 
     default: struct {
-        sampler: Sampler,
-        diffuse: TextureView2D,
-        normals: TextureView2D,
-        metallic_roughness: TextureView2D,
-        ambient_occlusion: TextureView2D,
-        emission: TextureView2D,
+        sampler: Sampler.Ref,
+
+        depth_image: Image.Ref,
+        depth_view: ImageView.Ref,
+
+        diffuse: Image.Ref,
+        diffuse_view: ImageView.Ref,
+
+        normals: Image.Ref,
+        normals_view: ImageView.Ref,
+
+        metallic_roughness: Image.Ref,
+        metallic_roughness_view: ImageView.Ref,
+
+        ambient_occlusion: Image.Ref,
+        ambient_occlusion_view: ImageView.Ref,
+
+        emission: Image.Ref,
+        emission_view: ImageView.Ref,
 
         vertex_shader: *const VertexShader = undefined,
         pixel_shader: *const PixelShader = undefined,
-        constant_buffers: std.BoundedArray(ConstantBufferItem, 8) = undefined,
     },
 
-    // @TODO: add rasterization state map, blend state map, and sampler map so we can just use them at 
-    // draw time instead of creating new objects each time at init. Be aggressive for JIT (Just in Time) gfx object creation
-
-    const enable_debug_layers = true;
-    const swapchain_buffer_count: u32 = 3;
-    pub const hdr_format = TextureFormat.Rgba16_Float;
-    pub const ldr_format = TextureFormat.Rgba8_Unorm;
+    pub const hdr_format = ImageFormat.Rgba16_Float;
+    pub const ldr_format = ImageFormat.Rgba8_Unorm;
+    pub const depth_format = ImageFormat.D24S8_Unorm_Uint;
 
     pub fn deinit(self: *Self) void {
-        std.log.debug("D3D11 deinit", .{});
+        std.log.debug("gfx deinit", .{});
 
-        self.default.sampler.deinit();
-        self.default.diffuse.deinit();
-        self.default.normals.deinit();
-        self.default.metallic_roughness.deinit();
-        self.default.ambient_occlusion.deinit();
-        self.default.emission.deinit();
+        self.platform.deinit();
+
+        self.images.deinit();
+        self.image_views.deinit();
+        self.samplers.deinit();
+        self.graphics_pipelines.deinit();
+        self.framebuffers.deinit();
 
         self.tone_mapping_filter.deinit();
 
-        self.hdr_rtv.deinit();
-        self.hdr_texture_view.deinit();
-        self.hdr_texture.deinit();
-
-        self.framebuffer_rtv.deinit();
-
-        self.platform.deinit();
+        self.default.sampler.deinit();
+        self.default.depth_view.deinit();
+        self.default.depth_image.deinit();
+        self.default.diffuse_view.deinit();
+        self.default.diffuse.deinit();
+        self.default.normals_view.deinit();
+        self.default.normals.deinit();
+        self.default.metallic_roughness_view.deinit();
+        self.default.metallic_roughness.deinit();
+        self.default.ambient_occlusion_view.deinit();
+        self.default.ambient_occlusion.deinit();
+        self.default.emission_view.deinit();
+        self.default.emission.deinit();
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
         var gfx_platform = try pl.GfxPlatform.init(alloc, window);
         errdefer gfx_platform.deinit();
         
-        const window_size = try window.get_client_size();
-
         var gfx_state = Self {
             .platform = gfx_platform,
-            .swapchain_size = .{
-                .width = @intCast(window_size.width), 
-                .height = @intCast(window_size.height)
-            },
-            .framebuffer_rtv = undefined,
-            .hdr_rtv = undefined,
-            .hdr_texture = undefined,
-            .hdr_texture_view = undefined,
+
+            .images = gen.GenerationalList(Image).init(alloc),
+            .image_views = gen.GenerationalList(ImageView).init(alloc),
+            .samplers = gen.GenerationalList(Sampler).init(alloc),
+            .graphics_pipelines = gen.GenerationalList(GraphicsPipeline).init(alloc),
+            .framebuffers = gen.GenerationalList(FrameBuffer).init(alloc),
+
             .tone_mapping_filter = undefined,
+
             .default = .{
+                .depth_image = undefined,
+                .depth_view = undefined,
                 .sampler = undefined,
                 .diffuse = undefined,
+                .diffuse_view = undefined,
                 .normals = undefined,
+                .normals_view = undefined,
                 .metallic_roughness = undefined,
+                .metallic_roughness_view = undefined,
                 .ambient_occlusion = undefined,
+                .ambient_occlusion_view = undefined,
                 .emission = undefined,
+                .emission_view = undefined,
             },
         };
 
-        const framebuffer_texture = try gfx_state.create_texture2d_from_framebuffer();
-        defer framebuffer_texture.deinit();
-
-        gfx_state.framebuffer_rtv = try RenderTargetView.init_from_texture2d(&framebuffer_texture, &gfx_state);
-        errdefer gfx_state.framebuffer_rtv.deinit();
-
-        gfx_state.hdr_texture = try gfx_state.create_hdr_rtv_texture2d_from_framebuffer();
-        errdefer gfx_state.hdr_texture.deinit();
-
-        gfx_state.hdr_rtv = try RenderTargetView.init_from_texture2d(&gfx_state.hdr_texture, &gfx_state);
-        errdefer gfx_state.hdr_rtv.deinit();
-
-        gfx_state.hdr_texture_view = try TextureView2D.init_from_texture2d(&gfx_state.hdr_texture, &gfx_state);
-        errdefer gfx_state.hdr_texture_view.deinit();
-
-        gfx_state.tone_mapping_filter = try ToneMappingAndBloomFilter.init(&gfx_state);
+        gfx_state.tone_mapping_filter = try ToneMappingAndBloomFilter.init();
         errdefer gfx_state.tone_mapping_filter.deinit();
 
-        gfx_state.default.sampler = try Sampler.init(.{}, &gfx_state);
+        gfx_state.default.depth_image = try Image.init(.{
+            .format = Self.depth_format,
+            .match_swapchain_extent = true,
+
+            .usage_flags = .{ .DepthStencil = true, },
+            .access_flags = .{ .GpuWrite = true, },
+        }, null);
+        errdefer gfx_state.default.depth_image.deinit();
+
+        gfx_state.default.depth_view = try ImageView.init(.{ .image = gfx_state.default.depth_image, });
+        errdefer gfx_state.default.depth_view.deinit();
+
+        gfx_state.default.sampler = try Sampler.init(.{});
         errdefer gfx_state.default.sampler.deinit();
-        gfx_state.default.diffuse = try init_single_pixel_texture_view([4]u8{255, 255, 255, 255}, &gfx_state);
+
+        gfx_state.default.diffuse = try init_single_pixel_texture(zm.f32x4s(1.0));
         errdefer gfx_state.default.diffuse.deinit();
-        gfx_state.default.normals = try init_single_pixel_texture_view([4]u8{128, 128, 255, 255}, &gfx_state);
+
+        gfx_state.default.diffuse_view = try ImageView.init(.{ .image = gfx_state.default.diffuse, });
+        errdefer gfx_state.default.diffuse_view.deinit();
+
+        gfx_state.default.normals = try init_single_pixel_texture(zm.f32x4(0.5, 0.5, 1.0, 1.0));
         errdefer gfx_state.default.normals.deinit();
-        gfx_state.default.metallic_roughness = try init_single_pixel_texture_view([4]u8{0, 255, 255, 255}, &gfx_state);
+
+        gfx_state.default.normals_view = try ImageView.init(.{ .image = gfx_state.default.normals, });
+        errdefer gfx_state.default.normals_view.deinit();
+
+        gfx_state.default.metallic_roughness = try init_single_pixel_texture(zm.f32x4(0.0, 1.0, 1.0, 1.0));
         errdefer gfx_state.default.metallic_roughness.deinit();
-        gfx_state.default.ambient_occlusion = try init_single_pixel_texture_view([4]u8{255, 255, 255, 255}, &gfx_state);
+
+        gfx_state.default.metallic_roughness_view = try ImageView.init(.{ .image = gfx_state.default.metallic_roughness, });
+        errdefer gfx_state.default.metallic_roughness_view.deinit();
+        
+        gfx_state.default.ambient_occlusion = try init_single_pixel_texture(zm.f32x4s(1.0));
         errdefer gfx_state.default.ambient_occlusion.deinit();
-        gfx_state.default.emission = try init_single_pixel_texture_view([4]u8{0, 0, 0, 255}, &gfx_state);
+
+        gfx_state.default.ambient_occlusion_view = try ImageView.init(.{ .image = gfx_state.default.ambient_occlusion, });
+        errdefer gfx_state.default.ambient_occlusion_view.deinit();
+
+        gfx_state.default.emission = try init_single_pixel_texture(zm.f32x4(0.0, 0.0, 0.0, 1.0));
         errdefer gfx_state.default.emission.deinit();
+
+        gfx_state.default.emission_view = try ImageView.init(.{ .image = gfx_state.default.emission, });
+        errdefer gfx_state.default.emission_view.deinit();
 
         return gfx_state;
     }
 
-    fn init_single_pixel_texture_view(colour: [4]u8, gfx_state: *GfxState) !TextureView2D {
-        const texture = try Texture2D.init_colour(
+    pub inline fn get() *Self {
+        return &eng.get().gfx;
+    }
+
+    pub fn swapchain_size(self: *const Self) [2]u32 {
+        return self.platform.swapchain_size();
+    }
+
+    pub fn swapchain_aspect(self: *const Self) f32 {
+        const s = self.swapchain_size();
+        return @as(f32, @floatFromInt(s[0])) / @as(f32, @floatFromInt(s[1]));
+    }
+
+    fn init_single_pixel_texture(colour: zm.F32x4) !Image.Ref {
+        return try Image.init_colour(
             .{
                 .width = 1,
                 .height = 1,
                 .format = .Rgba8_Unorm,
+
+                .usage_flags = .{ .ShaderResource = true, },
+                .access_flags = .{},
             },
-            .{ .ShaderResource = true, },
-            .{},
             colour,
-            gfx_state
-        );
-        defer texture.deinit();
-        return try TextureView2D.init_from_texture2d(&texture, gfx_state);
-    }
-
-    fn create_texture2d_from_framebuffer(self: *Self) !Texture2D {
-        return try self.platform.create_texture2d_from_framebuffer(self);
-    }
-
-    fn create_hdr_rtv_texture2d_from_framebuffer(self: *Self) !Texture2D {
-        return try Texture2D.init(
-            .{ 
-                .height = @intCast(self.swapchain_size.height),
-                .width = @intCast(self.swapchain_size.width),
-                .format = hdr_format,
-            },
-            .{ .RenderTarget = true, .ShaderResource = true, },
-            .{ .GpuWrite = true, },
-            null,
-            self
         );
     }
 
-    pub fn begin_frame(self: *Self) !RenderTargetView {
-        return self.hdr_rtv;
+    pub fn get_frame_rtv(self: *Self) ImageView.Ref {
+        _ = self;
+        unreachable;
     }
 
-    pub fn get_framebuffer(self: *Self) *RenderTargetView {
-        return &self.framebuffer_rtv;
+    pub fn get_frame_hdr_view(self: *Self) ImageView.Ref {
+        _ = self;
+        unreachable;
+    }
+
+    pub fn get_framebuffer(self: *Self) ImageView.Ref {
+        _ = self;
+        unreachable;
     }
 
     pub fn present(self: *Self) !void {
-        if (self.swapchain_size.width * self.swapchain_size.height == 0) {
+        if (self.swapchain_size()[0] * self.swapchain_size()[1] == 0) {
             return error.SwapchainSizeIsZero;
         }
         try self.platform.present();
@@ -189,10 +224,6 @@ pub const GfxState = struct {
         self.platform.clear_state();
     }
 
-    pub fn swapchain_aspect(self: *Self) f32 {
-        return @as(f32, @floatFromInt(self.swapchain_size.width)) / @as(f32, @floatFromInt(self.swapchain_size.height));
-    }
-
     pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {
         const w = @max(new_width, 1);
         const h = @max(new_height, 1);
@@ -200,34 +231,7 @@ pub const GfxState = struct {
         self.clear_state();
         self.flush();
 
-        // Release help render target view before we update the swapchain.
-        // If we dont do this swapchain resize buffers will fail.
-        self.hdr_rtv.deinit();
-        self.hdr_texture_view.deinit();
-        self.hdr_texture.deinit();
-        self.framebuffer_rtv.deinit();
-
         self.platform.resize_swapchain(w, h);
-
-        // Update swapchain size variables
-        self.swapchain_size.width = w;
-        self.swapchain_size.height = h;
-
-        // Reacquire render target view from new swapchain
-        var framebuffer_texture = self.create_texture2d_from_framebuffer() catch unreachable;
-        defer framebuffer_texture.deinit();
-
-        self.framebuffer_rtv = RenderTargetView.init_from_texture2d(&framebuffer_texture, self)
-            catch unreachable;
-
-        self.hdr_texture = self.create_hdr_rtv_texture2d_from_framebuffer() catch unreachable;
-        errdefer self.hdr_texture.deinit();
-
-        self.hdr_rtv = RenderTargetView.init_from_texture2d(&self.hdr_texture, self)
-            catch unreachable;
-
-        self.hdr_texture_view = TextureView2D.init_from_texture2d(&self.hdr_texture, self)
-            catch unreachable;
     }
 
     pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
@@ -242,11 +246,11 @@ pub const GfxState = struct {
         }
     }
 
-    pub fn cmd_clear_render_target(self: *Self, rt: *const RenderTargetView, color: zm.F32x4) void {
+    pub fn cmd_clear_render_target(self: *Self, rt: ImageView.Ref, color: zm.F32x4) void {
         self.platform.cmd_clear_render_target(rt, color);
     }
 
-    pub fn cmd_clear_depth_stencil_view(self: *Self, dsv: *const DepthStencilView, depth: ?f32, stencil: ?u8) void {
+    pub fn cmd_clear_depth_stencil_view(self: *Self, dsv: ImageView.Ref, depth: ?f32, stencil: ?u8) void {
         self.platform.cmd_clear_depth_stencil_view(dsv, depth, stencil);
     }
 
@@ -258,7 +262,7 @@ pub const GfxState = struct {
         self.platform.cmd_set_scissor_rect(scissor);
     }
 
-    pub fn cmd_set_render_target(self: *Self, rtvs: []const ?*const RenderTargetView, depth_stencil_view: ?*const DepthStencilView) void {
+    pub fn cmd_set_render_target(self: *Self, rtvs: []const ?ImageView.Ref, depth_stencil_view: ?ImageView.Ref) void {
         self.platform.cmd_set_render_target(rtvs, depth_stencil_view);
     }
 
@@ -302,19 +306,11 @@ pub const GfxState = struct {
         self.platform.cmd_set_rasterizer_state(rs);
     }
 
-    pub fn cmd_set_blend_state(self: *Self, blend_state: ?*const BlendState) void {
-        self.platform.cmd_set_blend_state(blend_state);
+    pub fn cmd_set_shader_resources(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: []const ?ImageView.Ref) void {
+        self.platform.cmd_set_shader_resources(shader_stage, start_slot, views);
     }
 
-    pub fn cmd_set_shader_resources(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: anytype) void {
-        var srvs: [8]?*const pl.GfxPlatform.ShaderResourceView = [_]?*const pl.GfxPlatform.ShaderResourceView{null} ** 8;
-        inline for (views, 0..) |v, i| {
-            srvs[i] = if (@TypeOf(v) != @TypeOf(null)) v.shader_resource_view() else null;
-        }
-        self.platform.cmd_set_shader_resources(shader_stage, start_slot, &srvs);
-    }
-
-    pub fn cmd_set_samplers(self: *Self, shader_stage: ShaderStage, start_slot: u32, sampler: []const *const Sampler) void {
+    pub fn cmd_set_samplers(self: *Self, shader_stage: ShaderStage, start_slot: u32, sampler: []const Sampler.Ref) void {
         self.platform.cmd_set_samplers(shader_stage, start_slot, sampler);
     }
 
@@ -350,17 +346,10 @@ pub const GfxState = struct {
         self.platform.cmd_dispatch_compute(num_groups_x, num_groups_y, num_groups_z);
     }
 
-    pub fn cmd_copy_texture_to_texture(self: *Self, dst_texture: *const Texture2D, src_texture: *const Texture2D) void {
+    pub fn cmd_copy_texture_to_texture(self: *Self, dst_texture: Image.Ref, src_texture: Image.Ref) void {
         self.platform.cmd_copy_texture_to_texture(dst_texture, src_texture);
     }
 };
-
-pub const ConstantBufferItem = struct { 
-    stages: ShaderStageFlags = .{}, 
-    buffer: ?*const Buffer = null,
-};
-
-pub const ConstantBufferArray = std.BoundedArray(ConstantBufferItem, 4);
 
 pub const VertexBufferInput = struct {
     buffer: *const Buffer,
@@ -424,7 +413,6 @@ pub const VertexShader = struct {
         vs_func: []const u8,
         vs_layout: []const VertexInputLayoutEntry,
         options: VertexShaderOptions,
-        gfx: *GfxState,
     ) !VertexShader {
         const vs_res_path = try vs_path.resolve_path(alloc);
         defer alloc.free(vs_res_path);
@@ -444,7 +432,7 @@ pub const VertexShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(vs_buf, vs_func, vs_layout, modified_options, gfx);
+        return init_buffer(vs_buf, vs_func, vs_layout, modified_options);
     }
 
     pub fn init_buffer(
@@ -452,9 +440,8 @@ pub const VertexShader = struct {
         vs_func: []const u8, 
         vs_layout: []const VertexInputLayoutEntry,
         options: VertexShaderOptions,
-        gfx: *GfxState,
     ) !VertexShader {
-        const platform = pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, options, gfx) catch |err| {
+        const platform = pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, options) catch |err| {
             std.log.err("Vertex shader init failed: {s}", .{@errorName(err)});
             return err;
         };
@@ -503,7 +490,6 @@ pub const PixelShader = struct {
         ps_path: path.Path, 
         ps_func: []const u8,
         options: PixelShaderOptions,
-        gfx: *GfxState,
     ) !PixelShader {
         const ps_res_path = try ps_path.resolve_path(alloc);
         defer alloc.free(ps_res_path);
@@ -523,16 +509,15 @@ pub const PixelShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(ps_buf, ps_func, modified_options, gfx);
+        return init_buffer(ps_buf, ps_func, modified_options);
     }
 
     pub fn init_buffer(
         ps_data: []const u8, 
         ps_func: []const u8,
         options: PixelShaderOptions,
-        gfx: *GfxState,
     ) !PixelShader {
-        const platform = pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, options, gfx) catch |err| {
+        const platform = pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, options) catch |err| {
             std.log.err("Pixel shader init failed: {s}\n\t- {s}", .{
                 @errorName(err),
                 options.filepath orelse "no filepath provided",
@@ -562,7 +547,6 @@ pub const HullShader = struct {
         hs_path: path.Path, 
         hs_func: []const u8,
         options: HullShaderOptions,
-        gfx: *GfxState,
     ) !HullShader {
         const res_path = try hs_path.resolve_path(alloc);
         defer alloc.free(res_path);
@@ -582,16 +566,15 @@ pub const HullShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(buf, hs_func, modified_options, gfx);
+        return init_buffer(buf, hs_func, modified_options);
     }
 
     pub fn init_buffer(
         hs_data: []const u8, 
         hs_func: []const u8,
         options: HullShaderOptions,
-        gfx: *GfxState,
     ) !HullShader {
-        const platform = pl.GfxPlatform.HullShader.init_buffer(hs_data, hs_func, options, gfx) catch |err| {
+        const platform = pl.GfxPlatform.HullShader.init_buffer(hs_data, hs_func, options) catch |err| {
             std.log.err("Hull shader init failed: {s}\n\t- {s}", .{
                 @errorName(err),
                 options.filepath orelse "no filepath provided",
@@ -621,7 +604,6 @@ pub const DomainShader = struct {
         ds_path: path.Path, 
         ds_func: []const u8,
         options: DomainShaderOptions,
-        gfx: *GfxState,
     ) !DomainShader {
         const res_path = try ds_path.resolve_path(alloc);
         defer alloc.free(res_path);
@@ -641,16 +623,15 @@ pub const DomainShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(buf, ds_func, modified_options, gfx);
+        return init_buffer(buf, ds_func, modified_options);
     }
 
     pub fn init_buffer(
         ds_data: []const u8, 
         ds_func: []const u8,
         options: DomainShaderOptions,
-        gfx: *GfxState,
     ) !DomainShader {
-        const platform = pl.GfxPlatform.DomainShader.init_buffer(ds_data, ds_func, options, gfx) catch |err| {
+        const platform = pl.GfxPlatform.DomainShader.init_buffer(ds_data, ds_func, options) catch |err| {
             std.log.err("Domain shader init failed: {s}\n\t- {s}", .{
                 @errorName(err),
                 options.filepath orelse "no filepath provided",
@@ -680,7 +661,6 @@ pub const GeometryShader = struct {
         gs_path: path.Path, 
         gs_func: []const u8,
         options: GeometryShaderOptions,
-        gfx: *GfxState,
     ) !GeometryShader {
         const res_path = try gs_path.resolve_path(alloc);
         defer alloc.free(res_path);
@@ -700,16 +680,15 @@ pub const GeometryShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(buf, gs_func, modified_options, gfx);
+        return init_buffer(buf, gs_func, modified_options);
     }
 
     pub fn init_buffer(
         gs_data: []const u8, 
         gs_func: []const u8,
         options: GeometryShaderOptions,
-        gfx: *GfxState,
     ) !GeometryShader {
-        const platform = pl.GfxPlatform.GeometryShader.init_buffer(gs_data, gs_func, options, gfx) catch |err| {
+        const platform = pl.GfxPlatform.GeometryShader.init_buffer(gs_data, gs_func, options) catch |err| {
             std.log.err("Geometry shader init failed: {s}\n\t- {s}", .{
                 @errorName(err),
                 options.filepath orelse "no filepath provided",
@@ -739,7 +718,6 @@ pub const ComputeShader = struct {
         cs_path: path.Path, 
         cs_func: []const u8,
         options: ComputeShaderOptions,
-        gfx: *GfxState,
     ) !ComputeShader {
         const cs_res_path = try cs_path.resolve_path(alloc);
         defer alloc.free(cs_res_path);
@@ -759,16 +737,15 @@ pub const ComputeShader = struct {
             return error.FailedToReadShader;
         }
 
-        return init_buffer(cs_buf, cs_func, modified_options, gfx);
+        return init_buffer(cs_buf, cs_func, modified_options);
     }
 
     pub fn init_buffer(
         cs_data: []const u8, 
         cs_func: []const u8, 
         options: ComputeShaderOptions,
-        gfx: *GfxState,
     ) !ComputeShader {
-        const platform = pl.GfxPlatform.ComputeShader.init_buffer(cs_data, cs_func, options, gfx) catch |err| {
+        const platform = pl.GfxPlatform.ComputeShader.init_buffer(cs_data, cs_func, options) catch |err| {
             std.log.err("Compute shader init failed: {s}", .{@errorName(err)});
             return err;
         };
@@ -789,10 +766,9 @@ pub const Buffer = struct {
         byte_size: u32,
         usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
-        gfx: *GfxState,
     ) !Buffer {
         return Buffer {
-            .platform = try pl.GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags, gfx),
+            .platform = try pl.GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags),
         };
     }
     
@@ -800,16 +776,20 @@ pub const Buffer = struct {
         data: []const u8,
         usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
-        gfx: *GfxState,
     ) !Buffer {
         return Buffer {
-            .platform = try pl.GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags, gfx),
+            .platform = try pl.GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags),
         };
     }
 
-    pub fn map(self: *const Buffer, gfx: *GfxState) !MappedBuffer {
+    pub const MapOptions = struct {
+        read: bool = false,
+        write: bool = false,
+    };
+
+    pub fn map(self: *const Buffer, options: MapOptions) !MappedBuffer {
         return MappedBuffer {
-            .platform = try self.platform.map(gfx),
+            .platform = try self.platform.map(options),
         };
     }
 
@@ -833,301 +813,224 @@ pub const Buffer = struct {
 pub const ShaderResourceView = *const pl.GfxPlatform.ShaderResourceView;
 pub const UnorderedAccessView = *const pl.GfxPlatform.UnorderedAccessView;
 
-pub const Texture2D = struct {
-    platform: pl.GfxPlatform.Texture2D,
-    desc: Descriptor,
+pub fn Reference(comptime Type: type) type {
+    return struct {
+        const Self = @This();
+
+        id: gen.GenerationalIndex,
+
+        pub fn deinit(self: *const Self) void {
+            if (self.get()) |asset| {
+                asset.deinit();
+            } else |_| {
+                std.log.warn("Unable to retrieve {s} asset", .{@typeName(Type)});
+            }
+            gfxstate_list().remove(self.id) catch |err| {
+                std.log.warn("Unable to remove {s} asset: {}", .{@typeName(Type), err});
+            };
+        }
+
+        pub fn get(self: *const Self) !*Type {
+            return gfxstate_list().get(self.id) orelse return error.UnableToRetrieveAsset;
+        }
+
+        inline fn gfxstate_list() *gen.GenerationalList(Type) {
+            return switch (Type) {
+                Image => &GfxState.get().images,
+                else => unreachable,
+            };
+        }
+    };
+}
+
+pub const ImageInfo = struct {
+    format: ImageFormat,
+
+    match_swapchain_extent: bool = false,
+    width: u32 = 1,
+    height: u32 = 1,
+    depth: u32 = 1,
+    mip_levels: u32 = 1,
+    array_length: u32 = 1,
+
     usage_flags: TextureUsageFlags,
     access_flags: AccessFlags,
+};
 
-    pub fn deinit(self: *const Texture2D) void {
+pub const Image = struct {
+    pub const Ref = Reference(Image);
+
+
+    info: ImageInfo,
+    platform: GfxState.Platform.Image,
+    child_views: std.ArrayList(ImageView.Ref),
+
+    pub fn deinit(self: *const Image) void {
+        self.child_views.deinit();
         self.platform.deinit();
     }
 
-    pub fn init(
-        desc: Descriptor,
-        usage_flags: TextureUsageFlags,
-        access_flags: AccessFlags,
-        data: ?[]const u8,
-        gfx: *GfxState
-    ) !Texture2D {
-        if (data) |d| {
-            if (d.len < (desc.width * desc.height * desc.format.byte_width())) {
-                return error.NotEnoughDataToFillTexture;
-            }
-        } else {
-            if (!access_flags.CpuWrite and !access_flags.GpuWrite) { 
-                return error.DataNotSuppliedToImmutableTexture; 
-            }
-        }
+    pub fn init(info: ImageInfo, data: ?[]const u8) !Image.Ref {
+        const platform = try GfxState.Platform.Image.init(info, data);
+        errdefer platform.deinit();
 
-        return Texture2D {
-            .platform = try pl.GfxPlatform.Texture2D.init(desc, usage_flags, access_flags, data, gfx),
-            .desc = desc,
-            .usage_flags = usage_flags,
-            .access_flags = access_flags,
+        const image = Image {
+            .platform = platform,
+            .info = info,
+            .child_views = std.ArrayList(ImageView.Ref).init(eng.get().general_allocator),
+        };
+
+        return Image.Ref {
+            .id = try GfxState.get().images.insert(image),
         };
     }
 
-    pub fn init_colour(
-        desc: Descriptor,
-        usage_flags: TextureUsageFlags,
-        access_flags: AccessFlags,
-        colour: [4]u8,
-        gfx: *GfxState
-    ) !Texture2D {
-        if (desc.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
+    pub fn init_colour(info: ImageInfo, colour: zm.F32x4) !Image.Ref {
+        if (info.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
+        if (info.array_length != 1) { return error.CannotSetColourOnImageArray; }
+        if (info.mip_levels != 1) { return error.CannotSetColourOnMippedImage; }
 
-        const data = try std.heap.page_allocator.alloc(u8, desc.width * desc.height * 4);
-        defer std.heap.page_allocator.free(data);
+        const alloc = eng.get().frame_allocator;
+
+        const data = try alloc.alloc(u8, info.width * info.height * info.depth * 4);
+        defer alloc.free(data);
 
         const data_u32: *const align(1) []u32 = @ptrCast(&data);
-        const colour_u32: *const align(1) u32 = @ptrCast(&colour);
+        const clamped_colour = zm.clamp(colour, zm.f32x4s(0.0), zm.f32x4s(1.0));
+        const colour_u8: [4]u8 = .{
+            @intFromFloat(clamped_colour[0] * 255),
+            @intFromFloat(clamped_colour[1] * 255),
+            @intFromFloat(clamped_colour[2] * 255),
+            @intFromFloat(clamped_colour[3] * 255),
+        };
+        const colour_u32: *const align(1) u32 = @ptrCast(&colour_u8);
 
         @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
 
-        return init(desc, usage_flags, access_flags, data, gfx);
+        return try Image.init(info, data);
     }
 
-    pub const Descriptor = struct {
-        width: u32,
-        height: u32,
-        format: TextureFormat,
-        array_length: u32 = 1,
-        mip_levels: u32 = 1,
+    pub const MapOptions = struct {
+        read: bool = false,
+        write: bool = false,
     };
 
-    pub fn map(self: *const Texture2D, comptime OutType: type, gfx: *GfxState) !MappedTexture(OutType) {
-        return MappedTexture(OutType) {
-            .platform = try self.platform.map_read(OutType, gfx),
+    pub fn map(self: *const Image, options: MapOptions) !MappedImage {
+        return MappedImage {
+            .platform = try self.platform.map(options),
         };
     }
 
-    pub fn map_write_discard(self: *const Texture2D, comptime OutType: type, gfx: *GfxState) !MappedTexture(OutType) {
-        return MappedTexture(OutType) {
-            .platform = try self.platform.map_write_discard(OutType, gfx),
-        };
-    }
+    pub const MappedImage = struct {
+        platform: pl.GfxPlatform.Image.MappedImage,
 
-    pub fn MappedTexture(comptime T: type) type {
-        return struct {
-            platform: pl.GfxPlatform.Texture2D.MappedTexture(T),
-
-            pub fn unmap(self: *const MappedTexture(T)) void {
-                self.platform.unmap();
-            }
-            
-            pub fn data(self: *const MappedTexture(T)) [*]align(16)T {
-                return self.platform.data();
-            }
-        };
-    }
-};
-
-pub const TextureView2D = struct {
-    platform: pl.GfxPlatform.TextureView2D,
-    desc: Texture2D.Descriptor,
-    usage_flags: TextureUsageFlags,
-    access_flags: AccessFlags,
-
-    pub fn deinit(self: *const TextureView2D) void {
-        self.platform.deinit();
-    }
-
-    pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !TextureView2D {
-        return TextureView2D {
-            .platform = try pl.GfxPlatform.TextureView2D.init_from_texture2d(texture, gfx),
-            .desc = texture.desc,
-            .usage_flags = texture.usage_flags,
-            .access_flags = texture.access_flags,
-        };
-    }
-
-    pub fn shader_resource_view(self: *const TextureView2D) ShaderResourceView {
-        std.debug.assert(self.usage_flags.ShaderResource);
-        return self.platform.shader_resource_view();
-    }
-
-    pub fn unordered_access_view(self: *const TextureView2D) UnorderedAccessView {
-        std.debug.assert(self.usage_flags.UnorderedAccess);
-        return self.platform.unordered_access_view();
-    }
-};
-
-pub const Texture3D = struct {
-    platform: pl.GfxPlatform.Texture3D,
-    desc: Descriptor,
-    usage_flags: TextureUsageFlags,
-    access_flags: AccessFlags,
-
-    pub fn deinit(self: *const Texture3D) void {
-        self.platform.deinit();
-    }
-
-    pub fn init(
-        desc: Descriptor,
-        usage_flags: TextureUsageFlags,
-        access_flags: AccessFlags,
-        data: ?[]const u8,
-        gfx: *GfxState
-    ) !Texture3D {
-        if (data) |d| {
-            if (d.len < (desc.width * desc.height * desc.depth * desc.format.byte_width())) {
-                return error.NotEnoughDataToFillTexture;
-            }
-        } else {
-            if (!access_flags.CpuWrite and !access_flags.GpuWrite) { 
-                return error.DataNotSuppliedToImmutableTexture; 
-            }
+        pub fn unmap(self: *const MappedImage) void {
+            self.platform.unmap();
         }
 
-        return Texture3D {
-            .platform = try pl.GfxPlatform.Texture3D.init(desc, usage_flags, access_flags, data, gfx),
-            .desc = desc,
-            .usage_flags = usage_flags,
-            .access_flags = access_flags,
-        };
-    }
-
-    pub fn init_colour(
-        desc: Descriptor,
-        usage_flags: TextureUsageFlags,
-        access_flags: AccessFlags,
-        colour: [4]u8,
-        gfx: *GfxState
-    ) !Texture3D {
-        if (desc.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
-
-        const data = try std.heap.page_allocator.alloc(u8, desc.width * desc.height * desc.depth * 4);
-        defer std.heap.page_allocator.free(data);
-
-        const data_u32: *const align(1) []u32 = @ptrCast(&data);
-        const colour_u32: *const align(1) u32 = @ptrCast(&colour);
-
-        @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
-
-        return init(desc, usage_flags, access_flags, data, gfx);
-    }
-
-    pub const Descriptor = struct {
-        width: u32,
-        height: u32,
-        depth: u32,
-        format: TextureFormat,
-        mip_levels: u32 = 1,
+        pub fn data(self: *const MappedImage, comptime Type: type) [*]align(16)Type {
+            return self.platform.data(Type);
+        }
     };
-
-    pub fn map(self: *const Texture3D, comptime OutType: type, gfx: *GfxState) !MappedTexture(OutType) {
-        return MappedTexture(OutType) {
-            .platform = try self.platform.map(OutType, gfx),
-        };
-    }
-
-    pub fn MappedTexture(comptime T: type) type {
-        return struct {
-            platform: pl.GfxPlatform.Texture3D.MappedTexture(T),
-
-            pub fn unmap(self: *const MappedTexture(T)) void {
-                self.platform.unmap();
-            }
-            
-            pub fn data(self: *const MappedTexture(T)) [*]align(1)T {
-                return self.platform.data();
-            }
-        };
-    }
 };
 
-pub const TextureView3D = struct {
-    platform: pl.GfxPlatform.TextureView3D,
-    desc: Texture3D.Descriptor,
-    usage_flags: TextureUsageFlags,
-    access_flags: AccessFlags,
+pub const ImageViewInfo = struct {
+    image: Image.Ref,
+    base_mip_level: u32 = 0,
+    mip_level_count: u32 = 1,
+    base_array_layer: u32 = 0,
+    array_layer_count: u32 = 1,
+};
 
-    pub fn deinit(self: *const TextureView3D) void {
+pub const ImageView = struct {
+    pub const Ref = Reference(ImageView);
+
+    platform: GfxState.Platform.ImageView,
+    info: ImageViewInfo,
+    size: struct { width: u32, height: u32, },
+
+    pub fn deinit(self: *ImageView) void {
         self.platform.deinit();
     }
 
-    pub fn init_from_texture3d(texture: *const Texture3D, gfx: *GfxState) !TextureView3D {
-        return TextureView3D {
-            .platform = try pl.GfxPlatform.TextureView3D.init_from_texture3d(texture, gfx),
-            .desc = texture.desc,
-            .usage_flags = texture.usage_flags,
-            .access_flags = texture.access_flags,
-        };
-    }
+    pub fn init(info: ImageViewInfo) !ImageView.Ref {
+        std.debug.assert(info.base_mip_level > 0);
+        std.debug.assert(info.base_array_layer > 0);
 
-    pub fn shader_resource_view(self: *const TextureView3D) ShaderResourceView {
-        std.debug.assert(self.usage_flags.ShaderResource);
-        return self.platform.shader_resource_view();
-    }
+        const platform = try GfxState.Platform.ImageView.init(info);
+        errdefer platform.deinit();
 
-    pub fn unordered_access_view(self: *const TextureView3D) UnorderedAccessView {
-        std.debug.assert(self.usage_flags.UnorderedAccess);
-        return self.platform.unordered_access_view();
-    }
-};
+        const image = try info.image.get();
 
-pub const RenderTargetView = struct {
-    platform: pl.GfxPlatform.RenderTargetView,
-    size: struct { width: u32, height: u32, depth: u32, },
-
-    pub fn deinit(self: *const RenderTargetView) void {
-        self.platform.deinit();
-    }
-
-    pub fn init_from_texture2d(texture: *const Texture2D, gfx: *GfxState) !RenderTargetView {
-        return init_from_texture2d_mip(texture, 0, gfx);
-    }
-
-    pub fn init_from_texture2d_mip(texture: *const Texture2D, mip_level: u32, gfx: *GfxState) !RenderTargetView {
-        return RenderTargetView {
-            .platform = try pl.GfxPlatform.RenderTargetView.init_from_texture2d_mip(texture, mip_level, gfx),
+        const image_view = ImageView {
+            .platform = platform,
+            .info = info,
             .size = .{
-                .width = texture.desc.width / std.math.pow(u32, 2, mip_level),
-                .height = texture.desc.height / std.math.pow(u32, 2, mip_level),
-                .depth = 1,
+                .width = @divFloor(image.info.width, std.math.pow(u32, info.base_mip_level - 1, 2)),
+                .height = @divFloor(image.info.height, std.math.pow(u32, info.base_mip_level - 1, 2)),
             },
         };
-    }
 
-    pub fn init_from_texture3d(texture: *const Texture3D, gfx: *GfxState) !RenderTargetView {
-        return RenderTargetView {
-            .platform = try pl.GfxPlatform.RenderTargetView.init_from_texture3d(texture, gfx),
-            .size = .{
-                .width = texture.desc.width,
-                .height = texture.desc.height,
-                .depth = texture.desc.depth,
-            },
+        const view_ref = ImageView.Ref {
+            .id = try GfxState.get().image_views.insert(image_view),
         };
+        errdefer GfxState.get().image_views.remove(view_ref.id) catch {};
+
+        try image.child_views.append(view_ref);
+
+        return view_ref;
     }
 };
 
-pub const DepthStencilView = struct {
-    platform: pl.GfxPlatform.DepthStencilView,
+// pub const RenderTargetView = struct {
+//     platform: pl.GfxPlatform.RenderTargetView,
+//     size: struct { width: u32, height: u32, depth: u32, },
+//
+//     pub fn deinit(self: *const RenderTargetView) void {
+//         self.platform.deinit();
+//     }
+//
+//     pub fn init(image: Image.Ref) !RenderTargetView {
+//         return init_mip(image, 0);
+//     }
+//
+//     pub fn init_mip(image: Image.Ref, mip_level: u32) !RenderTargetView {
+//         return RenderTargetView {
+//             .platform = try pl.GfxPlatform.RenderTargetView.init(image, mip_level),
+//             .size = .{
+//                 .width = image.get().?.desc.width / std.math.pow(u32, 2, mip_level),
+//                 .height = image.get().?.desc.height / std.math.pow(u32, 2, mip_level),
+//                 .depth = 1,
+//             },
+//         };
+//     }
+// };
+//
+// pub const DepthStencilView = struct {
+//     platform: pl.GfxPlatform.DepthStencilView,
+//
+//     pub const Flags = packed struct(u2) {
+//         read_only_depth: bool = false,
+//         read_only_stencil: bool = false,
+//     };
+//
+//     pub fn deinit(self: *const DepthStencilView) void {
+//         self.platform.deinit();
+//     }
+//
+//     pub fn init(
+//         image: Image.Ref,
+//         flags: Flags,
+//     ) !DepthStencilView {
+//         if (!image.get().?.desc.format.is_depth()) { return error.NotADepthFormat; }
+//
+//         return DepthStencilView {
+//             .platform = try pl.GfxPlatform.DepthStencilView.init(image, flags),
+//         };
+//     }
+// };
 
-    pub const Flags = packed struct(u2) {
-        read_only_depth: bool = false,
-        read_only_stencil: bool = false,
-    };
-
-    pub fn deinit(self: *const DepthStencilView) void {
-        self.platform.deinit();
-    }
-
-    pub fn init_from_texture2d(
-        texture: *const Texture2D, 
-        flags: Flags,
-        gfx: *GfxState
-    ) !DepthStencilView {
-        if (!texture.desc.format.is_depth()) { return error.NotADepthFormat; }
-
-        return DepthStencilView {
-            .platform = try pl.GfxPlatform.DepthStencilView.init_from_texture2d(texture, flags, gfx),
-        };
-    }
-};
-
-pub const TextureFormat = enum {
+pub const ImageFormat = enum {
     Unknown,
     Rgba8_Unorm_Srgb,
     Rgba8_Unorm,
@@ -1141,7 +1044,7 @@ pub const TextureFormat = enum {
     R24X8_Unorm_Uint,
     D24S8_Unorm_Uint,
 
-    pub fn byte_width(self: TextureFormat) usize {
+    pub fn byte_width(self: ImageFormat) usize {
         switch (self) {
             .Unknown => return 0,
             .R32_Float => return 4,
@@ -1158,7 +1061,7 @@ pub const TextureFormat = enum {
         }
     }
 
-    pub fn is_depth(self: TextureFormat) bool {
+    pub fn is_depth(self: ImageFormat) bool {
         switch (self) {
             .D24S8_Unorm_Uint => return true,
             else => return false,
@@ -1219,15 +1122,26 @@ pub const SamplerBorderMode = enum {
 };
 
 pub const Sampler = struct {
-    platform: pl.GfxPlatform.Sampler,
+    pub const Ref = Reference(Sampler);
+
+    platform: GfxState.Platform.Sampler,
+    desc: SamplerDescriptor,
 
     pub fn deinit(self: *const Sampler) void {
         self.platform.deinit();
     }
 
-    pub fn init(desc: SamplerDescriptor, gfx: *GfxState) !Sampler {
-        return Sampler {
-            .platform = try pl.GfxPlatform.Sampler.init(desc, gfx),
+    pub fn init(desc: SamplerDescriptor) !Sampler.Ref {
+        const platform = try pl.GfxPlatform.Sampler.init(desc);
+        errdefer platform.deinit();
+
+        const sampler = Sampler {
+            .platform = platform,
+            .desc = desc,
+        };
+
+        return Sampler.Ref {
+            .id = try GfxState.get().samplers.insert(sampler),
         };
     }
 };
@@ -1236,23 +1150,6 @@ pub const BlendType = enum {
     None,
     Simple,
     PremultipliedAlpha,
-};
-
-pub const BlendState = struct {
-    platform: pl.GfxPlatform.BlendState,
-
-    pub fn deinit(self: *const BlendState) void {
-        self.platform.deinit();
-    }
-
-    pub fn init(render_target_blend_types: []const BlendType, gfx: *const GfxState) !BlendState {
-        if (render_target_blend_types.len > 8) {
-            return error.Maximum8BlendStates;
-        }
-        return BlendState {
-            .platform = try pl.GfxPlatform.BlendState.init(render_target_blend_types, gfx),
-        };
-    }
 };
 
 pub const FillMode = enum {
@@ -1297,7 +1194,7 @@ pub const AttachmentStoreOp = enum {
 
 pub const AttachmentInfo = struct {
     name: []const u8, // an identifier to relate this attachment to attachments in other subpasses
-    format: TextureFormat,
+    format: ImageFormat,
     blend_type: BlendType = BlendType.None,
 
     load_op: AttachmentLoadOp = AttachmentLoadOp.Load,
@@ -1308,7 +1205,8 @@ pub const AttachmentInfo = struct {
 };
 
 pub const SubpassInfo = struct {
-    attachments: []AttachmentInfo,
+    attachments: []const []const u8,
+    depth_attachment: ?[]const u8 = null,
 };
 
 pub const GraphicsPipelineInfo = struct {
@@ -1324,7 +1222,7 @@ pub const GraphicsPipelineInfo = struct {
     rasterization_line_width: f32 = 1.0,
 
     depth_test: ?struct {
-        write: bool = true,
+        write: bool = false,
         compare_op: CompareOp = CompareOp.GreaterOrEqual,
     } = null,
 
@@ -1339,21 +1237,65 @@ pub const GraphicsPipelineInfo = struct {
         slope_factor: f32,
     } = null,
 
-    subpasses: []SubpassInfo,
+    attachments: []const AttachmentInfo,
+    subpasses: []const SubpassInfo,
 };
 
 pub const GraphicsPipeline = struct {
-    platform: pl.GfxPlatform.GraphicsPipeline,
+    pub const Ref = Reference(GraphicsPipeline);
+
+    platform: GfxState.Platform.GraphicsPipeline,
     info: GraphicsPipelineInfo,
 
     pub fn deinit(self: *const GraphicsPipeline) void {
         self.platform.deinit();
     }
     
-    pub fn init(info: GraphicsPipelineInfo) !GraphicsPipeline {
-        return GraphicsPipeline {
-            .platform = try pl.GfxPlatform.GraphicsPipeline.init(info),
+    pub fn init(info: GraphicsPipelineInfo) !GraphicsPipeline.Ref {
+        const platform = try pl.GfxPlatform.GraphicsPipeline.init(info);
+        errdefer platform.deinit();
+
+        const graphics_pipeline = GraphicsPipeline {
+            .platform = platform,
             .info = info,
+        };
+
+        return GraphicsPipeline.Ref {
+            .id = try GfxState.get().graphics_pipelines.insert(graphics_pipeline),
+        };
+    }
+};
+
+pub const FrameBufferAttachmentInfo = union(enum) {
+    View: ImageView.Ref,
+    Swapchain: void,
+    SwapchainDepth: void,
+};
+
+pub const FrameBufferInfo = struct {
+    graphics_pipeline: GraphicsPipeline.Ref,
+    attachments: []const FrameBufferAttachmentInfo,
+};
+
+pub const FrameBuffer = struct {
+    pub const Ref = Reference(FrameBuffer);
+
+    platform: GfxState.Platform.FrameBuffer,
+
+    pub fn deinit(self: *const FrameBuffer) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: FrameBufferInfo) !FrameBuffer.Ref {
+        const platform = try pl.GfxPlatform.FrameBuffer.init(info);
+        errdefer platform.deinit();
+
+        const framebuffer = FrameBuffer {
+            .platform = platform,
+        };
+
+        return FrameBuffer.Ref {
+            .id = try GfxState.get().framebuffers.insert(framebuffer),
         };
     }
 };

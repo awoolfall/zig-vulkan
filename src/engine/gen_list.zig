@@ -30,7 +30,7 @@ pub fn GenerationalList(comptime T: type) type {
         data: std.ArrayList(ItemType),
         free_list: std.ArrayList(usize),
 
-        pub fn init(allocator: std.mem.Allocator) !Self {
+        pub fn init(allocator: std.mem.Allocator) Self {
             return Self {
                 .allocator = allocator,
                 .data = std.ArrayList(ItemType).init(allocator),

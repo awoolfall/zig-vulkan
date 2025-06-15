@@ -24,7 +24,7 @@ pub const Debug = struct {
         self.lines_instance_buffer.deinit();
     }
 
-    pub fn init(allocator: std.mem.Allocator, gfx_state: *gfx.GfxState) !Self {
+    pub fn init(allocator: std.mem.Allocator) !Self {
         _ = allocator;
 
         const lines_vertex_shader = try gfx.VertexShader.init_buffer(
@@ -36,7 +36,6 @@ pub const Debug = struct {
                 .{ .name = "COLOR", .index = 0, .slot = 2, .format = .F32x4, .per = .Instance, },
             })[0..],
             .{},
-            gfx_state
         );
         errdefer lines_vertex_shader.deinit();
 
@@ -44,7 +43,6 @@ pub const Debug = struct {
             LINES_HLSL,
             "ps_main",
             .{},
-            gfx_state
         );
         errdefer lines_pixel_shader.deinit();
 
@@ -52,7 +50,6 @@ pub const Debug = struct {
             @sizeOf(LineDetails) * MAX_LINES,
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx_state
         );
         errdefer lines_instance_buffer.deinit();
 
@@ -89,13 +86,13 @@ pub const Debug = struct {
         });
     }
 
-    pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: *const gfx.RenderTargetView) void {
+    pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: gfx.ImageView.Ref) void {
         const gfx_state = &@import("../root.zig").get().gfx;
 
         const lines_slice = self.lines.constSlice();
 
         {
-            var mapped_buffer = self.lines_instance_buffer.map(gfx_state) catch unreachable;
+            var mapped_buffer = self.lines_instance_buffer.map(.{ .write = true, }) catch unreachable;
             defer mapped_buffer.unmap();
 
             for (lines_slice, 0..) |line, i| {
@@ -108,7 +105,6 @@ pub const Debug = struct {
         }
 
         gfx_state.cmd_set_render_target(&.{rtv}, null);
-        gfx_state.cmd_set_blend_state(null);
         gfx_state.cmd_set_topology(.TriangleList);
         gfx_state.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
         gfx_state.cmd_set_constant_buffers(.Vertex, 0, &[_]*const gfx.Buffer{camera_buffer});

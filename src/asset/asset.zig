@@ -8,9 +8,9 @@ pub const AssetId = @import("asset_id.zig").AssetId;
 
 pub const ModelAsset = @import("model_asset.zig").ModelAsset;
 pub const AnimationAsset = @import("animation_asset.zig").AnimationAsset;
-pub const Texture2DAsset = @import("texture2d_asset.zig").Texture2dAsset;
+pub const ImageAsset = @import("texture2d_asset.zig").ImageAsset;
 
 pub const ModelAssetId = AssetId(ModelAsset);
 pub const AnimationAssetId = AssetId(AnimationAsset);
-pub const Texture2DAssetId = AssetId(Texture2DAsset);
+pub const Texture2DAssetId = AssetId(ImageAsset);
 

@@ -124,7 +124,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.imui = try ui.Imui.init(engine.general_allocator, &engine.input, &engine.time, &engine.window, &engine.gfx);
     errdefer engine.imui.deinit();
 
-    engine.debug = try db.Debug.init(engine.general_allocator, &engine.gfx);
+    engine.debug = try db.Debug.init(engine.general_allocator);
     errdefer engine.debug.deinit();
 
     Log.debug("Calling physics init", .{});

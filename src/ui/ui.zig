@@ -194,8 +194,8 @@ pub const Imui = struct {
         border_width_px: RectPixels = .{},
         corner_radii_px: qr.CornerRadiiPx = .{},
         texture: ?struct {
-            texture_view: _gfx.TextureView2D,
-            sampler: _gfx.Sampler,
+            texture_view: _gfx.ImageView.Ref,
+            sampler: _gfx.Sampler.Ref,
         } = null,
 
         margin_px: RectPixels = .{},
@@ -343,8 +343,8 @@ pub const Imui = struct {
     last_frame_arena: u8,
     arenas: [2]std.heap.ArenaAllocator,
 
-    scuffed_x_checkbox_image: _gfx.TextureView2D,
-    image_sampler: _gfx.Sampler,
+    scuffed_x_checkbox_image: _gfx.ImageView.Ref,
+    image_sampler: _gfx.Sampler.Ref,
 
     pub fn deinit(self: *Self) void {
         for (&self.fonts) |*f| {
@@ -376,23 +376,20 @@ pub const Imui = struct {
         var scuffed_x_image = try zstbi.Image.loadFromFile("res/scuffed_x.png", 4);
         defer scuffed_x_image.deinit();
 
-        var scuffed_x_checkbox_image = try _gfx.Texture2D.init(
+        var scuffed_x_checkbox_image = try _gfx.Image.init(
             .{
                 .width = scuffed_x_image.width,
                 .height = scuffed_x_image.height,
-                .format = _gfx.TextureFormat.Rgba8_Unorm_Srgb,
+                .format = _gfx.ImageFormat.Rgba8_Unorm_Srgb,
+
+                .usage_flags = .{ .ShaderResource = true, },
+                .access_flags = .{},
             },
-            .{ .ShaderResource = true, },
-            .{},
             scuffed_x_image.data,
-            gfx
         );
         defer scuffed_x_checkbox_image.deinit();
         
-        var scuffed_x_checkbox_image_view = try _gfx.TextureView2D.init_from_texture2d(
-            &scuffed_x_checkbox_image,
-            gfx
-        );
+        var scuffed_x_checkbox_image_view = try _gfx.ImageView.init(.{ .image = scuffed_x_checkbox_image, });
         errdefer scuffed_x_checkbox_image_view.deinit();
 
         // Initialize fonts
@@ -407,7 +404,6 @@ pub const Imui = struct {
                 alloc,
                 font_paths.json,
                 font_paths.png,
-                gfx
             );
             fonts[idx] = font_obj;
         }
@@ -422,13 +418,13 @@ pub const Imui = struct {
             .priority_widgets = std.ArrayList(Widget).init(alloc),
             .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
             .scuffed_x_checkbox_image = scuffed_x_checkbox_image_view,
-            .image_sampler = try _gfx.Sampler.init(.{}, gfx),
+            .image_sampler = try _gfx.Sampler.init(.{}),
             .last_frame_arena = 0,
             .arenas = [_]std.heap.ArenaAllocator{
                 std.heap.ArenaAllocator.init(alloc),
                 std.heap.ArenaAllocator.init(alloc),
             },
-            .quad_renderer = try QuadRenderer.init(gfx),
+            .quad_renderer = try QuadRenderer.init(),
             .fonts = fonts,
         };
         self.add_root_widget(gfx);
@@ -616,8 +612,8 @@ pub const Imui = struct {
             .computed = .{
                 .relative_position = .{0.0, 0.0},
                 .size = .{
-                    @floatFromInt(gfx.swapchain_size.width), 
-                    @floatFromInt(gfx.swapchain_size.height)
+                    @floatFromInt(gfx.swapchain_size()[0]), 
+                    @floatFromInt(gfx.swapchain_size()[1])
                 },
             },
             .flags = .{
@@ -904,7 +900,7 @@ pub const Imui = struct {
 
     fn render_imui_widget(
         self: *Self, 
-        rtv: *_gfx.RenderTargetView, 
+        rtv: _gfx.ImageView.Ref, 
         widget: *const Widget,
         scissor_rect: RectPixels,
         render_palette: Palette
@@ -933,8 +929,7 @@ pub const Imui = struct {
                     .corner_radii_px = widget.corner_radii_px,
                     .texture = quad_texture_props,
                 },
-                rtv.*,
-                &engine.get().gfx
+                rtv,
             );
         }
 
@@ -954,15 +949,14 @@ pub const Imui = struct {
                         else render_palette.text_dark,
                     .pixel_height = text.size,
                 },
-                rtv.*,
-                &engine.get().gfx
+                rtv,
             );
         }
     }
 
     fn render_imui_recursive(
         self: *Self, 
-        rtv: *_gfx.RenderTargetView, 
+        rtv: _gfx.ImageView.Ref, 
         widget_id: WidgetId, 
         parent_scissor: RectPixels,
         parent_palette: Palette
@@ -978,13 +972,13 @@ pub const Imui = struct {
             // widget_scissor.height = @min(widget_scissor.top + widget_scissor.height, parent_scissor.top + parent_scissor.height) - widget_scissor.top;
 
             // expand scissor if overflow is allowed
-            const swapchain_size = engine.get().gfx.swapchain_size;
+            const swapchain_size = engine.get().gfx.swapchain_size();
             if (widget.flags.allows_overflow_x) {
-                widget_scissor.right = @floatFromInt(swapchain_size.width);
+                widget_scissor.right = @floatFromInt(swapchain_size[0]);
                 widget_scissor.left = 0;
             }
             if (widget.flags.allows_overflow_y) {
-                widget_scissor.bottom = @floatFromInt(swapchain_size.height);
+                widget_scissor.bottom = @floatFromInt(swapchain_size[1]);
                 widget_scissor.top = 0;
             }
 
@@ -1000,13 +994,13 @@ pub const Imui = struct {
             scissor.bottom = @min(scissor.bottom, parent_scissor.bottom);
 
             // expand scissor if overflow is allowed
-            const swapchain_size = engine.get().gfx.swapchain_size;
+            const swapchain_size = engine.get().gfx.swapchain_size();
             if (widget.flags.allows_overflow_x) {
-                scissor.right = @floatFromInt(swapchain_size.width);
+                scissor.right = @floatFromInt(swapchain_size[0]);
                 scissor.left = 0;
             }
             if (widget.flags.allows_overflow_y) {
-                scissor.bottom = @floatFromInt(swapchain_size.height);
+                scissor.bottom = @floatFromInt(swapchain_size[1]);
                 scissor.top = 0;
             }
 
@@ -1046,16 +1040,15 @@ pub const Imui = struct {
         }
     }
 
-    pub fn render_imui(self: *Self, rtv: *_gfx.RenderTargetView, gfx: *_gfx.GfxState) void {
+    pub fn render_imui(self: *Self, rtv: _gfx.ImageView.Ref) void {
         // widget rects must be computed before rendering
         self.compute_widget_rects();
         
-        _ = gfx;
         const screen_scissor = RectPixels {
             .left = 0.0,
             .top = 0.0,
-            .right = @floatFromInt(engine.get().gfx.swapchain_size.width),
-            .bottom = @floatFromInt(engine.get().gfx.swapchain_size.height),
+            .right = @floatFromInt(engine.get().gfx.swapchain_size()[0]),
+            .bottom = @floatFromInt(engine.get().gfx.swapchain_size()[1]),
         };
         const render_palette = self.palette();
 

@@ -45,7 +45,7 @@ pub const ToneMappingOptions = packed struct(u32) {
 vertex_shader: gf.VertexShader,
 pixel_shader: gf.PixelShader,
 black_and_white_pixel_shader: gf.PixelShader,
-sampler: gf.Sampler,
+sampler: gf.Sampler.Ref,
 
     bloom_filter: bloom.BloomFilter,
 
@@ -57,13 +57,12 @@ sampler: gf.Sampler,
         self.sampler.deinit();
     }
 
-pub fn init(gfx: *gf.GfxState) !Self {
+pub fn init() !Self {
     var vertex_shader = try gf.VertexShader.init_buffer(
         gf.GfxState.FULL_SCREEN_QUAD_VS,
         "vs_main",
         ([0]gf.VertexInputLayoutEntry {})[0..],
         .{},
-        gfx
     );
     errdefer vertex_shader.deinit();
 
@@ -71,7 +70,6 @@ pub fn init(gfx: *gf.GfxState) !Self {
         gf.GfxState.FULL_SCREEN_QUAD_VS ++ HLSL,
         "ps_main",
         .{},
-        gfx
     );
     errdefer pixel_shader.deinit();
 
@@ -82,18 +80,14 @@ pub fn init(gfx: *gf.GfxState) !Self {
             .defines = &.{
                 .{ "BLACK_AND_WHITE", "1" },
             },
-            },
-        gfx
+        },
     );
     errdefer black_and_white_pixel_shader.deinit();
 
-    var sampler = try gf.Sampler.init(
-        gf.SamplerDescriptor {},
-        gfx
-    );
+    var sampler = try gf.Sampler.init(.{});
     errdefer sampler.deinit();
 
-    var bloom_filter = try bloom.BloomFilter.init(gfx);
+    var bloom_filter = try bloom.BloomFilter.init();
     errdefer bloom_filter.deinit();
 
     return Self {
@@ -107,23 +101,24 @@ pub fn init(gfx: *gf.GfxState) !Self {
 
 pub fn apply_filter(
     self: *Self,
-    hdr_buffer: *gf.TextureView2D,
+    hdr_buffer: gf.ImageView.Ref,
     options: ToneMappingOptions,
-    rtv: *gf.RenderTargetView,
-    gfx: *gf.GfxState
+    rtv: gf.ImageView.Ref,
 ) void {
-    self.bloom_filter.render_bloom_texture(hdr_buffer, 0.005, gfx);
+    const gfx = gf.GfxState.get();
 
+    self.bloom_filter.render_bloom_texture(hdr_buffer, 0.005);
+
+    const view = rtv.get() catch unreachable;
     const viewport = gf.Viewport {
-        .width = @floatFromInt(rtv.size.width),
-        .height = @floatFromInt(rtv.size.height),
+        .width = @floatFromInt(view.size.width),
+        .height = @floatFromInt(view.size.height),
         .top_left_x = 0,
         .top_left_y = 0,
         .min_depth = 0,
         .max_depth = 0,
     };
 
-    gfx.cmd_set_blend_state(null);
     gfx.cmd_set_render_target(&.{rtv}, null);
 
     gfx.cmd_set_viewport(viewport);
@@ -136,7 +131,7 @@ pub fn apply_filter(
     } else {
         gfx.cmd_set_pixel_shader(&self.pixel_shader);
     }
-    gfx.cmd_set_samplers(.Pixel, 0, &.{&self.sampler});
+    gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
     gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_buffer, self.bloom_filter.get_bloom_view()});
 
     gfx.cmd_set_topology(.TriangleList);

@@ -5,28 +5,28 @@ const gf = eng.gfx;
 const pt = eng.path;
 const FileWatcher = @import("file_watcher.zig");
 
-pub const Texture2dPath = union(enum) {
+pub const ImagePath = union(enum) {
     Path: []const u8,
 };
 
-pub const Texture2dAsset = struct {
+pub const ImageAsset = struct {
     const Self = @This();
-    pub const BaseType = gf.Texture2D;
+    pub const BaseType = gf.Image.Ref;
 
     arena: std.heap.ArenaAllocator,
 
-    path: Texture2dPath,
+    path: ImagePath,
 
-    loaded_texture: ?struct {
+    loaded: ?struct {
         watcher: ?FileWatcher = null,
-        texture: gf.Texture2D
+        image: gf.Image.Ref,
     } = null,
 
     pub fn deinit(self: *Self) void {
         self.arena.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, path: Texture2dPath) !Self {
+    pub fn init(alloc: std.mem.Allocator, path: ImagePath) !Self {
         var arena = std.heap.ArenaAllocator.init(alloc);
         errdefer arena.deinit();
 
@@ -46,17 +46,17 @@ pub const Texture2dAsset = struct {
     }
 
     pub fn unload(self: *Self) void {
-        if (self.loaded_texture) |*t| {
+        if (self.loaded) |*t| {
             if (t.watcher) |*w| {
                 w.deinit();
             }
-            t.texture.deinit();
+            t.image.deinit();
         }
     }
 
     pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
-        const texture = try load_texture(alloc, &self.path);
-        errdefer texture.deinit();
+        const image = try load_image(alloc, &self.path);
+        errdefer image.deinit();
 
         var watcher = switch (self.path) {
             .Path => |p| blk: {
@@ -68,33 +68,33 @@ pub const Texture2dAsset = struct {
         };
         errdefer if (watcher) |*w| { w.deinit(); };
 
-        self.loaded_texture = .{
-            .texture = texture,
+        self.loaded = .{
+            .image = image,
             .watcher = watcher,
         };
     }
 
     pub fn reload(self: *Self, alloc: std.mem.Allocator) !void {
-        const loaded_texture = &(self.loaded_texture orelse return);
+        const loaded = &(self.loaded orelse return);
 
-        const new_texture = try load_texture(alloc, &self.path);
-        errdefer new_texture.deinit();
+        const new_image = try load_image(alloc, &self.path);
+        errdefer new_image.deinit();
 
-        loaded_texture.texture.deinit();
-        loaded_texture.texture = new_texture;
+        loaded.image.deinit();
+        loaded.image = new_image;
     }
 
     pub fn file_watcher(self: *Self) ?*FileWatcher {
-        const loaded_texture = &(self.loaded_texture orelse return null);
-        return &(loaded_texture.watcher orelse return null);
+        const loaded = &(self.loaded orelse return null);
+        return &(loaded.watcher orelse return null);
     }
 
     pub fn loaded_asset(self: *Self) ?*BaseType {
-        const loaded_texture = &(self.loaded_texture orelse return null);
-        return &loaded_texture.texture;
+        const loaded = &(self.loaded orelse return null);
+        return &loaded.image;
     }
 
-    pub fn load_texture(alloc: std.mem.Allocator, path: *const Texture2dPath) !gf.Texture2D {
+    pub fn load_image(alloc: std.mem.Allocator, path: *const ImagePath) !gf.Image.Ref {
         switch (path.*) {
             .Path => |p| {
                 const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
@@ -105,39 +105,40 @@ pub const Texture2dAsset = struct {
                     asset_path,
                     .{}
                 ) catch |err| {
-                    std.log.err("Failed to load texture '{s}': {}", .{ p, err });
-                    return error.TextureLoadFailed;
+                    std.log.err("Failed to load image '{s}': {}", .{ p, err });
+                    return error.ImageLoadFailed;
                 };
                 defer image.deinit();
 
                 const format = blk: {
                     if (image.is_hdr) {
                         switch (image.num_components) {
-                            1 => break :blk gf.TextureFormat.R32_Float,
-                            2 => break :blk gf.TextureFormat.Rg32_Float,
-                            4 => break :blk gf.TextureFormat.Rgba32_Float,
-                            else => return error.UnsupportedTextureFormat,
+                            1 => break :blk gf.ImageFormat.R32_Float,
+                            2 => break :blk gf.ImageFormat.Rg32_Float,
+                            4 => break :blk gf.ImageFormat.Rgba32_Float,
+                            else => return error.UnsupportedImageFormat,
                         }
                     } else {
                         switch (image.num_components) {
-                            4 => break :blk gf.TextureFormat.Rgba8_Unorm,
-                            else => return error.UnsupportedTextureFormat,
+                            4 => break :blk gf.ImageFormat.Rgba8_Unorm,
+                            else => return error.UnsupportedImageFormat,
                         }
                     }
                 };
 
-                return gf.Texture2D.init(
+                return gf.Image.init(
                     .{
                         .height = image.height,
                         .width = image.width,
+                        .depth = 1,
                         .format = format,
                         .array_length = 1,
                         .mip_levels = 1,
+
+                        .usage_flags = .{ .ShaderResource = true, },
+                        .access_flags = .{},
                     },
-                    .{ .ShaderResource = true, },
-                    .{},
                     image.data,
-                    &eng.get().gfx
                 );
             },
         }

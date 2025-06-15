@@ -47,9 +47,9 @@ fn primitive_topology_from_zcgltf(topology: zmesh.io.zcgltf.PrimitiveType) Primi
 }
 
 pub const MaterialTextureMap = struct {
-    map: gf.TextureView2D,
+    map: gf.ImageView.Ref,
     uv_index: u8,
-    sampler: ?gf.Sampler = null,
+    sampler: ?gf.Sampler.Ref = null,
 
     fn deinit(self: *MaterialTextureMap) void {
         self.map.deinit();
@@ -199,7 +199,6 @@ pub const Buffers = struct {
         mesh_bitangents: ?[]const ([3]f32),
         mesh_bone_ids: ?[]const ([4]i32),
         mesh_weights: ?[]const ([4]f32),
-        gfx: *gf.GfxState,
     ) !Buffers {
         const num_positions = mesh_positions.len;
 
@@ -245,8 +244,7 @@ pub const Buffers = struct {
         const vertices_buffer = try gf.Buffer.init_with_data(
             vertices_data,
             .{ .VertexBuffer = true, },
-            .{},
-            gfx
+            .{}
         );
         errdefer vertices_buffer.deinit();
 
@@ -254,8 +252,7 @@ pub const Buffers = struct {
         const indices_buffer = try gf.Buffer.init_with_data(
             std.mem.sliceAsBytes(mesh_indices[0..]),
             .{ .IndexBuffer = true, },
-            .{},
-            gfx
+            .{}
         );
         errdefer indices_buffer.deinit();
 
@@ -293,7 +290,7 @@ pub const Model = struct {
     root_nodes: []usize,
     animations: []an.BoneAnimation,
     materials: []MaterialTemplate,
-    textures: []gf.Texture2D,
+    textures: []gf.Image.Ref,
     arena_allocator: *std.heap.ArenaAllocator,
 
     global_inverse_transform: zm.Mat,
@@ -322,7 +319,7 @@ pub const Model = struct {
         self.buffers.deinit();
     }
 
-    fn create_gfx_texture_from_assimp_texture(tex: assimp.Texture.Ptr, format: gf.TextureFormat, gfx: *gf.GfxState) !gf.Texture2D {
+    fn create_gfx_texture_from_assimp_texture(tex: assimp.Texture.Ptr, format: gf.ImageFormat) !gf.Image.Ref {
         var data: []const u8 = undefined;
         if (tex.compressed_data()) |compressed_data| {
             data = compressed_data;
@@ -333,22 +330,22 @@ pub const Model = struct {
         var image = try zstbi.Image.loadFromMemory(data, 4);
         defer image.deinit();
 
-        return try gf.Texture2D.init(
+        return try gf.Image.init(
             .{
                 .width = image.width,
                 .height = image.height,
                 .format = format,
                 .mip_levels = 1,
                 .array_length = 1,
+
+                .usage_flags = .{ .ShaderResource = true, },
+                .access_flags = .{},
             },
-            .{ .ShaderResource = true, },
-            .{},
             image.data,
-            gfx
         );
     }
 
-    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path, gfx: *gf.GfxState) !Self {
+    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
 
@@ -380,8 +377,9 @@ pub const Model = struct {
         defer assimp.aiReleaseImport(scene);
 
         // textures
-        const textures = try model_arena.alloc(gf.Texture2D, scene.textures().len);
+        const textures = try model_arena.alloc(gf.Image.Ref, scene.textures().len);
         errdefer model_arena.free(textures);
+        // TODO there is a gpu leak here... check the full file.
 
         const texture_created = try local_arena.allocator().alloc(bool, scene.textures().len);
         @memset(texture_created[0..], false);
@@ -446,19 +444,18 @@ pub const Model = struct {
                     }
                     if (tex_idx) |idx| {
                         if (texture_created[idx] == false) {
-                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm_Srgb, gfx);
+                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm_Srgb);
                             texture_created[idx] = true;
                         }
 
                         material.diffuse_map = MaterialTextureMap {
-                            .map = try gf.TextureView2D.init_from_texture2d(&textures[idx], gfx),
+                            .map = try gf.ImageView.init(.{
+                                .image = textures[idx],
+                            }),
                             .uv_index = @truncate(p.uvindex),
-                            .sampler = try gf.Sampler.init(
-                                .{
-                                    .filter_min_mag = .Linear,
-                                },
-                                gfx
-                            ),
+                            .sampler = try gf.Sampler.init(.{
+                                .filter_min_mag = .Linear,
+                            }),
                         };
                     }
                 }
@@ -472,19 +469,16 @@ pub const Model = struct {
                     }
                     if (tex_idx) |idx| {
                         if (texture_created[idx] == false) {
-                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm, gfx);
+                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm);
                             texture_created[idx] = true;
                         }
 
                         material.normals_map = MaterialTextureMap {
-                            .map = try gf.TextureView2D.init_from_texture2d(&textures[idx], gfx),
+                            .map = try gf.ImageView.init(.{ .image = textures[idx], }),
                             .uv_index = @truncate(p.uvindex),
-                            .sampler = try gf.Sampler.init(
-                                .{
-                                    .filter_min_mag = .Linear,
-                                },
-                                gfx
-                            ),
+                            .sampler = try gf.Sampler.init(.{
+                                .filter_min_mag = .Linear,
+                            }),
                         };
                     }
                 }
@@ -661,7 +655,6 @@ pub const Model = struct {
             mesh_bitangents.items,
             mesh_bone_ids.items,
             mesh_weights.items,
-            gfx
         );
         errdefer buffers.deinit();
 
@@ -1078,7 +1071,7 @@ pub const Model = struct {
         }
     }
 
-    pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape, gfx: *gf.GfxState) !Model {
+    pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Model {
         var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
         errdefer alloc.destroy(model_arena_allocator);
 
@@ -1150,7 +1143,6 @@ pub const Model = struct {
             bitangents,
             bone_ids,
             bone_weights,
-            gfx
         );
         errdefer buffers.deinit();
 
@@ -1216,7 +1208,7 @@ pub const Model = struct {
         };
     }
 
-    pub fn cone(alloc: std.mem.Allocator, slices: i32, gfx: *gf.GfxState) !Model {
+    pub fn cone(alloc: std.mem.Allocator, slices: i32) !Model {
         // Generate cone shape
         var cone_shape = zmesh.Shape.initCone(slices, 6);
         defer cone_shape.deinit();
@@ -1227,10 +1219,10 @@ pub const Model = struct {
         // flat shaded
         cone_shape.unweld();
 
-        return try init_from_shape(alloc, &cone_shape, gfx);
+        return try init_from_shape(alloc, &cone_shape);
     }
 
-    pub fn plane(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *gf.GfxState) !Model {
+    pub fn plane(alloc: std.mem.Allocator, slices: i32, stacks: i32) !Model {
         // Generate cone shape
         var shape = zmesh.Shape.initPlane(slices, stacks);
         defer shape.deinit();
@@ -1239,10 +1231,10 @@ pub const Model = struct {
         shape.translate(-0.5, -0.5, 0.0);
         shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
 
-        return try init_from_shape(alloc, &shape, gfx);
+        return try init_from_shape(alloc, &shape);
     }
 
-    pub fn plane_on_sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, plane_extent_radians: f32, gfx: *gf.GfxState) !Model {
+    pub fn plane_on_sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, plane_extent_radians: f32) !Model {
         // Generate plane shape
         var shape = zmesh.Shape.initPlane(slices, stacks);
         defer shape.deinit();
@@ -1262,7 +1254,7 @@ pub const Model = struct {
         shape.rotate(std.math.degreesToRadians(-90.0), 0.0, 1.0, 0.0);
         shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
 
-        return try init_from_shape(alloc, &shape, gfx);
+        return try init_from_shape(alloc, &shape);
     }
 
     pub const Heightmap = struct {
@@ -1321,7 +1313,6 @@ pub const Model = struct {
             plane_extent_radians: f32 = 0.0,
             heightmap_scale: f32 = 1.0,
         },
-        gfx: *gf.GfxState
     ) !Model {
         // generate plane shape
         var shape = zmesh.Shape.initPlane(options.slices, options.stacks);
@@ -1345,10 +1336,10 @@ pub const Model = struct {
         shape.rotate(std.math.degreesToRadians(-90.0), 0.0, 1.0, 0.0);
         shape.rotate(std.math.degreesToRadians(-90.0), 1.0, 0.0, 0.0);
 
-        return try init_from_shape(alloc, &shape, gfx);
+        return try init_from_shape(alloc, &shape);
     }
 
-    pub fn sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32, gfx: *gf.GfxState) !Model {
+    pub fn sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32) !Model {
         // Generate sphere shape
         var shape = zmesh.Shape.initParametricSphere(slices, stacks);
         defer shape.deinit();
@@ -1356,10 +1347,10 @@ pub const Model = struct {
         // flat shaded
         //shape.unweld();
 
-        return try init_from_shape(alloc, &shape, gfx);
+        return try init_from_shape(alloc, &shape);
     }
 
-    pub fn cube(alloc: std.mem.Allocator, gfx: *gf.GfxState) !Self {
+    pub fn cube(alloc: std.mem.Allocator) !Self {
         // Generate cube shape
         var shape = zmesh.Shape.initCube();
         defer shape.deinit();
@@ -1369,7 +1360,7 @@ pub const Model = struct {
         // flat shaded
         shape.unweld();
 
-        return try init_from_shape(alloc, &shape, gfx);
+        return try init_from_shape(alloc, &shape);
     }
 
     pub const AnimationEntry = struct {

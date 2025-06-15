@@ -22,7 +22,7 @@ unique_name_hash: u64,
 
 models: std.AutoHashMap(u64, AssetPath(ma.ModelAsset)),
 animations: std.AutoHashMap(u64, AssetPath(aa.AnimationAsset)),
-textures2D: std.AutoHashMap(u64, AssetPath(ta.Texture2dAsset)),
+images: std.AutoHashMap(u64, AssetPath(ta.ImageAsset)),
 
 pub fn deinit(self: *Self) void {
     self.alloc.free(self.unique_name);
@@ -43,12 +43,12 @@ pub fn deinit(self: *Self) void {
         self.animations.deinit();
     }
     {
-        var iter = self.textures2D.valueIterator();
+        var iter = self.images.valueIterator();
         while (iter.next()) |a| {
             self.alloc.free(a.unique_name);
             a.asset.deinit();
         }
-        self.textures2D.deinit();
+        self.images.deinit();
     }
 }
 
@@ -64,7 +64,7 @@ pub fn init(alloc: std.mem.Allocator, unique_name: []const u8) !Self {
 
         .models = std.AutoHashMap(u64, AssetPath(ma.ModelAsset)).init(alloc),
         .animations = std.AutoHashMap(u64, AssetPath(aa.AnimationAsset)).init(alloc),
-        .textures2D = std.AutoHashMap(u64, AssetPath(ta.Texture2dAsset)).init(alloc),
+        .images = std.AutoHashMap(u64, AssetPath(ta.ImageAsset)).init(alloc),
     };
 }
 
@@ -78,7 +78,7 @@ pub fn unload(self: *Self) void {
         }
     }
     {
-        var iter = self.textures2D.valueIterator();
+        var iter = self.images.valueIterator();
         while (iter.next()) |a| {
             a.asset.unload();
         }
@@ -98,7 +98,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
         }
     }
     {
-        var iter = self.textures2D.valueIterator();
+        var iter = self.images.valueIterator();
         while (iter.next()) |a| {
             try a.asset.load(alloc);
         }
@@ -111,7 +111,7 @@ pub fn get_asset_hashmap(self: *Self, AssetType: type) !*std.AutoHashMap(u64, As
     switch (AssetType) {
         ma.ModelAsset => return &self.models,
         aa.AnimationAsset => return &self.animations,
-        ta.Texture2dAsset => return &self.textures2D,
+        ta.ImageAsset => return &self.images,
         else => return error.InvalidAssetType,
     }
 }
@@ -155,15 +155,15 @@ pub fn define_animation(self: *Self, name: []const u8, base_model: []const u8, a
     );
 }
 
-pub fn add_texture2D(self: *Self, name: []const u8, path: ta.Texture2dPath) !void {
+pub fn add_image(self: *Self, name: []const u8, path: ta.ImagePath) !void {
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
-    try self.textures2D.put(
+    try self.images.put(
         std.hash_map.hashString(owned_name),
         .{
             .unique_name = owned_name,
-            .asset = try ta.Texture2dAsset.init(self.alloc, path),
+            .asset = try ta.ImageAsset.init(self.alloc, path),
         }
     );
 }

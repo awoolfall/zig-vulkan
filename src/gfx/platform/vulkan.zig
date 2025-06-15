@@ -20,16 +20,14 @@ pub const GfxStateVulkan = struct {
     pub const GeometryShader = GeometryShaderVulkan;
     pub const ComputeShader = ComputeShaderVulkan;
     pub const Buffer = BufferVulkan;
-    pub const Texture2D = Texture2DVulkan;
-    pub const TextureView2D = TextureView2DVulkan;
-    pub const Texture3D = Texture3DVulkan;
-    pub const TextureView3D = TextureView3DVulkan;
+    pub const Image = ImageVulkan;
+    pub const ImageView = ImageViewVulkan;
     pub const RenderTargetView = RenderTargetViewVulkan;
     pub const DepthStencilView = DepthStencilViewVulkan;
     pub const RasterizationState = RasterizationStateVulkan;
     pub const Sampler = SamplerVulkan;
-    pub const BlendState = BlendStateVulkan;
     pub const GraphicsPipeline = GraphicsPipelineVulkan;
+    pub const FrameBuffer = FrameBufferVulkan;
     pub const ShaderResourceView = u32;//d3d11.IShaderResourceView;
     pub const UnorderedAccessView = u32;//d3d11.IUnorderedAccessView;
 
@@ -86,7 +84,6 @@ pub const GfxStateVulkan = struct {
         vkt(c.vkDeviceWaitIdle(self.device)) catch |err| {
             std.log.err("Unable to wait for device idle: {}", .{err});
         };
-        //c.vkDestroyCommandPool(self.device, vk_command_pool, null);
         
         self.swapchain.deinit(self.device);
 
@@ -573,6 +570,14 @@ pub const GfxStateVulkan = struct {
         };
     }
 
+    pub inline fn get() *Self {
+        return &eng.get().gfx.platform;
+    }
+
+    pub inline fn swapchain_size(self: *const Self) [2]u32 {
+        return .{ self.swapchain.extent.width, self.swapchain.extent.height };
+    }
+
     pub fn create_texture2d_from_framebuffer(self: *Self, gfx: *gf.GfxState) !gf.Texture2D {
         _ = self;
         return gf.Texture2D.init(
@@ -616,13 +621,13 @@ pub const GfxStateVulkan = struct {
         _ = new_height;
     }
 
-    pub inline fn cmd_clear_render_target(self: *Self, rt: *const gf.RenderTargetView, color: zm.F32x4) void {
+    pub inline fn cmd_clear_render_target(self: *Self, rt: gf.ImageView.Ref, color: zm.F32x4) void {
         _ = self;
         _ = rt;
         _ = color;
     }
 
-    pub inline fn cmd_clear_depth_stencil_view(self: *Self, dsv: *const gf.DepthStencilView, depth: ?f32, stencil: ?u8) void {
+    pub inline fn cmd_clear_depth_stencil_view(self: *Self, dsv: gf.ImageView.Ref, depth: ?f32, stencil: ?u8) void {
         _ = self;
         _ = dsv;
         _ = depth;
@@ -639,7 +644,7 @@ pub const GfxStateVulkan = struct {
         _ = scissor;
     }
     
-    pub inline fn cmd_set_render_target(self: *Self, rtvs: []const ?*const gf.RenderTargetView, depth_stencil_view: ?*const gf.DepthStencilView) void {
+    pub inline fn cmd_set_render_target(self: *Self, rtvs: []const ?gf.ImageView.Ref, depth_stencil_view: ?gf.ImageView.Ref) void {
         _ = self;
         _ = rtvs;
         _ = depth_stencil_view;
@@ -705,14 +710,14 @@ pub const GfxStateVulkan = struct {
         _ = blend_state;
     }
 
-    pub inline fn cmd_set_shader_resources(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?*const ShaderResourceView) void {
+    pub inline fn cmd_set_shader_resources(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?gf.ImageView.Ref) void {
         _ = self;
         _ = shader_stage;
         _ = start_slot;
         _ = views;
     }
 
-    pub inline fn cmd_set_samplers(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, sampler: []const *const gf.Sampler) void {
+    pub inline fn cmd_set_samplers(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, sampler: []const gf.Sampler.Ref) void {
         _ = self;
         _ = shader_stage;
         _ = start_slot;
@@ -764,7 +769,7 @@ pub const GfxStateVulkan = struct {
         _ = num_groups_z;
     }
 
-    pub inline fn cmd_copy_texture_to_texture(self: *Self, dst_texture: *const gf.Texture2D, src_texture: *const gf.Texture2D) void {
+    pub inline fn cmd_copy_texture_to_texture(self: *Self, dst_texture: gf.Image.Ref, src_texture: gf.Image.Ref) void {
         _ = self;
         _ = dst_texture;
         _ = src_texture;
@@ -789,8 +794,8 @@ const ShaderModule = struct {
         shader_data: []const u8, 
         shader_entry_point: []const u8, 
         shader_stage: gf.ShaderStage,
-        gfx: *gf.GfxState,
     ) !Self {
+        const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
 
         const session_create_info = slang.SessionCreateInfo {
@@ -932,12 +937,12 @@ pub const VertexShaderVulkan = struct {
         vs_func: []const u8,
         vs_layout: []const gf.VertexInputLayoutEntry,
         options: gf.VertexShaderOptions,
-        gfx: *gf.GfxState,
     ) !Self {
         _ = options;
+        const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
 
-        const shader_module = try ShaderModule.init(vs_data, vs_func, gf.ShaderStage.Vertex, gfx);
+        const shader_module = try ShaderModule.init(vs_data, vs_func, gf.ShaderStage.Vertex);
         errdefer shader_module.deinit();
 
         const vertex_input_bindings = try alloc.alloc(c.VkVertexInputBindingDescription, vs_layout.len);
@@ -999,11 +1004,10 @@ pub const PixelShaderVulkan = struct {
         ps_data: []const u8, 
         ps_func: []const u8, 
         options: gf.PixelShaderOptions,
-        gfx: *gf.GfxState,
     ) !Self {
         _ = options;
 
-        const shader_module = try ShaderModule.init(ps_data, ps_func, gf.ShaderStage.Pixel, gfx);
+        const shader_module = try ShaderModule.init(ps_data, ps_func, gf.ShaderStage.Pixel);
         errdefer shader_module.deinit();
 
         return .{
@@ -1023,12 +1027,10 @@ pub const HullShaderVulkan = struct {
         hs_data: []const u8, 
         hs_func: []const u8, 
         options: gf.HullShaderOptions,
-        gfx: *gf.GfxState,
     ) !Self {
         _ = hs_data;
         _ = hs_func;
         _ = options;
-        _ = gfx;
         return .{};
     }
 };
@@ -1044,12 +1046,10 @@ pub const DomainShaderVulkan = struct {
         ds_data: []const u8, 
         ds_func: []const u8, 
         options: gf.DomainShaderOptions,
-        gfx: *gf.GfxState,
     ) !Self {
         _ = ds_data;
         _ = ds_func;
         _ = options;
-        _ = gfx;
         return .{};
     }
 };
@@ -1065,12 +1065,10 @@ pub const GeometryShaderVulkan = struct {
         gs_data: []const u8, 
         gs_func: []const u8, 
         options: gf.GeometryShaderOptions,
-        gfx: *gf.GfxState,
     ) !Self {
         _ = gs_data;
         _ = gs_func;
         _ = options;
-        _ = gfx;
         return .{};
     }
 };
@@ -1086,18 +1084,16 @@ pub const ComputeShaderVulkan = struct {
         cs_data: []const u8, 
         cs_func: []const u8,
         options: gf.ComputeShaderOptions,
-        gfx: *gf.GfxState,
     ) !Self {
         _ = cs_data;
         _ = cs_func;
         _ = options;
-        _ = gfx;
         return .{};
     }
 };
 
-fn convert_buffer_usage_flags_to_vulkan(usage: gf.BufferUsageFlags) u32 {
-    var flags: u32 = 0;
+fn convert_buffer_usage_flags_to_vulkan(usage: gf.BufferUsageFlags) c.VkBufferUsageFlags {
+    var flags: c.VkBufferUsageFlags = 0;
 
     if (usage.VertexBuffer) {
         flags |= c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
@@ -1121,9 +1117,31 @@ fn convert_buffer_usage_flags_to_vulkan(usage: gf.BufferUsageFlags) u32 {
     return flags;
 }
 
-fn find_vulkan_memory_type(type_filter: u32, property_flags: c.VkMemoryPropertyFlags, gfx: *GfxStateVulkan) !u32 {
+fn convert_texture_usage_flags_to_vulkan(usage: gf.TextureUsageFlags) c.VkImageUsageFlags {
+    var flags: c.VkImageUsageFlags = 0;
+
+    if (usage.ShaderResource) {
+        flags |= c.VK_IMAGE_USAGE_SAMPLED_BIT;
+    }
+    if (usage.RenderTarget) {
+        flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    }
+    if (usage.DepthStencil) {
+        flags |= c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
+    if (usage.TransferSrc) {
+        flags |= c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
+    if (usage.TransferDst) {
+        flags |= c.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    }
+
+    return flags;
+}
+
+fn find_vulkan_memory_type(type_filter: u32, property_flags: c.VkMemoryPropertyFlags) !u32 {
     var vk_mem_properties: c.VkPhysicalDeviceMemoryProperties = undefined;
-    c.vkGetPhysicalDeviceMemoryProperties(gfx.physical_device, &vk_mem_properties);
+    c.vkGetPhysicalDeviceMemoryProperties(GfxStateVulkan.get().physical_device, &vk_mem_properties);
 
     for (vk_mem_properties.memoryTypes[0..(vk_mem_properties.memoryTypeCount)], 0..) |mem_type, idx| {
         const contains_all_properties = ((mem_type.propertyFlags & property_flags) == property_flags);
@@ -1133,6 +1151,48 @@ fn find_vulkan_memory_type(type_filter: u32, property_flags: c.VkMemoryPropertyF
     }
 
     return error.CouldNotFindSuitableVulkanMemory;
+}
+
+fn begin_single_time_command_buffer(command_pool: c.VkCommandPool) !c.VkCommandBuffer {
+    const alloc_info = c.VkCommandBufferAllocateInfo {
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandBufferCount = 1,
+        .commandPool = GfxStateVulkan.get().all_command_pool,
+        .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    };
+
+    var vk_command_buffer: c.VkCommandBuffer = undefined;
+    try vkt(c.vkAllocateCommandBuffers(GfxStateVulkan.get().device, &alloc_info, &vk_command_buffer));
+    errdefer c.vkFreeCommandBuffers(GfxStateVulkan.get().device, command_pool, 1, &vk_command_buffer);
+
+    const begin_info = c.VkCommandBufferBeginInfo {
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+
+    try vkt(c.vkBeginCommandBuffer(vk_command_buffer, &begin_info));
+    errdefer c.vkEndCommandBuffer(vk_command_buffer);
+
+    return vk_command_buffer;
+}
+
+fn end_single_time_command_buffer(command_pool: c.VkCommandPool, command_buffer: c.VkCommandBuffer) void {
+    if (vkt(c.vkEndCommandBuffer(command_buffer))) {
+        const submit_info = c.VkSubmitInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command_buffer,
+        };
+        
+        vkt(c.vkQueueSubmit(GfxStateVulkan.get().queues.all, 1, &submit_info, @ptrCast(c.VK_NULL_HANDLE))) catch |err| {
+            std.log.warn("Unable to submit one time command buffer: {}", .{err});
+        };
+        vkt(c.vkQueueWaitIdle(GfxStateVulkan.get().queues.all)) catch {};
+    } else |err| {
+        std.log.warn("Unable to end command buffer: {}", .{err});
+    }
+
+    c.vkFreeCommandBuffers(GfxStateVulkan.get().device, command_pool, 1, &command_buffer);
 }
 
 pub const BufferVulkan = struct {
@@ -1151,12 +1211,14 @@ pub const BufferVulkan = struct {
         byte_size: u32,
         usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
-        gfx: *gf.GfxState,
     ) !Self {
         // @TODO: use the dedicated transfer queue
         const use_shared = false; // gfx.platform.queues.has_distinct_transfer_queue() and
             // (access_flags.CpuRead or access_flags.CpuWrite);
-        const family_indices: []const u32 = &.{ gfx.platform.queues.all_family_index, gfx.platform.queues.cpu_gpu_transfer_family_index };
+        const family_indices: []const u32 = &.{
+            GfxStateVulkan.get().queues.all_family_index,
+            GfxStateVulkan.get().queues.cpu_gpu_transfer_family_index
+        };
 
         const buffer_create_info = c.VkBufferCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1169,11 +1231,11 @@ pub const BufferVulkan = struct {
         std.debug.assert(buffer_create_info.usage != 0);
 
         var vk_buffer: c.VkBuffer = undefined;
-        try vkt(c.vkCreateBuffer(gfx.platform.device, &buffer_create_info, null, &vk_buffer));
-        errdefer c.vkDestroyBuffer(gfx.platform.device, vk_buffer, null);
+        try vkt(c.vkCreateBuffer(GfxStateVulkan.get().device, &buffer_create_info, null, &vk_buffer));
+        errdefer c.vkDestroyBuffer(GfxStateVulkan.get().device, vk_buffer, null);
 
         var vk_memory_requirements: c.VkMemoryRequirements = undefined;
-        c.vkGetBufferMemoryRequirements(gfx.platform.device, vk_buffer, &vk_memory_requirements);
+        c.vkGetBufferMemoryRequirements(GfxStateVulkan.get().device, vk_buffer, &vk_memory_requirements);
 
         const memory_properties: c.VkMemoryPropertyFlags = if (access_flags.CpuRead or access_flags.CpuWrite)
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
@@ -1185,15 +1247,15 @@ pub const BufferVulkan = struct {
             .memoryTypeIndex = try find_vulkan_memory_type(
                 vk_memory_requirements.memoryTypeBits,
                 memory_properties,
-                &gfx.platform
             ),
         };
 
+        // TODO better memory allocation strategy
         var vk_device_memory: c.VkDeviceMemory = undefined;
-        try vkt(c.vkAllocateMemory(gfx.platform.device, &memory_allocate_info, null, &vk_device_memory));
-        errdefer c.vkFreeMemory(gfx.platform.device, vk_device_memory, null);
+        try vkt(c.vkAllocateMemory(GfxStateVulkan.get().device, &memory_allocate_info, null, &vk_device_memory));
+        errdefer c.vkFreeMemory(GfxStateVulkan.get().device, vk_device_memory, null);
 
-        try vkt(c.vkBindBufferMemory(gfx.platform.device, vk_buffer, vk_device_memory, 0));
+        try vkt(c.vkBindBufferMemory(GfxStateVulkan.get().device, vk_buffer, vk_device_memory, 0));
 
         return .{
             .vk_buffer_info = buffer_create_info,
@@ -1206,85 +1268,59 @@ pub const BufferVulkan = struct {
         data: []const u8,
         usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
-        gfx: *gf.GfxState,
     ) !Self {
         var usage_flags_plus = usage_flags;
         usage_flags_plus.TransferDst = true;
 
-        const self = try Self.init(@intCast(data.len), usage_flags_plus, access_flags, gfx);
+        const self = try Self.init(@intCast(data.len), usage_flags_plus, access_flags);
         errdefer self.deinit();
 
         const staging = try Self.init(
             @intCast(data.len), 
             .{ .TransferSrc = true, },
             .{ .CpuWrite = true, },
-            gfx
         );
         defer staging.deinit();
 
         {
             var data_ptr: ?*anyopaque = undefined;
-            try vkt(c.vkMapMemory(gfx.platform.device, staging.vk_device_memory, 0, staging.vk_buffer_info.size, 0, &data_ptr));
-            defer c.vkUnmapMemory(gfx.platform.device, staging.vk_device_memory);
+            try vkt(c.vkMapMemory(GfxStateVulkan.get().device, staging.vk_device_memory, 0, staging.vk_buffer_info.size, 0, &data_ptr));
+            defer c.vkUnmapMemory(GfxStateVulkan.get().device, staging.vk_device_memory);
 
             @memcpy(@as([*]u8, @ptrCast(data_ptr))[0..(staging.vk_buffer_info.size)], data[0..]);
         }
 
-        const command_buffer_allocate_info = c.VkCommandBufferAllocateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandBufferCount = 1,
-            .commandPool = gfx.platform.all_command_pool,
-            .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        };
+        const command_buffer = try begin_single_time_command_buffer(GfxStateVulkan.get().all_command_pool);
 
-        var command_buffer: c.VkCommandBuffer = undefined;
-        try vkt(c.vkAllocateCommandBuffers(gfx.platform.device, &command_buffer_allocate_info, &command_buffer));
-        defer c.vkFreeCommandBuffers(gfx.platform.device, gfx.platform.all_command_pool, 1, &command_buffer);
-
-        const begin_info = c.VkCommandBufferBeginInfo {
-            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-        };
-
-        try vkt(c.vkBeginCommandBuffer(command_buffer, &begin_info));
         const buffer_copy_region = c.VkBufferCopy {
             .size = staging.vk_buffer_info.size,
             .dstOffset = 0,
             .srcOffset = 0,
         };
         c.vkCmdCopyBuffer(command_buffer, staging.vk_buffer, self.vk_buffer, 1, &buffer_copy_region);
-        try vkt(c.vkEndCommandBuffer(command_buffer));
 
-        const submit_info = c.VkSubmitInfo {
-            .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &command_buffer,
-        };
-
-        try vkt(c.vkQueueSubmit(gfx.platform.queues.all, 1, &submit_info, @ptrCast(c.VK_NULL_HANDLE)));
-        try vkt(c.vkQueueWaitIdle(gfx.platform.queues.all));
+        end_single_time_command_buffer(GfxStateVulkan.get().all_command_pool, command_buffer);
 
         return self;
     }
 
-    pub inline fn map(self: *const Self, gfx: *gf.GfxState) !MappedBuffer {
+    pub inline fn map(self: *const Self, options: gf.Buffer.MapOptions) !MappedBuffer {
+        _ = options;
         var data_ptr: ?*anyopaque = undefined;
-        try vkt(c.vkMapMemory(gfx.platform.device, self.vk_device_memory, 0, self.vk_buffer_info.size, 0, &data_ptr));
+        try vkt(c.vkMapMemory(GfxStateVulkan.get().device, self.vk_device_memory, 0, self.vk_buffer_info.size, 0, &data_ptr));
 
         return MappedBuffer {
             .data_ptr = data_ptr,
             .device_memory = self.vk_device_memory,
-            .gfx = &gfx.platform,
         };
     }
 
     pub const MappedBuffer = struct {
         data_ptr: ?*anyopaque,
         device_memory: c.VkDeviceMemory,
-        gfx: *GfxStateVulkan,
 
         pub inline fn unmap(self: *const MappedBuffer) void {
-            c.vkUnmapMemory(self.gfx.device, self.device_memory);
+            c.vkUnmapMemory(GfxStateVulkan.get().device, self.device_memory);
         }
 
         pub inline fn data(self: *const MappedBuffer, comptime Type: type) *Type {
@@ -1298,155 +1334,261 @@ pub const BufferVulkan = struct {
 
 };
 
-pub const Texture2DVulkan = struct {
+pub const ImageVulkan = struct {
     const Self = @This();
 
     alloc: std.mem.Allocator,
     false_data: []u8,
 
-    pub inline fn deinit(self: *const Self) void {
-        self.alloc.free(self.false_data);
-    }
-
-    pub inline fn init(
-        desc: gf.Texture2D.Descriptor,
-        usage_flags: gf.TextureUsageFlags,
-        access_flags: gf.AccessFlags,
-        data: ?[]const u8,
-        gfx: *gf.GfxState
-    ) !Self {
-        _ = usage_flags;
-        _ = access_flags;
-        const alloc = gfx.platform.alloc;
-        const false_data = if (data) |d| try alloc.dupe(u8, d) 
-            else try alloc.alloc(u8, desc.height * desc.width * desc.array_length * desc.format.byte_width());
-        return .{
-            .alloc = alloc,
-            .false_data = false_data,
-        };
-    }
-
-    pub inline fn map_read(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
-        _ = gfx;
-        return MappedTexture(OutType) {
-            .data_ptr = @alignCast(@ptrCast(self.false_data.ptr)),
-        };
-    }
-
-    pub inline fn map_write_discard(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
-        _ = gfx;
-        return MappedTexture(OutType) {
-            .data_ptr = @alignCast(@ptrCast(self.false_data.ptr)),
-        };
-    }
-
-    pub fn MappedTexture(comptime T: type) type {
-        return struct {
-            data_ptr: *align(16)T,
-
-            pub inline fn unmap(self: *const MappedTexture(T)) void {
-                _ = self;
-            }
-            
-            pub inline fn data(self: *const MappedTexture(T)) [*]align(16)T {
-                return @as([*]align(16)T, @ptrCast(self.data_ptr));
-            }
-        };
-    }
-};
-
-pub const TextureView2DVulkan = struct {
-    const Self = @This();
-    value: u32 = 0,
-
-    pub inline fn deinit(self: *const Self) void {
-        _ = self;
-    }
-
-    pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
-        _ = texture;
-        _ = gfx;
-        return .{};
-    }
-
-    pub fn shader_resource_view(self: *const Self) *const GfxStateVulkan.ShaderResourceView {
-        return &self.value;
-    }
-
-    pub fn unordered_access_view(self: *const Self) *const GfxStateVulkan.UnorderedAccessView {
-        return &self.value;
-    }
-};
-
-pub const TextureView3DVulkan = struct {
-    const Self = @This();
-    value: u32 = 0,
-
-    pub inline fn deinit(self: *const Self) void {
-        _ = self;
-    }
-
-    pub inline fn init_from_texture3d(texture: *const gf.Texture3D, gfx: *gf.GfxState) !Self {
-        _ = texture;
-        _ = gfx;
-        return .{};
-    }
-
-    pub fn shader_resource_view(self: *const Self) *const GfxStateVulkan.ShaderResourceView {
-        return &self.value;
-    }
-
-    pub fn unordered_access_view(self: *const Self) *const GfxStateVulkan.UnorderedAccessView {
-        return &self.value;
-    }
-};
-
-pub const Texture3DVulkan = struct {
-    const Self = @This();
-
-    alloc: std.mem.Allocator,
-    false_data: []u8,
+    vk_image: c.VkImage,
+    vk_device_memory: c.VkDeviceMemory,
+    vk_layout: c.VkImageLayout,
+    vk_format: c.VkFormat,
 
     pub inline fn deinit(self: *const Self) void {
         self.alloc.free(self.false_data);
+        c.vkFreeMemory(GfxStateVulkan.get().device, self.vk_device_memory, null);
+        c.vkDestroyImage(GfxStateVulkan.get().device, self.vk_image, null);
     }
 
     pub inline fn init(
-        desc: gf.Texture3D.Descriptor,
-        usage_flags: gf.TextureUsageFlags,
-        access_flags: gf.AccessFlags,
+        info: gf.ImageInfo,
         data: ?[]const u8,
-        gfx: *gf.GfxState
     ) !Self {
-        _ = usage_flags;
-        _ = access_flags;
-        const alloc = gfx.platform.alloc;
+        const alloc = GfxStateVulkan.get().alloc;
         const false_data = if (data) |d| try alloc.dupe(u8, d) 
-            else try alloc.alloc(u8, desc.height * desc.width * desc.depth * desc.format.byte_width());
-        return .{
+            else try alloc.alloc(u8, info.height * info.width * info.array_length * info.format.byte_width());
+
+        var usage_flags_plus = info.usage_flags;
+        if (data != null) {
+            usage_flags_plus.TransferDst = true;
+        }
+        const vk_usage_flags = convert_texture_usage_flags_to_vulkan(usage_flags_plus);
+
+        const vk_format = textureformat_to_vulkan(info.format);
+
+        const vk_layout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+
+        const image_info = c.VkImageCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .format = vk_format,
+            .imageType = c.VK_IMAGE_TYPE_2D,
+            .extent = c.VkExtent3D {
+                .width = info.width,
+                .height = info.height,
+                .depth = 1,
+            },
+            .mipLevels = info.mip_levels,
+            .arrayLayers = info.array_length,
+            .tiling = c.VK_IMAGE_TILING_OPTIMAL,
+            .initialLayout = vk_layout,
+            .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+            .samples = c.VK_SAMPLE_COUNT_1_BIT,
+            .usage = vk_usage_flags,
+        };
+
+        var vk_image: c.VkImage = undefined;
+        try vkt(c.vkCreateImage(GfxStateVulkan.get().device, &image_info, null, &vk_image));
+        errdefer c.vkDestroyImage(GfxStateVulkan.get().device, vk_image, null);
+
+        var memory_requirements: c.VkMemoryRequirements = undefined;
+        c.vkGetImageMemoryRequirements(GfxStateVulkan.get().device, vk_image, &memory_requirements);
+
+        const alloc_info = c.VkMemoryAllocateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memory_requirements.size,
+            .memoryTypeIndex = try find_vulkan_memory_type(memory_requirements.memoryTypeBits, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+        };
+
+        // TODO better memory allocation strategy
+        var vk_device_memory: c.VkDeviceMemory = undefined;
+        try vkt(c.vkAllocateMemory(GfxStateVulkan.get().device, &alloc_info, null, &vk_device_memory));
+        errdefer c.vkFreeMemory(GfxStateVulkan.get().device, vk_device_memory, null);
+
+        try vkt(c.vkBindImageMemory(GfxStateVulkan.get().device, vk_image, vk_device_memory, 0));
+
+        var self = Self {
             .alloc = alloc,
             .false_data = false_data,
+
+            .vk_image = vk_image,
+            .vk_device_memory = vk_device_memory,
+            .vk_layout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+            .vk_format = vk_format,
         };
+
+        if (data) |d| {
+            const buffer_length = info.width * info.height * info.array_length * info.format.byte_width();
+            const staging_buffer = try BufferVulkan.init(
+                @intCast(buffer_length),
+                .{ .TransferSrc = true, },
+                .{ .CpuWrite = true, },
+            );
+            defer staging_buffer.deinit();
+
+            {
+                var mapped_buffer = try staging_buffer.map(.{ .write = true, });
+                defer mapped_buffer.unmap();
+
+                const mapped_slice = mapped_buffer.data_array(u8, buffer_length);
+                @memcpy(mapped_slice, d);
+            }
+
+            try self.transition_layout(c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+            const command_buffer = try begin_single_time_command_buffer(GfxStateVulkan.get().all_command_pool);
+            const region = c.VkBufferImageCopy {
+                .bufferOffset = 0,
+                .bufferRowLength = 0,
+                .bufferImageHeight = 0,
+
+                .imageSubresource = .{
+                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                    .mipLevel = 0,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+
+                .imageOffset = .{ .x = 0, .y = 0, .z = 0, },
+                .imageExtent = .{
+                    .width = info.width,
+                    .height = info.height,
+                    .depth = 1,
+                }
+            };
+            c.vkCmdCopyBufferToImage(command_buffer, staging_buffer.vk_buffer, vk_image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            end_single_time_command_buffer(GfxStateVulkan.get().all_command_pool, command_buffer);
+
+            try self.transition_layout(vk_layout);
+        }
+
+        return self;
     }
 
-    pub inline fn map(self: *const Self, comptime OutType: type, gfx: *gf.GfxState) !MappedTexture(OutType) {
-        _ = gfx;
-        return MappedTexture(OutType) {
-            .data_ptr = @alignCast(@ptrCast(self.false_data)),
-        };
+    pub inline fn map(self: *const Self, options: gf.Image.MapOptions) !MappedImage {
+        _ = self;
+        _ = options;
+        return error.NotImplemented;
     }
 
-    pub fn MappedTexture(comptime T: type) type {
-        return struct {
-            data_ptr: *T,
+    pub const MappedImage = struct {
 
-            pub inline fn unmap(self: *const MappedTexture(T)) void {
-                _ = self;
+        pub fn unmap(self: *const MappedImage) void {
+            _ = self;
+        }
+
+        pub fn data(self: *const MappedImage, comptime Type: type) [*]align(16)Type {
+            _ = self;
+            unreachable;
+        }
+    };
+
+    fn transition_layout(self: *Self, new_layout: c.VkImageLayout) !void {
+        const command_buffer = try begin_single_time_command_buffer(GfxStateVulkan.get().all_command_pool);
+
+        var src_access: c.VkAccessFlags = 0;
+        var dst_access: c.VkAccessFlags = 0;
+
+        var src_stage: c.VkPipelineStageFlags = 0;
+        var dst_stage: c.VkPipelineStageFlags = 0;
+
+        switch (self.vk_layout) {
+            c.VK_IMAGE_LAYOUT_UNDEFINED => {},
+            c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL => {
+                src_access = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+                src_stage = c.VK_PIPELINE_STAGE_TRANSFER_BIT;
+            },
+            else => unreachable,
+        }
+
+        switch (new_layout) {
+            c.VK_IMAGE_LAYOUT_UNDEFINED => {},
+            c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL => {
+                dst_access = c.VK_ACCESS_SHADER_READ_BIT;
+                dst_stage = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; // TODO this could be any stage..
+            },
+            c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL => {
+                dst_access = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+                dst_stage = c.VK_PIPELINE_STAGE_TRANSFER_BIT;
+            },
+            else => unreachable,
+        }
+
+        const image_barrier = c.VkImageMemoryBarrier {
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .image = self.vk_image,
+            .oldLayout = self.vk_layout,
+            .newLayout = new_layout,
+            .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+            .srcAccessMask = src_access,
+            .dstAccessMask = dst_access,
+            .subresourceRange = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 1,
+                .layerCount = 1,
+            },
+        };
+        c.vkCmdPipelineBarrier(
+            command_buffer, 
+            src_stage, 
+            dst_stage, 
+            0, 
+            0, null,
+            0, null,
+            1, &image_barrier
+        );
+
+        end_single_time_command_buffer(GfxStateVulkan.get().all_command_pool, command_buffer);
+
+        self.vk_layout = new_layout;
+    }
+};
+
+pub const ImageViewVulkan = struct {
+    vk_image_view: c.VkImageView,
+    
+    pub fn deinit(self: *const ImageViewVulkan) void {
+        c.vkDestroyImageView(GfxStateVulkan.get().device, self.vk_image_view, null);
+    }
+
+    pub fn init(info: gf.ImageViewInfo) !ImageViewVulkan {
+        const img = gf.GfxState.get().images.get(info.image.id) orelse return error.UnableToRetrieveImage;
+
+        const view_type: c.VkImageViewType = blk: { // TODO cube
+            if (img.info.depth == 1) {
+                break :blk 
+                    if (info.array_layer_count == 1) c.VK_IMAGE_VIEW_TYPE_2D
+                    else c.VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+            } else {
+                break :blk
+                    if (info.array_layer_count == 1) c.VK_IMAGE_VIEW_TYPE_3D
+                    else return error.CannotCreateImageView3DArray;
             }
-            
-            pub inline fn data(self: *const MappedTexture(T)) [*]align(1)T {
-                return @as([*]align(1)T, @ptrCast(self.data_ptr));
-            }
+        };
+
+        const image_view_info = c.VkImageViewCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = img.platform.vk_image, 
+            .viewType = view_type,
+            .format = img.platform.vk_format,
+            .subresourceRange = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, // Depth?
+                .baseMipLevel = info.base_mip_level,
+                .levelCount = info.mip_level_count,
+                .baseArrayLayer = info.base_array_layer,
+                .layerCount = info.array_layer_count,
+            },
+        };
+
+        var vk_image_view: c.VkImageView = undefined;
+        try vkt(c.vkCreateImageView(GfxStateVulkan.get().device, &image_view_info, null, &vk_image_view));
+        errdefer c.vkDestroyImageView(GfxStateVulkan.get().device, vk_image_view, null);
+
+        return ImageViewVulkan {
+            .vk_image_view = vk_image_view,
         };
     }
 };
@@ -1458,20 +1600,9 @@ pub const RenderTargetViewVulkan = struct {
         _ = self;
     }
 
-    pub inline fn init_from_texture2d(texture: *const gf.Texture2D, gfx: *gf.GfxState) !Self {
-        return init_from_texture2d_mip(texture, 0, gfx);
-    }
-
-    pub inline fn init_from_texture2d_mip(texture: *const gf.Texture2D, mip_level: u32, gfx: *gf.GfxState) !Self {
+    pub inline fn init(texture: gf.Image.Ref, mip_level: u32) !Self {
         _ = texture;
         _ = mip_level;
-        _ = gfx;
-        return .{};
-    }
-
-    pub fn init_from_texture3d(texture: *const gf.Texture3D, gfx: *gf.GfxState) !Self {
-        _ = texture;
-        _ = gfx;
         return .{};
     }
 };
@@ -1483,14 +1614,12 @@ pub const DepthStencilViewVulkan = struct {
         _ = self;
     }
 
-    pub inline fn init_from_texture2d(
-        texture: *const gf.Texture2D, 
+    pub inline fn init(
+        texture: gf.Image.Ref, 
         flags: gf.DepthStencilView.Flags,
-        gfx: *gf.GfxState
     ) !Self {
         _ = texture;
         _ = flags;
-        _ = gfx;
         return .{};
     }
 };
@@ -1516,26 +1645,28 @@ pub const SamplerVulkan = struct {
         _ = self;
     }
 
-    pub inline fn init(desc: gf.SamplerDescriptor, gfx: *gf.GfxState) !Self {
+    pub inline fn init(desc: gf.SamplerDescriptor) !Self {
         _ = desc;
-        _ = gfx;
         return .{};
     }
 };
 
-pub const BlendStateVulkan = struct {
-    const Self = @This();
-
-    pub inline fn deinit(self: *const Self) void {
-        _ = self;
-    }
-
-    pub inline fn init(render_target_blend_types: []const gf.BlendType, gfx: *const gf.GfxState) !Self {
-        _ = render_target_blend_types;
-        _ = gfx;
-        return .{};
-    }
-};
+inline fn textureformat_to_vulkan(format: gf.ImageFormat) c.VkFormat {
+    return switch (format) {
+        .R32_Float => c.VK_FORMAT_R32_SFLOAT,
+        .Rg32_Float => c.VK_FORMAT_R32G32_SFLOAT,
+        .Rgba32_Float => c.VK_FORMAT_R32G32B32A32_SFLOAT,
+        .Rgba16_Float => c.VK_FORMAT_R16G16B16A16_SFLOAT,
+        .R32_Uint => c.VK_FORMAT_R32_UINT,
+        .Bgra8_Unorm => c.VK_FORMAT_B8G8R8A8_UNORM,
+        .D24S8_Unorm_Uint => c.VK_FORMAT_D24_UNORM_S8_UINT,
+        .R24X8_Unorm_Uint => c.VK_FORMAT_D24_UNORM_S8_UINT,
+        .Rg11b10_Float => c.VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+        .Rgba8_Unorm => c.VK_FORMAT_R8G8B8A8_UNORM,
+        .Rgba8_Unorm_Srgb => c.VK_FORMAT_R8G8B8A8_SRGB,
+        .Unknown => c.VK_FORMAT_UNDEFINED,
+    };
+}
 
 inline fn topology_to_vulkan(topology: gf.Topology) c.VkPrimitiveTopology {
     return switch (topology) {
@@ -1571,11 +1702,8 @@ inline fn fillmode_to_vulkan(fillmode: gf.FillMode) c.VkPolygonMode {
     };
 }
 
-inline fn bool_to_vulkan(b: bool) u32 {
-    return switch (b) {
-        .true => c.VK_TRUE,
-        .false => c.VK_FALSE,
-    };
+inline fn bool_to_vulkan(b: bool) c_uint {
+    return if (b) c.VK_TRUE else c.VK_FALSE;
 }
 
 inline fn compareop_to_vulkan(compareop: gf.CompareOp) c.VkCompareOp {
@@ -1588,6 +1716,65 @@ inline fn compareop_to_vulkan(compareop: gf.CompareOp) c.VkCompareOp {
         .LessOrEqual => c.VK_COMPARE_OP_LESS_OR_EQUAL,
         .Never => c.VK_COMPARE_OP_NEVER,
         .NotEqual => c.VK_COMPARE_OP_NOT_EQUAL,
+    };
+}
+
+inline fn blendtype_to_vulkan(blendtype: gf.BlendType) c.VkPipelineColorBlendAttachmentState {
+    return switch (blendtype) {
+        .None => c.VkPipelineColorBlendAttachmentState {
+            .blendEnable = c.VK_FALSE,
+            .colorWriteMask =   c.VK_COLOR_COMPONENT_R_BIT |
+                c.VK_COLOR_COMPONENT_G_BIT |
+                c.VK_COLOR_COMPONENT_B_BIT |
+                c.VK_COLOR_COMPONENT_A_BIT,
+            .srcColorBlendFactor = c.VK_BLEND_FACTOR_ONE,
+            .dstColorBlendFactor = c.VK_BLEND_FACTOR_ZERO,
+            .colorBlendOp = c.VK_BLEND_OP_ADD,
+            .srcAlphaBlendFactor = c.VK_BLEND_FACTOR_ONE,
+            .dstAlphaBlendFactor = c.VK_BLEND_FACTOR_ZERO,
+            .alphaBlendOp = c.VK_BLEND_OP_ADD,
+        },
+        .Simple => c.VkPipelineColorBlendAttachmentState {
+            .blendEnable = c.VK_TRUE,
+            .colorWriteMask =   c.VK_COLOR_COMPONENT_R_BIT |
+                c.VK_COLOR_COMPONENT_G_BIT |
+                c.VK_COLOR_COMPONENT_B_BIT |
+                c.VK_COLOR_COMPONENT_A_BIT,
+            .srcColorBlendFactor = c.VK_BLEND_FACTOR_SRC_ALPHA,
+            .dstColorBlendFactor = c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+            .colorBlendOp = c.VK_BLEND_OP_ADD,
+            .srcAlphaBlendFactor = c.VK_BLEND_FACTOR_ZERO,
+            .dstAlphaBlendFactor = c.VK_BLEND_FACTOR_DST_ALPHA,
+            .alphaBlendOp = c.VK_BLEND_OP_ADD,
+        },
+        .PremultipliedAlpha => c.VkPipelineColorBlendAttachmentState {
+            .blendEnable = c.VK_TRUE,
+            .colorWriteMask =   c.VK_COLOR_COMPONENT_R_BIT |
+                c.VK_COLOR_COMPONENT_G_BIT |
+                c.VK_COLOR_COMPONENT_B_BIT |
+                c.VK_COLOR_COMPONENT_A_BIT,
+            .srcColorBlendFactor = c.VK_BLEND_FACTOR_ONE,
+            .dstColorBlendFactor = c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+            .colorBlendOp = c.VK_BLEND_OP_ADD,
+            .srcAlphaBlendFactor = c.VK_BLEND_FACTOR_ONE,
+            .dstAlphaBlendFactor = c.VK_BLEND_FACTOR_ZERO,
+            .alphaBlendOp = c.VK_BLEND_OP_ADD,
+        },
+    };
+}
+
+inline fn loadop_to_vulkan(loadop: gf.AttachmentLoadOp) c.VkAttachmentLoadOp {
+    return switch (loadop) {
+        .Clear => c.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .DontCare => c.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .Load => c.VK_ATTACHMENT_LOAD_OP_LOAD,
+    };
+}
+
+inline fn storeop_to_vulkan(storeop: gf.AttachmentStoreOp) c.VkAttachmentStoreOp {
+    return switch (storeop) {
+        .DontCare => c.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .Store => c.VK_ATTACHMENT_STORE_OP_STORE,
     };
 }
 
@@ -1611,7 +1798,7 @@ pub const GraphicsPipelineVulkan = struct {
         defer arena_struct.deinit();
         const arena = arena_struct.allocator();
         
-        const dynamic_states = []c.VkDynamicState {
+        const dynamic_states: []const c.VkDynamicState = &.{
             c.VK_DYNAMIC_STATE_VIEWPORT,
             c.VK_DYNAMIC_STATE_SCISSOR,
         };
@@ -1673,14 +1860,11 @@ pub const GraphicsPipelineVulkan = struct {
         const depth_info = c.VkPipelineDepthStencilStateCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
             .depthTestEnable = bool_to_vulkan(info.depth_test != null),
-            .depthCompareOp = if (info.depth_test) |d| d.compare_op else c.VK_COMPARE_OP_ALWAYS,
+            .depthCompareOp = if (info.depth_test) |d| compareop_to_vulkan(d.compare_op) else c.VK_COMPARE_OP_ALWAYS,
             .depthWriteEnable = if (info.depth_test) |d| bool_to_vulkan(d.write) else c.VK_FALSE,
             .stencilTestEnable = c.VK_FALSE, // @TODO
             .depthBoundsTestEnable = c.VK_FALSE,
         };
-
-        var attachments = try std.ArrayList(gf.AttachmentInfo).initCapacity(arena, 32);
-        defer attachments.deinit();
 
         const SubpassRefInfo = struct {
             attachment_refs: []usize,
@@ -1691,38 +1875,23 @@ pub const GraphicsPipelineVulkan = struct {
         for (info.subpasses, 0..) |subpass, sidx| {
             subpass_refs[sidx].attachment_refs = try arena.alloc(usize, subpass.attachments.len);
 
-            for (subpass.attachments, 0..) |a, aidx| {
-                var attachment_found = false;
-                for (attachments.slice(), 0..) |*stored, stored_aidx| {
-                    if (!std.mem.eql(u8, stored.name, a.name)) { continue; }
-                    if (a.format != stored.format) { continue; }
-                    if (a.load_op != stored.load_op) { continue; }
-                    if (a.store_op != stored.store_op) { continue; }
-                    if (a.stencil_load_op != stored.stencil_load_op) { continue; }
-                    if (a.stencil_store_op != stored.stencil_store_op) { continue; }
+            for (subpass.attachments, 0..) |subpass_attachment_name, subpass_aidx| {
+                const found_aidx: ?usize = for (info.attachments, 0..) |attachment, aidx| {
+                    if (std.mem.eql(u8, attachment.name, subpass_attachment_name)) {
+                        break aidx;
+                    }
+                } else null;
 
-                    // subpass attachment matches this one!
-                    subpass_refs[sidx].attachment_refs[aidx] = stored_aidx;
-                    attachment_found = true;
-                    break;
-                }
-                if (!attachment_found) {
-                    try attachments.append(a);
-                    subpass_refs[sidx].attachment_refs[aidx] = (attachments.items.len - 1);
-                }
+                if (found_aidx == null) { return error.SubpassAttachmentNameNotFound; }
+                subpass_refs[sidx].attachment_refs[subpass_aidx] = found_aidx.?;
             }
         }
 
-        var color_blend_attachments = try arena.alloc(c.VkPipelineColorBlendAttachmentState, attachments.items.len);
+        var color_blend_attachments = try arena.alloc(c.VkPipelineColorBlendAttachmentState, info.attachments.len);
         defer arena.free(color_blend_attachments);
 
-        for (attachments.items, 0..) |*a, idx| {
-            color_blend_attachments[idx] = switch (a.blend_type) {
-                // @TODO
-                .None => c.VkPipelineColorBlendAttachmentState {
-                },
-                else => unreachable,
-            };
+        for (info.attachments, 0..) |*a, idx| {
+            color_blend_attachments[idx] = blendtype_to_vulkan(a.blend_type); 
         }
 
         const color_blend_info = c.VkPipelineColorBlendStateCreateInfo {
@@ -1746,13 +1915,18 @@ pub const GraphicsPipelineVulkan = struct {
         try vkt(c.vkCreatePipelineLayout(eng.get().gfx.platform.device, &pipeline_layout_info, null, &vk_pipeline_layout));
         errdefer c.vkDestroyPipelineLayout(eng.get().gfx.platform.device, vk_pipeline_layout, null);
 
-        var attachment_descriptions = try arena.alloc(c.VkAttachmentDescription, attachments.items.len);
+        var attachment_descriptions = try arena.alloc(c.VkAttachmentDescription, info.attachments.len);
         defer arena.free(attachment_descriptions);
 
-        for (attachments.items, 0..) |*a, idx| {
-            _ = a;
+        for (info.attachments, 0..) |*a, idx| {
             attachment_descriptions[idx] = c.VkAttachmentDescription {
-                // @TODO
+                .format = textureformat_to_vulkan(a.format),
+                .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = c.VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, // TODO
+                .loadOp = loadop_to_vulkan(a.load_op),
+                .storeOp = storeop_to_vulkan(a.store_op),
+                .stencilLoadOp = loadop_to_vulkan(a.stencil_load_op),
+                .stencilStoreOp = storeop_to_vulkan(a.stencil_store_op),
             };
         }
 
@@ -1815,17 +1989,137 @@ pub const GraphicsPipelineVulkan = struct {
             .subpass = 0,
 
             .basePipelineIndex = -1,
-            .basePipelineHandle = c.VK_NULL_HANDLE,
+            .basePipelineHandle = @ptrCast(c.VK_NULL_HANDLE),
         };
 
         var vk_graphics_pipeline: c.VkPipeline = undefined;
-        try vkt(c.vkCreateGraphicsPipelines(eng.get().gfx.platform.device, c.VK_NULL_HANDLE, 1, &graphics_pipeline_info, null, &vk_graphics_pipeline));
+        try vkt(c.vkCreateGraphicsPipelines(eng.get().gfx.platform.device, @ptrCast(c.VK_NULL_HANDLE), 1, &graphics_pipeline_info, null, &vk_graphics_pipeline));
         errdefer c.vkDestroyPipeline(eng.get().gfx.platform.device, vk_graphics_pipeline, null);
 
         return Self {
             .vk_pipeline_layout = vk_pipeline_layout,
             .vk_render_pass = vk_render_pass,
             .vk_graphics_pipeline = vk_graphics_pipeline,
+        };
+    }
+};
+
+const FrameBufferAttachmentExtent = struct {
+    width: u32,
+    height: u32,
+    layers: u32,
+
+    pub fn eql(self: *const FrameBufferAttachmentExtent, oth: FrameBufferAttachmentExtent) bool {
+        return 
+            self.width == oth.width and
+            self.height == oth.height and
+            self.layers == oth.layers;
+    }
+};
+
+inline fn framebufferattachment_extent(framebuffer_attachment: gf.FrameBufferAttachmentInfo) FrameBufferAttachmentExtent {
+    return switch (framebuffer_attachment) {
+        .Swapchain => .{
+            .width = GfxStateVulkan.get().swapchain.extent.width,
+            .height = GfxStateVulkan.get().swapchain.extent.height,
+            .layers = 1,
+        },
+        .SwapchainDepth => .{
+            .width = GfxStateVulkan.get().swapchain.extent.width,
+            .height = GfxStateVulkan.get().swapchain.extent.height,
+            .layers = 1,
+        },
+        .View => |v| blk: {
+            const view = v.get() catch unreachable;
+            break :blk .{
+                .width = view.size.width,
+                .height = view.size.height,
+                .layers = view.info.array_layer_count,
+            };
+        },
+    };
+}
+
+pub const FrameBufferVulkan = struct {
+    vk_framebuffers: []c.VkFramebuffer,
+    
+    pub fn deinit(self: *const FrameBufferVulkan) void {
+        for (self.vk_framebuffers) |f| {
+            c.vkDestroyFramebuffer(eng.get().gfx.platform.device, f, null);
+        }
+        eng.get().general_allocator.free(self.vk_framebuffers);
+    }
+
+    pub fn init(info: gf.FrameBufferInfo) !FrameBufferVulkan {
+        if (info.attachments.len == 0) { return error.NoAttachmentsProvided; }
+
+        const alloc = eng.get().general_allocator;
+
+        const create_multiple_for_frames_in_flight = blk: {
+            var swapchain_index: ?usize = null;
+            for (info.attachments, 0..) |a, i| {
+                switch (a) {
+                    .Swapchain => { swapchain_index = i; break; },
+                    else => {},
+                }
+            }
+            break :blk (swapchain_index != null);
+        };
+
+        const swapchain_images_count = eng.get().gfx.platform.swapchain.images.items.len;
+        const framebuffers = try alloc.alloc(c.VkFramebuffer, if (create_multiple_for_frames_in_flight) swapchain_images_count else 1);
+        errdefer alloc.free(framebuffers);
+
+        const framebuffer_extent = framebufferattachment_extent(info.attachments[0]);
+
+        const attachments = try alloc.alloc(c.VkImageView, info.attachments.len);
+        defer alloc.free(attachments);
+
+        for (framebuffers, 0..) |*framebuffer, fidx| {
+            for (info.attachments, 0..) |*a, aidx| {
+                attachments[aidx] = switch (a.*) {
+                    .Swapchain => GfxStateVulkan.get().swapchain.image_views.items[fidx],
+                    .SwapchainDepth => blk: {
+                        const view = try gf.GfxState.get().default.depth_view.get();
+                        break :blk view.platform.vk_image_view;
+                    },
+                    .View => |v| blk: {
+                        const view = try v.get();
+                        break :blk view.platform.vk_image_view;
+                    },
+                };
+
+                const attachment_extent = framebufferattachment_extent(a.*);
+                if (!attachment_extent.eql(framebuffer_extent)) {
+                    return error.AttachmentsHaveDifferentExtents;
+                }
+            }
+
+            const framebuffer_info = c.VkFramebufferCreateInfo {
+                .sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass = (try info.graphics_pipeline.get()).platform.vk_render_pass,
+                .pAttachments = @ptrCast(attachments.ptr),
+                .attachmentCount = @intCast(attachments.len),
+                .width = framebuffer_extent.width,
+                .height = framebuffer_extent.height,
+                .layers = framebuffer_extent.layers,
+            };
+
+            vkt(c.vkCreateFramebuffer(eng.get().gfx.platform.device, &framebuffer_info, null, framebuffer)) catch |err| {
+                for (0..fidx) |i| {
+                    c.vkDestroyFramebuffer(eng.get().gfx.platform.device, framebuffers[i], null);
+                }
+                return err;
+            };
+        }
+        errdefer {
+            for (framebuffers) |framebuffer| {
+                c.vkDestroyFramebuffer(eng.get().gfx.platform.device, framebuffer, null);
+            }
+        }
+
+        return FrameBufferVulkan {
+            .vk_framebuffers = framebuffers,
         };
     }
 };

@@ -83,8 +83,7 @@ pub const QuadBufferFlags = packed struct(u32) {
 };
 
 pub const QuadRenderer = struct {
-    sampler: _gfx.Sampler,
-    blend_state: _gfx.BlendState,
+    sampler: _gfx.Sampler.Ref,
 
     quad_vso: _gfx.VertexShader,
     quad_pso: _gfx.PixelShader,
@@ -94,7 +93,6 @@ pub const QuadRenderer = struct {
     const QUAD_SHADER_HLSL = @embedFile("quad_shader.slang");
 
     pub fn deinit(self: *QuadRenderer) void {
-        self.blend_state.deinit();
         self.sampler.deinit();
 
         self.quad_vso.deinit();
@@ -103,11 +101,10 @@ pub const QuadRenderer = struct {
         self.quad_buffer_pixel.deinit();
     }
 
-    pub fn init(gfx: *_gfx.GfxState) !QuadRenderer {
+    pub fn init() !QuadRenderer {
         // construct ui object
         var quad_renderer = QuadRenderer {
             .sampler = undefined,
-            .blend_state = undefined,
 
             .quad_vso = undefined,
             .quad_pso = undefined,
@@ -121,7 +118,6 @@ pub const QuadRenderer = struct {
             "vs_main",
             ([_]_gfx.VertexInputLayoutEntry {})[0..],
             .{},
-            gfx
         );
         errdefer quad_renderer.quad_vso.deinit();
 
@@ -129,7 +125,6 @@ pub const QuadRenderer = struct {
             QUAD_SHADER_HLSL,
             "ps_main",
             .{},
-            gfx
         );
         errdefer quad_renderer.quad_pso.deinit();
 
@@ -138,7 +133,6 @@ pub const QuadRenderer = struct {
             @sizeOf(QuadBufferVertexBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx
         );
         errdefer quad_renderer.quad_buffer_vertex.deinit();
 
@@ -146,7 +140,6 @@ pub const QuadRenderer = struct {
             @sizeOf(QuadBufferPixelBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx
         );
         errdefer quad_renderer.quad_buffer_pixel.deinit();
 
@@ -157,21 +150,20 @@ pub const QuadRenderer = struct {
                 .filter_mip = .Point,
                 .border_mode = .Wrap,
             },
-            gfx
         );
         errdefer quad_renderer.sampler.deinit();
 
         // create blend state
-        quad_renderer.blend_state = try _gfx.BlendState.init(([_]_gfx.BlendType{.PremultipliedAlpha})[0..], gfx);
-        errdefer quad_renderer.blend_state.deinit();
+        // quad_renderer.blend_state = try _gfx.BlendState.init(([_]_gfx.BlendType{.PremultipliedAlpha})[0..], gfx);
+        // errdefer quad_renderer.blend_state.deinit();
 
         // finally return the ui structure
         return quad_renderer;
     }
 
     pub const QuadPropertiesTexture = struct {
-        texture_view: _gfx.TextureView2D,
-        sampler: _gfx.Sampler,
+        texture_view: _gfx.ImageView.Ref,
+        sampler: _gfx.Sampler.Ref,
     };
 
     pub const QuadProperties = struct {
@@ -187,19 +179,21 @@ pub const QuadRenderer = struct {
         self: *QuadRenderer,
         rect_pixels: RectPixels,
         props: QuadProperties,
-        rtv: _gfx.RenderTargetView, 
-        gfx: *_gfx.GfxState,
+        rtv: _gfx.ImageView.Ref, 
     ) void {
+        const gfx = _gfx.GfxState.get();
+
         { // Setup quad vertex info buffer
-            const mapped_buffer = self.quad_buffer_vertex.map(gfx) catch unreachable;
+            const mapped_buffer = self.quad_buffer_vertex.map(.{ .write = true, }) catch unreachable;
             defer mapped_buffer.unmap();
 
+            const view = rtv.get() catch unreachable;
             mapped_buffer.data(QuadBufferVertexBuffer).* = QuadBufferVertexBuffer {
-                .quad_bounds = Bounds.from_rect(rect_pixels, @floatFromInt(rtv.size.width), @floatFromInt(rtv.size.height)),
+                .quad_bounds = Bounds.from_rect(rect_pixels, @floatFromInt(view.size.width), @floatFromInt(view.size.height)),
             };
         }
         { // Setup quad pixel info buffer
-            const mapped_buffer = self.quad_buffer_pixel.map(gfx) catch unreachable;
+            const mapped_buffer = self.quad_buffer_pixel.map(.{ .write = true, }) catch unreachable;
             defer mapped_buffer.unmap();
 
             mapped_buffer.data(QuadBufferPixelBuffer).* = QuadBufferPixelBuffer {
@@ -215,9 +209,10 @@ pub const QuadRenderer = struct {
             };
         }
 
+        const view = rtv.get() catch unreachable;
         const viewport = _gfx.Viewport {
-            .width = @floatFromInt(rtv.size.width),
-            .height = @floatFromInt(rtv.size.height),
+            .width = @floatFromInt(view.size.width),
+            .height = @floatFromInt(view.size.height),
             .min_depth = 0.0,
             .max_depth = 1.0,
             .top_left_x = 0,
@@ -227,8 +222,7 @@ pub const QuadRenderer = struct {
 
         gfx.cmd_set_pixel_shader(&self.quad_pso);
 
-        gfx.cmd_set_render_target(&.{&rtv}, null);
-        gfx.cmd_set_blend_state(&self.blend_state);
+        gfx.cmd_set_render_target(&.{rtv}, null);
 
         gfx.cmd_set_vertex_shader(&self.quad_vso);
 
@@ -245,11 +239,11 @@ pub const QuadRenderer = struct {
         gfx.cmd_set_constant_buffers(.Pixel, 1, &.{&self.quad_buffer_pixel});
 
         if (props.texture) |texture_props| {
-            gfx.cmd_set_samplers(.Pixel, 0, &.{&texture_props.sampler});
-            gfx.cmd_set_shader_resources(.Pixel, 0, &.{&texture_props.texture_view});
+            gfx.cmd_set_samplers(.Pixel, 0, &.{texture_props.sampler});
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{texture_props.texture_view});
         } else {
-            gfx.cmd_set_samplers(.Pixel, 0, &.{&gfx.default.sampler});
-            gfx.cmd_set_shader_resources(.Pixel, 0, &.{&gfx.default.diffuse});
+            gfx.cmd_set_samplers(.Pixel, 0, &.{gfx.default.sampler});
+            gfx.cmd_set_shader_resources(.Pixel, 0, &.{gfx.default.diffuse_view});
         }
 
         gfx.cmd_draw(6, 0);

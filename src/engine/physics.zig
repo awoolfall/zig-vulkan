@@ -202,7 +202,7 @@ pub const PhysicsSystem = struct {
         }
     }
 
-    pub fn debug_draw_bodies(self: *Self, rtv: *_gfx.RenderTargetView, width: i32, height: i32, projection: [16]f32, view: [16]f32) void {
+    pub fn debug_draw_bodies(self: *Self, rtv: _gfx.ImageView.Ref, width: i32, height: i32, projection: [16]f32, view: [16]f32) void {
         if (debug_renderer_enabled()) {
             self._debug_renderer.draw_bodies(self.zphy, rtv.platform.view, width, height, projection, view);
         }

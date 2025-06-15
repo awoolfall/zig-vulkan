@@ -56,11 +56,10 @@ pub const Font = struct {
     font_metrics: FontMetrics,
     character_map: std.AutoHashMap(u21, CharacterInfo),
 
-    msdf_texture_view: _gfx.TextureView2D,
+    msdf_texture_view: _gfx.ImageView.Ref,
     font_vso: _gfx.VertexShader,
     font_pso: _gfx.PixelShader,
-    sampler: _gfx.Sampler,
-    blend_state: _gfx.BlendState,
+    sampler: _gfx.Sampler.Ref,
     character_buffer: _gfx.Buffer,
     font_text_buffer: _gfx.Buffer,
 
@@ -71,14 +70,13 @@ pub const Font = struct {
         self.font_vso.deinit();
         self.font_pso.deinit();
         self.sampler.deinit();
-        self.blend_state.deinit();
         self.character_buffer.deinit();
         self.font_text_buffer.deinit();
         self.character_map.deinit();
         self._allocator.free(self.constant_buffer_data);
     }
 
-    pub fn init(alloc: std.mem.Allocator, font_json: path.Path, font_msdf_png: path.Path, gfx: *_gfx.GfxState) !Font {
+    pub fn init(alloc: std.mem.Allocator, font_json: path.Path, font_msdf_png: path.Path) !Font {
         const font_json_path = try font_json.resolve_path(alloc);
         defer alloc.free(font_json_path);
 
@@ -137,7 +135,6 @@ pub const Font = struct {
             .font_vso = undefined,
             .font_pso = undefined,
             .sampler = undefined,
-            .blend_state = undefined,
             .font_text_buffer = undefined,
             .character_buffer = undefined,
             .atlas_details = AtlasDetails {
@@ -184,20 +181,20 @@ pub const Font = struct {
         defer font_image.deinit();
 
         // create a d3d11 texture from the font png file
-        var msdf_texture = try _gfx.Texture2D.init(
+        var msdf_texture = try _gfx.Image.init(
             .{
                 .width = @intCast(font.atlas_details.width),
                 .height = @intCast(font.atlas_details.height),
                 .format = .Rgba8_Unorm,
+
+                .usage_flags = .{ .ShaderResource = true, },
+                .access_flags = .{},
             },
-            .{ .ShaderResource = true, },
-            .{},
             font_image.data,
-            gfx
         );
         defer msdf_texture.deinit();
 
-        font.msdf_texture_view = try _gfx.TextureView2D.init_from_texture2d(&msdf_texture, gfx);
+        font.msdf_texture_view = try _gfx.ImageView.init(.{ .image = msdf_texture, });
         errdefer font.msdf_texture_view.deinit();
 
         // create the font shaders
@@ -210,7 +207,6 @@ pub const Font = struct {
                 .{ .name = "TEXCOORD", .index = 1, .format = .F32x4, .per = .Instance, },
             })[0..],
             .{},
-            gfx
         );
         errdefer font.font_vso.deinit();
 
@@ -218,7 +214,6 @@ pub const Font = struct {
             MSDF_FONT_SHADER_HLSL,
             "ps_main",
             .{},
-            gfx
         );
         errdefer font.font_pso.deinit();
 
@@ -229,23 +224,21 @@ pub const Font = struct {
                 .filter_mip = .Point,
                 .border_mode = .Wrap,
             },
-            gfx
         );
         errdefer font.sampler.deinit();
 
         // create blend state
-        font.blend_state = try _gfx.BlendState.init(
-            ([_]_gfx.BlendType { .PremultipliedAlpha })[0..],
-            gfx
-        );
-        errdefer font.blend_state.deinit();
+        // font.blend_state = try _gfx.BlendState.init(
+        //     ([_]_gfx.BlendType { .PremultipliedAlpha })[0..],
+        //     gfx
+        // );
+        // errdefer font.blend_state.deinit();
 
         // create constant buffers
         font.font_text_buffer = try _gfx.Buffer.init(
             @sizeOf(FontConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx
         );
         errdefer font.font_text_buffer.deinit();
 
@@ -253,7 +246,6 @@ pub const Font = struct {
             @sizeOf([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer),
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
-            gfx
         );
         errdefer font.character_buffer.deinit();
 
@@ -271,28 +263,30 @@ pub const Font = struct {
         self: *const Font,
         text: []const u8,
         props: FontRenderProperties2D,
-        rtv: _gfx.RenderTargetView, 
-        gfx: *_gfx.GfxState,
+        rtv: _gfx.ImageView.Ref, 
     ) void {
+        const gfx = _gfx.GfxState.get();
+
         if (text.len == 0) { return; }
         
-        const aspect = (@as(f32, @floatFromInt(rtv.size.width)) / @as(f32, @floatFromInt(rtv.size.height)));
+        const view = rtv.get() catch unreachable;
+        const aspect = (@as(f32, @floatFromInt(view.size.width)) / @as(f32, @floatFromInt(view.size.height)));
         const xy_screen_space = ui.position_pixels_to_screen_space(
             props.position.x,
             props.position.y,
-            @floatFromInt(rtv.size.width),
-            @floatFromInt(rtv.size.height)
+            @floatFromInt(view.size.width),
+            @floatFromInt(view.size.height)
         );
         var y_loc = xy_screen_space[1];
         var x_loc = xy_screen_space[0];
         const x_start_loc = x_loc;
 
-        const percpx = props.pixel_height / @as(f32, @floatFromInt(rtv.size.height));
+        const percpx = props.pixel_height / @as(f32, @floatFromInt(view.size.height));
         const screen_size = (percpx * 2.0);
 
         const viewport = _gfx.Viewport {
-            .width = @floatFromInt(rtv.size.width),
-            .height = @floatFromInt(rtv.size.height),
+            .width = @floatFromInt(view.size.width),
+            .height = @floatFromInt(view.size.height),
             .min_depth = 0.0,
             .max_depth = 1.0,
             .top_left_x = 0,
@@ -301,10 +295,9 @@ pub const Font = struct {
         gfx.cmd_set_viewport(viewport);
 
         gfx.cmd_set_pixel_shader(&self.font_pso);
-        gfx.cmd_set_shader_resources(.Pixel, 0, &.{&self.msdf_texture_view});
+        gfx.cmd_set_shader_resources(.Pixel, 0, &.{self.msdf_texture_view});
 
-        gfx.cmd_set_render_target(&.{&rtv}, null);
-        gfx.cmd_set_blend_state(&self.blend_state);
+        gfx.cmd_set_render_target(&.{rtv}, null);
 
         gfx.cmd_set_vertex_shader(&self.font_vso);
 
@@ -312,14 +305,14 @@ pub const Font = struct {
         gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
 
         gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.font_text_buffer});
-        gfx.cmd_set_samplers(.Pixel, 0, &.{&self.sampler});
+        gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
 
         gfx.cmd_set_vertex_buffers(0, &.{
             .{ .buffer = &self.character_buffer, .stride = @sizeOf(CharacterInfoConstantBuffer), .offset = 0, },
         });
 
         { // Setup font text info buffer
-            const mapped_buffer = self.font_text_buffer.map(gfx) catch unreachable;
+            const mapped_buffer = self.font_text_buffer.map(.{ .write = true, }) catch unreachable;
             defer mapped_buffer.unmap();
 
             mapped_buffer.data(FontConstantBuffer).* = FontConstantBuffer {
@@ -337,7 +330,7 @@ pub const Font = struct {
         while (text_utf8_iter.nextCodepoint()) |c| {
             if (instance_id >= RENDER_INSTANCE_COUNT) {
                 {
-                    const mapped_buffer = self.character_buffer.map(gfx) catch unreachable;
+                    const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
                     defer mapped_buffer.unmap();
 
                     @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
@@ -380,7 +373,7 @@ pub const Font = struct {
         // render the remaining characters
         if (instance_id > 0) {
             {
-                const mapped_buffer = self.character_buffer.map(gfx) catch unreachable;
+                const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
                 defer mapped_buffer.unmap();
 
                 @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
