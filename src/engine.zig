@@ -175,16 +175,18 @@ fn window_event_received(engine_void_ptr: *anyopaque, event: wd.WindowEvent) voi
     // Timing needs to be updated at the very beginning of a frame
     self.time.received_window_event(&event);
 
+    // send event to gfx
+    self.gfx.received_window_event(&event);
+
+    // Update input struct with key events
+    self.input.received_window_event_early(&event);
+
     switch (event) {
-        .RESIZED => |new_size| { self.gfx.window_resized(new_size.width, new_size.height); },
         .EVENTS_CLEARED => self.pre_app_update() catch |err| {
             std.log.err("pre app update failed: {}", .{err});
         },
         else => {},
     }
-
-    // Update input struct with key events
-    self.input.received_window_event_early(&event);
 
     // Send event to the client app
     self.app.window_event_received(&event);

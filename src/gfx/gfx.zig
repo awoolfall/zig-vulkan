@@ -9,7 +9,7 @@ const gen = @import("self").gen;
 const ToneMappingAndBloomFilter = @import("tonemapping_filter.zig");
 
 const eng = @import("../root.zig");
-const RectPixels = eng.Rect;
+const Rect = eng.Rect;
 
 pub const GfxState = struct {
     const Self = @This();
@@ -19,11 +19,18 @@ pub const GfxState = struct {
 
     platform: Platform,
 
+    buffers: gen.GenerationalList(Buffer),
     images: gen.GenerationalList(Image),
     image_views: gen.GenerationalList(ImageView),
     samplers: gen.GenerationalList(Sampler),
+
     graphics_pipelines: gen.GenerationalList(GraphicsPipeline),
     framebuffers: gen.GenerationalList(FrameBuffer),
+
+    descriptor_layouts: gen.GenerationalList(DescriptorLayout),
+    descriptor_pools: gen.GenerationalList(DescriptorPool),
+
+    command_pools: gen.GenerationalList(CommandPool),
 
     tone_mapping_filter: ToneMappingAndBloomFilter,
 
@@ -61,6 +68,7 @@ pub const GfxState = struct {
 
         self.platform.deinit();
 
+        self.buffers.deinit();
         self.images.deinit();
         self.image_views.deinit();
         self.samplers.deinit();
@@ -91,6 +99,7 @@ pub const GfxState = struct {
         var gfx_state = Self {
             .platform = gfx_platform,
 
+            .buffers = gen.GenerationalList(Buffer).init(alloc),
             .images = gen.GenerationalList(Image).init(alloc),
             .image_views = gen.GenerationalList(ImageView).init(alloc),
             .samplers = gen.GenerationalList(Sampler).init(alloc),
@@ -194,21 +203,6 @@ pub const GfxState = struct {
         );
     }
 
-    pub fn get_frame_rtv(self: *Self) ImageView.Ref {
-        _ = self;
-        unreachable;
-    }
-
-    pub fn get_frame_hdr_view(self: *Self) ImageView.Ref {
-        _ = self;
-        unreachable;
-    }
-
-    pub fn get_framebuffer(self: *Self) ImageView.Ref {
-        _ = self;
-        unreachable;
-    }
-
     pub fn present(self: *Self) !void {
         if (self.swapchain_size()[0] * self.swapchain_size()[1] == 0) {
             return error.SwapchainSizeIsZero;
@@ -220,139 +214,32 @@ pub const GfxState = struct {
         self.platform.flush();
     }
 
-    pub fn clear_state(self: *Self) void {
-        self.platform.clear_state();
-    }
-
-    pub fn window_resized(self: *Self, new_width: i32, new_height: i32) void {
-        const w = @max(new_width, 1);
-        const h = @max(new_height, 1);
-
-        self.clear_state();
+    pub fn window_resized(self: *Self, new_width: u32, new_height: u32) void {
         self.flush();
-
-        self.platform.resize_swapchain(w, h);
+        self.platform.resize_swapchain(@max(new_width, 1), @max(new_height, 1));
     }
 
     pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
         switch (event.*) {
             .RESIZED => |new_size| { 
-                self.window_resized(new_size.width, new_size.height);
+                self.window_resized(@intCast(new_size.width), @intCast(new_size.height));
 
                 // send resize event to children
-                self.tone_mapping_filter.framebuffer_resized(self) catch unreachable;
+                self.tone_mapping_filter.framebuffer_resized(self) catch unreachable; // TODO remove?
             },
             else => {},
         }
     }
+};
 
-    pub fn cmd_clear_render_target(self: *Self, rt: ImageView.Ref, color: zm.F32x4) void {
-        self.platform.cmd_clear_render_target(rt, color);
-    }
-
-    pub fn cmd_clear_depth_stencil_view(self: *Self, dsv: ImageView.Ref, depth: ?f32, stencil: ?u8) void {
-        self.platform.cmd_clear_depth_stencil_view(dsv, depth, stencil);
-    }
-
-    pub fn cmd_set_viewport(self: *Self, viewport: Viewport) void {
-        self.platform.cmd_set_viewport(viewport);
-    }
-
-    pub fn cmd_set_scissor_rect(self: *Self, scissor: ?RectPixels) void {
-        self.platform.cmd_set_scissor_rect(scissor);
-    }
-
-    pub fn cmd_set_render_target(self: *Self, rtvs: []const ?ImageView.Ref, depth_stencil_view: ?ImageView.Ref) void {
-        self.platform.cmd_set_render_target(rtvs, depth_stencil_view);
-    }
-
-    pub fn cmd_set_vertex_shader(self: *Self, vs: *const VertexShader) void {
-        self.platform.cmd_set_vertex_shader(vs);
-    }
-
-    pub fn cmd_set_pixel_shader(self: *Self, ps: *const PixelShader) void {
-        self.platform.cmd_set_pixel_shader(ps);
-    }
-
-    pub fn cmd_set_hull_shader(self: *Self, hs: ?*const HullShader) void {
-        self.platform.cmd_set_hull_shader(hs);
-    }
-
-    pub fn cmd_set_domain_shader(self: *Self, ds: ?*const DomainShader) void {
-        self.platform.cmd_set_domain_shader(ds);
-    }
-
-    pub fn cmd_set_geometry_shader(self: *Self, gs: ?*const GeometryShader) void {
-        self.platform.cmd_set_geometry_shader(gs);
-    }
-
-    pub fn cmd_set_compute_shader(self: *Self, cs: ?*const ComputeShader) void {
-        self.platform.cmd_set_compute_shader(cs);
-    }
-
-    pub fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const VertexBufferInput) void {
-        self.platform.cmd_set_vertex_buffers(start_slot, buffers);
-    }
-
-    pub fn cmd_set_index_buffer(self: *Self, buffer: *const Buffer, format: IndexFormat, offset: u32) void {
-        self.platform.cmd_set_index_buffer(buffer, format, offset);
-    }
-
-    pub fn cmd_set_constant_buffers(self: *Self, shader_stage: ShaderStage, start_slot: u32, buffers: []const *const Buffer) void {
-        self.platform.cmd_set_constant_buffers(shader_stage, start_slot, buffers);
-    }
-
-    pub fn cmd_set_rasterizer_state(self: *Self, rs: RasterizationStateDesc) void {
-        self.platform.cmd_set_rasterizer_state(rs);
-    }
-
-    pub fn cmd_set_shader_resources(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: []const ?ImageView.Ref) void {
-        self.platform.cmd_set_shader_resources(shader_stage, start_slot, views);
-    }
-
-    pub fn cmd_set_samplers(self: *Self, shader_stage: ShaderStage, start_slot: u32, sampler: []const Sampler.Ref) void {
-        self.platform.cmd_set_samplers(shader_stage, start_slot, sampler);
-    }
-
-    pub fn cmd_draw(self: *Self, vertex_count: u32, start_vertex: u32) void {
-        self.platform.cmd_draw(vertex_count, start_vertex);
-    }
-
-    pub fn cmd_draw_indexed(self: *Self, index_count: u32, start_index: u32, base_vertex: i32) void {
-        self.platform.cmd_draw_indexed(index_count, start_index, base_vertex);
-    }
-
-    pub fn cmd_draw_instanced(self: *Self, vertex_count: u32, instance_count: u32, start_vertex: u32, start_instance: u32) void {
-        self.platform.cmd_draw_instanced(vertex_count, instance_count, start_vertex, start_instance);
-    }
-
-    pub fn cmd_set_topology(self: *Self, topology: Topology) void {
-        self.platform.cmd_set_topology(topology);
-    }
-
-    pub fn cmd_set_topology_patch_list_count(self: *Self, patch_list_count: u32) void {
-        self.platform.cmd_set_topology_patch_list_count(patch_list_count);
-    }
-
-    pub fn cmd_set_unordered_access_views(self: *Self, shader_stage: ShaderStage, start_slot: u32, views: anytype) void {
-        var uavs: [8]?*const pl.GfxPlatform.UnorderedAccessView = [_]?*const pl.GfxPlatform.UnorderedAccessView{null} ** 8;
-        inline for (views, 0..) |v, i| {
-            uavs[i] = if (@TypeOf(v) != @TypeOf(null)) v.unordered_access_view() else null;
-        }
-        self.platform.cmd_set_unordered_access_views(shader_stage, start_slot, &uavs);
-    }
-
-    pub fn cmd_dispatch_compute(self: *Self, num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) void {
-        self.platform.cmd_dispatch_compute(num_groups_x, num_groups_y, num_groups_z);
-    }
-
-    pub fn cmd_copy_texture_to_texture(self: *Self, dst_texture: Image.Ref, src_texture: Image.Ref) void {
-        self.platform.cmd_copy_texture_to_texture(dst_texture, src_texture);
-    }
+pub const QueueFamily = enum {
+    Graphics,
+    Transfer,
+    Compute,
 };
 
 pub const VertexBufferInput = struct {
-    buffer: *const Buffer,
+    buffer: Buffer.Ref,
     stride: u32,
     offset: u32,
 };
@@ -387,10 +274,10 @@ pub const Topology = enum {
 pub const Viewport = struct {
     width: f32,
     height: f32,
-    top_left_x: f32,
-    top_left_y: f32,
-    min_depth: f32,
-    max_depth: f32,
+    top_left_x: f32 = 0.0,
+    top_left_y: f32 = 0.0,
+    min_depth: f32 = 0.0,
+    max_depth: f32 = 1.0,
 };
 
 pub const ShaderDefineTuple = std.meta.Tuple(&[_]type{ []const u8, []const u8 });
@@ -755,7 +642,39 @@ pub const ComputeShader = struct {
     }
 };
 
+pub fn Reference(comptime Type: type) type {
+    return struct {
+        const Self = @This();
+
+        id: gen.GenerationalIndex,
+
+        pub fn deinit(self: *const Self) void {
+            if (self.get()) |asset| {
+                asset.deinit();
+            } else |_| {
+                std.log.warn("Unable to retrieve {s} asset", .{@typeName(Type)});
+            }
+            gfxstate_list().remove(self.id) catch |err| {
+                std.log.warn("Unable to remove {s} asset: {}", .{@typeName(Type), err});
+            };
+        }
+
+        pub fn get(self: *const Self) !*Type {
+            return gfxstate_list().get(self.id) orelse return error.UnableToRetrieveAsset;
+        }
+
+        inline fn gfxstate_list() *gen.GenerationalList(Type) {
+            return switch (Type) {
+                Image => &GfxState.get().images,
+                else => unreachable,
+            };
+        }
+    };
+}
+
 pub const Buffer = struct {
+    pub const Ref = Reference(Buffer);
+
     platform: pl.GfxPlatform.Buffer,
 
     pub fn deinit(self: *const Buffer) void {
@@ -766,9 +685,16 @@ pub const Buffer = struct {
         byte_size: u32,
         usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
-    ) !Buffer {
-        return Buffer {
-            .platform = try pl.GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags),
+    ) !Buffer.Ref {
+        const platform = try pl.GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags);
+        errdefer platform.deinit();
+
+        const buffer = Buffer {
+            .platform = platform,
+        };
+
+        return Buffer.Ref {
+            .id = try GfxState.get().buffers.insert(buffer),
         };
     }
     
@@ -777,8 +703,15 @@ pub const Buffer = struct {
         usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
     ) !Buffer {
-        return Buffer {
-            .platform = try pl.GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags),
+        const platform = try pl.GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags);
+        errdefer platform.deinit();
+
+        const buffer = Buffer {
+            .platform = platform,
+        };
+
+        return Buffer.Ref {
+            .platform = try GfxState.get().buffers.insert(buffer),
         };
     }
 
@@ -810,39 +743,6 @@ pub const Buffer = struct {
     };
 };
 
-pub const ShaderResourceView = *const pl.GfxPlatform.ShaderResourceView;
-pub const UnorderedAccessView = *const pl.GfxPlatform.UnorderedAccessView;
-
-pub fn Reference(comptime Type: type) type {
-    return struct {
-        const Self = @This();
-
-        id: gen.GenerationalIndex,
-
-        pub fn deinit(self: *const Self) void {
-            if (self.get()) |asset| {
-                asset.deinit();
-            } else |_| {
-                std.log.warn("Unable to retrieve {s} asset", .{@typeName(Type)});
-            }
-            gfxstate_list().remove(self.id) catch |err| {
-                std.log.warn("Unable to remove {s} asset: {}", .{@typeName(Type), err});
-            };
-        }
-
-        pub fn get(self: *const Self) !*Type {
-            return gfxstate_list().get(self.id) orelse return error.UnableToRetrieveAsset;
-        }
-
-        inline fn gfxstate_list() *gen.GenerationalList(Type) {
-            return switch (Type) {
-                Image => &GfxState.get().images,
-                else => unreachable,
-            };
-        }
-    };
-}
-
 pub const ImageInfo = struct {
     format: ImageFormat,
 
@@ -859,7 +759,6 @@ pub const ImageInfo = struct {
 
 pub const Image = struct {
     pub const Ref = Reference(Image);
-
 
     info: ImageInfo,
     platform: GfxState.Platform.Image,
@@ -982,54 +881,6 @@ pub const ImageView = struct {
     }
 };
 
-// pub const RenderTargetView = struct {
-//     platform: pl.GfxPlatform.RenderTargetView,
-//     size: struct { width: u32, height: u32, depth: u32, },
-//
-//     pub fn deinit(self: *const RenderTargetView) void {
-//         self.platform.deinit();
-//     }
-//
-//     pub fn init(image: Image.Ref) !RenderTargetView {
-//         return init_mip(image, 0);
-//     }
-//
-//     pub fn init_mip(image: Image.Ref, mip_level: u32) !RenderTargetView {
-//         return RenderTargetView {
-//             .platform = try pl.GfxPlatform.RenderTargetView.init(image, mip_level),
-//             .size = .{
-//                 .width = image.get().?.desc.width / std.math.pow(u32, 2, mip_level),
-//                 .height = image.get().?.desc.height / std.math.pow(u32, 2, mip_level),
-//                 .depth = 1,
-//             },
-//         };
-//     }
-// };
-//
-// pub const DepthStencilView = struct {
-//     platform: pl.GfxPlatform.DepthStencilView,
-//
-//     pub const Flags = packed struct(u2) {
-//         read_only_depth: bool = false,
-//         read_only_stencil: bool = false,
-//     };
-//
-//     pub fn deinit(self: *const DepthStencilView) void {
-//         self.platform.deinit();
-//     }
-//
-//     pub fn init(
-//         image: Image.Ref,
-//         flags: Flags,
-//     ) !DepthStencilView {
-//         if (!image.get().?.desc.format.is_depth()) { return error.NotADepthFormat; }
-//
-//         return DepthStencilView {
-//             .platform = try pl.GfxPlatform.DepthStencilView.init(image, flags),
-//         };
-//     }
-// };
-
 pub const ImageFormat = enum {
     Unknown,
     Rgba8_Unorm_Srgb,
@@ -1099,7 +950,7 @@ pub const RasterizationStateDesc = packed struct(u3) {
     FrontCounterClockwise: bool = false,
 };
 
-pub const SamplerDescriptor = struct {
+pub const SamplerInfo = struct {
     anisotropic_filter: bool = false,
     filter_min_mag: SamplerFilter = .Point,
     filter_mip: SamplerFilter = .Point,
@@ -1125,19 +976,19 @@ pub const Sampler = struct {
     pub const Ref = Reference(Sampler);
 
     platform: GfxState.Platform.Sampler,
-    desc: SamplerDescriptor,
+    info: SamplerInfo,
 
     pub fn deinit(self: *const Sampler) void {
         self.platform.deinit();
     }
 
-    pub fn init(desc: SamplerDescriptor) !Sampler.Ref {
-        const platform = try pl.GfxPlatform.Sampler.init(desc);
+    pub fn init(info: SamplerInfo) !Sampler.Ref {
+        const platform = try pl.GfxPlatform.Sampler.init(info);
         errdefer platform.deinit();
 
         const sampler = Sampler {
             .platform = platform,
-            .desc = desc,
+            .info = info,
         };
 
         return Sampler.Ref {
@@ -1297,5 +1148,278 @@ pub const FrameBuffer = struct {
         return FrameBuffer.Ref {
             .id = try GfxState.get().framebuffers.insert(framebuffer),
         };
+    }
+};
+
+pub const BindingType = enum {
+    UniformBuffer,
+    StorageBuffer,
+    ImageView,
+    Sampler,
+    ImageViewAndSampler,
+};
+
+pub const DescriptorBindingInfo = struct {
+    binding: u32,
+    binding_type: BindingType,
+    array_count: u32 = 1,
+    shader_stages: ShaderStageFlags,
+};
+
+pub const DescriptorLayoutInfo = struct {
+    bindings: []const DescriptorBindingInfo,
+};
+
+pub const DescriptorLayout = struct {
+    pub const Ref = Reference(DescriptorLayout);
+
+    platform: GfxState.Platform.DescriptorLayout,
+    info: DescriptorLayoutInfo,
+
+    pub fn deinit(self: *const DescriptorLayout) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: DescriptorLayoutInfo) !DescriptorLayout.Ref {
+        const platform = try GfxState.Platform.DescriptorLayout.init(info);
+        errdefer platform.deinit();
+
+        const layout = DescriptorLayout {
+            .platform = platform,
+            .info = info,
+        };
+
+        return DescriptorLayout.Ref {
+            .id = try GfxState.get().descriptor_layouts.insert(layout),
+        };
+    }
+};
+
+pub const PoolSizeInfo = struct {
+    binding_type: BindingType,
+    count: u32,
+};
+
+pub const DescriptorPoolInfo = struct {
+    strategy: union(enum) {
+        Layout: DescriptorLayout.Ref,
+        Manual: []const PoolSizeInfo,
+    },
+    max_sets: u32,
+};
+
+pub const DescriptorPool = struct {
+    pub const Ref = Reference(DescriptorPool);
+
+    platform: GfxState.Platform.DescriptorPool,
+
+    pub fn deinit(self: *const DescriptorPool) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: DescriptorPoolInfo) !DescriptorPool.Ref {
+        const platform = try GfxState.Platform.DescriptorPool.init(info);
+        errdefer platform.deinit();
+
+        const pool = DescriptorPool {
+            .platform = platform,
+        };
+
+        return DescriptorPool.Ref {
+            .id = try GfxState.get().descriptor_pools.insert(pool),
+        };
+    }
+
+    pub fn allocate_sets(
+        self: *const DescriptorPool,
+        alloc: std.mem.Allocator,
+        info: DescriptorSetInfo,
+        number_of_sets: u32
+    ) ![]DescriptorSet {
+        // TODO track resources
+        const sets = try self.platform.allocate_sets(alloc, info, number_of_sets);
+        return sets;
+    }
+};
+
+pub const DescriptorSetInfo = struct {
+    layout: DescriptorLayout.Ref,
+};
+
+pub const DescriptorSetWriteBufferInfo = struct {
+    buffer: Buffer.Ref,
+    offset: u64 = 0,
+    range: u64 = std.math.maxInt(u64),
+};
+
+pub const DescriptorSetUpdateWriteInfo = struct {
+    binding: u32,
+    array_element: u32 = 0,
+    array_count: u32 = 1,
+    data: union(BindingType) {
+        UniformBuffer: []const DescriptorSetWriteBufferInfo,
+        StorageBuffer: []const DescriptorSetWriteBufferInfo,
+        ImageView: []const ImageView.Ref,
+        Sampler: []const Sampler.Ref,
+        ImageViewAndSampler: []const struct{ view: ImageView.Ref, sampler: Sampler.Ref, },
+    },
+};
+
+pub const DescriptorSetUpdateInfo = struct {
+    writes: []const DescriptorSetUpdateWriteInfo,
+};
+
+pub const DescriptorSet = struct {
+    pub const Ref = Reference(DescriptorSet);
+
+    platform: GfxState.Platform.DescriptorSet,
+
+    pub fn deinit(self: *const DescriptorSet) void {
+        self.platform.deinit();
+    }
+
+    pub fn update(self: *DescriptorSet, info: DescriptorSetUpdateInfo) void {
+        self.platform.update(info);
+    }
+};
+
+pub const CommandPoolInfo = struct {
+    transient_buffers: bool = false,
+    allow_reset_command_buffers: bool = false,
+    queue_family: QueueFamily,
+};
+
+pub const CommandPool = struct {
+    const Self = @This();
+    pub const Ref = Reference(CommandPool);
+    
+    platform: GfxState.Platform.CommandPool,
+
+    pub fn deinit(self: *const Self) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: CommandPoolInfo) !Self.Ref {
+        const platform = try GfxState.Platform.CommandPool.init(info);
+        errdefer platform.deinit();
+
+        const pool = CommandPool {
+            .platform = platform,
+        };
+
+        return Self.Ref {
+            .id = try GfxState.get().command_pools.insert(pool),
+        };
+    }
+
+    pub fn allocate_command_buffer(self: *Self, info: CommandBufferInfo) !CommandBuffer {
+        return CommandBuffer {
+            .platform = try self.platform.allocate_command_buffer(info),
+        };
+    }
+};
+
+pub const CommandBufferLevel = enum {
+    Primary,
+    Secondary,
+};
+
+pub const CommandBufferInfo = struct {
+    level: CommandBufferLevel = .Primary,
+};
+
+pub const CommandBuffer = struct {
+    const Self = @This();
+
+    platform: GfxState.Platform.CommandBuffer,
+
+    pub fn deinit(self: *const Self) void {
+        self.platform.deinit();
+    }
+
+    pub fn cmd_begin(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn cmd_end(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn cmd_bind_graphics_pipeline(self: *Self, pipeline: GraphicsPipeline.Ref) void {
+        _ = self;
+        _ = pipeline;
+    }
+
+    pub fn cmd_set_viewport(self: *Self, viewport: Viewport) void {
+        _ = self;
+        _ = viewport;
+    }
+
+    pub fn cmd_set_scissor(self: *Self, scissor: Rect) void {
+        _ = self;
+        _ = scissor;
+    }
+
+    pub const VertexBufferBindInfo = struct {
+        buffer: Buffer.Ref,
+        offset: u64 = 0,
+    };
+
+    pub const BindVertexBuffersInfo = struct {
+        first_binding: u32 = 0,
+        buffers: []const VertexBufferBindInfo,
+    };
+
+    pub fn cmd_bind_vertex_buffers(self: *Self, info: BindVertexBuffersInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub const BindIndexBufferInfo = struct {
+        buffer: Buffer.Ref,
+        index_format: IndexFormat,
+        offset: u64 = 0,
+    };
+
+    pub fn cmd_bind_index_buffer(self: *Self, info: BindIndexBufferInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub const BindDescriptorSetInfo = struct {
+        graphics_pipeline: GraphicsPipeline.Ref,
+        first_binding: u32 = 0,
+        descriptor_sets: []const DescriptorSet.Ref,
+        dynamic_offsets: ?[]const u32 = null,
+    };
+
+    pub fn cmd_bind_descriptor_sets(self: *Self, info: BindDescriptorSetInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub const DrawInfo = struct {
+        vertex_count: u32,
+        first_vertex: u32 = 0,
+        instance_count: u32 = 1,
+        first_instance: u32 = 0,
+    };
+
+    pub fn cmd_draw(self: *Self, info: DrawInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub const DrawIndexedInfo = struct {
+        index_count: u32,
+        first_index: u32 = 0,
+        vertex_offset: u32 = 0,
+        instance_count: u32 = 1,
+        first_instance: u32 = 0,
+    };
+
+    pub fn cmd_draw_indexed(self: *Self, info: DrawIndexedInfo) void {
+        _ = self;
+        _ = info;
     }
 };

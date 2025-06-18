@@ -19,17 +19,18 @@ pub const GfxStateVulkan = struct {
     pub const DomainShader = DomainShaderVulkan;
     pub const GeometryShader = GeometryShaderVulkan;
     pub const ComputeShader = ComputeShaderVulkan;
+    
     pub const Buffer = BufferVulkan;
     pub const Image = ImageVulkan;
     pub const ImageView = ImageViewVulkan;
-    pub const RenderTargetView = RenderTargetViewVulkan;
-    pub const DepthStencilView = DepthStencilViewVulkan;
-    pub const RasterizationState = RasterizationStateVulkan;
     pub const Sampler = SamplerVulkan;
+
     pub const GraphicsPipeline = GraphicsPipelineVulkan;
     pub const FrameBuffer = FrameBufferVulkan;
-    pub const ShaderResourceView = u32;//d3d11.IShaderResourceView;
-    pub const UnorderedAccessView = u32;//d3d11.IUnorderedAccessView;
+
+    pub const DescriptorLayout = DescriptorLayoutVulkan;
+    pub const DescriptorPool = DescriptorPoolVulkan;
+    pub const DescriptorSet = DescriptorSetVulkan;
 
     const VkQueues = struct {
         all: c.VkQueue,
@@ -467,21 +468,22 @@ pub const GfxStateVulkan = struct {
     }
 
     const SwapchainCreateOptions = struct {
+        width: u32,
+        height: u32,
         format: c.VkSurfaceFormatKHR,
         present_mode: c.VkPresentModeKHR,
     };
 
-    fn create_swapchain(self: *Self, window: *pl.Window, opt: SwapchainCreateOptions) !SwapchainInfo {
+    fn create_swapchain(self: *Self, opt: SwapchainCreateOptions) !SwapchainInfo {
         var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
         try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface, &surface_capabilities));
 
         var swapchain_extent = surface_capabilities.currentExtent;
         if (swapchain_extent.width == std.math.maxInt(u32)) {
-            const window_size = try window.get_client_size();
             swapchain_extent = c.VkExtent2D {
-                .width = std.math.clamp(@as(u32, @intCast(window_size.width)),
+                .width = std.math.clamp(@as(u32, @intCast(opt.width)),
                     surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width),
-                .height = std.math.clamp(@as(u32, @intCast(window_size.height)),
+                .height = std.math.clamp(@as(u32, @intCast(opt.height)),
                     surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height),
             };
         }
@@ -578,201 +580,43 @@ pub const GfxStateVulkan = struct {
         return .{ self.swapchain.extent.width, self.swapchain.extent.height };
     }
 
-    pub fn create_texture2d_from_framebuffer(self: *Self, gfx: *gf.GfxState) !gf.Texture2D {
-        _ = self;
-        return gf.Texture2D.init(
-            .{
-                .format = .R32_Float,
-                .width = 1,
-                .height = 1,
-            },
-            .{},
-            .{},
-            &[_]u8{0, 0, 0, 0},
-            gfx
-        );
-    }
-
     pub inline fn begin_frame(self: *Self) !gf.RenderTargetView {
         _ = self;
         return gf.RenderTargetView {};
     }
-
-    // pub inline fn get_framebuffer(self: *Self) *gf.RenderTargetView {
-    //     _ = self;
-    //     return undefined;
-    // }
 
     pub inline fn present(self: *Self) !void {
         _ = self;
     }
 
     pub inline fn flush(self: *Self) void {
-        _ = self;
+        vkt(c.vkDeviceWaitIdle(self.device)) catch |err| {
+            std.log.err("Unable to wait for vulkan device idle: {}", .{err});
+            // probably device lost
+            unreachable;
+        };
     }
 
-    pub inline fn clear_state(self: *Self) void {
-        _ = self;
+    pub inline fn resize_swapchain(self: *Self, new_width: u32, new_height: u32) void {
+        const new_swapchain = try self.create_swapchain(.{
+            .width = @intCast(new_width),
+            .height = @intCast(new_height),
+            .format = self.swapchain.format,
+            .present_mode = self.swapchain.present_mode,
+        });
+        errdefer self.swapchain.deinit(self.device);
+
+        self.swapchain.deinit(self.device);
+        self.swapchain = new_swapchain;
+
+        // TODO recreate all dependant vulkan objects
     }
 
-    pub inline fn resize_swapchain(self: *Self, new_width: i32, new_height: i32) void {
-        _ = self;
-        _ = new_width;
-        _ = new_height;
-    }
-
-    pub inline fn cmd_clear_render_target(self: *Self, rt: gf.ImageView.Ref, color: zm.F32x4) void {
-        _ = self;
-        _ = rt;
-        _ = color;
-    }
-
-    pub inline fn cmd_clear_depth_stencil_view(self: *Self, dsv: gf.ImageView.Ref, depth: ?f32, stencil: ?u8) void {
-        _ = self;
-        _ = dsv;
-        _ = depth;
-        _ = stencil;
-    }
-
-    pub inline fn cmd_set_viewport(self: *Self, viewport: gf.Viewport) void {
-        _ = self;
-        _ = viewport;
-    }
-
-    pub inline fn cmd_set_scissor_rect(self: *Self, scissor: ?Rect) void {
-        _ = self;
-        _ = scissor;
-    }
-    
-    pub inline fn cmd_set_render_target(self: *Self, rtvs: []const ?gf.ImageView.Ref, depth_stencil_view: ?gf.ImageView.Ref) void {
-        _ = self;
-        _ = rtvs;
-        _ = depth_stencil_view;
-    }
-
-    pub inline fn cmd_set_vertex_shader(self: *Self, vs: *const gf.VertexShader) void {
-        _ = self;
-        _ = vs;
-    }
-
-    pub inline fn cmd_set_pixel_shader(self: *Self, ps: *const gf.PixelShader) void {
-        _ = self;
-        _ = ps;
-    }
-
-    pub inline fn cmd_set_hull_shader(self: *Self, hs: ?*const gf.HullShader) void {
-        _ = self;
-        _ = hs;
-    }
-
-    pub inline fn cmd_set_domain_shader(self: *Self, ds: ?*const gf.DomainShader) void {
-        _ = self;
-        _ = ds;
-    }
-    
-    pub inline fn cmd_set_geometry_shader(self: *Self, gs: ?*const gf.GeometryShader) void {
-        _ = self;
-        _ = gs;
-    }
-
-    pub inline fn cmd_set_compute_shader(self: *Self, cs: ?*const gf.ComputeShader) void {
-        _ = self;
-        _ = cs;
-    }
-
-    pub inline fn cmd_set_vertex_buffers(self: *Self, start_slot: u32, buffers: []const gf.VertexBufferInput) void {
-        _ = self;
-        _ = start_slot;
-        _ = buffers;
-    }
-
-    pub inline fn cmd_set_index_buffer(self: *Self, buffer: *const gf.Buffer, format: gf.IndexFormat, offset: u32) void {
-        _ = self;
-        _ = buffer;
-        _ = format;
-        _ = offset;
-    }
-
-    pub inline fn cmd_set_constant_buffers(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, buffers: []const *const gf.Buffer) void {
-        _ = self;
-        _ = shader_stage;
-        _ = start_slot;
-        _ = buffers;
-    }
-
-    pub inline fn cmd_set_rasterizer_state(self: *Self, rs: gf.RasterizationStateDesc) void {
-        _ = self;
-        _ = rs;
-    }
-
-    pub inline fn cmd_set_blend_state(self: *Self, blend_state: ?*const gf.BlendState) void {
-        _ = self;
-        _ = blend_state;
-    }
-
-    pub inline fn cmd_set_shader_resources(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?gf.ImageView.Ref) void {
-        _ = self;
-        _ = shader_stage;
-        _ = start_slot;
-        _ = views;
-    }
-
-    pub inline fn cmd_set_samplers(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, sampler: []const gf.Sampler.Ref) void {
-        _ = self;
-        _ = shader_stage;
-        _ = start_slot;
-        _ = sampler;
-    }
-
-    pub inline fn cmd_draw(self: *Self, vertex_count: u32, start_vertex: u32) void {
-        _ = self;
-        _ = vertex_count;
-        _ = start_vertex;
-    }
-
-    pub inline fn cmd_draw_indexed(self: *Self, index_count: u32, start_index: u32, base_vertex: i32) void {
-        _ = self;
-        _ = index_count;
-        _ = start_index;
-        _ = base_vertex;
-    }
-
-    pub inline fn cmd_draw_instanced(self: *Self, vertex_count: u32, instance_count: u32, start_vertex: u32, start_instance: u32) void {
-        _ = self;
-        _ = vertex_count;
-        _ = instance_count;
-        _ = start_vertex;
-        _ = start_instance;
-    }
-
-    pub inline fn cmd_set_topology(self: *Self, topology: gf.Topology) void {
-        _ = self;
-        _ = topology;
-    }
-
-    pub inline fn cmd_set_topology_patch_list_count(self: *Self, patch_list_count: u32) void {
-        _ = self;
-        _ = patch_list_count;
-    }
-
-    pub inline fn cmd_set_unordered_access_views(self: *Self, shader_stage: gf.ShaderStage, start_slot: u32, views: []const ?*const UnorderedAccessView) void {
-        _ = self;
-        _ = shader_stage;
-        _ = start_slot;
-        _ = views;
-    }
-
-    pub inline fn cmd_dispatch_compute(self: *Self, num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) void {
-        _ = self;
-        _ = num_groups_x;
-        _ = num_groups_y;
-        _ = num_groups_z;
-    }
-
-    pub inline fn cmd_copy_texture_to_texture(self: *Self, dst_texture: gf.Image.Ref, src_texture: gf.Image.Ref) void {
-        _ = self;
-        _ = dst_texture;
-        _ = src_texture;
+    pub fn get_queue_family_index(self: *const Self, queue_family: gf.QueueFamily) u32 {
+        return switch (queue_family) {
+            .Graphics, .Compute => self.queues.all_family_index,
+            .Transfer => self.queues.cpu_gpu_transfer_family_index,
+        };
     }
 };
 
@@ -924,7 +768,7 @@ pub const VertexShaderVulkan = struct {
     vk_vertex_input_binding_description: []c.VkVertexInputBindingDescription,
     vk_vertex_input_attrib_description: []c.VkVertexInputAttributeDescription,
     
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         const alloc = eng.get().gfx.platform.alloc;
         
         self.shader_module.deinit();
@@ -932,7 +776,7 @@ pub const VertexShaderVulkan = struct {
         alloc.free(self.vk_vertex_input_binding_description);
     }
 
-    pub inline fn init_buffer(
+    pub fn init_buffer(
         vs_data: []const u8,
         vs_func: []const u8,
         vs_layout: []const gf.VertexInputLayoutEntry,
@@ -996,11 +840,11 @@ pub const PixelShaderVulkan = struct {
 
     shader_module: ShaderModule,
     
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         self.shader_module.deinit();
     }
     
-    pub inline fn init_buffer(
+    pub fn init_buffer(
         ps_data: []const u8, 
         ps_func: []const u8, 
         options: gf.PixelShaderOptions,
@@ -1019,11 +863,11 @@ pub const PixelShaderVulkan = struct {
 pub const HullShaderVulkan = struct {
     const Self = @This();
     
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         _ = self;
     }
     
-    pub inline fn init_buffer(
+    pub fn init_buffer(
         hs_data: []const u8, 
         hs_func: []const u8, 
         options: gf.HullShaderOptions,
@@ -1038,11 +882,11 @@ pub const HullShaderVulkan = struct {
 pub const DomainShaderVulkan = struct {
     const Self = @This();
     
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         _ = self;
     }
     
-    pub inline fn init_buffer(
+    pub fn init_buffer(
         ds_data: []const u8, 
         ds_func: []const u8, 
         options: gf.DomainShaderOptions,
@@ -1057,11 +901,11 @@ pub const DomainShaderVulkan = struct {
 pub const GeometryShaderVulkan = struct {
     const Self = @This();
     
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         _ = self;
     }
     
-    pub inline fn init_buffer(
+    pub fn init_buffer(
         gs_data: []const u8, 
         gs_func: []const u8, 
         options: gf.GeometryShaderOptions,
@@ -1076,11 +920,11 @@ pub const GeometryShaderVulkan = struct {
 pub const ComputeShaderVulkan = struct {
     const Self = @This();
     
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         _ = self;
     }
     
-    pub inline fn init_buffer(
+    pub fn init_buffer(
         cs_data: []const u8, 
         cs_func: []const u8,
         options: gf.ComputeShaderOptions,
@@ -1202,12 +1046,12 @@ pub const BufferVulkan = struct {
     vk_buffer: c.VkBuffer,
     vk_device_memory: c.VkDeviceMemory,
 
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         c.vkFreeMemory(eng.get().gfx.platform.device, self.vk_device_memory, null);
         c.vkDestroyBuffer(eng.get().gfx.platform.device, self.vk_buffer, null);
     }
 
-    pub inline fn init(
+    pub fn init(
         byte_size: u32,
         usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
@@ -1264,7 +1108,7 @@ pub const BufferVulkan = struct {
         };
     }
     
-    pub inline fn init_with_data(
+    pub fn init_with_data(
         data: []const u8,
         usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
@@ -1304,7 +1148,7 @@ pub const BufferVulkan = struct {
         return self;
     }
 
-    pub inline fn map(self: *const Self, options: gf.Buffer.MapOptions) !MappedBuffer {
+    pub fn map(self: *const Self, options: gf.Buffer.MapOptions) !MappedBuffer {
         _ = options;
         var data_ptr: ?*anyopaque = undefined;
         try vkt(c.vkMapMemory(GfxStateVulkan.get().device, self.vk_device_memory, 0, self.vk_buffer_info.size, 0, &data_ptr));
@@ -1345,13 +1189,13 @@ pub const ImageVulkan = struct {
     vk_layout: c.VkImageLayout,
     vk_format: c.VkFormat,
 
-    pub inline fn deinit(self: *const Self) void {
+    pub fn deinit(self: *const Self) void {
         self.alloc.free(self.false_data);
         c.vkFreeMemory(GfxStateVulkan.get().device, self.vk_device_memory, null);
         c.vkDestroyImage(GfxStateVulkan.get().device, self.vk_image, null);
     }
 
-    pub inline fn init(
+    pub fn init(
         info: gf.ImageInfo,
         data: ?[]const u8,
     ) !Self {
@@ -1465,7 +1309,7 @@ pub const ImageVulkan = struct {
         return self;
     }
 
-    pub inline fn map(self: *const Self, options: gf.Image.MapOptions) !MappedImage {
+    pub fn map(self: *const Self, options: gf.Image.MapOptions) !MappedImage {
         _ = self;
         _ = options;
         return error.NotImplemented;
@@ -1593,61 +1437,66 @@ pub const ImageViewVulkan = struct {
     }
 };
 
-pub const RenderTargetViewVulkan = struct {
-    const Self = @This();
+inline fn samplerfilter_to_vulkan(filter: gf.SamplerFilter) c.VkFilter {
+    return switch (filter) {
+        .Linear => c.VK_FILTER_LINEAR,
+        .Point => c.VK_FILTER_NEAREST,
+    };
+}
 
-    pub inline fn deinit(self: *const Self) void {
-        _ = self;
-    }
-
-    pub inline fn init(texture: gf.Image.Ref, mip_level: u32) !Self {
-        _ = texture;
-        _ = mip_level;
-        return .{};
-    }
-};
-
-pub const DepthStencilViewVulkan = struct {
-    const Self = @This();
-
-    pub inline fn deinit(self: *const Self) void {
-        _ = self;
-    }
-
-    pub inline fn init(
-        texture: gf.Image.Ref, 
-        flags: gf.DepthStencilView.Flags,
-    ) !Self {
-        _ = texture;
-        _ = flags;
-        return .{};
-    }
-};
-
-pub const RasterizationStateVulkan = struct {
-    const Self = @This();
-
-    pub inline fn deinit(self: *const Self) void {
-        _ = self.state.Release();
-    }
-
-    pub inline fn init(desc: gf.RasterizationStateDesc, gfx: *gf.GfxState) !Self {
-        _ = desc;
-        _ = gfx;
-        return .{};
-    }
-};
+inline fn samplerbordermode_to_vulkan(bordermode: gf.SamplerBorderMode) c.VkSamplerAddressMode {
+    return switch (bordermode) {
+        .BorderColour => c.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        .Clamp => c.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .Mirror => c.VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        .Wrap => c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    };
+}
 
 pub const SamplerVulkan = struct {
     const Self = @This();
 
-    pub inline fn deinit(self: *const Self) void {
-        _ = self;
+    vk_sampler: c.VkSampler,
+
+    pub fn deinit(self: *const Self) void {
+        c.vkDestroySampler(GfxStateVulkan.get().device, self.vk_sampler, null);
     }
 
-    pub inline fn init(desc: gf.SamplerDescriptor) !Self {
-        _ = desc;
-        return .{};
+    pub fn init(info: gf.SamplerDescriptor) !Self {
+        const sampler_info = c.VkSamplerCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            
+            .magFilter = samplerfilter_to_vulkan(info.filter_min_mag),
+            .minFilter = samplerfilter_to_vulkan(info.filter_min_mag),
+
+            .mipmapMode = samplerfilter_to_vulkan(info.filter_mip),
+            .mipLodBias = 0.0,
+
+            .addressModeU = samplerbordermode_to_vulkan(info.border_mode),
+            .addressModeV = samplerbordermode_to_vulkan(info.border_mode),
+            .addressModeW = samplerbordermode_to_vulkan(info.border_mode),
+
+            .anisotropyEnable = bool_to_vulkan(info.anisotropic_filter),
+            .maxAnisotropy = 1, // TODO
+            
+            .borderColor = c.VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK, // todo?
+
+            .minLod = info.min_lod,
+            .maxLod = info.max_lod,
+
+            .unnormalizedCoordinates = c.VK_FALSE,
+            
+            .compareEnable = c.VK_FALSE,
+            .compareOp = c.VK_COMPARE_OP_ALWAYS,
+        };
+
+        var vk_sampler: c.VkSampler = undefined;
+        try vkt(c.vkCreateSampler(GfxStateVulkan.get().device, &sampler_info, null, &vk_sampler));
+        errdefer c.vkDestroySampler(GfxStateVulkan.get().device, vk_sampler, null);
+
+        return Self {
+            .vk_sampler = vk_sampler,
+        };
     }
 };
 
@@ -2121,5 +1970,414 @@ pub const FrameBufferVulkan = struct {
         return FrameBufferVulkan {
             .vk_framebuffers = framebuffers,
         };
+    }
+};
+
+fn bindingtype_to_vulkan(bindingtype: gf.BindingType) c.VkDescriptorType {
+    return switch (bindingtype) {
+        .ImageView => c.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .ImageViewAndSampler => c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .Sampler => c.VK_DESCRIPTOR_TYPE_SAMPLER,
+        .UniformBuffer => c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .StorageBuffer => c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+    };
+}
+
+fn shaderstageflags_to_vulkan(shaderstageflags: gf.ShaderStageFlags) c.VkShaderStageFlags {
+    var flags: c.VkShaderStageFlags = 0;
+
+    if (shaderstageflags.Vertex) {
+        flags |= c.VK_SHADER_STAGE_VERTEX_BIT;
+    }
+    if (shaderstageflags.Pixel) {
+        flags |= c.VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+
+    return flags;
+}
+
+pub const DescriptorLayoutVulkan = struct {
+    vk_layout: c.VkDescriptorSetLayout,
+    
+    pub fn deinit(self: *const DescriptorLayoutVulkan) void {
+        c.vkDestroyDescriptorSetLayout(GfxStateVulkan.get().device, self.vk_layout, null);
+    }
+
+    pub fn init(info: gf.DescriptorLayoutInfo) !DescriptorLayoutVulkan {
+        const alloc = GfxStateVulkan.get().alloc;
+
+        const vk_bindings = try alloc.alloc(c.VkDescriptorSetLayoutBinding, info.bindings.len);
+        defer alloc.free(vk_bindings);
+
+        for (info.bindings, 0..) |*binding, idx| {
+            vk_bindings[idx] = c.VkDescriptorSetLayoutBinding {
+                .binding = binding.binding,
+                .descriptorType = bindingtype_to_vulkan(binding.binding_type),
+                .stageFlags = shaderstageflags_to_vulkan(binding.shader_stages),
+                .descriptorCount = binding.array_count,
+                .pImmutableSamplers = null, // todo? idk
+            };
+        }
+
+        const layout_info = c.VkDescriptorSetLayoutCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .pBindings = @ptrCast(vk_bindings.ptr),
+            .bindingCount = @intCast(vk_bindings.len),
+        };
+
+        var vk_layout: c.VkDescriptorSetLayout = undefined;
+        try vkt(c.vkCreateDescriptorSetLayout(GfxStateVulkan.get().device, &layout_info, null, &vk_layout));
+        errdefer c.vkDestroyDescriptorSetLayout(GfxStateVulkan.get().device, vk_layout, null);
+
+        return DescriptorLayoutVulkan {
+            .vk_layout = vk_layout,
+        };
+    }
+};
+
+pub const DescriptorPoolVulkan = struct {
+    vk_pool: c.VkDescriptorPool,
+
+    pub fn deinit(self: *const DescriptorPoolVulkan) void {
+        c.vkDestroyDescriptorPool(GfxStateVulkan.get().device, self.vk_pool, null);
+    }
+
+    pub fn init(info: gf.DescriptorPoolInfo) !DescriptorPoolVulkan {
+        const alloc = GfxStateVulkan.get().alloc;
+
+        const vk_pool_sizes: []c.VkDescriptorPoolSize = try switch (info.strategy) {
+            .Layout => |layout_ref| blk: {
+                const layout = try layout_ref.get();
+
+                var descriptor_counts: [@typeInfo(gf.BindingType).@"enum".fields.len]u32 = undefined;
+                @memset(descriptor_counts[0..], 0);
+
+                for (layout.info.bindings) |binding| {
+                    descriptor_counts[@intFromEnum(binding.binding_type)] += binding.array_count;
+                }
+
+                var vk_pool_sizes_list = std.ArrayList(c.VkDescriptorPoolSize).init(alloc);
+                defer vk_pool_sizes_list.deinit();
+
+                for (descriptor_counts[0..], 0..) |desc, idx| {
+                    if (desc > 0) {
+                        try vk_pool_sizes_list.append(c.VkDescriptorPoolSize {
+                            .type = bindingtype_to_vulkan(@enumFromInt(idx)),
+                            .descriptorCount = desc,
+                        });
+                    }
+                }
+
+                const vk_pool_sizes = try alloc.dupe(c.VkDescriptorPoolSize, vk_pool_sizes_list.items[0..]);
+                break :blk vk_pool_sizes;
+            },
+            .Manual => |pool_sizes| blk: {
+                const vk_pool_sizes = try alloc.alloc(c.VkDescriptorPoolSize, pool_sizes.len);
+
+                for (pool_sizes, 0..) |size, idx| {
+                    vk_pool_sizes[idx] = c.VkDescriptorPoolSize {
+                        .type = bindingtype_to_vulkan(size.binding_type),
+                        .descriptorCount = size.count,
+                    };
+                }
+
+                break :blk vk_pool_sizes;
+            },
+        };
+        defer alloc.free(vk_pool_sizes);
+
+        for (vk_pool_sizes) |*pool_size| {
+            // TODO check we can actually create this many in the pool
+            pool_size.descriptorCount *= info.max_sets;
+        }
+
+        const pool_info = c.VkDescriptorPoolCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = info.max_sets,
+            .pPoolSizes = @ptrCast(vk_pool_sizes.ptr),
+            .poolSizeCount = @intCast(vk_pool_sizes.len),
+        };
+
+        var vk_pool: c.VkDescriptorPool = undefined;
+        try vkt(c.vkCreateDescriptorPool(GfxStateVulkan.get().device, &pool_info, null, &vk_pool));
+        errdefer c.vkDestroyDescriptorPool(GfxStateVulkan.get().device, vk_pool, null);
+
+        return DescriptorPoolVulkan {
+            .vk_pool = vk_pool,
+        };
+    }
+
+    pub fn allocate_sets(
+        self: *const DescriptorPoolVulkan,
+        alloc: std.mem.Allocator,
+        info: gf.DescriptorSetInfo,
+        number_of_sets: u32
+    ) ![]gf.DescriptorSet {
+        // todo multiple sets using multiple different layouts?
+        const layout = try info.layout.get();
+
+        const layouts = try alloc.alloc(c.VkDescriptorSetLayout, number_of_sets);
+        defer alloc.free(layouts);
+
+        for (layouts) |*l| {
+            l.* = layout.platform.vk_layout;
+        }
+
+        const alloc_info = c.VkDescriptorSetAllocateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = self.vk_pool,
+            .pSetLayouts = @ptrCast(layouts.ptr),
+            .descriptorSetCount = @intCast(layouts.len),
+        };
+
+        const vk_sets = try alloc.alloc(gf.DescriptorSet, number_of_sets);
+        defer alloc.free(vk_sets);
+
+        const sets = try alloc.alloc(gf.DescriptorSet, number_of_sets);
+        errdefer alloc.free(sets);
+
+        try vkt(c.vkAllocateDescriptorSets(GfxStateVulkan.get().device, &alloc_info, @ptrCast(sets.ptr)));
+
+        for (vk_sets, 0..) |vk_set, idx| {
+            sets[idx] = gf.DescriptorSet {
+                .platform = DescriptorSetVulkan.init(vk_set),
+            };
+        }
+
+        return sets;
+    }
+};
+
+pub const DescriptorSetVulkan = struct {
+    vk_set: c.VkDescriptorSet,
+
+    pub fn deinit(self: *DescriptorSetVulkan) void {
+        _ = self;
+    }
+
+    fn init(vk_set: c.VkDescriptorSet) DescriptorSetVulkan {
+        return .{
+            .vk_set = vk_set,
+        };
+    }
+
+    pub fn update(self: *const DescriptorSetVulkan, info: gf.DescriptorSetUpdateInfo) void {
+        const alloc = GfxStateVulkan.get().alloc;
+
+        var arena_obj = std.heap.ArenaAllocator.init(alloc);
+        defer arena_obj.deinit();
+        const arena = arena_obj.allocator();
+
+        const vk_write_infos = try arena.alloc(c.VkWriteDescriptorSet, info.writes.len);
+        defer arena.free(vk_write_infos);
+
+        const BufferWritesList = std.SinglyLinkedList(c.VkDescriptorBufferInfo);
+        var vk_buffer_writes = BufferWritesList {};
+
+        const ImageViewWritesList = std.SinglyLinkedList(c.VkDescriptorImageInfo);
+        var vk_view_writes = ImageViewWritesList {};
+
+        for (info.writes, 0..) |write, idx| {
+            const vk_write_info = &vk_write_infos[idx];
+
+            vk_write_info.* = c.VkWriteDescriptorSet {
+                .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = self.vk_set,
+                .dstBinding = write.binding,
+                .dstArrayElement = write.array_element,
+                .descriptorCount = write.array_count,
+                .descriptorType = bindingtype_to_vulkan(std.meta.activeTag(write.data)),
+                .pBufferInfo = null,
+                .pImageInfo = null,
+                .pTexelBufferView = null,
+            };
+
+            switch (write.data) {
+                .UniformBuffer, .StorageBuffer => |buffer_writes| {
+                    for (buffer_writes) |bw| {
+                        const buffer = try bw.buffer.get();
+
+                        const buffer_node = try arena.create(BufferWritesList.Node);
+                        buffer_node.data = c.VkDescriptorBufferInfo {
+                            .buffer = buffer.platform.vk_buffer,
+                            .offset = bw.offset,
+                            .range = bw.range,
+                        };
+                        vk_buffer_writes.prepend(buffer_node);
+                        vk_write_info.pBufferInfo = &buffer_node.data;
+                    }
+                },
+                .ImageView => |image_writes| {
+                    for (image_writes) |iw| {
+                        const view = try iw.get();
+
+                        const view_node = try arena.create(ImageViewWritesList.Node);
+                        view_node.data = c.VkDescriptorImageInfo {
+                            .sampler = null,
+                            .imageView = view.platform.vk_image_view,
+                            .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        };
+                        vk_view_writes.prepend(view_node);
+                        vk_write_info.pImageInfo = &view_node.data;
+                    }
+                },
+                .Sampler => |sampler_writes| {
+                    for (sampler_writes) |sw| {
+                        const sampler = try sw.get();
+
+                        const view_node = try arena.create(ImageViewWritesList.Node);
+                        view_node.data = c.VkDescriptorImageInfo {
+                            .sampler = sampler.platform.vk_sampler,
+                            .imageView = null,
+                            .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        };
+                        vk_view_writes.prepend(view_node);
+                        vk_write_info.pImageInfo = &view_node.data;
+                    }
+                },
+                .ImageViewAndSampler => |image_writes| {
+                    for (image_writes) |iw| {
+                        const view = try iw.view.get();
+                        const sampler = try iw.sampler.get();
+
+                        const view_node = try arena.create(ImageViewWritesList.Node);
+                        view_node.data = c.VkDescriptorImageInfo {
+                            .sampler = sampler.platform.vk_sampler,
+                            .imageView = view.platform.vk_image_view,
+                            .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        };
+                        vk_view_writes.prepend(view_node);
+                        vk_write_info.pImageInfo = &view_node.data;
+                    }
+                }
+            }
+        }
+
+        c.vkUpdateDescriptorSets(
+            GfxStateVulkan.get().device,
+            @intCast(vk_write_infos.len),
+            @ptrCast(vk_write_infos.ptr),
+            0,
+            null
+        );
+    }
+};
+
+inline fn poolflags_to_vulkan(info: gf.CommandPoolInfo) c.VkCommandPoolCreateFlags {
+    var flags: c.VkCommandPoolCreateFlags = 0;
+    if (info.transient_buffers) {
+        flags |= c.VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    }
+    if (info.allow_reset_command_buffers) {
+        flags |= c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    }
+    return flags;
+}
+
+pub const CommandPoolVulkan = struct {
+    vk_pool: c.VkCommandPool,
+
+    pub fn deinit(self: *const CommandPoolVulkan) void {
+        c.vkDestroyCommandPool(GfxStateVulkan.get().device, self.vk_pool, null);
+    }
+
+    pub fn init(info: gf.CommandPoolInfo) !CommandPoolVulkan {
+        const pool_info = c.VkCommandPoolCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = poolflags_to_vulkan(info),
+            .queueFamilyIndex = GfxStateVulkan.get().get_queue_family_index(info.queue_family),
+        };
+
+        var vk_pool: c.VkCommandPool = undefined;
+        try vkt(c.vkCreateCommandPool(GfxStateVulkan.get().device, &pool_info, null, &vk_pool));
+        errdefer c.vkDestroyCommandPool(GfxStateVulkan.get().device, vk_pool, null);
+
+        return CommandPoolVulkan {
+            .vk_pool = vk_pool,
+        };
+    }
+
+    pub fn allocate_command_buffer(self: *CommandPoolVulkan, info: gf.CommandBufferInfo) !CommandBufferVulkan {
+        const alloc_info = c.VkCommandBufferAllocateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandBufferCount = 1,
+            .commandPool = GfxStateVulkan.get().all_command_pool,
+            .level = commandbufferlevel_to_vulkan(info.level),
+        };
+
+        var vk_command_buffer: c.VkCommandBuffer = undefined;
+        try vkt(c.vkAllocateCommandBuffers(GfxStateVulkan.get().device, &alloc_info, &vk_command_buffer));
+        errdefer c.vkFreeCommandBuffers(GfxStateVulkan.get().device, self.vk_pool, 1, &vk_command_buffer);
+
+        return CommandBufferVulkan {
+            .vk_pool = self.vk_pool,
+            .vk_command_buffer = vk_command_buffer,
+        };
+    }
+};
+
+inline fn commandbufferlevel_to_vulkan(level: gf.CommandBufferLevel) c.VkCommandBufferLevel {
+    return switch (level) {
+        .Primary => c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .Secondary => c.VK_COMMAND_BUFFER_LEVEL_SECONDARY,
+    };
+}
+
+pub const CommandBufferVulkan = struct {
+    const Self = @This();
+
+    vk_pool: c.VkCommandPool,
+    vk_command_buffer: c.VkCommandBuffer,
+
+    pub fn deinit(self: *const Self) void {
+        c.vkFreeCommandBuffers(GfxStateVulkan.get().device, self.vk_pool, 1, &self.vk_command_buffer);
+    }
+
+    pub fn cmd_begin(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn cmd_end(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn cmd_bind_graphics_pipeline(self: *Self, pipeline: gf.GraphicsPipeline.Ref) void {
+        _ = self;
+        _ = pipeline;
+    }
+
+    pub fn cmd_set_viewport(self: *Self, viewport: gf.Viewport) void {
+        _ = self;
+        _ = viewport;
+    }
+
+    pub fn cmd_set_scissor(self: *Self, scissor: eng.Rect) void {
+        _ = self;
+        _ = scissor;
+    }
+
+    pub fn cmd_bind_vertex_buffers(self: *Self, info: gf.BindVertexBuffersInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub fn cmd_bind_index_buffer(self: *Self, info: gf.BindIndexBufferInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub fn cmd_bind_descriptor_sets(self: *Self, info: gf.BindDescriptorSetInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub fn cmd_draw(self: *Self, info: gf.DrawInfo) void {
+        _ = self;
+        _ = info;
+    }
+
+    pub fn cmd_draw_indexed(self: *Self, info: gf.DrawIndexedInfo) void {
+        _ = self;
+        _ = info;
     }
 };
