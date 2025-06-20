@@ -24,6 +24,7 @@ pub const GfxState = struct {
     image_views: gen.GenerationalList(ImageView),
     samplers: gen.GenerationalList(Sampler),
 
+    render_passes: gen.GenerationalList(RenderPass),
     graphics_pipelines: gen.GenerationalList(GraphicsPipeline),
     framebuffers: gen.GenerationalList(FrameBuffer),
 
@@ -1053,11 +1054,42 @@ pub const AttachmentInfo = struct {
 
     stencil_load_op: AttachmentLoadOp = AttachmentLoadOp.Load,
     stencil_store_op: AttachmentStoreOp = AttachmentStoreOp.Store,
+
+    clear_value: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
 };
 
 pub const SubpassInfo = struct {
     attachments: []const []const u8,
     depth_attachment: ?[]const u8 = null,
+};
+
+pub const RenderPassInfo = struct {
+    attachments: []const AttachmentInfo,
+    subpasses: []const SubpassInfo,
+};
+
+pub const RenderPass = struct {
+    const Self = @This();
+    pub const Ref = Reference(Self);
+
+    platform: GfxState.Platform.RenderPass,
+
+    pub fn deinit(self: *const Self) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: RenderPassInfo) !RenderPass.Ref {
+        const platform = try pl.GfxPlatform.RenderPass.init(info);
+        errdefer platform.deinit();
+
+        const render_pass = RenderPass {
+            .platform = platform,
+        };
+
+        return Self.Ref {
+            .id = try GfxState.get().render_passes.insert(render_pass),
+        };
+    }
 };
 
 pub const GraphicsPipelineInfo = struct {
@@ -1089,7 +1121,8 @@ pub const GraphicsPipelineInfo = struct {
     } = null,
 
     attachments: []const AttachmentInfo,
-    subpasses: []const SubpassInfo,
+    render_pass: RenderPass.Ref,
+    subpass_index: u32 = 0,
 };
 
 pub const GraphicsPipeline = struct {
@@ -1124,7 +1157,7 @@ pub const FrameBufferAttachmentInfo = union(enum) {
 };
 
 pub const FrameBufferInfo = struct {
-    graphics_pipeline: GraphicsPipeline.Ref,
+    render_pass: RenderPass.Ref,
     attachments: []const FrameBufferAttachmentInfo,
 };
 
@@ -1337,27 +1370,54 @@ pub const CommandBuffer = struct {
         self.platform.deinit();
     }
 
-    pub fn cmd_begin(self: *Self) void {
-        _ = self;
+    pub fn cmd_begin(self: *Self) !void {
+        self.platform.cmd_begin();
     }
 
-    pub fn cmd_end(self: *Self) void {
-        _ = self;
+    pub fn cmd_end(self: *Self) !void {
+        self.platform.cmd_end();
+    }
+
+    pub const BeginRenderPassInfo = struct {
+        pub const SubpassContents = enum {
+            Inline,
+            SecondaryCommandBuffers,
+        };
+
+        render_pass: RenderPass.Ref,
+        framebuffer: FrameBuffer.Ref,
+        render_area: Rect = .{ .top = 0.0, .left = 0.0, .bottom = 1.0, .right = 1.0, },
+        subpass_contents: SubpassContents = .Inline,
+    };
+
+    pub fn cmd_begin_render_pass(self: *Self, info: BeginRenderPassInfo) void {
+        self.platform.cmd_begin_render_pass(info);
+    }
+
+    pub fn cmd_end_render_pass(self: *Self) void {
+        self.platform.cmd_end_render_pass();
     }
 
     pub fn cmd_bind_graphics_pipeline(self: *Self, pipeline: GraphicsPipeline.Ref) void {
-        _ = self;
-        _ = pipeline;
+        self.platform.cmd_bind_graphics_pipeline(pipeline);
     }
 
-    pub fn cmd_set_viewport(self: *Self, viewport: Viewport) void {
-        _ = self;
-        _ = viewport;
+    pub const SetViewportsInfo = struct {
+        viewports: []const Viewport,
+        first_viewport: u32 = 0,
+    };
+
+    pub fn cmd_set_viewports(self: *Self, info: SetViewportsInfo) void {
+        self.platform.cmd_set_viewports(info);
     }
 
-    pub fn cmd_set_scissor(self: *Self, scissor: Rect) void {
-        _ = self;
-        _ = scissor;
+    pub const SetScissorsInfo = struct {
+        scissors: []const Rect,
+        first_scissor: u32 = 0,
+    };
+
+    pub fn cmd_set_scissors(self: *Self, info: SetScissorsInfo) void {
+        self.platform.cmd_set_scissor(info);
     }
 
     pub const VertexBufferBindInfo = struct {
@@ -1371,8 +1431,7 @@ pub const CommandBuffer = struct {
     };
 
     pub fn cmd_bind_vertex_buffers(self: *Self, info: BindVertexBuffersInfo) void {
-        _ = self;
-        _ = info;
+        self.platform.cmd_bind_vertex_buffers(info);
     }
 
     pub const BindIndexBufferInfo = struct {
@@ -1382,20 +1441,18 @@ pub const CommandBuffer = struct {
     };
 
     pub fn cmd_bind_index_buffer(self: *Self, info: BindIndexBufferInfo) void {
-        _ = self;
-        _ = info;
+        self.platform.cmd_bind_index_buffer(info);
     }
 
     pub const BindDescriptorSetInfo = struct {
         graphics_pipeline: GraphicsPipeline.Ref,
         first_binding: u32 = 0,
         descriptor_sets: []const DescriptorSet.Ref,
-        dynamic_offsets: ?[]const u32 = null,
+        dynamic_offsets: []const u32 = &.{},
     };
 
     pub fn cmd_bind_descriptor_sets(self: *Self, info: BindDescriptorSetInfo) void {
-        _ = self;
-        _ = info;
+        self.platform.cmd_bind_descriptor_sets(info);
     }
 
     pub const DrawInfo = struct {
@@ -1406,20 +1463,18 @@ pub const CommandBuffer = struct {
     };
 
     pub fn cmd_draw(self: *Self, info: DrawInfo) void {
-        _ = self;
-        _ = info;
+        self.platform.cmd_draw(info);
     }
 
     pub const DrawIndexedInfo = struct {
         index_count: u32,
         first_index: u32 = 0,
-        vertex_offset: u32 = 0,
+        vertex_offset: i32 = 0,
         instance_count: u32 = 1,
         first_instance: u32 = 0,
     };
 
     pub fn cmd_draw_indexed(self: *Self, info: DrawIndexedInfo) void {
-        _ = self;
-        _ = info;
+        self.platform.cmd_draw_indexed(info);
     }
 };

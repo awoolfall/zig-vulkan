@@ -44,8 +44,8 @@ pub const ParticleSystem = struct {
     pixel_shader: gf.PixelShader,
     shader_watcher: eng.assets.FileWatcher,
 
-    model_matrix_vertex_buffer: gf.Buffer,
-    constant_buffer: gf.Buffer,
+    model_matrix_vertex_buffer: gf.Buffer.Ref,
+    constant_buffer: gf.Buffer.Ref,
 
     pipeline: gf.GraphicsPipeline.Ref,
     framebuffer: gf.FrameBuffer.Ref,
@@ -101,22 +101,21 @@ pub const ParticleSystem = struct {
             .{ .CpuWrite = true, },
         );
         errdefer constant_buffer.deinit();
-
-        var graphics_pipeline = try gf.GraphicsPipeline.init(.{
-            .vertex_shader = &vertex_shader,
-            .pixel_shader = &pixel_shader,
-            .depth_test = .{ .write = true, },
-            .attachments = &[_]gf.AttachmentInfo {
-                .{
-                    .name = "colour",
-                    .format = gf.GfxState.hdr_format,
-                    .blend_type = .Simple,
-                },
-                .{
-                    .name = "depth",
-                    .format = gf.GfxState.depth_format,
-                },
+        
+        const attachments = [_]gf.AttachmentInfo {
+            .{
+                .name = "colour",
+                .format = gf.GfxState.hdr_format,
+                .blend_type = .Simple,
             },
+            .{
+                .name = "depth",
+                .format = gf.GfxState.depth_format,
+            },
+        };
+
+        var render_pass = try gf.RenderPass.init(.{
+            .attachments = attachments[0..],
             .subpasses = &[_]gf.SubpassInfo {
                 gf.SubpassInfo {
                     .attachments = &.{
@@ -126,6 +125,14 @@ pub const ParticleSystem = struct {
                 },
             },
         });
+        errdefer render_pass.deinit();
+
+        var graphics_pipeline = try gf.GraphicsPipeline.init(.{
+            .vertex_shader = &vertex_shader,
+            .pixel_shader = &pixel_shader,
+            .depth_test = .{ .write = true, },
+            .attachments = attachments[0..],
+        });
         errdefer graphics_pipeline.deinit();
 
         var framebuffer = try gf.FrameBuffer.init(.{
@@ -133,7 +140,7 @@ pub const ParticleSystem = struct {
                 .Swapchain,
                 .SwapchainDepth,
             },
-            .graphics_pipeline = graphics_pipeline,
+            .render_pass = render_pass,
         });
         errdefer framebuffer.deinit();
 
@@ -412,6 +419,27 @@ pub const ParticleSystem = struct {
                 }),
             };
         } else |_| {}
+
+        const command_buffer = gf.CommandBuffer.init(.{}) catch unreachable;
+        defer command_buffer.deinit();
+
+        {
+            command_buffer.cmd_begin();
+            defer command_buffer.cmd_end();
+
+            {
+                command_buffer.cmd_begin_render_pass(.{ .render_pass = self.render_pass, });
+                defer command_buffer.cmd_end_render_pass();
+
+                command_buffer.cmd_bind_graphics_pipeline(self.pipeline);
+                command_buffer.cmd_bind_descriptor_sets(.{
+                });
+                command_buffer.cmd_bind_vertex_buffers(.{
+                });
+                command_buffer.cmd_draw(.{
+                });
+            }
+        }
 
         gfx.cmd_set_rasterizer_state(.{ .FillBack = true, });
         gfx.cmd_set_pixel_shader(&self.pixel_shader);

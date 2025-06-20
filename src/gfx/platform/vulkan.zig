@@ -25,12 +25,16 @@ pub const GfxStateVulkan = struct {
     pub const ImageView = ImageViewVulkan;
     pub const Sampler = SamplerVulkan;
 
+    pub const RenderPass = RenderPassVulkan;
     pub const GraphicsPipeline = GraphicsPipelineVulkan;
     pub const FrameBuffer = FrameBufferVulkan;
 
     pub const DescriptorLayout = DescriptorLayoutVulkan;
     pub const DescriptorPool = DescriptorPoolVulkan;
     pub const DescriptorSet = DescriptorSetVulkan;
+
+    pub const CommandPool = CommandPoolVulkan;
+    pub const CommandBuffer = CommandPoolVulkan;
 
     const VkQueues = struct {
         all: c.VkQueue,
@@ -610,6 +614,7 @@ pub const GfxStateVulkan = struct {
         self.swapchain = new_swapchain;
 
         // TODO recreate all dependant vulkan objects
+        unreachable;
     }
 
     pub fn get_queue_family_index(self: *const Self, queue_family: gf.QueueFamily) u32 {
@@ -935,6 +940,26 @@ pub const ComputeShaderVulkan = struct {
         return .{};
     }
 };
+
+inline fn rect_to_vulkan(rect: Rect) c.VkRect2D {
+    return c.VkRect2D {
+        .offset = .{
+            .x = rect.left,
+            .y = rect.top,
+        },
+        .extent = .{
+            .width = rect.width(),
+            .height = rect.height(),
+        },
+    };
+}
+
+fn indexformat_to_vulkan(indexformat: gf.IndexFormat) c.VkIndexType {
+    return switch (indexformat) {
+        .U16 => c.VK_INDEX_TYPE_UINT16,
+        .U32 => c.VK_INDEX_TYPE_UINT32,
+    };
+}
 
 fn convert_buffer_usage_flags_to_vulkan(usage: gf.BufferUsageFlags) c.VkBufferUsageFlags {
     var flags: c.VkBufferUsageFlags = 0;
@@ -1500,6 +1525,150 @@ pub const SamplerVulkan = struct {
     }
 };
 
+fn formatclearvalue_to_vulkan(format: gf.ImageFormat, clear_value: zm.F32x4) c.VkClearValue {
+    if (format.is_depth()) {
+        return c.VkClearValue {
+            .depthStencil = .{
+                .depth = clear_value[0],
+                .stencil = @intFromFloat(clear_value[1]),
+            }
+        };
+    } else {
+        return switch (format) {
+            .Rgba8_Unorm_Srgb,
+            .Rgba8_Unorm,
+            .Bgra8_Unorm,
+            .R24X8_Unorm_Uint,
+            .D24S8_Unorm_Uint,
+            .R32_Uint => c.VkClearValue {
+                .color = .{ .uint32 = .{
+                    @intFromFloat(clear_value[0]),
+                    @intFromFloat(clear_value[1]),
+                    @intFromFloat(clear_value[2]),
+                    @intFromFloat(clear_value[3]),
+                } }
+            },
+            .Unknown,
+            .R32_Float,
+            .Rg32_Float,
+            .Rgba16_Float,
+            .Rgba32_Float,
+            .Rg11b10_Float =>  c.VkClearValue {
+                .color = .{ .float32 = .{
+                    clear_value[0],
+                    clear_value[1],
+                    clear_value[2],
+                    clear_value[3],
+                } }
+            },
+        };
+    }
+}
+
+pub const RenderPassVulkan = struct {
+    const Self = @This();
+    
+    vk_render_pass: c.VkRenderPass,
+    vk_clear_values: []c.VkClearValue,
+
+    pub fn deinit(self: *const Self) void {
+        c.vkDestroyRenderPass(GfxStateVulkan.get().device, self.vk_render_pass, null);
+        GfxStateVulkan.get().alloc.free(self.vk_clear_values);
+    }
+
+    pub fn init(info: gf.RenderPassInfo) !RenderPassVulkan {
+        const alloc = GfxStateVulkan.get().alloc;
+
+        const arena_obj = std.heap.ArenaAllocator.init(alloc);
+        defer arena_obj.deinit();
+        const arena = arena_obj.allocator();
+
+        const SubpassRefInfo = struct {
+            attachment_refs: []usize,
+        };
+        var subpass_refs = try arena.alloc(SubpassRefInfo, info.subpasses.len);
+        arena.free(subpass_refs);
+
+        for (info.subpasses, 0..) |subpass, sidx| {
+            subpass_refs[sidx].attachment_refs = try arena.alloc(usize, subpass.attachments.len);
+
+            for (subpass.attachments, 0..) |subpass_attachment_name, subpass_aidx| {
+                const found_aidx: ?usize = for (info.attachments, 0..) |attachment, aidx| {
+                    if (std.mem.eql(u8, attachment.name, subpass_attachment_name)) {
+                        break aidx;
+                    }
+                } else null;
+
+                if (found_aidx == null) { return error.SubpassAttachmentNameNotFound; }
+                subpass_refs[sidx].attachment_refs[subpass_aidx] = found_aidx.?;
+            }
+        }
+
+        var subpass_descriptions = try arena.alloc(c.VkSubpassDescription, subpass_refs.len);
+        defer arena.free(subpass_descriptions);
+
+        for (subpass_refs, 0..) |ref, idx| {
+            var attachment_refs = try arena.alloc(c.VkAttachmentReference, ref.attachment_refs.len);
+            // freed by arena allocator
+            
+            for (ref.attachment_refs, 0..) |aidx, ridx| {
+                attachment_refs[aidx] = .{
+                    .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // @TODO: depth? other layouts?
+                    .attachment = @intCast(ridx),
+                };
+            }
+
+            subpass_descriptions[idx] = c.VkSubpassDescription{
+                .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS, // @TODO: compute? other?
+                .pColorAttachments = @ptrCast(attachment_refs.ptr),
+                .colorAttachmentCount = @intCast(attachment_refs.len),
+                // @TODO: depth attachment, resolve attachments
+            };
+        }
+
+        var attachment_descriptions = try arena.alloc(c.VkAttachmentDescription, info.attachments.len);
+        defer arena.free(attachment_descriptions);
+
+        var vk_clear_values = try alloc.alloc(c.VkClearValue, info.attachments.len);
+        errdefer alloc.free(vk_clear_values);
+
+        for (info.attachments, 0..) |*a, idx| {
+            attachment_descriptions[idx] = c.VkAttachmentDescription {
+                .format = textureformat_to_vulkan(a.format),
+                .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = c.VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, // TODO
+                .loadOp = loadop_to_vulkan(a.load_op),
+                .storeOp = storeop_to_vulkan(a.store_op),
+                .stencilLoadOp = loadop_to_vulkan(a.stencil_load_op),
+                .stencilStoreOp = storeop_to_vulkan(a.stencil_store_op),
+            };
+
+            vk_clear_values[idx] = formatclearvalue_to_vulkan(a.format, a.clear_value);
+        }
+
+        const render_pass_info = c.VkRenderPassCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+
+            .pAttachments = @ptrCast(attachment_descriptions.ptr),
+            .attachmentCount = @intCast(attachment_descriptions.len),
+
+            .pSubpasses = @ptrCast(subpass_descriptions.ptr),
+            .subpassCount = @intCast(subpass_descriptions.len),
+
+            // @TODO: dependencies
+        };
+
+        var vk_render_pass: c.VkRenderPass = undefined;
+        try vkt(c.vkCreateRenderPass(eng.get().gfx.platform.device, &render_pass_info, null, &vk_render_pass));
+        errdefer c.vkDestroyRenderPass(eng.get().gfx.platform.device, vk_render_pass, null);
+
+        return RenderPassVulkan {
+            .vk_render_pass = vk_render_pass,
+            .vk_clear_values = vk_clear_values,
+        };
+    }
+};
+
 inline fn textureformat_to_vulkan(format: gf.ImageFormat) c.VkFormat {
     return switch (format) {
         .R32_Float => c.VK_FORMAT_R32_SFLOAT,
@@ -1631,17 +1800,17 @@ pub const GraphicsPipelineVulkan = struct {
     const Self = @This();
 
     vk_pipeline_layout: c.VkPipelineLayout,
-    vk_render_pass: c.VkRenderPass,
     vk_graphics_pipeline: c.VkPipeline,
 
     pub fn deinit(self: *const Self) void {
         const device = eng.get().gfx.platform.device;
         c.vkDestroyPipeline(device, self.vk_graphics_pipeline, null);
-        c.vkDestroyRenderPass(device, self.vk_render_pass, null);
         c.vkDestroyPipelineLayout(device, self.vk_pipeline_layout, null);
     }
     
     pub fn init(info: gf.GraphicsPipelineInfo) !Self {
+        const render_pass = try info.render_pass.get();
+
         const alloc = eng.get().frame_allocator;
         var arena_struct = std.heap.ArenaAllocator.init(alloc);
         defer arena_struct.deinit();
@@ -1715,26 +1884,6 @@ pub const GraphicsPipelineVulkan = struct {
             .depthBoundsTestEnable = c.VK_FALSE,
         };
 
-        const SubpassRefInfo = struct {
-            attachment_refs: []usize,
-        };
-        var subpass_refs = try arena.alloc(SubpassRefInfo, info.subpasses.len);
-        arena.free(subpass_refs);
-
-        for (info.subpasses, 0..) |subpass, sidx| {
-            subpass_refs[sidx].attachment_refs = try arena.alloc(usize, subpass.attachments.len);
-
-            for (subpass.attachments, 0..) |subpass_attachment_name, subpass_aidx| {
-                const found_aidx: ?usize = for (info.attachments, 0..) |attachment, aidx| {
-                    if (std.mem.eql(u8, attachment.name, subpass_attachment_name)) {
-                        break aidx;
-                    }
-                } else null;
-
-                if (found_aidx == null) { return error.SubpassAttachmentNameNotFound; }
-                subpass_refs[sidx].attachment_refs[subpass_aidx] = found_aidx.?;
-            }
-        }
 
         var color_blend_attachments = try arena.alloc(c.VkPipelineColorBlendAttachmentState, info.attachments.len);
         defer arena.free(color_blend_attachments);
@@ -1764,59 +1913,6 @@ pub const GraphicsPipelineVulkan = struct {
         try vkt(c.vkCreatePipelineLayout(eng.get().gfx.platform.device, &pipeline_layout_info, null, &vk_pipeline_layout));
         errdefer c.vkDestroyPipelineLayout(eng.get().gfx.platform.device, vk_pipeline_layout, null);
 
-        var attachment_descriptions = try arena.alloc(c.VkAttachmentDescription, info.attachments.len);
-        defer arena.free(attachment_descriptions);
-
-        for (info.attachments, 0..) |*a, idx| {
-            attachment_descriptions[idx] = c.VkAttachmentDescription {
-                .format = textureformat_to_vulkan(a.format),
-                .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
-                .finalLayout = c.VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, // TODO
-                .loadOp = loadop_to_vulkan(a.load_op),
-                .storeOp = storeop_to_vulkan(a.store_op),
-                .stencilLoadOp = loadop_to_vulkan(a.stencil_load_op),
-                .stencilStoreOp = storeop_to_vulkan(a.stencil_store_op),
-            };
-        }
-
-        var subpass_descriptions = try arena.alloc(c.VkSubpassDescription, subpass_refs.len);
-        defer arena.free(subpass_descriptions);
-
-        for (subpass_refs, 0..) |ref, idx| {
-            var attachment_refs = try arena.alloc(c.VkAttachmentReference, ref.attachment_refs.len);
-            // freed by arena allocator
-            
-            for (ref.attachment_refs, 0..) |aidx, ridx| {
-                attachment_refs[aidx] = .{
-                    .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // @TODO: depth? other layouts?
-                    .attachment = @intCast(ridx),
-                };
-            }
-
-            subpass_descriptions[idx] = c.VkSubpassDescription{
-                .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS, // @TODO: compute? other?
-                .pColorAttachments = @ptrCast(attachment_refs.ptr),
-                .colorAttachmentCount = @intCast(attachment_refs.len),
-                // @TODO: depth attachment, resolve attachments
-            };
-        }
-
-        const render_pass_info = c.VkRenderPassCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-
-            .pAttachments = @ptrCast(attachment_descriptions.ptr),
-            .attachmentCount = @intCast(attachment_descriptions.len),
-
-            .pSubpasses = @ptrCast(subpass_descriptions.ptr),
-            .subpassCount = @intCast(subpass_descriptions.len),
-
-            // @TODO: dependencies
-        };
-
-        var vk_render_pass: c.VkRenderPass = undefined;
-        try vkt(c.vkCreateRenderPass(eng.get().gfx.platform.device, &render_pass_info, null, &vk_render_pass));
-        errdefer c.vkDestroyRenderPass(eng.get().gfx.platform.device, vk_render_pass, null);
-
         const graphics_pipeline_info = c.VkGraphicsPipelineCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 
@@ -1834,8 +1930,8 @@ pub const GraphicsPipelineVulkan = struct {
             .pDynamicState = &dynamic_state_info,
 
             .layout = vk_pipeline_layout,
-            .renderPass = vk_render_pass,
-            .subpass = 0,
+            .renderPass = render_pass.platform.vk_render_pass,
+            .subpass = info.subpass_index,
 
             .basePipelineIndex = -1,
             .basePipelineHandle = @ptrCast(c.VK_NULL_HANDLE),
@@ -1847,7 +1943,6 @@ pub const GraphicsPipelineVulkan = struct {
 
         return Self {
             .vk_pipeline_layout = vk_pipeline_layout,
-            .vk_render_pass = vk_render_pass,
             .vk_graphics_pipeline = vk_graphics_pipeline,
         };
     }
@@ -1901,6 +1996,7 @@ pub const FrameBufferVulkan = struct {
 
     pub fn init(info: gf.FrameBufferInfo) !FrameBufferVulkan {
         if (info.attachments.len == 0) { return error.NoAttachmentsProvided; }
+        const render_pass = try info.render_pass.get();
 
         const alloc = eng.get().general_allocator;
 
@@ -1946,7 +2042,7 @@ pub const FrameBufferVulkan = struct {
 
             const framebuffer_info = c.VkFramebufferCreateInfo {
                 .sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-                .renderPass = (try info.graphics_pipeline.get()).platform.vk_render_pass,
+                .renderPass = render_pass.platform.vk_render_pass,
                 .pAttachments = @ptrCast(attachments.ptr),
                 .attachmentCount = @intCast(attachments.len),
                 .width = framebuffer_extent.width,
@@ -2333,51 +2429,158 @@ pub const CommandBufferVulkan = struct {
         c.vkFreeCommandBuffers(GfxStateVulkan.get().device, self.vk_pool, 1, &self.vk_command_buffer);
     }
 
-    pub fn cmd_begin(self: *Self) void {
-        _ = self;
+    pub fn cmd_begin(self: *Self) !void {
+        const begin_info = c.VkCommandBufferBeginInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = 0, // TODO
+        };
+
+        try vkt(c.vkBeginCommandBuffer(self.vk_command_buffer, &begin_info));
     }
 
-    pub fn cmd_end(self: *Self) void {
-        _ = self;
+    pub fn cmd_end(self: *Self) !void {
+        try vkt(c.vkEndCommandBuffer(self.vk_command_buffer));
+    }
+
+    pub fn cmd_begin_render_pass(self: *Self, info: gf.CommandBuffer.BeginRenderPassInfo) void {
+        const render_pass = info.render_pass.get() catch return;
+        const framebuffer = info.framebuffer.get() catch return;
+        
+        const begin_info = c.VkRenderPassBeginInfo {
+            .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass = render_pass.platform.vk_render_pass,
+            .framebuffer = framebuffer.platform.vk_framebuffers[0], // TODO idx
+            .pClearValues = @ptrCast(render_pass.platform.vk_clear_values.ptr),
+            .clearValueCount = @intCast(render_pass.platform.vk_clear_values.len),
+            .renderArea = rect_to_vulkan(info.render_area),
+        };
+
+        const subpass_contents = switch (info.subpass_contents) {
+            .Inline => c.VK_SUBPASS_CONTENTS_INLINE,
+            .SecondaryCommandBuffers => c.VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS,
+        };
+
+        c.vkCmdBeginRenderPass(self.vk_command_buffer, &begin_info, subpass_contents);
+    }
+
+    pub fn cmd_end_render_pass(self: *Self) void {
+        c.vkCmdEndRenderPass(self.vk_command_buffer);
     }
 
     pub fn cmd_bind_graphics_pipeline(self: *Self, pipeline: gf.GraphicsPipeline.Ref) void {
-        _ = self;
-        _ = pipeline;
+        const p = pipeline.get() catch return;
+        c.vkCmdBindPipeline(self.vk_command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, p.platform.vk_graphics_pipeline);
     }
 
-    pub fn cmd_set_viewport(self: *Self, viewport: gf.Viewport) void {
-        _ = self;
-        _ = viewport;
+    const max_vk_viewports = 6;
+    pub fn cmd_set_viewport(self: *Self, info: gf.CommandBuffer.SetViewportsInfo) void {
+        std.debug.assert(info.viewports.len <= max_vk_viewports);
+
+        const vk_viewports: [max_vk_viewports]c.VkViewport = undefined;
+        for (info.viewports, 0..) |v, idx| {
+            vk_viewports[idx] = c.VkViewport {
+                .x = v.top_left_x,
+                .y = v.top_left_y,
+                .width = v.width,
+                .height = v.height,
+                .minDepth = v.min_depth,
+                .maxDepth = v.max_depth,
+            };
+        }
+        c.vkCmdSetViewport(
+            self.vk_command_buffer, 
+            info.first_viewport, 
+            @intCast(info.viewports.len),
+            @ptrCast(vk_viewports[0..].ptr)
+        );
     }
 
-    pub fn cmd_set_scissor(self: *Self, scissor: eng.Rect) void {
-        _ = self;
-        _ = scissor;
+    pub fn cmd_set_scissor(self: *Self, info: gf.CommandBuffer.SetScissorsInfo) void {
+        std.debug.assert(info.scissors.len <= max_vk_viewports);
+
+        const vk_scissors: [max_vk_viewports]c.VkRect2D = undefined;
+        for (info.scissors, 0..) |s, idx| {
+            vk_scissors[idx] = rect_to_vulkan(s);
+        }
+        c.vkCmdSetScissor(
+            self.vk_command_buffer,
+            info.first_scissor,
+            @intCast(info.scissors.len),
+            @ptrCast(vk_scissors[0..].ptr)
+        );
     }
 
-    pub fn cmd_bind_vertex_buffers(self: *Self, info: gf.BindVertexBuffersInfo) void {
-        _ = self;
-        _ = info;
+    pub fn cmd_bind_vertex_buffers(self: *Self, info: gf.CommandBuffer.BindVertexBuffersInfo) void {
+        const max_vertex_buffers = 16;
+        std.debug.assert(info.buffers.len <= max_vertex_buffers);
+
+        const vk_buffers: [max_vertex_buffers]c.VkBuffer = undefined;
+        const vk_device_sizes: [max_vertex_buffers]c.VkDeviceSize = undefined;
+        for (info.buffers, 0..) |b, idx| {
+            const buffer = b.get() catch unreachable;
+            vk_buffers[idx] = buffer.platform.vk_buffer;
+            vk_device_sizes[idx] = b.offset;
+        }
+        c.vkCmdBindVertexBuffers(
+            self.vk_command_buffer,
+            info.first_binding,
+            @intCast(info.buffers.len),
+            @ptrCast(vk_buffers[0..].ptr),
+            @ptrCast(vk_device_sizes[0..].ptr)
+        );
     }
 
-    pub fn cmd_bind_index_buffer(self: *Self, info: gf.BindIndexBufferInfo) void {
-        _ = self;
-        _ = info;
+    pub fn cmd_bind_index_buffer(self: *Self, info: gf.CommandBuffer.BindIndexBufferInfo) void {
+        const buffer = info.buffer.get() catch unreachable;
+        c.vkCmdBindIndexBuffer(
+            self.vk_command_buffer,
+            buffer.platform.vk_buffer,
+            info.offset,
+            indexformat_to_vulkan(info.index_format)
+        );
     }
 
-    pub fn cmd_bind_descriptor_sets(self: *Self, info: gf.BindDescriptorSetInfo) void {
-        _ = self;
-        _ = info;
+    pub fn cmd_bind_descriptor_sets(self: *Self, info: gf.CommandBuffer.BindDescriptorSetInfo) void {
+        const max_descriptor_sets = 16;
+        std.debug.assert(info.descriptor_sets.len <= 16);
+
+        const vk_descriptor_sets: [max_descriptor_sets]c.VkDescriptorSet = undefined;
+        for (info.descriptor_sets, 0..) |s, idx| {
+            const set = s.get() catch unreachable;
+            vk_descriptor_sets[idx] = set.platform.vk_set;
+        }
+
+        const pipeline = info.graphics_pipeline.get() catch unreachable;
+        c.vkCmdBindDescriptorSets(
+            self.vk_command_buffer,
+            c.VK_PIPELINE_BIND_POINT_GRAPHICS, // TODO compute
+            pipeline.platform.vk_pipeline_layout,
+            info.first_binding,
+            @intCast(info.descriptor_sets.len),
+            @ptrCast(vk_descriptor_sets[0..].ptr),
+            @intCast(info.dynamic_offsets.len),
+            @ptrCast(info.dynamic_offsets.ptr)
+        );
     }
 
-    pub fn cmd_draw(self: *Self, info: gf.DrawInfo) void {
-        _ = self;
-        _ = info;
+    pub fn cmd_draw(self: *Self, info: gf.CommandBuffer.DrawInfo) void {
+        c.vkCmdDraw(
+            self.vk_command_buffer,
+            info.vertex_count,
+            info.instance_count,
+            info.first_vertex,
+            info.first_instance
+        );
     }
 
-    pub fn cmd_draw_indexed(self: *Self, info: gf.DrawIndexedInfo) void {
-        _ = self;
-        _ = info;
+    pub fn cmd_draw_indexed(self: *Self, info: gf.CommandBuffer.DrawIndexedInfo) void {
+        c.vkCmdDrawIndexed(
+            self.vk_command_buffer,
+            info.index_count,
+            info.instance_count,
+            info.first_index,
+            info.vertex_offset,
+            info.first_instance
+        );
     }
 };
