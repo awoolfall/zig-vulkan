@@ -14,7 +14,7 @@ pub const BloomFilter = struct {
     downsample_pixel_shader: gf.PixelShader,
     sampler: gf.Sampler.Ref,
     upsample_pixel_shader: gf.PixelShader,
-    constant_buffer: gf.Buffer,
+    constant_buffer: gf.Buffer.Ref,
 
     bloom_mip_textures: [2]struct {
         texture: gf.Image.Ref,
@@ -120,9 +120,9 @@ pub const BloomFilter = struct {
         }
     }
 
-    pub fn framebuffer_resized(self: *BloomFilter, gfx: *gf.GfxState) !void {
+    pub fn framebuffer_resized(self: *BloomFilter) !void {
         self.deinit_mip_texture();
-        try self.init_mip_texture(gfx);
+        try self.init_mip_texture();
     }
 
     pub fn get_bloom_view(self: *const BloomFilter) gf.ImageView.Ref {

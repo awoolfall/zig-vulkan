@@ -60,8 +60,8 @@ pub const Font = struct {
     font_vso: _gfx.VertexShader,
     font_pso: _gfx.PixelShader,
     sampler: _gfx.Sampler.Ref,
-    character_buffer: _gfx.Buffer,
-    font_text_buffer: _gfx.Buffer,
+    character_buffer: _gfx.Buffer.Ref,
+    font_text_buffer: _gfx.Buffer.Ref,
 
     constant_buffer_data: []CharacterInfoConstantBuffer,
 

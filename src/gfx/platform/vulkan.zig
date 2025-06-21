@@ -13,6 +13,8 @@ const Rect = eng.Rect;
 pub const GfxStateVulkan = struct {
     const Self = @This();
 
+    const MAX_FRAMES_IN_FLIGHT = 2;
+
     pub const VertexShader = VertexShaderVulkan;
     pub const PixelShader = PixelShaderVulkan;
     pub const HullShader = HullShaderVulkan;
@@ -36,6 +38,9 @@ pub const GfxStateVulkan = struct {
     pub const CommandPool = CommandPoolVulkan;
     pub const CommandBuffer = CommandPoolVulkan;
 
+    pub const Semaphore = SemaphoreVulkan;
+    pub const Fence = FenceVulkan;
+
     const VkQueues = struct {
         all: c.VkQueue,
         all_family_index: u32,
@@ -54,9 +59,12 @@ pub const GfxStateVulkan = struct {
         images: std.ArrayList(c.VkImage),
         image_views: std.ArrayList(c.VkImageView),
 
-        extent: c.VkExtent2D,
-        format: c.VkSurfaceFormatKHR,
+        surface_format: c.VkSurfaceFormatKHR,
         present_mode: c.VkPresentModeKHR,
+        extent: c.VkExtent2D,
+
+        current_image_index: u32 = 0,
+        image_available_semaphore: c.VkSemaphore,
 
         pub fn deinit(self: *@This(), vk_device: c.VkDevice) void {
             for (self.image_views.items) |iv| {
@@ -65,6 +73,7 @@ pub const GfxStateVulkan = struct {
             self.image_views.deinit();
             self.images.deinit();
             c.vkDestroySwapchainKHR(vk_device, self.swapchain, null);
+            c.vkDestroySemaphore(vk_device, self.image_available_semaphore, null);
         }
     };
 
@@ -84,12 +93,15 @@ pub const GfxStateVulkan = struct {
     transfer_command_pool: c.VkCommandPool,
 
     swapchain: SwapchainInfo,
+    temp_frame_wait_fence: c.VkFence,
 
     pub fn deinit(self: *Self) void {
+        std.log.info("Vulkan deinit", .{});
         vkt(c.vkDeviceWaitIdle(self.device)) catch |err| {
             std.log.err("Unable to wait for device idle: {}", .{err});
         };
         
+        c.vkDestroyFence(self.device, self.temp_frame_wait_fence, null);
         self.swapchain.deinit(self.device);
 
         c.vkDestroyCommandPool(self.device, self.all_command_pool, null);
@@ -101,10 +113,13 @@ pub const GfxStateVulkan = struct {
         slang.c.deinitialise(self.slang_global);
     }
 
-    pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
+    pub fn init(self: *Self, alloc: std.mem.Allocator, window: *pl.Window) !void {
+        self.alloc = alloc;
+
         // @TODO move this to assets?
-        const slang_global = slang.c.initialise();
-        errdefer slang.c.deinitialise(slang_global);
+        self.slang_global = slang.c.initialise();
+        if (self.slang_global == null) { return error.UnableToCreateGlobalSlang; }
+        errdefer slang.c.deinitialise(self.slang_global);
 
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));
@@ -133,11 +148,9 @@ pub const GfxStateVulkan = struct {
             .pNext = null,
         };
 
-        var vk_instance: c.VkInstance = undefined;
-        try vkt(c.vkCreateInstance(&create_instance_info, null, &vk_instance));
-        errdefer c.vkDestroyInstance(vk_instance, null);
+        try vkt(c.vkCreateInstance(&create_instance_info, null, &self.instance));
+        errdefer c.vkDestroyInstance(self.instance, null);
 
-        var vk_surface: c.VkSurfaceKHR = undefined;
         switch (@import("builtin").os.tag) {
             .windows => {
                 const surface_create_info = vk.VkWin32SurfaceCreateInfoKHR {
@@ -152,11 +165,11 @@ pub const GfxStateVulkan = struct {
                 //     .hwnd = @alignCast(@ptrCast(@as(*align(@alignOf(c.HWND)) *anyopaque, @alignCast(@ptrCast(window.hwnd))))),
                 //     .hinstance = @alignCast(@ptrCast(@as(*align(@alignOf(c.HINSTANCE)) *anyopaque, @alignCast(@ptrCast(window.hInstance))))),
                 // };
-                try vkt(c.vkCreateWin32SurfaceKHR(vk_instance, @ptrCast(&surface_create_info), null, &vk_surface));
+                try vkt(c.vkCreateWin32SurfaceKHR(self.instance, @ptrCast(&surface_create_info), null, &self.surface));
             },
             else => @compileError("Platform not implemented"),
         }
-        errdefer c.vkDestroySurfaceKHR(vk_instance, vk_surface, null);
+        errdefer c.vkDestroySurfaceKHR(self.instance, self.surface, null);
 
         var device_extensions = std.ArrayList([*c]const u8).init(alloc);
         defer device_extensions.deinit();
@@ -164,11 +177,11 @@ pub const GfxStateVulkan = struct {
         try device_extensions.append(c.VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
         var physical_device_count: u32 = 0;
-        try vkt(c.vkEnumeratePhysicalDevices(vk_instance, &physical_device_count, null));
+        try vkt(c.vkEnumeratePhysicalDevices(self.instance, &physical_device_count, null));
 
         const physical_device_storage = try alloc.alloc(c.VkPhysicalDevice, physical_device_count);
         defer alloc.free(physical_device_storage);
-        try vkt(c.vkEnumeratePhysicalDevices(vk_instance, &physical_device_count, physical_device_storage.ptr));
+        try vkt(c.vkEnumeratePhysicalDevices(self.instance, &physical_device_count, physical_device_storage.ptr));
 
         var best_physical_device_idx: usize = std.math.maxInt(usize);
         std.log.info("Available physical devices:", .{});
@@ -208,25 +221,25 @@ pub const GfxStateVulkan = struct {
             }
 
             var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
-            vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, vk_surface, &surface_capabilities))
+            vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, self.surface, &surface_capabilities))
                 catch continue;
 
             var surface_fomats_count: u32 = 0;
-            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, vk_surface, &surface_fomats_count, null))
+            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, self.surface, &surface_fomats_count, null))
                 catch continue;
 
             const surface_formats = try alloc.alloc(c.VkSurfaceFormatKHR, surface_fomats_count);
             defer alloc.free(surface_formats);
-            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, vk_surface, &surface_fomats_count, surface_formats.ptr))
+            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, self.surface, &surface_fomats_count, surface_formats.ptr))
                 catch continue;
 
             var surface_present_modes_count: u32 = 0;
-            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, vk_surface, &surface_present_modes_count, null))
+            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, self.surface, &surface_present_modes_count, null))
                 catch continue;
 
             const surface_present_modes = try alloc.alloc(c.VkPresentModeKHR, surface_present_modes_count);
             defer alloc.free(surface_present_modes);
-            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, vk_surface, &surface_present_modes_count, surface_present_modes.ptr))
+            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, self.surface, &surface_present_modes_count, surface_present_modes.ptr))
                 catch continue;
 
             if (surface_fomats_count == 0 or surface_present_modes_count == 0) {
@@ -243,14 +256,14 @@ pub const GfxStateVulkan = struct {
         if (best_physical_device_idx >= physical_device_count) {
             return error.UnableToFindASuitablePhysicalDevice;
         }
-        const vk_physical_device = physical_device_storage[best_physical_device_idx];
+        self.physical_device = physical_device_storage[best_physical_device_idx];
 
         var physical_device_props: c.VkPhysicalDeviceProperties = undefined;
-        c.vkGetPhysicalDeviceProperties(vk_physical_device, &physical_device_props);
+        c.vkGetPhysicalDeviceProperties(self.physical_device, &physical_device_props);
         std.log.info("Selected {s} as the physical device.", .{std.mem.sliceTo(&physical_device_props.deviceName, 0)});
 
         var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
-        try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk_physical_device, vk_surface, &surface_capabilities));
+        try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface, &surface_capabilities));
 
         var surface_format: c.VkSurfaceFormatKHR = .{
             .format = c.VK_FORMAT_R8G8B8A8_SRGB,
@@ -259,11 +272,11 @@ pub const GfxStateVulkan = struct {
         var present_mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_MAILBOX_KHR;
 
         var surface_fomats_count: u32 = 0;
-        try vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(vk_physical_device, vk_surface, &surface_fomats_count, null));
+        try vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(self.physical_device, self.surface, &surface_fomats_count, null));
 
         const surface_formats = try alloc.alloc(c.VkSurfaceFormatKHR, surface_fomats_count);
         defer alloc.free(surface_formats);
-        try vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(vk_physical_device, vk_surface, &surface_fomats_count, surface_formats.ptr));
+        try vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(self.physical_device, self.surface, &surface_fomats_count, surface_formats.ptr));
 
         var found_format = false;
         for (surface_formats) |sf| {
@@ -280,11 +293,11 @@ pub const GfxStateVulkan = struct {
         }
 
         var surface_present_modes_count: u32 = 0;
-        try vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(vk_physical_device, vk_surface, &surface_present_modes_count, null));
+        try vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(self.physical_device, self.surface, &surface_present_modes_count, null));
 
         const surface_present_modes = try alloc.alloc(c.VkPresentModeKHR, surface_present_modes_count);
         defer alloc.free(surface_present_modes);
-        try vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(vk_physical_device, vk_surface, &surface_present_modes_count, surface_present_modes.ptr));
+        try vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(self.physical_device, self.surface, &surface_present_modes_count, surface_present_modes.ptr));
 
         var found_present_mode = false;
         for (surface_present_modes) |sp| {
@@ -301,12 +314,12 @@ pub const GfxStateVulkan = struct {
         }
 
         var queue_family_properties_count: u32 = 0;
-        c.vkGetPhysicalDeviceQueueFamilyProperties(vk_physical_device, &queue_family_properties_count, null);
+        c.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &queue_family_properties_count, null);
 
         const queue_family_properties_storage = try alloc.alloc(c.VkQueueFamilyProperties, queue_family_properties_count);
         defer alloc.free(queue_family_properties_storage);
         c.vkGetPhysicalDeviceQueueFamilyProperties(
-            vk_physical_device, 
+            self.physical_device, 
             &queue_family_properties_count, 
             queue_family_properties_storage.ptr
         );
@@ -320,7 +333,7 @@ pub const GfxStateVulkan = struct {
             const is_transfer = queue_family_props.queueFlags & c.VK_QUEUE_TRANSFER_BIT != 0;
 
             var supports_present: c.VkBool32 = 0;
-            vkt(c.vkGetPhysicalDeviceSurfaceSupportKHR(vk_physical_device, @intCast(idx), vk_surface, &supports_present)) catch {
+            vkt(c.vkGetPhysicalDeviceSurfaceSupportKHR(self.physical_device, @intCast(idx), self.surface, &supports_present)) catch {
                 std.log.info("unable to check queue family for present support, thats unfortunate", .{});
             };
 
@@ -387,24 +400,23 @@ pub const GfxStateVulkan = struct {
             .flags = 0,
         };
 
-        var vk_device: c.VkDevice = undefined;
         try vkt(c.vkCreateDevice(
-                vk_physical_device, 
+                self.physical_device, 
                 &create_device_info,
                 null,
-                &vk_device
+                &self.device
         ));
-        errdefer c.vkDestroyDevice(vk_device, null);
-        errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
+        errdefer c.vkDestroyDevice(self.device, null);
+        errdefer vkt(c.vkDeviceWaitIdle(self.device)) catch unreachable;
 
         var vk_all_queue: c.VkQueue = undefined;
-        c.vkGetDeviceQueue(vk_device, all_queue_idx, 0, &vk_all_queue);
+        c.vkGetDeviceQueue(self.device, all_queue_idx, 0, &vk_all_queue);
 
         var vk_present_queue: c.VkQueue = vk_all_queue;
         if (present_queue_idx != all_queue_idx) {
             std.log.info("has dedicated present queue", .{});
             var vk_queue_temp: c.VkQueue = undefined;
-            c.vkGetDeviceQueue(vk_device, present_queue_idx, 0, &vk_queue_temp);
+            c.vkGetDeviceQueue(self.device, present_queue_idx, 0, &vk_queue_temp);
             vk_present_queue = vk_queue_temp;
         }
 
@@ -412,11 +424,11 @@ pub const GfxStateVulkan = struct {
         if (transfer_queue_idx < queue_family_properties_count) {
             std.log.info("has dedicated transfer queue", .{});
             var vk_transfer_queue_temp: c.VkQueue = undefined;
-            c.vkGetDeviceQueue(vk_device, transfer_queue_idx, 0, &vk_transfer_queue_temp);
+            c.vkGetDeviceQueue(self.device, transfer_queue_idx, 0, &vk_transfer_queue_temp);
             vk_cpu_gpu_transfer_queue = vk_transfer_queue_temp;
         }
 
-        const queues = VkQueues {
+        self.queues = VkQueues {
             .all = vk_all_queue,
             .all_family_index = all_queue_idx,
             .present = vk_present_queue,
@@ -428,47 +440,41 @@ pub const GfxStateVulkan = struct {
 
         const transfer_command_pool_create_info = c.VkCommandPoolCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .queueFamilyIndex = queues.cpu_gpu_transfer_family_index,
+            .queueFamilyIndex = self.queues.cpu_gpu_transfer_family_index,
         };
 
-        var vk_transfer_command_pool: c.VkCommandPool = undefined;
-        try vkt(c.vkCreateCommandPool(vk_device, &transfer_command_pool_create_info, null, &vk_transfer_command_pool));
-        errdefer c.vkDestroyCommandPool(vk_device, vk_transfer_command_pool, null);
-        errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
+        try vkt(c.vkCreateCommandPool(self.device, &transfer_command_pool_create_info, null, &self.transfer_command_pool));
+        errdefer c.vkDestroyCommandPool(self.device, self.transfer_command_pool, null);
+        errdefer vkt(c.vkDeviceWaitIdle(self.device)) catch unreachable;
 
         const all_command_pool_create_info = c.VkCommandPoolCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .queueFamilyIndex = queues.all_family_index,
+            .queueFamilyIndex = self.queues.all_family_index,
         };
 
-        var vk_all_command_pool: c.VkCommandPool = undefined;
-        try vkt(c.vkCreateCommandPool(vk_device, &all_command_pool_create_info, null, &vk_all_command_pool));
-        errdefer c.vkDestroyCommandPool(vk_device, vk_all_command_pool, null);
-        errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
+        try vkt(c.vkCreateCommandPool(self.device, &all_command_pool_create_info, null, &self.all_command_pool));
+        errdefer c.vkDestroyCommandPool(self.device, self.all_command_pool, null);
+        errdefer vkt(c.vkDeviceWaitIdle(self.device)) catch unreachable;
 
-        var self = Self {
-            .alloc = alloc,
-            .slang_global = slang_global,
-            .vk_version = vk_version,
-            .instance = vk_instance,
-            .physical_device = vk_physical_device,
-            .device = vk_device,
-            .surface = vk_surface,
-            .queues = queues,
-            .transfer_command_pool = vk_transfer_command_pool,
-            .all_command_pool = vk_all_command_pool,
-            .swapchain = undefined,
+        const frame_wait_fence_info = c.VkFenceCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
         };
 
-        self.swapchain = try self.create_swapchain(window, .{
+        try vkt(c.vkCreateFence(self.device, &frame_wait_fence_info, null, &self.temp_frame_wait_fence));
+        errdefer c.vkDestroyFence(self.device, self.temp_frame_wait_fence, null);
+
+
+        const window_size = try window.get_client_size();
+        self.swapchain = try self.create_swapchain(.{
+            .width = @intCast(@max(window_size.width, 1)),
+            .height = @intCast(@max(window_size.height, 1)),
             .format = surface_format,
             .present_mode = present_mode,
         });
         errdefer self.swapchain.deinit(self.device);
 
         std.log.info("success!", .{});
-        //return error.Unimplemented;
-        return self;
     }
 
     const SwapchainCreateOptions = struct {
@@ -565,14 +571,23 @@ pub const GfxStateVulkan = struct {
             }
             swapchain_image_views.clearRetainingCapacity();
         }
+
+        const semaphore_info = c.VkSemaphoreCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+
+        var vk_image_available_semaphore: c.VkSemaphore = undefined;
+        try vkt(c.vkCreateSemaphore(self.device, &semaphore_info, null, &vk_image_available_semaphore));
+        errdefer c.vkDestroySemaphore(self.device, vk_image_available_semaphore, null);
         
         return .{
             .swapchain = vk_swapchain,
             .images = swapchain_images,
             .image_views = swapchain_image_views,
             .extent = swapchain_extent,
-            .format = opt.format,
+            .surface_format = opt.format,
             .present_mode = opt.present_mode,
+            .image_available_semaphore = vk_image_available_semaphore,
         };
     }
 
@@ -584,13 +599,45 @@ pub const GfxStateVulkan = struct {
         return .{ self.swapchain.extent.width, self.swapchain.extent.height };
     }
 
-    pub inline fn begin_frame(self: *Self) !gf.RenderTargetView {
-        _ = self;
-        return gf.RenderTargetView {};
+    pub inline fn begin_frame(self: *Self) !void {
+        // vkt(c.vkWaitForFences(self.device, 1, &self.temp_frame_wait_fence, bool_to_vulkan(true), std.math.maxInt(u64))) catch |err| {
+        //     std.log.warn("Failed waiting for fence: {}", .{err});
+        // };
+        // vkt(c.vkResetFences(self.device, 1, &self.temp_frame_wait_fence)) catch |err| {
+        //     std.log.warn("Failed to reset fence: {}", .{err});
+        // };
+        self.flush();
+
+        try vkt(c.vkAcquireNextImageKHR(
+            self.device,
+            self.swapchain.swapchain,
+            std.math.maxInt(u32),
+            self.swapchain.image_available_semaphore,
+            @ptrCast(c.VK_NULL_HANDLE),
+            &self.swapchain.current_image_index
+        ));
     }
 
-    pub inline fn present(self: *Self) !void {
-        _ = self;
+    pub inline fn present(self: *Self, wait_semaphores: []const *gf.Semaphore) !void {
+        const MAX_WAIT_SEMAPHORES = 16;
+        std.debug.assert(wait_semaphores.len < MAX_WAIT_SEMAPHORES);
+        var vk_wait_semaphores: [MAX_WAIT_SEMAPHORES]c.VkSemaphore = undefined;
+
+        for (wait_semaphores, 0..) |s, idx| {
+            vk_wait_semaphores[idx] = s.platform.vk_semaphore;
+        }
+
+        const present_info = c.VkPresentInfoKHR {
+            .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .swapchainCount = 1,
+            .pSwapchains = @ptrCast(&self.swapchain.swapchain),
+            .pImageIndices = @ptrCast(&self.swapchain.current_image_index),
+            .pResults = null,
+            .waitSemaphoreCount = @intCast(wait_semaphores.len),
+            .pWaitSemaphores = @ptrCast(vk_wait_semaphores[0..].ptr),
+        };
+
+        try vkt(c.vkQueuePresentKHR(self.queues.present, &present_info));
     }
 
     pub inline fn flush(self: *Self) void {
@@ -602,12 +649,12 @@ pub const GfxStateVulkan = struct {
     }
 
     pub inline fn resize_swapchain(self: *Self, new_width: u32, new_height: u32) void {
-        const new_swapchain = try self.create_swapchain(.{
-            .width = @intCast(new_width),
-            .height = @intCast(new_height),
-            .format = self.swapchain.format,
+        const new_swapchain = self.create_swapchain(.{
+            .width = new_width,
+            .height = new_height,
+            .format = self.swapchain.surface_format,
             .present_mode = self.swapchain.present_mode,
-        });
+        }) catch return;
         errdefer self.swapchain.deinit(self.device);
 
         self.swapchain.deinit(self.device);
@@ -617,11 +664,15 @@ pub const GfxStateVulkan = struct {
         unreachable;
     }
 
-    pub fn get_queue_family_index(self: *const Self, queue_family: gf.QueueFamily) u32 {
+    pub inline fn get_queue_family_index(self: *const Self, queue_family: gf.QueueFamily) u32 {
         return switch (queue_family) {
             .Graphics, .Compute => self.queues.all_family_index,
             .Transfer => self.queues.cpu_gpu_transfer_family_index,
         };
+    }
+
+    pub inline fn get_frame_index(self: *const Self) u32 {
+        return self.swapchain.current_image_index;
     }
 };
 
@@ -787,6 +838,18 @@ pub const VertexShaderVulkan = struct {
         vs_layout: []const gf.VertexInputLayoutEntry,
         options: gf.VertexShaderOptions,
     ) !Self {
+        {
+        const session_create_info = slang.SessionCreateInfo {
+            .compile_target = slang.c.TARGET_SPIRV,
+            .profile = "spirv_1_3",
+            .preprocessor_macros = &.{
+            },
+        };
+
+        const slang_session = try slang.check(slang.c.create_session(GfxStateVulkan.get().slang_global, session_create_info.to_slang()));
+        defer slang.c.destroy_session(slang_session);
+        }
+
         _ = options;
         const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
@@ -1328,7 +1391,8 @@ pub const ImageVulkan = struct {
             c.vkCmdCopyBufferToImage(command_buffer, staging_buffer.vk_buffer, vk_image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
             end_single_time_command_buffer(GfxStateVulkan.get().all_command_pool, command_buffer);
 
-            try self.transition_layout(vk_layout);
+            // note: cannot trnasition back to UNDEFINED
+            //try self.transition_layout(vk_layout);
         }
 
         return self;
@@ -1362,7 +1426,9 @@ pub const ImageVulkan = struct {
         var dst_stage: c.VkPipelineStageFlags = 0;
 
         switch (self.vk_layout) {
-            c.VK_IMAGE_LAYOUT_UNDEFINED => {},
+            c.VK_IMAGE_LAYOUT_UNDEFINED => {
+                src_stage = c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            },
             c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL => {
                 src_access = c.VK_ACCESS_TRANSFER_WRITE_BIT;
                 src_stage = c.VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -1396,7 +1462,7 @@ pub const ImageVulkan = struct {
                 .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
                 .baseMipLevel = 0,
                 .levelCount = 1,
-                .baseArrayLayer = 1,
+                .baseArrayLayer = 0,
                 .layerCount = 1,
             },
         };
@@ -1424,7 +1490,7 @@ pub const ImageViewVulkan = struct {
     }
 
     pub fn init(info: gf.ImageViewInfo) !ImageViewVulkan {
-        const img = gf.GfxState.get().images.get(info.image.id) orelse return error.UnableToRetrieveImage;
+        const img = try info.image.get();
 
         const view_type: c.VkImageViewType = blk: { // TODO cube
             if (img.info.depth == 1) {
@@ -1444,7 +1510,10 @@ pub const ImageViewVulkan = struct {
             .viewType = view_type,
             .format = img.platform.vk_format,
             .subresourceRange = .{
-                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, // Depth?
+                .aspectMask = switch (img.info.format) {
+                    .D24S8_Unorm_Uint => c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
+                    else => c.VK_IMAGE_ASPECT_COLOR_BIT,
+                },
                 .baseMipLevel = info.base_mip_level,
                 .levelCount = info.mip_level_count,
                 .baseArrayLayer = info.base_array_layer,
@@ -1487,7 +1556,7 @@ pub const SamplerVulkan = struct {
         c.vkDestroySampler(GfxStateVulkan.get().device, self.vk_sampler, null);
     }
 
-    pub fn init(info: gf.SamplerDescriptor) !Self {
+    pub fn init(info: gf.SamplerInfo) !Self {
         const sampler_info = c.VkSamplerCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             
@@ -1579,7 +1648,7 @@ pub const RenderPassVulkan = struct {
     pub fn init(info: gf.RenderPassInfo) !RenderPassVulkan {
         const alloc = GfxStateVulkan.get().alloc;
 
-        const arena_obj = std.heap.ArenaAllocator.init(alloc);
+        var arena_obj = std.heap.ArenaAllocator.init(alloc);
         defer arena_obj.deinit();
         const arena = arena_obj.allocator();
 
@@ -1587,7 +1656,7 @@ pub const RenderPassVulkan = struct {
             attachment_refs: []usize,
         };
         var subpass_refs = try arena.alloc(SubpassRefInfo, info.subpasses.len);
-        arena.free(subpass_refs);
+        defer arena.free(subpass_refs);
 
         for (info.subpasses, 0..) |subpass, sidx| {
             subpass_refs[sidx].attachment_refs = try arena.alloc(usize, subpass.attachments.len);
@@ -2582,5 +2651,108 @@ pub const CommandBufferVulkan = struct {
             info.vertex_offset,
             info.first_instance
         );
+    }
+};
+
+pub const SemaphoreVulkan = struct {
+    const Self = @This();
+
+    vk_semaphore: c.VkSemaphore,
+
+    pub inline fn deinit(self: *const Self) void {
+        c.vkDestroySemaphore(GfxStateVulkan.get().device, self.vk_semaphore, null);
+    }
+
+    pub inline fn init(info: gf.SemaphoreCreateInfo) !Self {
+        _ = info;
+
+        const semaphore_info = c.VkSemaphoreCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+
+        var vk_semaphore: c.VkSemaphore = undefined;
+        try vkt(c.vkCreateSemaphore(GfxStateVulkan.get().device, &semaphore_info, null, &vk_semaphore));
+        errdefer c.vkDestroySemaphore(GfxStateVulkan.get().device, vk_semaphore, null);
+
+        return Self {
+            .vk_semaphore = vk_semaphore,
+        };
+    }
+};
+
+pub const FenceVulkan = struct {
+    const Self = @This();
+
+    vk_fence: c.VkFence,
+
+    pub inline fn deinit(self: *const Self) void {
+        c.vkDestroyFence(GfxStateVulkan.get().device, self.vk_fence, null);
+    }
+
+    pub inline fn init(info: gf.FenceCreateInfo) !Self {
+        const fence_info = c.VkFenceCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = if (info.create_signalled) c.VK_FENCE_CREATE_SIGNALED_BIT else 0,
+        };
+
+        var vk_fence: c.VkFence = undefined;
+        try vkt(c.vkCreateFence(GfxStateVulkan.get().device, &fence_info, null, &vk_fence));
+        errdefer c.vkDestroyFence(GfxStateVulkan.get().device, vk_fence, null);
+
+        return Self {
+            .vk_fence = vk_fence,
+        };
+    }
+
+    pub inline fn wait(self: *Self) !void {
+        vkt(c.vkWaitForFences(
+                GfxStateVulkan.get().device,
+                1,
+                self.vk_fence,
+                bool_to_vulkan(true),
+                std.math.maxInt(u64)
+        )) catch |err| {
+            std.log.warn("Failed waiting for fence: {}", .{err});
+        };
+    }
+
+    pub inline fn wait_all(fences: []const *Self) !void {
+        const MAX_FENCES = 16;
+        std.debug.assert(fences.len < MAX_FENCES);
+
+        var vk_fences: [MAX_FENCES]c.VkFence = undefined;
+        for (fences, 0..) |f, idx| {
+            vk_fences[idx] = f.vk_fence;
+        }
+
+        try vkt(c.vkWaitForFences(
+                GfxStateVulkan.get().device,
+                @intCast(fences.len),
+                @ptrCast(vk_fences[0..].ptr),
+                bool_to_vulkan(true),
+                std.math.maxInt(u64)
+        ));
+    }
+    
+    pub inline fn wait_any(fences: []const *Self) !void {
+        const MAX_FENCES = 16;
+        std.debug.assert(fences.len < MAX_FENCES);
+
+        var vk_fences: [MAX_FENCES]c.VkFence = undefined;
+        for (fences, 0..) |f, idx| {
+            vk_fences[idx] = f.vk_fence;
+        }
+
+        try vkt(c.vkWaitForFences(
+                GfxStateVulkan.get().device,
+                @intCast(fences.len),
+                @ptrCast(vk_fences[0..].ptr),
+                bool_to_vulkan(false),
+                std.math.maxInt(u64)
+        ));
+    }
+
+    pub inline fn reset(self: *Self) !void {
+        try vkt(c.vkResetFences(GfxStateVulkan.get().device, 1, self.vk_fence));
     }
 };

@@ -110,7 +110,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.window.deinit();
 
     Log.debug("Calling GFX init!", .{});
-    engine.gfx = try gf.GfxState.init(engine.general_allocator, &engine.window);
+    try engine.gfx.init(engine.general_allocator, &engine.window);
     errdefer engine.gfx.deinit();
 
     engine.asset_manager = blk: {

@@ -146,8 +146,8 @@ pub const ModelNode = struct {
 };
 
 pub const Buffers = struct {
-    indices: gf.Buffer,
-    vertices: gf.Buffer,
+    indices: gf.Buffer.Ref,
+    vertices: gf.Buffer.Ref,
 
     offsets: struct {
         positions: usize,
@@ -516,6 +516,7 @@ pub const Model = struct {
         // Iterate through all assimp meshes and create MeshPrimitive for each, store These
         // in an array for use later.
         {
+            var was_able_to_find_a_free_vertex_place = false;
             for (scene.meshes(), 0..) |mesh, idx| {
                 var prim = MeshPrimitive {
                     .num_indices = undefined,
@@ -605,7 +606,6 @@ pub const Model = struct {
                         const weight = wg.mWeight;
                         std.debug.assert(weight >= 0.0);
 
-                        var was_able_to_find_a_free_vertex_place = false;
                         for (mesh_bone_ids.items[vertId], 0..) |mesh_bone_id, i| {
                             std.debug.assert(mesh_bone_id != bone_id);
 
@@ -620,11 +620,12 @@ pub const Model = struct {
                                 break;
                             }
                         }
-                        if (!was_able_to_find_a_free_vertex_place) {
-                            std.debug.print("wasn't able to find a free vertex place: {}\n", .{vertId});
-                        }
                     }
                 }
+            }
+
+            if (!was_able_to_find_a_free_vertex_place) {
+                std.log.warn("wasn't able to find a free vertex place when loading model bones.", .{});
             }
         }
 

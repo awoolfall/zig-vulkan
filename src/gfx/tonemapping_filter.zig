@@ -142,6 +142,6 @@ pub fn apply_filter(
     gfx.cmd_set_shader_resources(.Pixel, 0, &.{null, null});
 }
 
-pub fn framebuffer_resized(self: *Self, gfx: *gf.GfxState) !void {
-    self.bloom_filter.framebuffer_resized(gfx);
+pub fn framebuffer_resized(self: *Self) !void {
+    try self.bloom_filter.framebuffer_resized();
 }

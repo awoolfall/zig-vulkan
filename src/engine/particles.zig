@@ -47,6 +47,7 @@ pub const ParticleSystem = struct {
     model_matrix_vertex_buffer: gf.Buffer.Ref,
     constant_buffer: gf.Buffer.Ref,
 
+    render_pass: gf.RenderPass.Ref,
     pipeline: gf.GraphicsPipeline.Ref,
     framebuffer: gf.FrameBuffer.Ref,
 
@@ -58,11 +59,14 @@ pub const ParticleSystem = struct {
 
         self.framebuffer.deinit();
         self.pipeline.deinit();
+        self.render_pass.deinit();
+
         self.vertex_shader.deinit();
         self.pixel_shader.deinit();
+        self.shader_watcher.deinit();
+
         self.model_matrix_vertex_buffer.deinit();
         self.constant_buffer.deinit();
-        self.shader_watcher.deinit();
     }
 
     pub fn init(alloc: std.mem.Allocator, settings: ParticleSystemSettings) !Self {
@@ -132,6 +136,7 @@ pub const ParticleSystem = struct {
             .pixel_shader = &pixel_shader,
             .depth_test = .{ .write = true, },
             .attachments = attachments[0..],
+            .render_pass = render_pass,
         });
         errdefer graphics_pipeline.deinit();
 
@@ -160,6 +165,7 @@ pub const ParticleSystem = struct {
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
             .shader_watcher = shader_watcher,
+            .render_pass = render_pass,
             .pipeline = graphics_pipeline,
             .framebuffer = framebuffer,
             .model_matrix_vertex_buffer = model_matrix_vertex_buffer,

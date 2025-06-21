@@ -16,7 +16,7 @@ pub const Debug = struct {
     lines: std.BoundedArray(DebugLine, MAX_LINES),
     lines_vertex_shader: gfx.VertexShader,
     lines_pixel_shader: gfx.PixelShader,
-    lines_instance_buffer: gfx.Buffer,
+    lines_instance_buffer: gfx.Buffer.Ref,
 
     pub fn deinit(self: *Self) void {
         self.lines_vertex_shader.deinit();

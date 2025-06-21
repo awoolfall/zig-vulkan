@@ -67,15 +67,6 @@ pub const GfxState = struct {
     pub fn deinit(self: *Self) void {
         std.log.debug("gfx deinit", .{});
 
-        self.platform.deinit();
-
-        self.buffers.deinit();
-        self.images.deinit();
-        self.image_views.deinit();
-        self.samplers.deinit();
-        self.graphics_pipelines.deinit();
-        self.framebuffers.deinit();
-
         self.tone_mapping_filter.deinit();
 
         self.default.sampler.deinit();
@@ -91,90 +82,109 @@ pub const GfxState = struct {
         self.default.ambient_occlusion.deinit();
         self.default.emission_view.deinit();
         self.default.emission.deinit();
+
+        self.platform.deinit();
+
+        self.buffers.deinit();
+        self.images.deinit();
+        self.image_views.deinit();
+        self.samplers.deinit();
+
+        self.framebuffers.deinit();
+        self.graphics_pipelines.deinit();
+        self.render_passes.deinit();
+
+        self.descriptor_pools.deinit();
+        self.descriptor_layouts.deinit();
+
+        self.command_pools.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
-        var gfx_platform = try pl.GfxPlatform.init(alloc, window);
-        errdefer gfx_platform.deinit();
+    pub fn init(self: *Self, alloc: std.mem.Allocator, window: *pl.Window) !void {
+        self.buffers = gen.GenerationalList(Buffer).init(alloc);
+        errdefer self.buffers.deinit();
+
+        self.images = gen.GenerationalList(Image).init(alloc);
+        errdefer self.images.deinit();
+
+        self.image_views = gen.GenerationalList(ImageView).init(alloc);
+        errdefer self.image_views.deinit();
+
+        self.samplers = gen.GenerationalList(Sampler).init(alloc);
+        errdefer self.samplers.deinit();
+
+
+        self.render_passes = gen.GenerationalList(RenderPass).init(alloc);
+        errdefer self.render_passes.deinit();
+
+        self.graphics_pipelines = gen.GenerationalList(GraphicsPipeline).init(alloc);
+        errdefer self.graphics_pipelines.deinit();
+
+        self.framebuffers = gen.GenerationalList(FrameBuffer).init(alloc);
+        errdefer self.framebuffers.deinit();
+
+
+        self.descriptor_layouts = gen.GenerationalList(DescriptorLayout).init(alloc);
+        errdefer self.descriptor_layouts.deinit();
         
-        var gfx_state = Self {
-            .platform = gfx_platform,
+        self.descriptor_pools = gen.GenerationalList(DescriptorPool).init(alloc);
+        errdefer self.descriptor_pools.deinit();
 
-            .buffers = gen.GenerationalList(Buffer).init(alloc),
-            .images = gen.GenerationalList(Image).init(alloc),
-            .image_views = gen.GenerationalList(ImageView).init(alloc),
-            .samplers = gen.GenerationalList(Sampler).init(alloc),
-            .graphics_pipelines = gen.GenerationalList(GraphicsPipeline).init(alloc),
-            .framebuffers = gen.GenerationalList(FrameBuffer).init(alloc),
+        self.command_pools = gen.GenerationalList(CommandPool).init(alloc);
+        errdefer self.command_pools.deinit();
 
-            .tone_mapping_filter = undefined,
 
-            .default = .{
-                .depth_image = undefined,
-                .depth_view = undefined,
-                .sampler = undefined,
-                .diffuse = undefined,
-                .diffuse_view = undefined,
-                .normals = undefined,
-                .normals_view = undefined,
-                .metallic_roughness = undefined,
-                .metallic_roughness_view = undefined,
-                .ambient_occlusion = undefined,
-                .ambient_occlusion_view = undefined,
-                .emission = undefined,
-                .emission_view = undefined,
-            },
-        };
+        try self.platform.init(alloc, window);
+        errdefer self.platform.deinit();
+        
 
-        gfx_state.tone_mapping_filter = try ToneMappingAndBloomFilter.init();
-        errdefer gfx_state.tone_mapping_filter.deinit();
+        self.tone_mapping_filter = try ToneMappingAndBloomFilter.init();
+        errdefer self.tone_mapping_filter.deinit();
 
-        gfx_state.default.depth_image = try Image.init(.{
+        self.default.depth_image = try Image.init(.{
             .format = Self.depth_format,
             .match_swapchain_extent = true,
 
             .usage_flags = .{ .DepthStencil = true, },
             .access_flags = .{ .GpuWrite = true, },
         }, null);
-        errdefer gfx_state.default.depth_image.deinit();
+        errdefer self.default.depth_image.deinit();
 
-        gfx_state.default.depth_view = try ImageView.init(.{ .image = gfx_state.default.depth_image, });
-        errdefer gfx_state.default.depth_view.deinit();
+        self.default.depth_view = try ImageView.init(.{ .image = self.default.depth_image, });
+        errdefer self.default.depth_view.deinit();
 
-        gfx_state.default.sampler = try Sampler.init(.{});
-        errdefer gfx_state.default.sampler.deinit();
+        self.default.sampler = try Sampler.init(.{});
+        errdefer self.default.sampler.deinit();
 
-        gfx_state.default.diffuse = try init_single_pixel_texture(zm.f32x4s(1.0));
-        errdefer gfx_state.default.diffuse.deinit();
+        self.default.diffuse = try init_single_pixel_texture(zm.f32x4s(1.0));
+        errdefer self.default.diffuse.deinit();
 
-        gfx_state.default.diffuse_view = try ImageView.init(.{ .image = gfx_state.default.diffuse, });
-        errdefer gfx_state.default.diffuse_view.deinit();
+        self.default.diffuse_view = try ImageView.init(.{ .image = self.default.diffuse, });
+        errdefer self.default.diffuse_view.deinit();
 
-        gfx_state.default.normals = try init_single_pixel_texture(zm.f32x4(0.5, 0.5, 1.0, 1.0));
-        errdefer gfx_state.default.normals.deinit();
+        self.default.normals = try init_single_pixel_texture(zm.f32x4(0.5, 0.5, 1.0, 1.0));
+        errdefer self.default.normals.deinit();
 
-        gfx_state.default.normals_view = try ImageView.init(.{ .image = gfx_state.default.normals, });
-        errdefer gfx_state.default.normals_view.deinit();
+        self.default.normals_view = try ImageView.init(.{ .image = self.default.normals, });
+        errdefer self.default.normals_view.deinit();
 
-        gfx_state.default.metallic_roughness = try init_single_pixel_texture(zm.f32x4(0.0, 1.0, 1.0, 1.0));
-        errdefer gfx_state.default.metallic_roughness.deinit();
+        self.default.metallic_roughness = try init_single_pixel_texture(zm.f32x4(0.0, 1.0, 1.0, 1.0));
+        errdefer self.default.metallic_roughness.deinit();
 
-        gfx_state.default.metallic_roughness_view = try ImageView.init(.{ .image = gfx_state.default.metallic_roughness, });
-        errdefer gfx_state.default.metallic_roughness_view.deinit();
+        self.default.metallic_roughness_view = try ImageView.init(.{ .image = self.default.metallic_roughness, });
+        errdefer self.default.metallic_roughness_view.deinit();
         
-        gfx_state.default.ambient_occlusion = try init_single_pixel_texture(zm.f32x4s(1.0));
-        errdefer gfx_state.default.ambient_occlusion.deinit();
+        self.default.ambient_occlusion = try init_single_pixel_texture(zm.f32x4s(1.0));
+        errdefer self.default.ambient_occlusion.deinit();
 
-        gfx_state.default.ambient_occlusion_view = try ImageView.init(.{ .image = gfx_state.default.ambient_occlusion, });
-        errdefer gfx_state.default.ambient_occlusion_view.deinit();
+        self.default.ambient_occlusion_view = try ImageView.init(.{ .image = self.default.ambient_occlusion, });
+        errdefer self.default.ambient_occlusion_view.deinit();
 
-        gfx_state.default.emission = try init_single_pixel_texture(zm.f32x4(0.0, 0.0, 0.0, 1.0));
-        errdefer gfx_state.default.emission.deinit();
+        self.default.emission = try init_single_pixel_texture(zm.f32x4(0.0, 0.0, 0.0, 1.0));
+        errdefer self.default.emission.deinit();
 
-        gfx_state.default.emission_view = try ImageView.init(.{ .image = gfx_state.default.emission, });
-        errdefer gfx_state.default.emission_view.deinit();
-
-        return gfx_state;
+        self.default.emission_view = try ImageView.init(.{ .image = self.default.emission, });
+        errdefer self.default.emission_view.deinit();
     }
 
     pub inline fn get() *Self {
@@ -204,11 +214,15 @@ pub const GfxState = struct {
         );
     }
 
-    pub fn present(self: *Self) !void {
+    pub fn begin_frame(self: *Self) !void {
+        try self.platform.begin_frame();
+    }
+
+    pub fn present(self: *Self, wait_semaphores: []const *Semaphore) !void {
         if (self.swapchain_size()[0] * self.swapchain_size()[1] == 0) {
             return error.SwapchainSizeIsZero;
         }
-        try self.platform.present();
+        try self.platform.present(wait_semaphores);
     }
 
     pub fn flush(self: *Self) void {
@@ -226,7 +240,7 @@ pub const GfxState = struct {
                 self.window_resized(@intCast(new_size.width), @intCast(new_size.height));
 
                 // send resize event to children
-                self.tone_mapping_filter.framebuffer_resized(self) catch unreachable; // TODO remove?
+                self.tone_mapping_filter.framebuffer_resized() catch unreachable; // TODO remove?
             },
             else => {},
         }
@@ -666,7 +680,16 @@ pub fn Reference(comptime Type: type) type {
 
         inline fn gfxstate_list() *gen.GenerationalList(Type) {
             return switch (Type) {
+                Buffer => &GfxState.get().buffers,
                 Image => &GfxState.get().images,
+                ImageView => &GfxState.get().image_views,
+                Sampler => &GfxState.get().samplers,
+                RenderPass => &GfxState.get().render_passes,
+                GraphicsPipeline => &GfxState.get().graphics_pipelines,
+                FrameBuffer => &GfxState.get().framebuffers,
+                DescriptorLayout => &GfxState.get().descriptor_layouts,
+                DescriptorPool => &GfxState.get().descriptor_pools,
+                CommandPool => &GfxState.get().command_pools,
                 else => unreachable,
             };
         }
@@ -703,7 +726,7 @@ pub const Buffer = struct {
         data: []const u8,
         usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
-    ) !Buffer {
+    ) !Buffer.Ref {
         const platform = try pl.GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags);
         errdefer platform.deinit();
 
@@ -712,7 +735,7 @@ pub const Buffer = struct {
         };
 
         return Buffer.Ref {
-            .platform = try GfxState.get().buffers.insert(buffer),
+            .id = try GfxState.get().buffers.insert(buffer),
         };
     }
 
@@ -771,7 +794,13 @@ pub const Image = struct {
     }
 
     pub fn init(info: ImageInfo, data: ?[]const u8) !Image.Ref {
-        const platform = try GfxState.Platform.Image.init(info, data);
+        var modified_info = info;
+        if (modified_info.match_swapchain_extent) {
+            modified_info.width = GfxState.get().swapchain_size()[0];
+            modified_info.height = GfxState.get().swapchain_size()[1];
+        }
+
+        const platform = try GfxState.Platform.Image.init(modified_info, data);
         errdefer platform.deinit();
 
         const image = Image {
@@ -790,9 +819,15 @@ pub const Image = struct {
         if (info.array_length != 1) { return error.CannotSetColourOnImageArray; }
         if (info.mip_levels != 1) { return error.CannotSetColourOnMippedImage; }
 
+        var modified_info = info;
+        if (modified_info.match_swapchain_extent) {
+            modified_info.width = GfxState.get().swapchain_size()[0];
+            modified_info.height = GfxState.get().swapchain_size()[1];
+        }
+
         const alloc = eng.get().frame_allocator;
 
-        const data = try alloc.alloc(u8, info.width * info.height * info.depth * 4);
+        const data = try alloc.alloc(u8, modified_info.width * modified_info.height * modified_info.depth * 4);
         defer alloc.free(data);
 
         const data_u32: *const align(1) []u32 = @ptrCast(&data);
@@ -807,7 +842,7 @@ pub const Image = struct {
 
         @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
 
-        return try Image.init(info, data);
+        return try Image.init(modified_info, data);
     }
 
     pub const MapOptions = struct {
@@ -854,9 +889,6 @@ pub const ImageView = struct {
     }
 
     pub fn init(info: ImageViewInfo) !ImageView.Ref {
-        std.debug.assert(info.base_mip_level > 0);
-        std.debug.assert(info.base_array_layer > 0);
-
         const platform = try GfxState.Platform.ImageView.init(info);
         errdefer platform.deinit();
 
@@ -866,8 +898,8 @@ pub const ImageView = struct {
             .platform = platform,
             .info = info,
             .size = .{
-                .width = @divFloor(image.info.width, std.math.pow(u32, info.base_mip_level - 1, 2)),
-                .height = @divFloor(image.info.height, std.math.pow(u32, info.base_mip_level - 1, 2)),
+                .width = @divFloor(image.info.width, std.math.pow(u32, 2, info.base_mip_level)),
+                .height = @divFloor(image.info.height, std.math.pow(u32, 2, info.base_mip_level)),
             },
         };
 
@@ -1476,5 +1508,52 @@ pub const CommandBuffer = struct {
 
     pub fn cmd_draw_indexed(self: *Self, info: DrawIndexedInfo) void {
         self.platform.cmd_draw_indexed(info);
+    }
+};
+
+pub const SemaphoreCreateInfo = struct {
+};
+
+pub const Semaphore = struct {
+    const Self = @This();
+
+    platform: GfxState.Platform.Semaphore,
+
+    pub fn deinit(self: *const Self) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: SemaphoreCreateInfo) !Self {
+        return try GfxState.Platform.Semaphore.init(info);
+    }
+};
+
+pub const FenceCreateInfo = struct {
+    create_signalled: bool = false,
+};
+
+pub const Fence = struct {
+    const Self = @This();
+
+    platform: GfxState.Platform.Fence,
+
+    pub fn deinit(self: *const Self) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: FenceCreateInfo) !Self {
+        return try GfxState.Platform.Fence.init(info);
+    }
+
+    pub fn wait(self: *Self) !void {
+        try self.platform.wait();
+    }
+
+    pub fn wait_all(fences: []const *Self) !void {
+        try GfxState.Platform.Fence.wait_all(fences);
+    }
+
+    pub fn reset(self: *Self) !void {
+        try self.platform.reset();
     }
 };

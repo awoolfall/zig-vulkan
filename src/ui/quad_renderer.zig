@@ -87,8 +87,8 @@ pub const QuadRenderer = struct {
 
     quad_vso: _gfx.VertexShader,
     quad_pso: _gfx.PixelShader,
-    quad_buffer_vertex: _gfx.Buffer,
-    quad_buffer_pixel: _gfx.Buffer,
+    quad_buffer_vertex: _gfx.Buffer.Ref,
+    quad_buffer_pixel: _gfx.Buffer.Ref,
 
     const QUAD_SHADER_HLSL = @embedFile("quad_shader.slang");
 
