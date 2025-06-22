@@ -175,18 +175,28 @@ pub const ParticleSystem = struct {
     }
 
     pub fn init_shaders(hlsl: []const u8) !struct {gf.VertexShader, gf.PixelShader} {
+        const stride: u32 = 
+            @sizeOf([16]f32) +  // matrix
+            @sizeOf([4]f32) +   // colour
+            @sizeOf([4]f32) +   // velocity
+            @sizeOf([4]f32);    // scale
         const vertex_shader = try gf.VertexShader.init_buffer(
             hlsl,
             "vs_main",
-            ([_]gf.VertexInputLayoutEntry {
-                .{ .name = "RowX", .slot = 0, .format = .F32x4, .per = .Instance },
-                .{ .name = "RowY", .slot = 1, .format = .F32x4, .per = .Instance },
-                .{ .name = "RowZ", .slot = 2, .format = .F32x4, .per = .Instance },
-                .{ .name = "RowW", .slot = 3, .format = .F32x4, .per = .Instance },
-                .{ .name = "Colour", .slot = 4, .format = .F32x4, .per = .Instance },
-                .{ .name = "Velocity", .slot = 5, .format = .F32x4, .per = .Instance },
-                .{ .name = "Scale", .slot = 6, .format = .F32x4, .per = .Instance },
-            })[0..],
+            .{
+                .bindings = &.{
+                    .{ .binding = 0, .stride = stride, .input_rate = .Instance },
+                },
+                .attributes = &.{
+                    .{ .name = "RowX",      .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "RowY",      .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "RowZ",      .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "RowW",      .location = 3, .binding = 0, .offset = 3 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "Colour",    .location = 4, .binding = 0, .offset = 4 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "Velocity",  .location = 5, .binding = 0, .offset = 5 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "Scale",     .location = 6, .binding = 0, .offset = 6 * @sizeOf([4]f32), .format = .F32x4, },
+                },
+            },
             .{},
         );
         errdefer vertex_shader.deinit();

@@ -143,7 +143,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     Log.debug("Calling app init!", .{});
     engine.app.init() catch |err| {
         Log.err("App init failed! Error: {s}", .{@errorName(err)});
-        return err;
+        unreachable;
     };
     errdefer engine.app.deinit();
 

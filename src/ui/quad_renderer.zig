@@ -116,7 +116,7 @@ pub const QuadRenderer = struct {
         quad_renderer.quad_vso = try _gfx.VertexShader.init_buffer(
             QUAD_SHADER_HLSL,
             "vs_main",
-            ([_]_gfx.VertexInputLayoutEntry {})[0..],
+            .{ .bindings = &.{}, .attributes = &.{}, },
             .{},
         );
         errdefer quad_renderer.quad_vso.deinit();

@@ -30,11 +30,16 @@ pub const Debug = struct {
         const lines_vertex_shader = try gfx.VertexShader.init_buffer(
             LINES_HLSL,
             "vs_main",
-            ([_]gfx.VertexInputLayoutEntry {
-                .{ .name = "TEXCOORD", .index = 0, .slot = 0, .format = .F32x4, .per = .Instance, },
-                .{ .name = "TEXCOORD", .index = 1, .slot = 1, .format = .F32x4, .per = .Instance, },
-                .{ .name = "COLOR", .index = 0, .slot = 2, .format = .F32x4, .per = .Instance, },
-            })[0..],
+            .{
+                .bindings = &.{
+                    .{ .binding = 0, .stride = 3 * @sizeOf([4]f32), .input_rate = .Instance, },
+                },
+                .attributes = &.{
+                    .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "COLOR",     .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
+                },
+            },
             .{},
         );
         errdefer lines_vertex_shader.deinit();

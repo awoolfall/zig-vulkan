@@ -61,7 +61,7 @@ pub fn init() !Self {
     var vertex_shader = try gf.VertexShader.init_buffer(
         gf.GfxState.FULL_SCREEN_QUAD_VS,
         "vs_main",
-        ([0]gf.VertexInputLayoutEntry {})[0..],
+        .{ .bindings = &.{}, .attributes = &.{} },
         .{},
     );
     errdefer vertex_shader.deinit();

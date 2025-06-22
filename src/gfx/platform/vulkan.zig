@@ -131,11 +131,18 @@ pub const GfxStateVulkan = struct {
 
         var instance_extensions = std.ArrayList([*c]const u8).init(alloc);
         defer instance_extensions.deinit();
-
         try instance_extensions.append(c.VK_KHR_SURFACE_EXTENSION_NAME);
         if (@import("builtin").os.tag == .windows) {
             try instance_extensions.append(c.VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
         }
+
+        var device_extensions = std.ArrayList([*c]const u8).init(alloc);
+        defer device_extensions.deinit();
+        try device_extensions.append(c.VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+        const required_physical_device_features_info = c.VkPhysicalDeviceFeatures {
+            .independentBlend = bool_to_vulkan(true),
+        };
 
         const create_instance_info = c.VkInstanceCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -170,11 +177,6 @@ pub const GfxStateVulkan = struct {
             else => @compileError("Platform not implemented"),
         }
         errdefer c.vkDestroySurfaceKHR(self.instance, self.surface, null);
-
-        var device_extensions = std.ArrayList([*c]const u8).init(alloc);
-        defer device_extensions.deinit();
-
-        try device_extensions.append(c.VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
         var physical_device_count: u32 = 0;
         try vkt(c.vkEnumeratePhysicalDevices(self.instance, &physical_device_count, null));
@@ -219,6 +221,20 @@ pub const GfxStateVulkan = struct {
                 std.log.info("  - doesn't satisfy all required extensions", .{});
                 continue;
             }
+
+            var vk_physical_device_features: c.VkPhysicalDeviceFeatures = undefined;
+            c.vkGetPhysicalDeviceFeatures(physical_device, &vk_physical_device_features);
+
+            var supports_all_features: bool = true;
+            inline for (@typeInfo(c.VkPhysicalDeviceFeatures).@"struct".fields) |field| {
+                if (@field(required_physical_device_features_info, field.name) == bool_to_vulkan(true)) {
+                    if (@field(vk_physical_device_features, field.name) != bool_to_vulkan(true)) {
+                        std.log.info("  - doesn't support feature '{s}'", .{field.name});
+                        supports_all_features = false;
+                    }
+                }
+            }
+            if (!supports_all_features) { continue; }
 
             var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
             vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, self.surface, &surface_capabilities))
@@ -397,6 +413,7 @@ pub const GfxStateVulkan = struct {
             .pQueueCreateInfos = queue_create_infos.items.ptr,
             .enabledExtensionCount = @intCast(device_extensions.items.len),
             .ppEnabledExtensionNames = device_extensions.items.ptr,
+            .pEnabledFeatures = &required_physical_device_features_info,
             .flags = 0,
         };
 
@@ -703,6 +720,9 @@ const ShaderModule = struct {
             .profile = "spirv_1_3",
             .preprocessor_macros = &.{
             },
+            .compile_options = &.{
+                .{ .name = slang.c.VulkanUseEntryPointName, .value = .{ .kind = slang.c.Int, .intValue0 = 1, }, },
+            },
         };
 
         const slang_session = try slang.check(slang.c.create_session(gfx.platform.slang_global, session_create_info.to_slang()));
@@ -835,21 +855,9 @@ pub const VertexShaderVulkan = struct {
     pub fn init_buffer(
         vs_data: []const u8,
         vs_func: []const u8,
-        vs_layout: []const gf.VertexInputLayoutEntry,
+        vs_layout: gf.VertexInputLayoutInfo,
         options: gf.VertexShaderOptions,
     ) !Self {
-        {
-        const session_create_info = slang.SessionCreateInfo {
-            .compile_target = slang.c.TARGET_SPIRV,
-            .profile = "spirv_1_3",
-            .preprocessor_macros = &.{
-            },
-        };
-
-        const slang_session = try slang.check(slang.c.create_session(GfxStateVulkan.get().slang_global, session_create_info.to_slang()));
-        defer slang.c.destroy_session(slang_session);
-        }
-
         _ = options;
         const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
@@ -857,34 +865,29 @@ pub const VertexShaderVulkan = struct {
         const shader_module = try ShaderModule.init(vs_data, vs_func, gf.ShaderStage.Vertex);
         errdefer shader_module.deinit();
 
-        const vertex_input_bindings = try alloc.alloc(c.VkVertexInputBindingDescription, vs_layout.len);
+        const vertex_input_bindings = try alloc.alloc(c.VkVertexInputBindingDescription, vs_layout.bindings.len);
         errdefer alloc.free(vertex_input_bindings);
 
-        const vertex_input_attrib_descriptions = try alloc.alloc(c.VkVertexInputAttributeDescription, vs_layout.len);
+        const vertex_input_attrib_descriptions = try alloc.alloc(c.VkVertexInputAttributeDescription, vs_layout.attributes.len);
         errdefer alloc.free(vertex_input_attrib_descriptions);
 
-        for (vs_layout, 0..) |entry, idx| {
+        for (vs_layout.bindings, 0..) |binding, idx| {
             vertex_input_bindings[idx] = c.VkVertexInputBindingDescription {
-                .binding = @intCast(idx),
-                .stride = switch (entry.format) {
-                    .F32x1 => @sizeOf(f32) * 1,
-                    .F32x2 => @sizeOf(f32) * 2,
-                    .F32x3 => @sizeOf(f32) * 3,
-                    .F32x4 => @sizeOf(f32) * 4,
-                    .I32x4 => @sizeOf(i32) * 4,
-                    .U8x4 => @sizeOf(u8) * 4,
-                },
-                .inputRate = switch (entry.per) {
+                .binding = binding.binding,
+                .stride = binding.stride,
+                .inputRate = switch (binding.input_rate) {
                     .Vertex => c.VK_VERTEX_INPUT_RATE_VERTEX,
                     .Instance => c.VK_VERTEX_INPUT_RATE_INSTANCE,
                 },
             };
+        }
 
+        for (vs_layout.attributes, 0..) |attrib, idx| {
             vertex_input_attrib_descriptions[idx] = c.VkVertexInputAttributeDescription {
-                .binding = @intCast(idx),
-                .location = 0,
-                .offset = 0,
-                .format = switch (entry.format) {
+                .binding = attrib.binding,
+                .location = attrib.location,
+                .offset = attrib.offset,
+                .format = switch (attrib.format) {
                     .F32x1 => c.VK_FORMAT_R32_SFLOAT,
                     .F32x2 => c.VK_FORMAT_R32G32_SFLOAT,
                     .F32x3 => c.VK_FORMAT_R32G32B32_SFLOAT,
@@ -1654,22 +1657,25 @@ pub const RenderPassVulkan = struct {
 
         const SubpassRefInfo = struct {
             attachment_refs: []usize,
+            depth_ref: ?usize,
         };
         var subpass_refs = try arena.alloc(SubpassRefInfo, info.subpasses.len);
         defer arena.free(subpass_refs);
 
         for (info.subpasses, 0..) |subpass, sidx| {
+            subpass_refs[sidx].depth_ref = if (subpass.depth_attachment) |depth_name| blk: {
+                const attachment_idx = find_attachment_by_name(depth_name, info.attachments) catch {
+                    return error.UnableToFindDepthAttachmentName;
+                };
+                break :blk attachment_idx;
+            } else null;
+
             subpass_refs[sidx].attachment_refs = try arena.alloc(usize, subpass.attachments.len);
-
             for (subpass.attachments, 0..) |subpass_attachment_name, subpass_aidx| {
-                const found_aidx: ?usize = for (info.attachments, 0..) |attachment, aidx| {
-                    if (std.mem.eql(u8, attachment.name, subpass_attachment_name)) {
-                        break aidx;
-                    }
-                } else null;
-
-                if (found_aidx == null) { return error.SubpassAttachmentNameNotFound; }
-                subpass_refs[sidx].attachment_refs[subpass_aidx] = found_aidx.?;
+                const attachment_idx = find_attachment_by_name(subpass_attachment_name, info.attachments) catch {
+                    return error.UnableToFindColourAttachmentName;
+                };
+                subpass_refs[sidx].attachment_refs[subpass_aidx] = attachment_idx;
             }
         }
 
@@ -1687,11 +1693,17 @@ pub const RenderPassVulkan = struct {
                 };
             }
 
+            var depth_attachment_ref = if (ref.depth_ref) |r| c.VkAttachmentReference {
+                .layout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .attachment = @intCast(r),
+            } else null;
+
             subpass_descriptions[idx] = c.VkSubpassDescription{
                 .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS, // @TODO: compute? other?
                 .pColorAttachments = @ptrCast(attachment_refs.ptr),
                 .colorAttachmentCount = @intCast(attachment_refs.len),
-                // @TODO: depth attachment, resolve attachments
+                .pDepthStencilAttachment = if (depth_attachment_ref) |*d| d else null,
+                // @TODO: resolve attachments, preserve attachments, etc.
             };
         }
 
@@ -1704,12 +1716,17 @@ pub const RenderPassVulkan = struct {
         for (info.attachments, 0..) |*a, idx| {
             attachment_descriptions[idx] = c.VkAttachmentDescription {
                 .format = textureformat_to_vulkan(a.format),
-                .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
-                .finalLayout = c.VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, // TODO
+                .initialLayout = 
+                    if (a.format.is_depth()) c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                    else c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .finalLayout = 
+                    if (a.format.is_depth()) c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                    else c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // TODO
                 .loadOp = loadop_to_vulkan(a.load_op),
                 .storeOp = storeop_to_vulkan(a.store_op),
                 .stencilLoadOp = loadop_to_vulkan(a.stencil_load_op),
                 .stencilStoreOp = storeop_to_vulkan(a.stencil_store_op),
+                .samples = c.VK_SAMPLE_COUNT_1_BIT,
             };
 
             vk_clear_values[idx] = formatclearvalue_to_vulkan(a.format, a.clear_value);
@@ -1735,6 +1752,14 @@ pub const RenderPassVulkan = struct {
             .vk_render_pass = vk_render_pass,
             .vk_clear_values = vk_clear_values,
         };
+    }
+
+    inline fn find_attachment_by_name(name: []const u8, attachments: []const gf.AttachmentInfo) !usize {
+        return for (attachments, 0..) |attachment, aidx| {
+            if (std.mem.eql(u8, attachment.name, name)) {
+                break aidx;
+            }
+        } else return error.UnableToFindAttachmentWithName;
     }
 };
 
@@ -1957,14 +1982,18 @@ pub const GraphicsPipelineVulkan = struct {
         var color_blend_attachments = try arena.alloc(c.VkPipelineColorBlendAttachmentState, info.attachments.len);
         defer arena.free(color_blend_attachments);
 
-        for (info.attachments, 0..) |*a, idx| {
-            color_blend_attachments[idx] = blendtype_to_vulkan(a.blend_type); 
+        var color_blend_attachments_len: u32 = 0;
+        for (info.attachments) |*a| {
+            if (!a.format.is_depth()) {
+                color_blend_attachments[color_blend_attachments_len] = blendtype_to_vulkan(a.blend_type); 
+                color_blend_attachments_len += 1;
+            }
         }
 
         const color_blend_info = c.VkPipelineColorBlendStateCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .pAttachments = @ptrCast(color_blend_attachments.ptr),
-            .attachmentCount = @intCast(color_blend_attachments.len),
+            .attachmentCount = color_blend_attachments_len,
             .logicOpEnable = c.VK_FALSE,
             .logicOp = c.VK_LOGIC_OP_COPY,
             .blendConstants = .{ 0.0, 0.0, 0.0, 0.0 },
@@ -1982,11 +2011,29 @@ pub const GraphicsPipelineVulkan = struct {
         try vkt(c.vkCreatePipelineLayout(eng.get().gfx.platform.device, &pipeline_layout_info, null, &vk_pipeline_layout));
         errdefer c.vkDestroyPipelineLayout(eng.get().gfx.platform.device, vk_pipeline_layout, null);
 
+        const vk_shader_stages = try arena.alloc(c.VkPipelineShaderStageCreateInfo, 2); // TODO get other shader stages working
+        defer arena.free(vk_shader_stages);
+
+        vk_shader_stages[0] = c.VkPipelineShaderStageCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
+            .module = info.vertex_shader.platform.shader_module.vk_shader_module,
+            .pName = info.vertex_shader.platform.shader_module.entry_point,
+            .pSpecializationInfo = null,
+        };
+        vk_shader_stages[1] = c.VkPipelineShaderStageCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = info.pixel_shader.platform.shader_module.vk_shader_module,
+            .pName = info.pixel_shader.platform.shader_module.entry_point,
+            .pSpecializationInfo = null,
+        };
+
         const graphics_pipeline_info = c.VkGraphicsPipelineCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 
-            .pStages = null, // @TODO
-            .stageCount = 0, //
+            .pStages = @ptrCast(vk_shader_stages.ptr),
+            .stageCount = @intCast(vk_shader_stages.len),
 
             .pVertexInputState = &vertex_input_info,
             .pInputAssemblyState = &input_assembly_info,

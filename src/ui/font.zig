@@ -202,10 +202,15 @@ pub const Font = struct {
         font.font_vso = try _gfx.VertexShader.init_buffer(
             MSDF_FONT_SHADER_HLSL,
             "vs_main",
-            ([_]_gfx.VertexInputLayoutEntry {
-                .{ .name = "TEXCOORD", .index = 0, .format = .F32x4, .per = .Instance, },
-                .{ .name = "TEXCOORD", .index = 1, .format = .F32x4, .per = .Instance, },
-            })[0..],
+            .{
+                .bindings = &.{
+                    .{ .binding = 0, .stride = 2 * @sizeOf([4]f32), .input_rate = .Instance, },
+                },
+                .attributes = &.{
+                    .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
+                },
+            },
             .{},
         );
         errdefer font.font_vso.deinit();

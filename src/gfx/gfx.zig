@@ -297,6 +297,39 @@ pub const Viewport = struct {
 
 pub const ShaderDefineTuple = std.meta.Tuple(&[_]type{ []const u8, []const u8 });
 
+pub const VertexInputLayoutFormat = enum {
+    F32x1,
+    F32x2,
+    F32x3,
+    F32x4,
+    I32x4,
+    U8x4,
+};
+
+pub const VertexInputLayoutInputRate = enum {
+    Vertex,
+    Instance,
+};
+
+pub const VertexInputBinding = struct {
+    binding: u32,
+    stride: u32,
+    input_rate: VertexInputLayoutInputRate,
+};
+
+pub const VertexInputAttribute = struct {
+    name: []const u8,
+    location: u32,
+    binding: u32,
+    offset: u32,
+    format: VertexInputLayoutFormat,
+};
+
+pub const VertexInputLayoutInfo = struct {
+    bindings: []const VertexInputBinding,
+    attributes: []const VertexInputAttribute,
+};
+
 pub const VertexShaderOptions = struct {
     filepath: ?[]const u8 = null,
     defines: []const ShaderDefineTuple = &.{},
@@ -313,7 +346,7 @@ pub const VertexShader = struct {
         alloc: std.mem.Allocator,
         vs_path: path.Path, 
         vs_func: []const u8,
-        vs_layout: []const VertexInputLayoutEntry,
+        vs_layout: VertexInputLayoutInfo,
         options: VertexShaderOptions,
     ) !VertexShader {
         const vs_res_path = try vs_path.resolve_path(alloc);
@@ -340,7 +373,7 @@ pub const VertexShader = struct {
     pub fn init_buffer(
         vs_data: []const u8, 
         vs_func: []const u8, 
-        vs_layout: []const VertexInputLayoutEntry,
+        vs_layout: VertexInputLayoutInfo,
         options: VertexShaderOptions,
     ) !VertexShader {
         const platform = pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, options) catch |err| {
@@ -351,28 +384,6 @@ pub const VertexShader = struct {
             .platform = platform,
         };
     }
-};
-
-pub const VertexInputLayoutEntry = struct {
-    name: []const u8,
-    index: u32 = 0,
-    slot: u32 = 0,
-    format: VertexInputLayoutFormat,
-    per: VertexInputLayoutIteratePer = VertexInputLayoutIteratePer.Vertex,
-};
-
-pub const VertexInputLayoutFormat = enum {
-    F32x1,
-    F32x2,
-    F32x3,
-    F32x4,
-    I32x4,
-    U8x4,
-};
-
-pub const VertexInputLayoutIteratePer = enum {
-    Vertex,
-    Instance,
 };
 
 pub const PixelShaderOptions = struct {

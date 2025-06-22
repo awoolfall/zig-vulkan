@@ -35,7 +35,7 @@ pub const BloomFilter = struct {
         var full_screen_quad_vertex_shader = try gf.VertexShader.init_buffer(
             FULL_SCREEN_QUAD_VS,
             "vs_main",
-            ([0]gf.VertexInputLayoutEntry {})[0..],
+            .{ .bindings = &.{}, .attributes = &.{}, },
             .{},
         );
         errdefer full_screen_quad_vertex_shader.deinit();
