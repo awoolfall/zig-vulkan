@@ -900,14 +900,10 @@ pub const Imui = struct {
 
     fn render_imui_widget(
         self: *Self, 
-        rtv: _gfx.ImageView.Ref, 
         widget: *const Widget,
         scissor_rect: RectPixels,
         render_palette: Palette
     ) void {
-        engine.get().gfx.cmd_set_scissor_rect(scissor_rect);
-        defer engine.get().gfx.cmd_set_scissor_rect(null);
-
         if (widget.flags.render_quad) {
             const quad_texture_props = blk: { 
                 if (widget.texture) |tex_props| {
@@ -920,43 +916,43 @@ pub const Imui = struct {
                 } 
             };
 
-            self.quad_renderer.render_quad(
-                widget.computed.rect(),
-                .{
-                    .colour = render_palette.background,
-                    .border_colour = render_palette.border,
-                    .border_width_px = qr.RectEdges.from_rect_pixels(widget.border_width_px),
-                    .corner_radii_px = widget.corner_radii_px,
-                    .texture = quad_texture_props,
-                },
-                rtv,
-            );
+            self.quad_renderer.submit_quad(.{
+                .rect = widget.computed.rect(),
+                .scissor = scissor_rect,
+                .colour = render_palette.background,
+                .border_colour = render_palette.border,
+                .border_width_px = qr.RectEdges.from_rect_pixels(widget.border_width_px),
+                .corner_radii_px = widget.corner_radii_px,
+                .texture = quad_texture_props,
+            }) catch |err| {
+                std.log.warn("Unable to submit quad for rendering: {}", .{err});
+            };
         }
 
         // render text
-        if (widget.text_content) |*text| {
-            const font_metrics = self.get_font(text.font).font_metrics;
-            const rect = widget.computed.rect();
-            const x = rect.left;
-            const y = rect.top + (font_metrics.ascender * text.size);
-
-            self.get_font(text.font).render_text_2d(
-                text.text,
-                .{
-                    .position = .{ .x = x, .y = y, },
-                    .colour = 
-                        if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
-                        else render_palette.text_dark,
-                    .pixel_height = text.size,
-                },
-                rtv,
-            );
-        }
+        // TODO
+        // if (widget.text_content) |*text| {
+        //     const font_metrics = self.get_font(text.font).font_metrics;
+        //     const rect = widget.computed.rect();
+        //     const x = rect.left;
+        //     const y = rect.top + (font_metrics.ascender * text.size);
+        //
+        //     self.get_font(text.font).render_text_2d(
+        //         text.text,
+        //         .{
+        //             .position = .{ .x = x, .y = y, },
+        //             .colour = 
+        //                 if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
+        //                 else render_palette.text_dark,
+        //             .pixel_height = text.size,
+        //         },
+        //         rtv,
+        //     );
+        // }
     }
 
     fn render_imui_recursive(
         self: *Self, 
-        rtv: _gfx.ImageView.Ref, 
         widget_id: WidgetId, 
         parent_scissor: RectPixels,
         parent_palette: Palette
@@ -1018,7 +1014,7 @@ pub const Imui = struct {
         }
 
         if (widget.flags.render) {
-            self.render_imui_widget(rtv, widget, widget_scissor, widget_palette);
+            self.render_imui_widget(widget, widget_scissor, widget_palette);
         }
 
         // // debug wireframe
@@ -1033,14 +1029,14 @@ pub const Imui = struct {
         // );
 
         if (widget.first_child) |c| {
-            self.render_imui_recursive(rtv, c, widget_content_scissor, widget_palette);
+            self.render_imui_recursive(c, widget_content_scissor, widget_palette);
         }
         if (widget.next_sibling) |s| {
-            self.render_imui_recursive(rtv, s, parent_scissor, parent_palette);
+            self.render_imui_recursive(s, parent_scissor, parent_palette);
         }
     }
 
-    pub fn render_imui(self: *Self, rtv: _gfx.ImageView.Ref) void {
+    pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
         // widget rects must be computed before rendering
         self.compute_widget_rects();
         
@@ -1052,8 +1048,10 @@ pub const Imui = struct {
         };
         const render_palette = self.palette();
 
-        self.render_imui_recursive(rtv, .{ .location = .Standard, .index = 0 }, screen_scissor, render_palette);
-        self.render_imui_recursive(rtv, .{ .location = .Priority, .index = 0 }, screen_scissor, render_palette);
+        self.render_imui_recursive(.{ .location = .Standard, .index = 0 }, screen_scissor, render_palette);
+        self.render_imui_recursive(.{ .location = .Priority, .index = 0 }, screen_scissor, render_palette);
+
+        try self.quad_renderer.render_quads(cmd);
     }
 
     pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {

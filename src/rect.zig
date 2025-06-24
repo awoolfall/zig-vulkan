@@ -13,6 +13,10 @@ pub inline fn lr_tb(lr: f32, tb: f32) Self {
     return .{ .left = lr, .right = lr, .top = tb, .bottom = tb, };
 }
 
+pub inline fn lt_rb(lt: f32, rb: f32) Self {
+    return .{ .left = lt, .top = lt, .right = rb, .bottom = rb, };
+}
+
 pub inline fn translate(self: *const Self, x: i32, y: i32) Self {
     return Self {
         .left = self.left + x,

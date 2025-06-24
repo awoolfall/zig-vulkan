@@ -30,6 +30,7 @@ pub const GfxState = struct {
 
     descriptor_layouts: gen.GenerationalList(DescriptorLayout),
     descriptor_pools: gen.GenerationalList(DescriptorPool),
+    descriptor_sets: gen.GenerationalList(DescriptorSet),
 
     command_pools: gen.GenerationalList(CommandPool),
 
@@ -61,7 +62,7 @@ pub const GfxState = struct {
     },
 
     pub const hdr_format = ImageFormat.Rgba16_Float;
-    pub const ldr_format = ImageFormat.Rgba8_Unorm;
+    pub const ldr_format = ImageFormat.Bgra8_Unorm;// ImageFormat.Rgba8_Unorm;
     pub const depth_format = ImageFormat.D24S8_Unorm_Uint;
 
     pub fn deinit(self: *Self) void {
@@ -94,6 +95,7 @@ pub const GfxState = struct {
         self.graphics_pipelines.deinit();
         self.render_passes.deinit();
 
+        self.descriptor_sets.deinit();
         self.descriptor_pools.deinit();
         self.descriptor_layouts.deinit();
 
@@ -129,6 +131,9 @@ pub const GfxState = struct {
         
         self.descriptor_pools = gen.GenerationalList(DescriptorPool).init(alloc);
         errdefer self.descriptor_pools.deinit();
+
+        self.descriptor_sets = gen.GenerationalList(DescriptorSet).init(alloc);
+        errdefer self.descriptor_sets.deinit();
 
         self.command_pools = gen.GenerationalList(CommandPool).init(alloc);
         errdefer self.command_pools.deinit();
@@ -218,6 +223,17 @@ pub const GfxState = struct {
         try self.platform.begin_frame();
     }
 
+    pub const SubmitInfo = struct {
+        command_buffers: []const *const CommandBuffer,
+        signal_semaphores: []const *const Semaphore = &.{},
+        wait_semaphores: []const *const Semaphore = &.{},
+        wait_dst_stage: PipelineStageFlags = .{},
+    };
+
+    pub fn submit_command_buffer(self: *Self, info: SubmitInfo) !void {
+        try self.platform.submit_command_buffer(info);
+    }
+
     pub fn present(self: *Self, wait_semaphores: []const *Semaphore) !void {
         if (self.swapchain_size()[0] * self.swapchain_size()[1] == 0) {
             return error.SwapchainSizeIsZero;
@@ -293,6 +309,14 @@ pub const Viewport = struct {
     top_left_y: f32 = 0.0,
     min_depth: f32 = 0.0,
     max_depth: f32 = 1.0,
+
+    pub fn full_screen_viewport() Viewport {
+        const size = GfxState.get().swapchain_size();
+        return Viewport {
+            .width = @floatFromInt(size[0]),
+            .height = @floatFromInt(size[1]),
+        };
+    }
 };
 
 pub const ShaderDefineTuple = std.meta.Tuple(&[_]type{ []const u8, []const u8 });
@@ -700,6 +724,7 @@ pub fn Reference(comptime Type: type) type {
                 FrameBuffer => &GfxState.get().framebuffers,
                 DescriptorLayout => &GfxState.get().descriptor_layouts,
                 DescriptorPool => &GfxState.get().descriptor_pools,
+                DescriptorSet => &GfxState.get().descriptor_sets,
                 CommandPool => &GfxState.get().command_pools,
                 else => unreachable,
             };
@@ -930,6 +955,7 @@ pub const ImageFormat = enum {
     Rgba8_Unorm_Srgb,
     Rgba8_Unorm,
     Bgra8_Unorm,
+    Bgra8_Srgb,
     R32_Float,
     R32_Uint,
     Rg32_Float,
@@ -948,6 +974,7 @@ pub const ImageFormat = enum {
             .Rgba8_Unorm_Srgb => return 4,
             .Rgba8_Unorm => return 4,
             .Bgra8_Unorm => return 4,
+            .Bgra8_Srgb => return 4,
             .Rgba16_Float => return 8,
             .Rgba32_Float => return 16,
             .Rg11b10_Float => return 3,
@@ -1106,9 +1133,61 @@ pub const SubpassInfo = struct {
     depth_attachment: ?[]const u8 = null,
 };
 
+pub const PipelineStageFlags = packed struct {
+    top_of_pipe: bool = false,
+    draw_indirect: bool = false,
+    vertex_input: bool = false,
+    vertex_shader: bool = false,
+    tessellation_control_shader: bool = false,
+    tessellation_evaluation_shader: bool = false,
+    geometry_shader: bool = false,
+    fragment_shader: bool = false,
+    early_fragment_tests: bool = false,
+    late_fragment_tests: bool = false,
+    color_attachment_output: bool = false,
+    compute_shader: bool = false,
+    transfer: bool = false,
+    bottom_of_pipe: bool = false,
+    host: bool = false,
+    all_graphics: bool = false,
+    all_commands: bool = false,
+};
+
+pub const AccessMaskFlags = packed struct {
+    indirect_command_read: bool = false,
+    index_read: bool = false,
+    vertex_attribute_read: bool = false,
+    uniform_read: bool = false,
+    input_attachment_read: bool = false,
+    shader_read: bool = false,
+    shader_write: bool = false,
+    color_attachment_read: bool = false,
+    color_attachment_write: bool = false,
+    depth_stencil_attachment_read: bool = false,
+    depth_stencil_attachment_write: bool = false,
+    transfer_read: bool = false,
+    transfer_write: bool = false,
+    host_read: bool = false,
+    host_write: bool = false,
+    memory_read: bool = false,
+    memory_write: bool = false,
+};
+
+pub const SubpassDependencyInfo = struct {
+    src_subpass: ?u32,
+    dst_subpass: u32,
+
+    src_stage_mask: PipelineStageFlags,
+    src_access_mask: AccessMaskFlags,
+
+    dst_stage_mask: PipelineStageFlags,
+    dst_access_mask: AccessMaskFlags,
+};
+
 pub const RenderPassInfo = struct {
     attachments: []const AttachmentInfo,
     subpasses: []const SubpassInfo,
+    dependencies: []const SubpassDependencyInfo,
 };
 
 pub const RenderPass = struct {
@@ -1195,7 +1274,8 @@ pub const GraphicsPipeline = struct {
 
 pub const FrameBufferAttachmentInfo = union(enum) {
     View: ImageView.Ref,
-    Swapchain: void,
+    SwapchainHDR: void,
+    SwapchainLDR: void,
     SwapchainDepth: void,
 };
 
@@ -1311,10 +1391,22 @@ pub const DescriptorPool = struct {
         alloc: std.mem.Allocator,
         info: DescriptorSetInfo,
         number_of_sets: u32
-    ) ![]DescriptorSet {
+    ) ![]DescriptorSet.Ref {
+        const set_refs = try alloc.alloc(DescriptorSet.Ref, number_of_sets);
+        errdefer alloc.free(set_refs);
+
         // TODO track resources
         const sets = try self.platform.allocate_sets(alloc, info, number_of_sets);
-        return sets;
+        defer alloc.free(sets);
+        errdefer { for (sets) |s| { s.deinit(); } }
+
+        for (sets, 0..) |set, idx| {
+            set_refs[idx] = .{
+                .id = try GfxState.get().descriptor_sets.insert(set),
+            };
+        }
+
+        return set_refs;
     }
 };
 
@@ -1328,16 +1420,26 @@ pub const DescriptorSetWriteBufferInfo = struct {
     range: u64 = std.math.maxInt(u64),
 };
 
+pub const ImageViewAndSampler = struct {
+    view: ImageView.Ref,
+    sampler: Sampler.Ref,
+};
+
 pub const DescriptorSetUpdateWriteInfo = struct {
     binding: u32,
     array_element: u32 = 0,
-    array_count: u32 = 1,
-    data: union(BindingType) {
-        UniformBuffer: []const DescriptorSetWriteBufferInfo,
-        StorageBuffer: []const DescriptorSetWriteBufferInfo,
-        ImageView: []const ImageView.Ref,
-        Sampler: []const Sampler.Ref,
-        ImageViewAndSampler: []const struct{ view: ImageView.Ref, sampler: Sampler.Ref, },
+    data: union(enum) {
+        UniformBuffer: DescriptorSetWriteBufferInfo,
+        StorageBuffer: DescriptorSetWriteBufferInfo,
+        ImageView: ImageView.Ref,
+        Sampler: Sampler.Ref,
+        ImageViewAndSampler: struct{ view: ImageView.Ref, sampler: Sampler.Ref, },
+
+        UniformBufferArray: []const DescriptorSetWriteBufferInfo,
+        StorageBufferArray: []const DescriptorSetWriteBufferInfo,
+        ImageViewArray: []const ImageView.Ref,
+        SamplerArray: []const Sampler.Ref,
+        ImageViewAndSamplerArray: []const ImageViewAndSampler,
     },
 };
 
@@ -1354,8 +1456,8 @@ pub const DescriptorSet = struct {
         self.platform.deinit();
     }
 
-    pub fn update(self: *DescriptorSet, info: DescriptorSetUpdateInfo) void {
-        self.platform.update(info);
+    pub fn update(self: *DescriptorSet, info: DescriptorSetUpdateInfo) !void {
+        try self.platform.update(info);
     }
 };
 
@@ -1389,9 +1491,19 @@ pub const CommandPool = struct {
     }
 
     pub fn allocate_command_buffer(self: *Self, info: CommandBufferInfo) !CommandBuffer {
-        return CommandBuffer {
-            .platform = try self.platform.allocate_command_buffer(info),
-        };
+        return (try self.allocate_command_buffers(info, 1))[0];
+    }
+
+    pub fn allocate_command_buffers(self: *Self, info: CommandBufferInfo, comptime count: usize) ![count]CommandBuffer {
+        const platform = try self.platform.allocate_command_buffers(info, count);
+
+        var buffers: [count]CommandBuffer = undefined;
+        inline for (platform, 0..) |b, idx| {
+            buffers[idx] = CommandBuffer {
+                .platform = b,
+            };
+        }
+        return buffers;
     }
 };
 
@@ -1413,12 +1525,16 @@ pub const CommandBuffer = struct {
         self.platform.deinit();
     }
 
+    pub fn reset(self: *Self) !void {
+        try self.platform.reset();
+    }
+
     pub fn cmd_begin(self: *Self) !void {
-        self.platform.cmd_begin();
+        try self.platform.cmd_begin();
     }
 
     pub fn cmd_end(self: *Self) !void {
-        self.platform.cmd_end();
+        try self.platform.cmd_end();
     }
 
     pub const BeginRenderPassInfo = struct {
@@ -1448,6 +1564,12 @@ pub const CommandBuffer = struct {
     pub const SetViewportsInfo = struct {
         viewports: []const Viewport,
         first_viewport: u32 = 0,
+
+        pub fn full_screen_viewport() SetViewportsInfo {
+            return SetViewportsInfo {
+                .viewports = &.{ .full_screen_viewport(), },
+            };
+        }
     };
 
     pub fn cmd_set_viewports(self: *Self, info: SetViewportsInfo) void {
@@ -1457,10 +1579,16 @@ pub const CommandBuffer = struct {
     pub const SetScissorsInfo = struct {
         scissors: []const Rect,
         first_scissor: u32 = 0,
+
+        pub fn full_screen_scissor() SetScissorsInfo {
+            return SetScissorsInfo {
+                .scissors = &.{ .lt_rb(0.0, 1.0), },
+            };
+        }
     };
 
     pub fn cmd_set_scissors(self: *Self, info: SetScissorsInfo) void {
-        self.platform.cmd_set_scissor(info);
+        self.platform.cmd_set_scissors(info);
     }
 
     pub const VertexBufferBindInfo = struct {

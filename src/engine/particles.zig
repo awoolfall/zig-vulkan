@@ -120,12 +120,22 @@ pub const ParticleSystem = struct {
 
         var render_pass = try gf.RenderPass.init(.{
             .attachments = attachments[0..],
-            .subpasses = &[_]gf.SubpassInfo {
+            .subpasses = &.{
                 gf.SubpassInfo {
                     .attachments = &.{
                         "colour",
                     },
                     .depth_attachment = "depth",
+                },
+            },
+            .dependencies = &.{
+                gf.SubpassDependencyInfo {
+                    .src_subpass = null,
+                    .dst_subpass = 0,
+                    .src_stage_mask = .{ .color_attachment_output = true, },
+                    .src_access_mask = .{},
+                    .dst_stage_mask = .{ .color_attachment_output = true, },
+                    .dst_access_mask = .{ .color_attachment_write = true, },
                 },
             },
         });
@@ -142,7 +152,7 @@ pub const ParticleSystem = struct {
 
         var framebuffer = try gf.FrameBuffer.init(.{
             .attachments = &.{
-                .Swapchain,
+                .SwapchainHDR,
                 .SwapchainDepth,
             },
             .render_pass = render_pass,
