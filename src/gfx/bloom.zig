@@ -104,6 +104,7 @@ pub const BloomFilter = struct {
 
                     .usage_flags = .{ .ShaderResource = true, .RenderTarget = true, },
                     .access_flags = .{ .GpuWrite = true, },
+                    .dst_layout = .ColorAttachmentOptimal,
                 },
                 null,
             );

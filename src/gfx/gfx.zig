@@ -62,7 +62,7 @@ pub const GfxState = struct {
     },
 
     pub const hdr_format = ImageFormat.Rgba16_Float;
-    pub const ldr_format = ImageFormat.Bgra8_Unorm;// ImageFormat.Rgba8_Unorm;
+    pub const ldr_format = ImageFormat.Bgra8_Srgb;// ImageFormat.Rgba8_Unorm;
     pub const depth_format = ImageFormat.D24S8_Unorm_Uint;
 
     pub fn deinit(self: *Self) void {
@@ -152,6 +152,7 @@ pub const GfxState = struct {
 
             .usage_flags = .{ .DepthStencil = true, },
             .access_flags = .{ .GpuWrite = true, },
+            .dst_layout = .DepthStencilAttachmentOptimal,
         }, null);
         errdefer self.default.depth_image.deinit();
 
@@ -214,20 +215,26 @@ pub const GfxState = struct {
 
                 .usage_flags = .{ .ShaderResource = true, },
                 .access_flags = .{},
+                .dst_layout = .ShaderReadOnlyOptimal,
             },
             colour,
         );
     }
 
-    pub fn begin_frame(self: *Self) !void {
-        try self.platform.begin_frame();
+    pub fn begin_frame(self: *Self) !Semaphore {
+        return try self.platform.begin_frame();
     }
+
+    pub const SubmitWaitSemaphoreInfo = struct {
+        semaphore: *const Semaphore,
+        dst_stage: PipelineStageFlags,
+    };
 
     pub const SubmitInfo = struct {
         command_buffers: []const *const CommandBuffer,
         signal_semaphores: []const *const Semaphore = &.{},
-        wait_semaphores: []const *const Semaphore = &.{},
-        wait_dst_stage: PipelineStageFlags = .{},
+        wait_semaphores: []const SubmitWaitSemaphoreInfo = &.{},
+        fence: ?Fence = null,
     };
 
     pub fn submit_command_buffer(self: *Self, info: SubmitInfo) !void {
@@ -803,6 +810,19 @@ pub const Buffer = struct {
     };
 };
 
+pub const ImageLayout = enum {
+    Undefined,
+    General,
+    ColorAttachmentOptimal,
+    DepthStencilAttachmentOptimal,
+    DepthStencilReadOnlyOptimal,
+    ShaderReadOnlyOptimal,
+    TransferSrcOptimal,
+    TransferDstOptimal,
+    Preinitialized,
+    PresentSrc,
+};
+
 pub const ImageInfo = struct {
     format: ImageFormat,
 
@@ -812,6 +832,7 @@ pub const ImageInfo = struct {
     depth: u32 = 1,
     mip_levels: u32 = 1,
     array_length: u32 = 1,
+    dst_layout: ImageLayout,
 
     usage_flags: TextureUsageFlags,
     access_flags: AccessFlags,
@@ -1125,6 +1146,9 @@ pub const AttachmentInfo = struct {
     stencil_load_op: AttachmentLoadOp = AttachmentLoadOp.Load,
     stencil_store_op: AttachmentStoreOp = AttachmentStoreOp.Store,
 
+    initial_layout: ImageLayout,
+    final_layout: ImageLayout,
+
     clear_value: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
 };
 
@@ -1214,6 +1238,12 @@ pub const RenderPass = struct {
     }
 };
 
+pub const PushConstantLayoutInfo = struct {
+    shader_stages: ShaderStageFlags,
+    offset: u32,
+    size: u32,
+};
+
 pub const GraphicsPipelineInfo = struct {
     vertex_shader: *const VertexShader,
     pixel_shader: *const PixelShader,
@@ -1245,6 +1275,9 @@ pub const GraphicsPipelineInfo = struct {
     attachments: []const AttachmentInfo,
     render_pass: RenderPass.Ref,
     subpass_index: u32 = 0,
+
+    descriptor_set_layouts: []const DescriptorLayout.Ref = &.{},
+    push_constants: []const PushConstantLayoutInfo = &.{},
 };
 
 pub const GraphicsPipeline = struct {
@@ -1529,8 +1562,14 @@ pub const CommandBuffer = struct {
         try self.platform.reset();
     }
 
-    pub fn cmd_begin(self: *Self) !void {
-        try self.platform.cmd_begin();
+    pub const BeginInfo = packed struct {
+        one_time_submit: bool = false,
+        render_pass_continue: bool = false,
+        simultaneous_use: bool = false,
+    };
+
+    pub fn cmd_begin(self: *Self, info: BeginInfo) !void {
+        try self.platform.cmd_begin(info);
     }
 
     pub fn cmd_end(self: *Self) !void {
@@ -1564,12 +1603,6 @@ pub const CommandBuffer = struct {
     pub const SetViewportsInfo = struct {
         viewports: []const Viewport,
         first_viewport: u32 = 0,
-
-        pub fn full_screen_viewport() SetViewportsInfo {
-            return SetViewportsInfo {
-                .viewports = &.{ .full_screen_viewport(), },
-            };
-        }
     };
 
     pub fn cmd_set_viewports(self: *Self, info: SetViewportsInfo) void {
@@ -1579,12 +1612,6 @@ pub const CommandBuffer = struct {
     pub const SetScissorsInfo = struct {
         scissors: []const Rect,
         first_scissor: u32 = 0,
-
-        pub fn full_screen_scissor() SetScissorsInfo {
-            return SetScissorsInfo {
-                .scissors = &.{ .lt_rb(0.0, 1.0), },
-            };
-        }
     };
 
     pub fn cmd_set_scissors(self: *Self, info: SetScissorsInfo) void {
@@ -1626,6 +1653,18 @@ pub const CommandBuffer = struct {
         self.platform.cmd_bind_descriptor_sets(info);
     }
 
+    pub const PushConstantsInfo = struct {
+        graphics_pipeline: GraphicsPipeline.Ref,
+        shader_stages: ShaderStageFlags,
+        offset: u32,
+        size: u32,
+        data: []const u8,
+    };
+
+    pub fn cmd_push_constants(self: *Self, info: PushConstantsInfo) void {
+        self.platform.cmd_push_constants(info);
+    }
+
     pub const DrawInfo = struct {
         vertex_count: u32,
         first_vertex: u32 = 0,
@@ -1648,6 +1687,44 @@ pub const CommandBuffer = struct {
     pub fn cmd_draw_indexed(self: *Self, info: DrawIndexedInfo) void {
         self.platform.cmd_draw_indexed(info);
     }
+
+    pub const MemoryBarrierInfo = struct {
+        src_access_mask: AccessMaskFlags,
+        dst_access_mask: AccessMaskFlags,
+    };
+
+    pub const BufferMemoryBarrierInfo = struct {
+        buffer: Buffer.Ref,
+        offset: u64,
+        size: u64,
+        src_access_mask: AccessMaskFlags,
+        dst_access_mask: AccessMaskFlags,
+        src_queue: ?QueueFamily = null,
+        dst_queue: ?QueueFamily = null,
+    };
+
+    pub const ImageMemoryBarrierInfo = struct {
+        image: Image.Ref,
+        // subresource_range: ??
+        src_access_mask: AccessMaskFlags,
+        dst_access_mask: AccessMaskFlags,
+        old_layout: ?ImageLayout = null,
+        new_layout: ?ImageLayout = null,
+        src_queue: ?QueueFamily = null,
+        dst_queue: ?QueueFamily = null,
+    };
+
+    pub const PipelineBarrierInfo = struct {
+        src_stage: PipelineStageFlags,
+        dst_stage: PipelineStageFlags,
+        memory_barriers: []const MemoryBarrierInfo = &.{},
+        buffer_barriers: []const BufferMemoryBarrierInfo = &.{},
+        image_barriers: []const ImageMemoryBarrierInfo = &.{},
+    };
+
+    pub fn cmd_pipeline_barrier(self: *Self, info: PipelineBarrierInfo) void {
+        self.platform.cmd_pipeline_barrier(info);
+    }
 };
 
 pub const SemaphoreCreateInfo = struct {
@@ -1663,7 +1740,9 @@ pub const Semaphore = struct {
     }
 
     pub fn init(info: SemaphoreCreateInfo) !Self {
-        return try GfxState.Platform.Semaphore.init(info);
+        return Semaphore {
+            .platform = try GfxState.Platform.Semaphore.init(info),
+        };
     }
 };
 

@@ -137,6 +137,7 @@ pub const ImageAsset = struct {
 
                         .usage_flags = .{ .ShaderResource = true, },
                         .access_flags = .{},
+                        .dst_layout = .ShaderReadOnlyOptimal,
                     },
                     image.data,
                 );

@@ -189,6 +189,7 @@ pub const Font = struct {
 
                 .usage_flags = .{ .ShaderResource = true, },
                 .access_flags = .{},
+                .dst_layout = .ShaderReadOnlyOptimal,
             },
             font_image.data,
         );

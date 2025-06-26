@@ -111,10 +111,14 @@ pub const ParticleSystem = struct {
                 .name = "colour",
                 .format = gf.GfxState.hdr_format,
                 .blend_type = .Simple,
+                .initial_layout = .ColorAttachmentOptimal,
+                .final_layout = .ColorAttachmentOptimal,
             },
             .{
                 .name = "depth",
                 .format = gf.GfxState.depth_format,
+                .initial_layout = .DepthStencilAttachmentOptimal,
+                .final_layout = .DepthStencilAttachmentOptimal,
             },
         };
 

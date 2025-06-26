@@ -384,6 +384,7 @@ pub const Imui = struct {
 
                 .usage_flags = .{ .ShaderResource = true, },
                 .access_flags = .{},
+                .dst_layout = .ShaderReadOnlyOptimal,
             },
             scuffed_x_image.data,
         );
