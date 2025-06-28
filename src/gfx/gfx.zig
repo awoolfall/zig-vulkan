@@ -699,7 +699,7 @@ pub const ComputeShader = struct {
     }
 };
 
-pub fn Reference(comptime Type: type) type {
+pub fn Reference(comptime T: type) type {
     return struct {
         const Self = @This();
 
@@ -709,19 +709,19 @@ pub fn Reference(comptime Type: type) type {
             if (self.get()) |asset| {
                 asset.deinit();
             } else |_| {
-                std.log.warn("Unable to retrieve {s} asset", .{@typeName(Type)});
+                std.log.warn("Unable to retrieve {s} asset", .{@typeName(T)});
             }
             gfxstate_list().remove(self.id) catch |err| {
-                std.log.warn("Unable to remove {s} asset: {}", .{@typeName(Type), err});
+                std.log.warn("Unable to remove {s} asset: {}", .{@typeName(T), err});
             };
         }
 
-        pub fn get(self: *const Self) !*Type {
+        pub fn get(self: *const Self) !*T {
             return gfxstate_list().get(self.id) orelse return error.UnableToRetrieveAsset;
         }
 
-        inline fn gfxstate_list() *gen.GenerationalList(Type) {
-            return switch (Type) {
+        fn gfxstate_list() *gen.GenerationalList(T) {
+            return switch (T) {
                 Buffer => &GfxState.get().buffers,
                 Image => &GfxState.get().images,
                 ImageView => &GfxState.get().image_views,
@@ -733,7 +733,7 @@ pub fn Reference(comptime Type: type) type {
                 DescriptorPool => &GfxState.get().descriptor_pools,
                 DescriptorSet => &GfxState.get().descriptor_sets,
                 CommandPool => &GfxState.get().command_pools,
-                else => unreachable,
+                else => @compileError("Unsupported gfx reference type"),
             };
         }
     };

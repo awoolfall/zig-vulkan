@@ -82,26 +82,48 @@ pub const QuadBufferFlags = packed struct(u32) {
     __unused: u31 = 0,
 };
 
+const QuadRenderSet = struct {
+    buffer_vertex: _gfx.Buffer.Ref,
+    buffer_pixel: _gfx.Buffer.Ref,
+
+    buffers_descriptor_pool: _gfx.DescriptorPool.Ref,
+    buffers_descriptor_set: _gfx.DescriptorSet.Ref,
+
+    images_descriptor_pool: _gfx.DescriptorPool.Ref,
+    default_images_set: _gfx.DescriptorSet.Ref,
+    image_descriptor_sets: std.ArrayList(_gfx.DescriptorSet.Ref),
+
+    pub fn deinit(self: *QuadRenderSet) void {
+        self.buffers_descriptor_set.deinit();
+        self.buffers_descriptor_pool.deinit();
+
+        for (self.image_descriptor_sets.items) |s| { s.deinit(); }
+        self.image_descriptor_sets.deinit();
+        self.images_descriptor_pool.deinit();
+
+        self.buffer_vertex.deinit();
+        self.buffer_pixel.deinit();
+    }
+};
+
 pub const QuadRenderer = struct {
-    const MAX_QUADS = 500;
+    const MAX_QUADS_PER_BUFFER = 500;
 
     sampler: _gfx.Sampler.Ref,
 
     vertex_shader: _gfx.VertexShader,
     pixel_shader: _gfx.PixelShader,
 
-    quad_buffer_vertex: _gfx.Buffer.Ref,
-    quad_buffer_pixel: _gfx.Buffer.Ref,
-
     render_pass: _gfx.RenderPass.Ref,
     pipeline: _gfx.GraphicsPipeline.Ref,
     framebuffer: _gfx.FrameBuffer.Ref,
 
-    descriptor_layout: _gfx.DescriptorLayout.Ref,
-    descriptor_pool: _gfx.DescriptorPool.Ref,
-    descriptor_sets: std.ArrayList(_gfx.DescriptorSet.Ref),
+    buffers_descriptor_layout: _gfx.DescriptorLayout.Ref,
+    image_descriptor_layout: _gfx.DescriptorLayout.Ref,
 
     frame_quads: std.ArrayList(QuadProperties),
+
+    quad_render_sets: std.ArrayList(QuadRenderSet),
 
     const QUAD_SHADER_HLSL = @embedFile("quad_shader.slang");
 
@@ -111,23 +133,17 @@ pub const QuadRenderer = struct {
         defer self.vertex_shader.deinit();
         defer self.pixel_shader.deinit();
 
-        defer self.quad_buffer_vertex.deinit();
-        defer self.quad_buffer_pixel.deinit();
-
         defer self.render_pass.deinit();
         defer self.pipeline.deinit();
         defer self.framebuffer.deinit();
 
-        defer self.descriptor_layout.deinit();
-        defer self.descriptor_pool.deinit();
-        defer {
-            for (self.descriptor_sets.items) |s| {
-                s.deinit();
-            }
-            self.descriptor_sets.deinit();
-        }
+        defer self.buffers_descriptor_layout.deinit();
+        defer self.image_descriptor_layout.deinit();
 
         defer self.frame_quads.deinit();
+
+        defer self.quad_render_sets.deinit();
+        defer for (self.quad_render_sets.items) |*s| { s.deinit(); };
     }
 
     pub fn init() !QuadRenderer {
@@ -147,21 +163,6 @@ pub const QuadRenderer = struct {
         );
         errdefer pixel_shader.deinit();
 
-        // create quad constant buffers
-        const buffer_vertex = try _gfx.Buffer.init(
-            @sizeOf(QuadBufferVertexBuffer) * MAX_QUADS,
-            .{ .ConstantBuffer = true, },
-            .{ .CpuWrite = true, },
-        );
-        errdefer buffer_vertex.deinit();
-
-        const buffer_pixel = try _gfx.Buffer.init(
-            @sizeOf(QuadBufferPixelBuffer) * MAX_QUADS,
-            .{ .ConstantBuffer = true, },
-            .{ .CpuWrite = true, },
-        );
-        errdefer buffer_pixel.deinit();
-
         // create sampler
         const sampler = try _gfx.Sampler.init(
             .{
@@ -177,9 +178,10 @@ pub const QuadRenderer = struct {
                 .name = "colour",
                 .format = _gfx.GfxState.ldr_format,
                 .load_op = .Clear,
-                .clear_value = zm.f32x4(0.7, 0.0, 0.7, 1.0),
+                .clear_value = zm.srgbToRgb(zm.f32x4(133.0/255.0, 193.0/255.0, 233.0/255.0, 1.0)),
                 .initial_layout = .Undefined,
                 .final_layout = .ColorAttachmentOptimal,
+                .blend_type = .PremultipliedAlpha,
             },
             _gfx.AttachmentInfo {
                 .name = "depth",
@@ -212,7 +214,7 @@ pub const QuadRenderer = struct {
         });
         errdefer render_pass.deinit();
 
-        const descriptor_layout = try _gfx.DescriptorLayout.init(.{
+        const buffers_descriptor_layout = try _gfx.DescriptorLayout.init(.{
             .bindings = &[_]_gfx.DescriptorBindingInfo {
                 _gfx.DescriptorBindingInfo {
                     .binding = 0,
@@ -226,7 +228,17 @@ pub const QuadRenderer = struct {
                 },
             },
         });
-        errdefer descriptor_layout.deinit();
+        errdefer buffers_descriptor_layout.deinit();
+
+        const image_descriptor_layout = try _gfx.DescriptorLayout.init(.{
+            .bindings = &.{
+                _gfx.DescriptorBindingInfo {
+                    .binding = 2,
+                    .binding_type = .ImageViewAndSampler,
+                    .shader_stages = .{ .Pixel = true, },
+                }
+            },
+        });
 
         const graphics_pipeline = try _gfx.GraphicsPipeline.init(.{
             .vertex_shader = &vertex_shader,
@@ -234,7 +246,8 @@ pub const QuadRenderer = struct {
             .attachments = attachments,
             .cull_mode = .CullNone, // TODO
             .descriptor_set_layouts = &.{
-                descriptor_layout               
+                buffers_descriptor_layout,
+                image_descriptor_layout,
             },
             .push_constants = &.{
                 _gfx.PushConstantLayoutInfo {
@@ -258,65 +271,134 @@ pub const QuadRenderer = struct {
         });
         errdefer framebuffer.deinit();
 
-        const descriptor_pool = try _gfx.DescriptorPool.init(.{ .max_sets = 16, .strategy = .{ .Layout = descriptor_layout, } });
-        errdefer descriptor_pool.deinit();
-
-        var descriptor_sets = std.ArrayList(_gfx.DescriptorSet.Ref).init(engine.get().general_allocator);
-        errdefer descriptor_sets.deinit();
-        const new_sets = try (try descriptor_pool.get()).allocate_sets(
-            engine.get().frame_allocator,
-            .{ .layout = descriptor_layout, },
-            2
-        );
-        defer engine.get().frame_allocator.free(new_sets);
-        errdefer {
-            for (new_sets) |s| { s.deinit(); }
-        }
-        try descriptor_sets.appendSlice(new_sets);
-
-        for (new_sets) |s| {
-            const set = s.get() catch unreachable;
-            set.update(.{
-                .writes = &.{
-                    .{
-                        .binding = 0,
-                        .data = .{ .UniformBuffer = .{
-                            .buffer = buffer_vertex,
-                        } },
-                    },
-                    .{
-                        .binding = 1,
-                        .data = .{ .UniformBuffer = .{
-                            .buffer = buffer_pixel,
-                        } },
-                    },
-                    },
-                }) catch |err| {
-                std.log.warn("Unable to update set: {}", .{err});
-            };
-        }
-
         const frame_quads_list = try std.ArrayList(QuadProperties).initCapacity(engine.get().general_allocator, 128);
         errdefer frame_quads_list.deinit();
+
+        const quad_render_sets = std.ArrayList(QuadRenderSet).init(engine.get().general_allocator);
+        errdefer quad_render_sets.deinit();
 
         return QuadRenderer {
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
 
-            .quad_buffer_vertex = buffer_vertex,
-            .quad_buffer_pixel = buffer_pixel,
             .sampler = sampler,
 
             .render_pass = render_pass,
             .pipeline = graphics_pipeline,
             .framebuffer = framebuffer,
 
-            .descriptor_layout = descriptor_layout,
-            .descriptor_pool = descriptor_pool,
-            .descriptor_sets = descriptor_sets,
+            .buffers_descriptor_layout = buffers_descriptor_layout,
+            .image_descriptor_layout = image_descriptor_layout,
 
             .frame_quads = frame_quads_list,
+            .quad_render_sets = quad_render_sets,
         };
+    }
+
+    fn create_new_sets_for_rendering(self: *QuadRenderer) !void {
+        while (@divFloor(self.frame_quads.items.len, QuadRenderer.MAX_QUADS_PER_BUFFER) + 1 > self.quad_render_sets.items.len) {
+            const buffer_vertex = _gfx.Buffer.init(
+                @sizeOf(QuadBufferVertexBuffer) * MAX_QUADS_PER_BUFFER,
+                .{ .ConstantBuffer = true, },
+                .{ .CpuWrite = true, },
+            ) catch |err| {
+                std.log.warn("failed to create new quad renderer constant buffer: {}", .{err});
+                return err;
+            };
+            errdefer buffer_vertex.deinit();
+
+            const buffer_pixel = _gfx.Buffer.init(
+                @sizeOf(QuadBufferPixelBuffer) * MAX_QUADS_PER_BUFFER,
+                .{ .ConstantBuffer = true, },
+                .{ .CpuWrite = true, },
+            ) catch |err| {
+                std.log.warn("failed to create new quad renderer constant buffer: {}", .{err});
+                return err;
+            };
+            errdefer buffer_pixel.deinit();
+
+            const buffers_descriptor_pool = try _gfx.DescriptorPool.init(.{
+                .max_sets = 1,
+                .strategy = .{ .Layout = self.buffers_descriptor_layout, },
+            });
+            errdefer buffers_descriptor_pool.deinit();
+
+            const images_descriptor_pool = try _gfx.DescriptorPool.init(.{
+                .max_sets = QuadRenderer.MAX_QUADS_PER_BUFFER + 1,
+                .strategy = .{ .Layout = self.image_descriptor_layout, },
+            });
+            errdefer images_descriptor_pool.deinit();
+
+            const buffers_descriptor_sets = try (buffers_descriptor_pool.get() catch unreachable).allocate_sets(
+                engine.get().frame_allocator,
+                .{ .layout = self.buffers_descriptor_layout, },
+                1,
+            );
+            defer engine.get().frame_allocator.free(buffers_descriptor_sets);
+
+            const buffers_descriptor_set = buffers_descriptor_sets[0];
+            errdefer buffers_descriptor_set.deinit();
+
+            {
+                const set = buffers_descriptor_set.get() catch unreachable;
+                set.update(.{
+                    .writes = &.{
+                        .{
+                            .binding = 0,
+                            .data = .{ .UniformBuffer = .{
+                                .buffer = buffer_vertex,
+                            } },
+                        },
+                        .{
+                            .binding = 1,
+                            .data = .{ .UniformBuffer = .{
+                                .buffer = buffer_pixel,
+                            } },
+                        },
+                        },
+                    }) catch |err| {
+                    std.log.warn("Unable to update set: {}", .{err});
+                };
+            }
+
+            var images_descriptor_sets = std.ArrayList(_gfx.DescriptorSet.Ref).init(engine.get().general_allocator);
+            errdefer images_descriptor_sets.deinit();
+
+            const new_image_sets = try (images_descriptor_pool.get() catch unreachable).allocate_sets(
+                engine.get().frame_allocator,
+                .{ .layout = self.image_descriptor_layout, },
+                QuadRenderer.MAX_QUADS_PER_BUFFER + 1
+            );
+            defer engine.get().frame_allocator.free(new_image_sets);
+            errdefer for (new_image_sets) |s| { s.deinit(); };
+
+            const default_images_set = new_image_sets[0];
+            (default_images_set.get() catch unreachable).update(.{
+                .writes = &.{
+                    .{
+                        .binding = 2,
+                        .data = .{ .ImageViewAndSampler = .{
+                            .view = _gfx.GfxState.get().default.diffuse_view,
+                            .sampler = _gfx.GfxState.get().default.sampler,
+                        } },
+                    },
+                    },
+                }) catch |err| {
+                std.log.warn("Unable to update set: {}", .{err});
+            };
+
+            try images_descriptor_sets.appendSlice(new_image_sets[1..]);
+
+            try self.quad_render_sets.append(QuadRenderSet {
+                .buffer_vertex = buffer_vertex,
+                .buffer_pixel = buffer_pixel,
+                .buffers_descriptor_set = buffers_descriptor_set,
+                .buffers_descriptor_pool = buffers_descriptor_pool,
+                .image_descriptor_sets = images_descriptor_sets,
+                .default_images_set = default_images_set,
+                .images_descriptor_pool = images_descriptor_pool,
+            });
+        }
     }
 
     pub const QuadPropertiesTexture = struct {
@@ -339,10 +421,7 @@ pub const QuadRenderer = struct {
         self: *QuadRenderer,
         props: QuadProperties,
     ) !void {
-        // TODO expand with more buffers if we exceed limit
-        if (self.frame_quads.items.len < QuadRenderer.MAX_QUADS) {
-            try self.frame_quads.append(props);
-        }
+        try self.frame_quads.append(props);
     }
 
     pub fn render_quads(
@@ -351,26 +430,38 @@ pub const QuadRenderer = struct {
     ) !void {
         defer self.frame_quads.clearRetainingCapacity();
 
+        self.create_new_sets_for_rendering() catch |err| {
+            std.log.err("Failed to create new quad rendering sets: {}", .{err});
+            self.frame_quads.shrinkRetainingCapacity(self.quad_render_sets.items.len * QuadRenderer.MAX_QUADS_PER_BUFFER);
+        };
+
         // Fill buffers
-        { 
-            const buffer_vertex = self.quad_buffer_vertex.get() catch unreachable;
+        for (self.quad_render_sets.items, 0..) |render_set, idx| { 
+            if (QuadRenderer.MAX_QUADS_PER_BUFFER * idx >= self.frame_quads.items.len) {
+                break;
+            }
+
+            const buffer_vertex = render_set.buffer_vertex.get() catch unreachable;
             const mapped_vertex = buffer_vertex.map(.{ .write = true, }) catch unreachable;
             defer mapped_vertex.unmap();
-            const vertex_data_array = mapped_vertex.data_array(QuadBufferVertexBuffer, QuadRenderer.MAX_QUADS);
+            const vertex_data_array = mapped_vertex.data_array(QuadBufferVertexBuffer, QuadRenderer.MAX_QUADS_PER_BUFFER);
 
-            const buffer_pixel = self.quad_buffer_pixel.get() catch unreachable;
+            const buffer_pixel = render_set.buffer_pixel.get() catch unreachable;
             const mapped_pixel = buffer_pixel.map(.{ .write = true, }) catch unreachable;
             defer mapped_pixel.unmap();
-            const pixel_data_array = mapped_pixel.data_array(QuadBufferPixelBuffer, QuadRenderer.MAX_QUADS);
+            const pixel_data_array = mapped_pixel.data_array(QuadBufferPixelBuffer, QuadRenderer.MAX_QUADS_PER_BUFFER);
 
             const size = _gfx.GfxState.get().swapchain_size();
 
-            for (self.frame_quads.items, 0..) |q, idx| {
-                vertex_data_array[idx] = QuadBufferVertexBuffer {
+            const quad_chunk_start = idx * QuadRenderer.MAX_QUADS_PER_BUFFER;
+            const quad_chunk_end = @min(quad_chunk_start + QuadRenderer.MAX_QUADS_PER_BUFFER, self.frame_quads.items.len);
+
+            for (self.frame_quads.items[quad_chunk_start..quad_chunk_end], 0..) |q, q_idx| {
+                vertex_data_array[q_idx] = QuadBufferVertexBuffer {
                     .quad_bounds = Bounds.from_rect(q.rect, @floatFromInt(size[0]), @floatFromInt(size[1])),
                 };
 
-                pixel_data_array[idx] = QuadBufferPixelBuffer {
+                pixel_data_array[q_idx] = QuadBufferPixelBuffer {
                     .bg_colour = q.colour,
                     .border_colour = q.border_colour,
                     .border_width_px = q.border_width_px,
@@ -381,6 +472,24 @@ pub const QuadRenderer = struct {
                         .has_texture = (q.texture != null),
                     }),
                 };
+
+                if (q.texture) |image| {
+                    // TODO only update if needed
+                    const image_set: *_gfx.DescriptorSet = render_set.image_descriptor_sets.items[q_idx].get() catch unreachable;
+                    image_set.update(.{
+                        .writes = &.{
+                            .{
+                                .binding = 2,
+                                .data = .{ .ImageViewAndSampler = .{
+                                    .view = image.texture_view,
+                                    .sampler = _gfx.GfxState.get().default.sampler,
+                                } },
+                            },
+                        },
+                    }) catch |err| {
+                        std.log.warn("Unable to update quad image set: {}", .{err});
+                    };
+                }
             }
         }
 
@@ -403,12 +512,18 @@ pub const QuadRenderer = struct {
         cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport() }, });
         cmd.cmd_set_scissors(.{ .scissors = &.{ .{ .left = 0.0, .top = 0.0, .right = @floatFromInt(swapchain_size[0]), .bottom = @floatFromInt(swapchain_size[1]), }, }, } );
 
-        for (self.frame_quads.items, 0..) |_, idx| {
+        for (self.frame_quads.items, 0..) |q, idx| {
+            const render_set: usize = @divFloor(idx, QuadRenderer.MAX_QUADS_PER_BUFFER);
+            const q_idx: usize = @mod(idx, QuadRenderer.MAX_QUADS_PER_BUFFER);
+
             // TODO update quad image if required
-            // todo? seperate image/non-image so we can draw all non-image using instancing
             cmd.cmd_bind_descriptor_sets(_gfx.CommandBuffer.BindDescriptorSetInfo {
                 .graphics_pipeline = self.pipeline,
-                .descriptor_sets = &.{ self.descriptor_sets.items[0], },
+                .descriptor_sets = &.{
+                    self.quad_render_sets.items[render_set].buffers_descriptor_set,
+                    if (q.texture) |_| self.quad_render_sets.items[render_set].image_descriptor_sets.items[q_idx]
+                    else self.quad_render_sets.items[render_set].default_images_set,
+                },
             });
 
             // push constant the index
@@ -420,6 +535,7 @@ pub const QuadRenderer = struct {
                 .data = std.mem.sliceAsBytes(([_]u32{ @as(u32, @intCast(idx)) })[0..]),
             });
 
+            // TODO instancing
             cmd.cmd_draw(.{
                 .vertex_count = 6,
             });

@@ -25,8 +25,8 @@ ConstantBuffer<PixelBuffer[500]> pixel_buffer : register(b1);
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> push_constants;
 
-// Texture2D quad_texture;
-// SamplerState quad_sampler;
+Texture2D quad_texture : t0;
+SamplerState quad_sampler : s0;
 
 inline float unpack(float4 packed_value, uint position)
 {
