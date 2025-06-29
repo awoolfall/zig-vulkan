@@ -1,3 +1,5 @@
+const eng = @import("self");
+
 const Self = @This();
 
 left: f32 = 0.0,
@@ -15,6 +17,11 @@ pub inline fn lr_tb(lr: f32, tb: f32) Self {
 
 pub inline fn lt_rb(lt: f32, rb: f32) Self {
     return .{ .left = lt, .top = lt, .right = rb, .bottom = rb, };
+}
+
+pub inline fn full_screen_pixels() Self {
+    const size = eng.get().gfx.swapchain_size();
+    return .{ .left = 0.0, .top = 0.0, .right = @floatFromInt(size[0]), .bottom = @floatFromInt(size[1]), };
 }
 
 pub inline fn translate(self: *const Self, x: i32, y: i32) Self {

@@ -1419,6 +1419,18 @@ pub const DescriptorPool = struct {
         };
     }
 
+    pub fn allocate_set(
+        self: *const DescriptorPool,
+        info: DescriptorSetInfo,
+    ) !DescriptorSet.Ref {
+        const alloc = eng.get().frame_allocator;
+
+        const sets = try self.allocate_sets(alloc, info, 1);
+        defer alloc.free(sets);
+
+        return sets[0];
+    }
+
     pub fn allocate_sets(
         self: *const DescriptorPool,
         alloc: std.mem.Allocator,
@@ -1584,7 +1596,7 @@ pub const CommandBuffer = struct {
 
         render_pass: RenderPass.Ref,
         framebuffer: FrameBuffer.Ref,
-        render_area: Rect = .{ .top = 0.0, .left = 0.0, .bottom = 1.0, .right = 1.0, },
+        render_area: Rect,
         subpass_contents: SubpassContents = .Inline,
     };
 

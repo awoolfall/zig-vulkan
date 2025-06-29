@@ -497,20 +497,14 @@ pub const QuadRenderer = struct {
         cmd.cmd_begin_render_pass(_gfx.CommandBuffer.BeginRenderPassInfo {
             .render_pass = self.render_pass,
             .framebuffer = self.framebuffer,
-            .render_area = .{
-                .left = 0.0,
-                .top = 0.0,
-                .right = @floatFromInt(_gfx.GfxState.get().swapchain_size()[0]),
-                .bottom = @floatFromInt(_gfx.GfxState.get().swapchain_size()[1]),
-            },
+            .render_area = .full_screen_pixels(),
         });
         defer cmd.cmd_end_render_pass();
 
         cmd.cmd_bind_graphics_pipeline(self.pipeline);
 
-        const swapchain_size = _gfx.GfxState.get().swapchain_size();
         cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport() }, });
-        cmd.cmd_set_scissors(.{ .scissors = &.{ .{ .left = 0.0, .top = 0.0, .right = @floatFromInt(swapchain_size[0]), .bottom = @floatFromInt(swapchain_size[1]), }, }, } );
+        cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels(), }, } );
 
         for (self.frame_quads.items, 0..) |q, idx| {
             const render_set: usize = @divFloor(idx, QuadRenderer.MAX_QUADS_PER_BUFFER);

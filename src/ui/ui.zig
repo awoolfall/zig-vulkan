@@ -406,7 +406,6 @@ pub const Imui = struct {
             defer { font_paths.json.deinit(); font_paths.png.deinit(); }
 
             const font_obj = try font.Font.init(
-                alloc,
                 font_paths.json,
                 font_paths.png,
             );
@@ -443,7 +442,7 @@ pub const Imui = struct {
         };
     }
 
-    pub fn get_font(self: *const Self, font_enum: FontEnum) *const font.Font {
+    pub fn get_font(self: *Self, font_enum: FontEnum) *font.Font {
         return &self.fonts[@intFromEnum(font_enum)];
     }
 
@@ -935,25 +934,22 @@ pub const Imui = struct {
         }
 
         // render text
-        // TODO
-        // if (widget.text_content) |*text| {
-        //     const font_metrics = self.get_font(text.font).font_metrics;
-        //     const rect = widget.computed.rect();
-        //     const x = rect.left;
-        //     const y = rect.top + (font_metrics.ascender * text.size);
-        //
-        //     self.get_font(text.font).render_text_2d(
-        //         text.text,
-        //         .{
-        //             .position = .{ .x = x, .y = y, },
-        //             .colour = 
-        //                 if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
-        //                 else render_palette.text_dark,
-        //             .pixel_height = text.size,
-        //         },
-        //         rtv,
-        //     );
-        // }
+        if (widget.text_content) |*text| {
+            const font_metrics = self.get_font(text.font).font_metrics;
+            const rect = widget.computed.rect();
+            const x = rect.left;
+            const y = rect.top + (font_metrics.ascender * text.size);
+
+            self.get_font(text.font).submit_text_2d(text.text, .{
+                .position = .{ .x = x, .y = y, },
+                .colour = 
+                    if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
+                    else render_palette.text_dark,
+                        .pixel_height = text.size,
+            }) catch |err| {
+                std.log.warn("Unable to submit text for rendering: {}", .{err});
+            };
+        }
     }
 
     fn render_imui_recursive(
@@ -1056,7 +1052,14 @@ pub const Imui = struct {
         self.render_imui_recursive(.{ .location = .Standard, .index = 0 }, screen_scissor, render_palette);
         self.render_imui_recursive(.{ .location = .Priority, .index = 0 }, screen_scissor, render_palette);
 
-        try self.quad_renderer.render_quads(cmd);
+        self.quad_renderer.render_quads(cmd) catch |err| {
+            std.log.warn("Unable to render quads: {}", .{err});
+        };
+        for (self.fonts[0..], 0..) |*f, idx| {
+            f.render_texts(cmd) catch |err| {
+                std.log.warn("Unable to render texts for font '{}': {}", .{ @as(FontEnum, @enumFromInt(idx)), err });
+            };
+        }
     }
 
     pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {

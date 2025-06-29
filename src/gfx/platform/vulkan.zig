@@ -3008,10 +3008,10 @@ pub const CommandBufferVulkan = struct {
         const max_vertex_buffers = 16;
         std.debug.assert(info.buffers.len <= max_vertex_buffers);
 
-        const vk_buffers: [max_vertex_buffers]c.VkBuffer = undefined;
-        const vk_device_sizes: [max_vertex_buffers]c.VkDeviceSize = undefined;
+        var vk_buffers: [max_vertex_buffers]c.VkBuffer = undefined;
+        var vk_device_sizes: [max_vertex_buffers]c.VkDeviceSize = undefined;
         for (info.buffers, 0..) |b, idx| {
-            const buffer = b.get() catch unreachable;
+            const buffer = b.buffer.get() catch unreachable;
             vk_buffers[idx] = buffer.platform.vk_buffer;
             vk_device_sizes[idx] = b.offset;
         }

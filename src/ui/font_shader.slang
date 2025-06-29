@@ -5,14 +5,25 @@ struct Bounds {
     float top;
 };
 
-cbuffer font_text_data : register(b0)
-{
+struct FontTextProps {
     float2 msdf_unit_range;
     float4 fg_colour;
     float4 bg_colour;
-}
+};
+ConstantBuffer<FontTextProps[1024]> font_text_props : register(b0);
 
+struct PushConstants
+{
+    uint32_t index;   
+};
+
+[[vk::push_constant]]
+ConstantBuffer<PushConstants> push_constants;
+
+[[vk::binding(0, 1)]]
 Texture2D msdf_font_texture;
+[[vk::binding(1, 1)]]
+SamplerState msdf_sampler;
 
 struct vs_out
 {
@@ -43,7 +54,6 @@ vs_out vs_main(uint vertId : SV_VertexID, float4 quad_bounds : TEXCOORD0, float4
     return output;
 }
 
-SamplerState MsdfSampler;
 
 float median(float r, float g, float b) {
     return max(min(r, g), min(max(r, g), b));
@@ -51,18 +61,20 @@ float median(float r, float g, float b) {
 
 float screenPxRange(float2 uvCoord) {
     float2 screenTexSize = float2(1.0, 1.0)/fwidth(uvCoord);
-    return max(0.5*dot(msdf_unit_range, screenTexSize), 1.0);
+    return max(0.5*dot(font_text_props[0].msdf_unit_range, screenTexSize), 1.0);
 }
 
 // converted from https://github.com/Chlumsky/msdfgen
 [shader("pixel")]
 float4 ps_main(vs_out input) : SV_TARGET
 {
-    float4 msd = msdf_font_texture.Sample(MsdfSampler, input.tex_coord.xy);
+    FontTextProps props = font_text_props[push_constants.index];
+
+    float4 msd = msdf_font_texture.Sample(msdf_sampler, input.tex_coord.xy);
     float sd = median(msd.r, msd.g, msd.b);
     float screenPxDistance = screenPxRange(input.tex_coord.xy) * (sd - 0.5);
     float opacity = clamp(screenPxDistance + 0.5, 0.0, 1.0);
     //return msd;
-    float4 colour = lerp(bg_colour, fg_colour, opacity);
+    float4 colour = lerp(props.bg_colour, props.fg_colour, opacity);
     return float4(colour.rgb * colour.a, colour.a);
 }

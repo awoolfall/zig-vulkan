@@ -1,5 +1,6 @@
 const std = @import("std");
 const zstbi = @import("zstbi");
+const eng = @import("self");
 const _gfx = @import("../gfx/gfx.zig");
 const zm = @import("zmath");
 const ui = @import("ui.zig");
@@ -46,37 +47,90 @@ const CharacterInfoConstantBuffer = extern struct {
     atlas_bounds: Bounds = .{},
 };
 
-const MSDF_FONT_SHADER_HLSL = @embedFile("font_shader.hlsl");
+const TextRenderInfo = struct {
+    text: []u8,
+    fg_colour: zm.F32x4,
+    bg_colour: zm.F32x4 = zm.f32x4s(0.0),
+    position: zm.F32x4,
+    size: f32,
+};
+
+const FontTextBufferData = struct {
+    text_buffer: _gfx.Buffer.Ref,
+    descriptor_set: _gfx.DescriptorSet.Ref,
+
+    pub fn deinit(self: *FontTextBufferData) void {
+        self.descriptor_set.deinit();
+        self.text_buffer.deinit();
+    }
+};
+
+const MSDF_FONT_SHADER_HLSL = @embedFile("font_shader.slang");
 
 pub const Font = struct {
-    const RENDER_INSTANCE_COUNT: u32 = 1024;
+    const TEXT_PROPS_PER_BUFFER = 1024;
+    const CHARACTERS_PER_VERTEX_BUFFER = 4096;
 
-    _allocator: std.mem.Allocator,
     atlas_details: AtlasDetails,
     font_metrics: FontMetrics,
     character_map: std.AutoHashMap(u21, CharacterInfo),
 
-    msdf_texture_view: _gfx.ImageView.Ref,
-    font_vso: _gfx.VertexShader,
-    font_pso: _gfx.PixelShader,
+    msdf_image: _gfx.Image.Ref,
+    msdf_image_view: _gfx.ImageView.Ref,
     sampler: _gfx.Sampler.Ref,
-    character_buffer: _gfx.Buffer.Ref,
-    font_text_buffer: _gfx.Buffer.Ref,
 
-    constant_buffer_data: []CharacterInfoConstantBuffer,
+    // TODO move to common font renderer struct
+    vertex_shader: _gfx.VertexShader,
+    pixel_shader: _gfx.PixelShader,
+
+    render_pass: _gfx.RenderPass.Ref,
+    pipeline: _gfx.GraphicsPipeline.Ref,
+    framebuffer: _gfx.FrameBuffer.Ref,
+
+    image_descriptor_layout: _gfx.DescriptorLayout.Ref,
+    image_descriptor_pool: _gfx.DescriptorPool.Ref,
+    image_descriptor_set: _gfx.DescriptorSet.Ref,
+
+    buffers_descriptor_layout: _gfx.DescriptorLayout.Ref,
+    buffers_descriptor_pool: _gfx.DescriptorPool.Ref,
+
+    character_vertex_buffers: std.ArrayList(_gfx.Buffer.Ref),
+    text_props_buffers: std.ArrayList(FontTextBufferData),
+
+    frame_texts: std.ArrayList(TextRenderInfo),
 
     pub fn deinit(self: *Font) void {
-        self.msdf_texture_view.deinit();
-        self.font_vso.deinit();
-        self.font_pso.deinit();
+        self.frame_texts.deinit();
+
+        for (self.text_props_buffers.items) |*b| { b.deinit(); }
+        self.text_props_buffers.deinit();
+        for (self.character_vertex_buffers.items) |b| { b.deinit(); }
+        self.character_vertex_buffers.deinit();
+
+        self.buffers_descriptor_pool.deinit();
+        self.buffers_descriptor_layout.deinit();
+
+        self.image_descriptor_set.deinit();
+        self.image_descriptor_pool.deinit();
+        self.image_descriptor_layout.deinit();
+
+        self.framebuffer.deinit();
+        self.pipeline.deinit();
+        self.render_pass.deinit();
+
+        self.vertex_shader.deinit();
+        self.pixel_shader.deinit();
+
+        self.msdf_image_view.deinit();
+        self.msdf_image.deinit();
         self.sampler.deinit();
-        self.character_buffer.deinit();
-        self.font_text_buffer.deinit();
+
         self.character_map.deinit();
-        self._allocator.free(self.constant_buffer_data);
     }
 
-    pub fn init(alloc: std.mem.Allocator, font_json: path.Path, font_msdf_png: path.Path) !Font {
+    pub fn init(font_json: path.Path, font_msdf_png: path.Path) !Font {
+        const alloc = eng.get().general_allocator;
+
         const font_json_path = try font_json.resolve_path(alloc);
         defer alloc.free(font_json_path);
 
@@ -125,53 +179,20 @@ pub const Font = struct {
         });
         defer font_data.deinit();
 
-        const constant_buffer_data = try alloc.alloc(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT);
-        @memset(constant_buffer_data[0..], CharacterInfoConstantBuffer{});
-
-        // construct font object
-        var font = Font {
-            ._allocator = alloc,
-            .msdf_texture_view = undefined,
-            .font_vso = undefined,
-            .font_pso = undefined,
-            .sampler = undefined,
-            .font_text_buffer = undefined,
-            .character_buffer = undefined,
-            .atlas_details = AtlasDetails {
-                .distance_range = font_data.value.atlas.distanceRange,
-                .size = font_data.value.atlas.size,
-                .width = font_data.value.atlas.width,
-                .height = font_data.value.atlas.height,
-            },
-            .font_metrics = FontMetrics {
-                .em_size = font_data.value.metrics.emSize,
-                .line_height = font_data.value.metrics.lineHeight,
-                .ascender = font_data.value.metrics.ascender,
-                .descender = -font_data.value.metrics.descender,
-                .underline_y = font_data.value.metrics.underlineY,
-                .underline_thickness = font_data.value.metrics.underlineThickness,
-            },
-            .character_map = std.AutoHashMap(u21, CharacterInfo).init(alloc),
-            .constant_buffer_data = constant_buffer_data,
+        const atlas_details = AtlasDetails {
+            .distance_range = font_data.value.atlas.distanceRange,
+            .size = font_data.value.atlas.size,
+            .width = font_data.value.atlas.width,
+            .height = font_data.value.atlas.height,
         };
-
-        const msdf_width: f32 = @floatFromInt(font.atlas_details.width);
-        const msdf_height: f32 = @floatFromInt(font.atlas_details.height);
-
-        // fill font character info array with data from font json
-        for (font_data.value.glyphs) |*glyph| {
-            const character_info = CharacterInfo {
-                .advance = glyph.advance,
-                .plane_bounds = glyph.planeBounds,
-                .atlas_bounds = Bounds {
-                    .left = (glyph.atlasBounds.left / msdf_width),
-                    .right = (glyph.atlasBounds.right / msdf_width),
-                    .top = 1.0 - (glyph.atlasBounds.top / msdf_height),
-                    .bottom = 1.0 - (glyph.atlasBounds.bottom / msdf_height),
-                },
-            };
-            try font.character_map.put(glyph.unicode, character_info);
-        }
+        const font_metrics = FontMetrics {
+            .em_size = font_data.value.metrics.emSize,
+            .line_height = font_data.value.metrics.lineHeight,
+            .ascender = font_data.value.metrics.ascender,
+            .descender = -font_data.value.metrics.descender,
+            .underline_y = font_data.value.metrics.underlineY,
+            .underline_thickness = font_data.value.metrics.underlineThickness,
+        };
 
         // load msdf font png file
         const font_png_path = try font_msdf_png.resolve_path_c_str(alloc);
@@ -181,10 +202,10 @@ pub const Font = struct {
         defer font_image.deinit();
 
         // create a d3d11 texture from the font png file
-        var msdf_texture = try _gfx.Image.init(
+        const msdf_image = try _gfx.Image.init(
             .{
-                .width = @intCast(font.atlas_details.width),
-                .height = @intCast(font.atlas_details.height),
+                .width = @intCast(atlas_details.width),
+                .height = @intCast(atlas_details.height),
                 .format = .Rgba8_Unorm,
 
                 .usage_flags = .{ .ShaderResource = true, },
@@ -193,14 +214,24 @@ pub const Font = struct {
             },
             font_image.data,
         );
-        defer msdf_texture.deinit();
+        errdefer msdf_image.deinit();
 
-        font.msdf_texture_view = try _gfx.ImageView.init(.{ .image = msdf_texture, });
-        errdefer font.msdf_texture_view.deinit();
+        const msdf_image_view = try _gfx.ImageView.init(.{ .image = msdf_image, });
+        errdefer msdf_image_view.deinit();
+
+        // create sampler
+        const sampler = try _gfx.Sampler.init(
+            .{
+                .filter_min_mag = .Linear,
+                .filter_mip = .Point,
+                .border_mode = .Wrap,
+            },
+        );
+        errdefer sampler.deinit();
 
         // create the font shaders
         // @TODO move font shader to a common location, not in each font file
-        font.font_vso = try _gfx.VertexShader.init_buffer(
+        const vertex_shader = try _gfx.VertexShader.init_buffer(
             MSDF_FONT_SHADER_HLSL,
             "vs_main",
             .{
@@ -214,49 +245,242 @@ pub const Font = struct {
             },
             .{},
         );
-        errdefer font.font_vso.deinit();
+        errdefer vertex_shader.deinit();
 
-        font.font_pso = try _gfx.PixelShader.init_buffer(
+        const pixel_shader = try _gfx.PixelShader.init_buffer(
             MSDF_FONT_SHADER_HLSL,
             "ps_main",
             .{},
         );
-        errdefer font.font_pso.deinit();
+        errdefer pixel_shader.deinit();
 
-        // create sampler
-        font.sampler = try _gfx.Sampler.init(
-            .{
-                .filter_min_mag = .Linear,
-                .filter_mip = .Point,
-                .border_mode = .Wrap,
+        const attachments = &[_]_gfx.AttachmentInfo {
+            _gfx.AttachmentInfo {
+                .name = "colour",
+                .format = _gfx.GfxState.ldr_format,
+                .initial_layout = .ColorAttachmentOptimal,
+                .final_layout = .ColorAttachmentOptimal,
+                .blend_type = .PremultipliedAlpha,
             },
-        );
-        errdefer font.sampler.deinit();
+            _gfx.AttachmentInfo {
+                .name = "depth",
+                .format = _gfx.GfxState.depth_format,
+                .initial_layout = .DepthStencilAttachmentOptimal,
+                .final_layout = .DepthStencilAttachmentOptimal,
+            },
+        };
 
-        // create blend state
-        // font.blend_state = try _gfx.BlendState.init(
-        //     ([_]_gfx.BlendType { .PremultipliedAlpha })[0..],
-        //     gfx
-        // );
-        // errdefer font.blend_state.deinit();
+        const render_pass = try _gfx.RenderPass.init(.{
+            .attachments = attachments,
+            .subpasses = &[_]_gfx.SubpassInfo {
+                .{
+                    .attachments = &.{ "colour" },
+                    .depth_attachment = "depth",
+                },
+            },
+            .dependencies = &.{
+                _gfx.SubpassDependencyInfo {
+                    .src_subpass = null,
+                    .dst_subpass = 0,
+                    .src_stage_mask = .{ .color_attachment_output = true, },
+                    .src_access_mask = .{},
+                    .dst_stage_mask = .{ .color_attachment_output = true, },
+                    .dst_access_mask = .{ .color_attachment_write = true, },
+                },
+            },
+        });
+        errdefer render_pass.deinit();
 
-        // create constant buffers
-        font.font_text_buffer = try _gfx.Buffer.init(
-            @sizeOf(FontConstantBuffer),
+        const buffers_descriptor_layout = try _gfx.DescriptorLayout.init(.{
+            .bindings = &[_]_gfx.DescriptorBindingInfo {
+                _gfx.DescriptorBindingInfo {
+                    .binding = 0,
+                    .binding_type = .UniformBuffer,
+                    .shader_stages = .{ .Pixel = true, },
+                },
+            },
+        });
+        errdefer buffers_descriptor_layout.deinit();
+
+        const buffers_descriptor_pool = try _gfx.DescriptorPool.init(.{
+            .max_sets = 64,
+            .strategy = .{ .Layout = buffers_descriptor_layout, },
+        });
+        errdefer buffers_descriptor_pool.deinit();
+
+        const image_descriptor_layout = try _gfx.DescriptorLayout.init(.{
+            .bindings = &.{
+                _gfx.DescriptorBindingInfo {
+                    .binding = 0,
+                    .binding_type = .ImageView,
+                    .shader_stages = .{ .Pixel = true, },
+                },
+                _gfx.DescriptorBindingInfo {
+                    .binding = 1,
+                    .binding_type = .Sampler,
+                    .shader_stages = .{ .Pixel = true, },
+                },
+            },
+        });
+        errdefer image_descriptor_layout.deinit();
+
+        const image_descriptor_pool = try _gfx.DescriptorPool.init(.{
+            .max_sets = 1,
+            .strategy = .{ .Layout = image_descriptor_layout, },
+        });
+        errdefer image_descriptor_pool.deinit();
+
+        const image_descriptor_set = try (image_descriptor_pool.get() catch unreachable)
+            .allocate_set(.{ .layout = image_descriptor_layout, });
+        errdefer image_descriptor_set.deinit();
+
+        try (image_descriptor_set.get() catch unreachable).update(_gfx.DescriptorSetUpdateInfo {
+            .writes = &.{
+                .{
+                    .binding = 0,
+                    .data = .{ .ImageView = msdf_image_view },
+                },
+                .{
+                    .binding = 1,
+                    .data = .{ .Sampler = sampler },
+                },
+            },
+        });
+
+        const graphics_pipeline = try _gfx.GraphicsPipeline.init(.{
+            .vertex_shader = &vertex_shader,
+            .pixel_shader = &pixel_shader,
+            .attachments = attachments,
+            .cull_mode = .CullNone, // TODO
+            .descriptor_set_layouts = &.{
+                buffers_descriptor_layout,
+                image_descriptor_layout,
+            },
+            .push_constants = &.{
+                _gfx.PushConstantLayoutInfo {
+                    .shader_stages = .{ .Pixel = true, },
+                    .size = 4,
+                    .offset = 0,
+                },
+            },
+            .depth_test = .{ .write = true, },
+            .render_pass = render_pass,
+            .subpass_index = 0,
+        });
+        errdefer graphics_pipeline.deinit();
+
+        const framebuffer = try _gfx.FrameBuffer.init(.{
+            .render_pass = render_pass,
+            .attachments = &.{
+                .SwapchainLDR,
+                .SwapchainDepth,
+            },
+        });
+        errdefer framebuffer.deinit();
+
+        const msdf_width: f32 = @floatFromInt(atlas_details.width);
+        const msdf_height: f32 = @floatFromInt(atlas_details.height);
+
+        var character_map = std.AutoHashMap(u21, CharacterInfo).init(alloc);
+        errdefer character_map.deinit();
+
+        // fill font character info array with data from font json
+        for (font_data.value.glyphs) |*glyph| {
+            const character_info = CharacterInfo {
+                .advance = glyph.advance,
+                .plane_bounds = glyph.planeBounds,
+                .atlas_bounds = Bounds {
+                    .left = (glyph.atlasBounds.left / msdf_width),
+                    .right = (glyph.atlasBounds.right / msdf_width),
+                    .top = 1.0 - (glyph.atlasBounds.top / msdf_height),
+                    .bottom = 1.0 - (glyph.atlasBounds.bottom / msdf_height),
+                },
+            };
+            try character_map.put(glyph.unicode, character_info);
+        }
+
+        // create arrays
+        const character_vertex_buffers = std.ArrayList(_gfx.Buffer.Ref).init(eng.get().general_allocator);
+        errdefer character_vertex_buffers.deinit();
+
+        const text_props_buffers = std.ArrayList(FontTextBufferData).init(eng.get().general_allocator);
+        errdefer text_props_buffers.deinit();
+
+        const frame_texts = std.ArrayList(TextRenderInfo).init(eng.get().general_allocator);
+        errdefer frame_texts.deinit();
+
+        return Font {
+            .atlas_details = atlas_details,
+            .font_metrics = font_metrics,
+            .character_map = character_map,
+
+            .msdf_image = msdf_image,
+            .msdf_image_view = msdf_image_view,
+            .sampler = sampler,
+
+            .vertex_shader = vertex_shader,
+            .pixel_shader = pixel_shader,
+
+            .render_pass = render_pass,
+            .pipeline = graphics_pipeline,
+            .framebuffer = framebuffer,
+
+            .image_descriptor_layout = image_descriptor_layout,
+            .image_descriptor_pool = image_descriptor_pool,
+            .image_descriptor_set = image_descriptor_set,
+
+            .buffers_descriptor_layout = buffers_descriptor_layout,
+            .buffers_descriptor_pool = buffers_descriptor_pool,
+
+            .character_vertex_buffers = character_vertex_buffers,
+            .text_props_buffers = text_props_buffers,
+
+            .frame_texts = frame_texts,
+        };
+    }
+
+    fn frame_allocator() std.mem.Allocator {
+        return eng.get().frame_allocator;
+    }
+
+    fn create_new_text_props_buffer(self: *Font) !void {
+        const new_buffer = try _gfx.Buffer.init(
+            @sizeOf(FontConstantBuffer) * Font.TEXT_PROPS_PER_BUFFER,
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
         );
-        errdefer font.font_text_buffer.deinit();
+        errdefer new_buffer.deinit();
 
-        font.character_buffer = try _gfx.Buffer.init(
-            @sizeOf([RENDER_INSTANCE_COUNT]CharacterInfoConstantBuffer),
+        const descriptor_set = try (self.buffers_descriptor_pool.get() catch unreachable)
+            .allocate_set(.{ .layout = self.buffers_descriptor_layout, });
+        errdefer descriptor_set.deinit();
+
+        try (descriptor_set.get() catch unreachable).update(_gfx.DescriptorSetUpdateInfo {
+            .writes = &[_]_gfx.DescriptorSetUpdateWriteInfo {
+                .{
+                    .binding = 0,
+                    .data = .{ .UniformBuffer = .{
+                        .buffer = new_buffer,
+                    } },
+                },
+            },
+        });
+
+        try self.text_props_buffers.append(FontTextBufferData {
+            .text_buffer = new_buffer,
+            .descriptor_set = descriptor_set,
+        });
+    }
+
+    fn create_new_character_vertex_buffer(self: *Font) !void {
+        const new_buffer = try _gfx.Buffer.init(
+            @sizeOf(CharacterInfoConstantBuffer) * Font.CHARACTERS_PER_VERTEX_BUFFER,
             .{ .VertexBuffer = true, },
             .{ .CpuWrite = true, },
         );
-        errdefer font.character_buffer.deinit();
+        errdefer new_buffer.deinit();
 
-        // finally return the font structure
-        return font;
+        try self.character_vertex_buffers.append(new_buffer);
     }
 
     pub const FontRenderProperties2D = struct {
@@ -265,128 +489,397 @@ pub const Font = struct {
         colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
     };
 
-    pub fn render_text_2d(
-        self: *const Font,
+    pub fn submit_text_2d(
+        self: *Font,
         text: []const u8,
         props: FontRenderProperties2D,
-        rtv: _gfx.ImageView.Ref, 
-    ) void {
-        const gfx = _gfx.GfxState.get();
+    ) !void {
+        const alloc = frame_allocator();
 
-        if (text.len == 0) { return; }
-        
-        const view = rtv.get() catch unreachable;
-        const aspect = (@as(f32, @floatFromInt(view.size.width)) / @as(f32, @floatFromInt(view.size.height)));
-        const xy_screen_space = ui.position_pixels_to_screen_space(
-            props.position.x,
-            props.position.y,
-            @floatFromInt(view.size.width),
-            @floatFromInt(view.size.height)
-        );
-        var y_loc = xy_screen_space[1];
-        var x_loc = xy_screen_space[0];
-        const x_start_loc = x_loc;
+        const owned_text = try alloc.dupe(u8, text);
+        errdefer alloc.free(owned_text);
 
-        const percpx = props.pixel_height / @as(f32, @floatFromInt(view.size.height));
-        const screen_size = (percpx * 2.0);
+        try self.frame_texts.append(TextRenderInfo {
+            .text = owned_text,
+            .position = zm.f32x4(props.position.x, props.position.y, 0.0, 0.0),
+            .fg_colour = props.colour,
+            .bg_colour = props.colour * zm.f32x4(1.0, 1.0, 1.0, 0.0),
+            .size = props.pixel_height,
+        });
+    }
 
-        const viewport = _gfx.Viewport {
-            .width = @floatFromInt(view.size.width),
-            .height = @floatFromInt(view.size.height),
-            .min_depth = 0.0,
-            .max_depth = 1.0,
-            .top_left_x = 0,
-            .top_left_y = 0,
-        };
-        gfx.cmd_set_viewport(viewport);
+    pub fn render_texts(
+        self: *Font,
+        cmd: *_gfx.CommandBuffer,
+    ) !void {
+        // return early if there are no text items
+        if (self.frame_texts.items.len == 0) { return; }
 
-        gfx.cmd_set_pixel_shader(&self.font_pso);
-        gfx.cmd_set_shader_resources(.Pixel, 0, &.{self.msdf_texture_view});
+        // defer clear text items set to render this frame
+        // TODO there may be a memory issue if this isnt called every frame, fix?
+        defer self.frame_texts.clearRetainingCapacity();
+        defer for (self.frame_texts.items) |t| { frame_allocator().free(t.text); };
 
-        gfx.cmd_set_render_target(&.{rtv}, null);
+        // run common commands
+        cmd.cmd_begin_render_pass(_gfx.CommandBuffer.BeginRenderPassInfo {
+            .framebuffer = self.framebuffer,
+            .render_pass = self.render_pass,
+            .render_area = .full_screen_pixels(),
+        });
+        defer cmd.cmd_end_render_pass();
 
-        gfx.cmd_set_vertex_shader(&self.font_vso);
+        cmd.cmd_bind_graphics_pipeline(self.pipeline);
 
-        gfx.cmd_set_topology(.TriangleList);
-        gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+        cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport() }, });
+        cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels(), }, } );
 
-        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.font_text_buffer});
-        gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
-
-        gfx.cmd_set_vertex_buffers(0, &.{
-            .{ .buffer = &self.character_buffer, .stride = @sizeOf(CharacterInfoConstantBuffer), .offset = 0, },
+        cmd.cmd_bind_descriptor_sets(_gfx.CommandBuffer.BindDescriptorSetInfo {
+            .graphics_pipeline = self.pipeline,
+            .first_binding = 1,
+            .descriptor_sets = &.{
+                self.image_descriptor_set,
+            },
         });
 
-        { // Setup font text info buffer
-            const mapped_buffer = self.font_text_buffer.map(.{ .write = true, }) catch unreachable;
-            defer mapped_buffer.unmap();
+        // set mapped buffers to null, these will be set dynamically in the following loop
+        var mapped_vertex_buffer: ?_gfx.Buffer.MappedBuffer = null;
+        defer if (mapped_vertex_buffer) |b| b.unmap();
 
-            mapped_buffer.data(FontConstantBuffer).* = FontConstantBuffer {
+        var mapped_text_props_buffer: ?_gfx.Buffer.MappedBuffer = null;
+        defer if (mapped_text_props_buffer) |b| b.unmap();
+
+        // keep track of buffer indexes
+        var vertex_buffer_idx: isize = -1;
+        var next_character_idx: usize = Font.CHARACTERS_PER_VERTEX_BUFFER;
+
+        var text_props_buffer_idx: isize = -1;
+        var next_text_props_idx: usize = Font.TEXT_PROPS_PER_BUFFER;
+
+        // perform rendering for all text items using this font
+        for (self.frame_texts.items) |t| for_frame_texts_blk: {
+            // calculate text length in utf8 codepoints
+            const utf8_length = std.unicode.utf8CountCodepoints(t.text) catch |err| {
+                std.log.warn("Unable to count text codepoints: {}", .{err});
+                continue;
+            };
+
+            // skip rendering if text is outside of supported lengths
+            if (utf8_length > Font.CHARACTERS_PER_VERTEX_BUFFER) {
+                std.log.warn("text is greater than {} characters, skipping", .{ Font.CHARACTERS_PER_VERTEX_BUFFER });
+                continue;
+            }
+            if (utf8_length == 0) { continue; }
+
+            // check we can fit text data into the current text props buffer, if not then create a new one
+            if (next_text_props_idx >= Font.TEXT_PROPS_PER_BUFFER) {
+                // increment buffer index and reset props index
+                text_props_buffer_idx += 1;
+                next_text_props_idx = 0;
+
+                // create new text props buffer if necessary
+                if (self.text_props_buffers.items.len == text_props_buffer_idx) {
+                    self.create_new_text_props_buffer() catch |err| {
+                        std.log.err("Unable to create new text props buffer: {}", .{err});
+                        break :for_frame_texts_blk;
+                    };
+                }
+
+                // update mapped buffer
+                if (mapped_text_props_buffer) |b| { b.unmap(); }
+                const text_props_buffer = self.text_props_buffers.items[@intCast(text_props_buffer_idx)].text_buffer.get() catch unreachable;
+                mapped_text_props_buffer = text_props_buffer.map(.{ .write = true, }) catch |err| {
+                    std.log.err("Unable to map text props buffer: {}", .{err});
+                    break :for_frame_texts_blk;
+                };
+
+                cmd.cmd_bind_descriptor_sets(_gfx.CommandBuffer.BindDescriptorSetInfo {
+                    .graphics_pipeline = self.pipeline,
+                    .first_binding = 0,
+                    .descriptor_sets = &.{ self.text_props_buffers.items[@intCast(text_props_buffer_idx)].descriptor_set },
+                });
+            }
+
+            // check we can fit text character data into the current character vertex buffer, if not then create a new one
+            if (next_character_idx + utf8_length > Font.CHARACTERS_PER_VERTEX_BUFFER) {
+                // increment buffer index and reset characters index
+                vertex_buffer_idx += 1;
+                next_character_idx = 0;
+
+                // create new character vertex buffer if necessary
+                if (self.character_vertex_buffers.items.len == vertex_buffer_idx) {
+                    self.create_new_character_vertex_buffer() catch |err| {
+                        std.log.err("Unable to create new character vertex buffer: {}", .{err});
+                        break :for_frame_texts_blk;
+                    };
+                }
+
+                // update mapped buffer
+                if (mapped_vertex_buffer) |b| { b.unmap(); }
+                const vertex_buffer = self.character_vertex_buffers.items[@intCast(vertex_buffer_idx)].get() catch unreachable;
+                mapped_vertex_buffer = vertex_buffer.map(.{ .write = true, }) catch |err| {
+                    std.log.err("Unable to map character vertex buffer: {}", .{err});
+                    break :for_frame_texts_blk;
+                };
+
+                cmd.cmd_bind_vertex_buffers(_gfx.CommandBuffer.BindVertexBuffersInfo {
+                    .first_binding = 0,
+                    .buffers = &.{ 
+                        .{
+                            .buffer = self.character_vertex_buffers.items[@intCast(vertex_buffer_idx)],
+                        },
+                    },
+                });
+            }
+
+            var layout_info = CharacterLayoutInfo {
+                .x_start_location = t.position[0],
+                .x_location = t.position[0],
+                .y_location = t.position[1],
+            };
+
+            // get an iterator over the utf-8 codepoints
+            const text_utf8 = std.unicode.Utf8View.init(t.text) catch |err| {
+                std.log.warn("Unable to create utf-8 view for text '{s}': {}", .{t.text, err});
+                continue;
+            };
+            var text_utf8_iter = text_utf8.iterator();
+
+            const character_start_idx = next_character_idx;
+
+            // iterate codepoints and fill character vertex buffer
+            while (text_utf8_iter.nextCodepoint()) |c| {
+                const character_info = self.character_map.get(c) orelse {
+                    //std.log.warn("Unable to retrieve character info from map", .{});
+                    continue;
+                };
+
+                const character_quad_bounds = self.calculate_character_quad_bounds(&layout_info, c, t.size) catch {
+                    continue;
+                };
+                self.layout_another_character(&layout_info, c);
+
+                const data_array = mapped_vertex_buffer.?.data_array(CharacterInfoConstantBuffer, Font.CHARACTERS_PER_VERTEX_BUFFER);
+                data_array[next_character_idx] = CharacterInfoConstantBuffer {
+                    .atlas_bounds = character_info.atlas_bounds,
+                    .quad_bounds = character_quad_bounds,
+                };
+
+                // increment character index
+                next_character_idx += 1;
+            }
+
+            // skip rendering if there are no characters to render
+            if (next_character_idx == character_start_idx) { continue; }
+
+            // fill text properties buffer at index
+            const text_props_buffer = mapped_text_props_buffer.?.data_array(FontConstantBuffer, Font.TEXT_PROPS_PER_BUFFER);
+            text_props_buffer[next_text_props_idx] = FontConstantBuffer {
+                .bg_colour = t.bg_colour,
+                .fg_colour = t.fg_colour,
                 .msdf_unit_range = zm.f32x4s(self.atlas_details.distance_range) 
                     / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),
-                .fg_colour = props.colour,
-                .bg_colour = props.colour * zm.f32x4(1.0, 1.0, 1.0, 0.0),
             };
+
+            // set push constant to text props index
+            cmd.cmd_push_constants(_gfx.CommandBuffer.PushConstantsInfo {
+                .graphics_pipeline = self.pipeline,
+                .shader_stages = .{ .Pixel = true, },
+                .offset = 0,
+                .size = 4,
+                .data = std.mem.toBytes(next_text_props_idx)[0..],
+            });
+
+            // draw instanced all characters in this text item
+            cmd.cmd_draw(_gfx.CommandBuffer.DrawInfo {
+                .first_instance = @intCast(character_start_idx),
+                .instance_count = @intCast(next_character_idx - character_start_idx),
+                .vertex_count = 6,
+            });
+            
+            // increment props index
+            next_text_props_idx += 1;
+        }
+    }
+
+    // pub fn render_text_2d(
+    //     self: *const Font,
+    //     text: []const u8,
+    //     props: FontRenderProperties2D,
+    //     rtv: _gfx.ImageView.Ref, 
+    // ) void {
+    //     const gfx = _gfx.GfxState.get();
+    //
+    //     if (text.len == 0) { return; }
+    //     
+    //     const view = rtv.get() catch unreachable;
+    //     const aspect = (@as(f32, @floatFromInt(view.size.width)) / @as(f32, @floatFromInt(view.size.height)));
+    //     const xy_screen_space = ui.position_pixels_to_screen_space(
+    //         props.position.x,
+    //         props.position.y,
+    //         @floatFromInt(view.size.width),
+    //         @floatFromInt(view.size.height)
+    //     );
+    //     var y_loc = xy_screen_space[1];
+    //     var x_loc = xy_screen_space[0];
+    //     const x_start_loc = x_loc;
+    //
+    //     const percpx = props.pixel_height / @as(f32, @floatFromInt(view.size.height));
+    //     const screen_size = (percpx * 2.0);
+    //
+    //     const viewport = _gfx.Viewport {
+    //         .width = @floatFromInt(view.size.width),
+    //         .height = @floatFromInt(view.size.height),
+    //         .min_depth = 0.0,
+    //         .max_depth = 1.0,
+    //         .top_left_x = 0,
+    //         .top_left_y = 0,
+    //     };
+    //     gfx.cmd_set_viewport(viewport);
+    //
+    //     gfx.cmd_set_pixel_shader(&self.font_pso);
+    //     gfx.cmd_set_shader_resources(.Pixel, 0, &.{self.msdf_texture_view});
+    //
+    //     gfx.cmd_set_render_target(&.{rtv}, null);
+    //
+    //     gfx.cmd_set_vertex_shader(&self.font_vso);
+    //
+    //     gfx.cmd_set_topology(.TriangleList);
+    //     gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+    //
+    //     gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.font_text_buffer});
+    //     gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
+    //
+    //     gfx.cmd_set_vertex_buffers(0, &.{
+    //         .{ .buffer = &self.character_buffer, .stride = @sizeOf(CharacterInfoConstantBuffer), .offset = 0, },
+    //     });
+    //
+    //     { // Setup font text info buffer
+    //         const mapped_buffer = self.font_text_buffer.map(.{ .write = true, }) catch unreachable;
+    //         defer mapped_buffer.unmap();
+    //
+    //         mapped_buffer.data(FontConstantBuffer).* = FontConstantBuffer {
+    //             .msdf_unit_range = zm.f32x4s(self.atlas_details.distance_range) 
+    //                 / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),
+    //             .fg_colour = props.colour,
+    //             .bg_colour = props.colour * zm.f32x4(1.0, 1.0, 1.0, 0.0),
+    //         };
+    //     }
+    //
+    //     const text_utf8 = std.unicode.Utf8View.init(text) catch unreachable; // TODO handle error
+    //     var text_utf8_iter = text_utf8.iterator();
+    //
+    //     var instance_id: usize = 0;
+    //     while (text_utf8_iter.nextCodepoint()) |c| {
+    //         if (instance_id >= RENDER_INSTANCE_COUNT) {
+    //             {
+    //                 const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
+    //                 defer mapped_buffer.unmap();
+    //
+    //                 @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
+    //             }
+    //
+    //             gfx.cmd_draw_instanced(6, RENDER_INSTANCE_COUNT, 0, 0);
+    //
+    //             instance_id = 0;
+    //         }
+    //
+    //         // handle newline
+    //         switch (c) {
+    //             '\n' => {
+    //                 x_loc = x_start_loc;
+    //                 y_loc -= self.font_metrics.line_height * screen_size;
+    //                 self.constant_buffer_data[instance_id] = .{};
+    //             },
+    //             else => {
+    //                 const char_info = self.character_map.get(c) orelse continue; // TODO handle error
+    //
+    //                 const quad_bounds = Bounds {
+    //                     .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
+    //                     .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
+    //                     .top = y_loc + char_info.plane_bounds.top * screen_size,
+    //                     .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
+    //                 };
+    //
+    //                 // Setup character info buffer
+    //                 self.constant_buffer_data[instance_id] = .{
+    //                     .quad_bounds = quad_bounds,
+    //                     .atlas_bounds = char_info.atlas_bounds,
+    //                 };
+    //
+    //                 x_loc += (char_info.advance / aspect) * screen_size;
+    //             }
+    //         }
+    //
+    //         instance_id += 1;
+    //     }
+    //     // render the remaining characters
+    //     if (instance_id > 0) {
+    //         {
+    //             const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
+    //             defer mapped_buffer.unmap();
+    //
+    //             @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
+    //         }
+    //
+    //         gfx.cmd_draw_instanced(6, @truncate(instance_id), 0, 0);
+    //     }
+    // }
+
+    const CharacterLayoutInfo = struct {
+        x_location: f32,
+        y_location: f32,
+        x_start_location: f32,
+        line_count: f32 = 0.0,
+        max_x: f32 = 0.0,
+    };
+
+    fn layout_another_character(
+        self: *const Font,
+        info: *CharacterLayoutInfo,
+        character_codepoint: u21,
+    ) void {
+        switch (character_codepoint) {
+            '\n' => {
+                info.x_location = info.x_start_location;
+                info.line_count += 1.0;
+            },
+            else => {
+                const char_info = self.character_map.get(character_codepoint) orelse return;
+                info.x_location += char_info.advance;
+            },
         }
 
-        const text_utf8 = std.unicode.Utf8View.init(text) catch unreachable; // TODO handle error
-        var text_utf8_iter = text_utf8.iterator();
+        info.max_x = @max(info.max_x, info.x_location);
+    }
 
-        var instance_id: usize = 0;
-        while (text_utf8_iter.nextCodepoint()) |c| {
-            if (instance_id >= RENDER_INSTANCE_COUNT) {
-                {
-                    const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
-                    defer mapped_buffer.unmap();
+    fn calculate_character_quad_bounds(
+        self: *const Font,
+        layout_info: *const CharacterLayoutInfo,
+        character_codepoint: u21,
+        pixel_height: f32,
+    ) !Bounds {
+        const char_info = self.character_map.get(character_codepoint) orelse return error.CharacterInfoDoesNotExist;
 
-                    @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
-                }
+        const screen_size = eng.get().gfx.swapchain_size();
+        const size_f32 = [2]f32{ @floatFromInt(screen_size[0]), @floatFromInt(screen_size[1]) };
+        const screen_aspect = eng.get().gfx.swapchain_aspect();
 
-                gfx.cmd_draw_instanced(6, RENDER_INSTANCE_COUNT, 0, 0);
+        const percpx = pixel_height / @as(f32, @floatFromInt(screen_size[1]));
+        const font_screen_size = (percpx * 2.0);
 
-                instance_id = 0;
-            }
+        const location = [2]f32{ layout_info.x_location / size_f32[0], layout_info.y_location / size_f32[1] };
 
-            // handle newline
-            switch (c) {
-                '\n' => {
-                    x_loc = x_start_loc;
-                    y_loc -= self.font_metrics.line_height * screen_size;
-                    self.constant_buffer_data[instance_id] = .{};
-                },
-                else => {
-                    const char_info = self.character_map.get(c) orelse continue; // TODO handle error
+        var bounds = Bounds {
+            .left = location[0] + char_info.plane_bounds.left * font_screen_size,
+            .right = location[0] + char_info.plane_bounds.right * font_screen_size,
+            .top = location[1] + char_info.plane_bounds.top * font_screen_size,
+            .bottom = location[1] + char_info.plane_bounds.bottom * font_screen_size,
+        };
 
-                    const quad_bounds = Bounds {
-                        .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
-                        .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
-                        .top = y_loc + char_info.plane_bounds.top * screen_size,
-                        .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
-                    };
+        bounds.left /= screen_aspect;
+        bounds.right /= screen_aspect;
 
-                    // Setup character info buffer
-                    self.constant_buffer_data[instance_id] = .{
-                        .quad_bounds = quad_bounds,
-                        .atlas_bounds = char_info.atlas_bounds,
-                    };
-
-                    x_loc += (char_info.advance / aspect) * screen_size;
-                }
-            }
-
-            instance_id += 1;
-        }
-        // render the remaining characters
-        if (instance_id > 0) {
-            {
-                const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
-                defer mapped_buffer.unmap();
-
-                @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
-            }
-
-            gfx.cmd_draw_instanced(6, @truncate(instance_id), 0, 0);
-        }
+        return bounds;
     }
 
     pub fn text_bounds_2d_pixels(
