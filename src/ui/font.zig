@@ -631,11 +631,7 @@ pub const Font = struct {
                 });
             }
 
-            var layout_info = CharacterLayoutInfo {
-                .x_start_location = t.position[0],
-                .x_location = t.position[0],
-                .y_location = t.position[1],
-            };
+            var layout_info = CharacterLayoutInfo {};
 
             // get an iterator over the utf-8 codepoints
             const text_utf8 = std.unicode.Utf8View.init(t.text) catch |err| {
@@ -648,15 +644,13 @@ pub const Font = struct {
 
             // iterate codepoints and fill character vertex buffer
             while (text_utf8_iter.nextCodepoint()) |c| {
-                const character_info = self.character_map.get(c) orelse {
-                    //std.log.warn("Unable to retrieve character info from map", .{});
-                    continue;
-                };
-
-                const character_quad_bounds = self.calculate_character_quad_bounds(&layout_info, c, t.size) catch {
-                    continue;
-                };
+                const character_quad_bounds = self.calculate_character_quad_bounds(&layout_info, c, t.position, t.size)
+                    catch Bounds{};
                 self.layout_another_character(&layout_info, c);
+
+                const character_info = self.character_map.get(c) orelse {
+                    continue;
+                };
 
                 const data_array = mapped_vertex_buffer.?.data_array(CharacterInfoConstantBuffer, Font.CHARACTERS_PER_VERTEX_BUFFER);
                 data_array[next_character_idx] = CharacterInfoConstantBuffer {
@@ -826,9 +820,8 @@ pub const Font = struct {
     // }
 
     const CharacterLayoutInfo = struct {
-        x_location: f32,
-        y_location: f32,
-        x_start_location: f32,
+        x_location: f32 = 0.0,
+        y_location: f32 = 0.0,
         line_count: f32 = 0.0,
         max_x: f32 = 0.0,
     };
@@ -840,7 +833,8 @@ pub const Font = struct {
     ) void {
         switch (character_codepoint) {
             '\n' => {
-                info.x_location = info.x_start_location;
+                info.x_location = 0.0;
+                info.y_location += self.font_metrics.line_height;
                 info.line_count += 1.0;
             },
             else => {
@@ -856,6 +850,7 @@ pub const Font = struct {
         self: *const Font,
         layout_info: *const CharacterLayoutInfo,
         character_codepoint: u21,
+        text_start_location: zm.F32x4,
         pixel_height: f32,
     ) !Bounds {
         const char_info = self.character_map.get(character_codepoint) orelse return error.CharacterInfoDoesNotExist;
@@ -867,19 +862,19 @@ pub const Font = struct {
         const percpx = pixel_height / @as(f32, @floatFromInt(screen_size[1]));
         const font_screen_size = (percpx * 2.0);
 
-        const location = [2]f32{ layout_info.x_location / size_f32[0], layout_info.y_location / size_f32[1] };
-
-        var bounds = Bounds {
-            .left = location[0] + char_info.plane_bounds.left * font_screen_size,
-            .right = location[0] + char_info.plane_bounds.right * font_screen_size,
-            .top = location[1] + char_info.plane_bounds.top * font_screen_size,
-            .bottom = location[1] + char_info.plane_bounds.bottom * font_screen_size,
+        var location = [2]f32{
+            (text_start_location[0] / size_f32[0]) + (layout_info.x_location * pixel_height) / size_f32[0],
+            (text_start_location[1] / size_f32[1]) + (layout_info.y_location * pixel_height) / size_f32[1],
         };
+        location[0] = (location[0] * 2.0) - 1.0;
+        location[1] = (location[1] * 2.0) - 1.0;
 
-        bounds.left /= screen_aspect;
-        bounds.right /= screen_aspect;
-
-        return bounds;
+        return Bounds {
+            .left = location[0] + char_info.plane_bounds.left * font_screen_size / screen_aspect,
+            .right = location[0] + char_info.plane_bounds.right * font_screen_size / screen_aspect,
+            .top = location[1] - char_info.plane_bounds.top * font_screen_size,
+            .bottom = location[1] - char_info.plane_bounds.bottom * font_screen_size,
+        };
     }
 
     pub fn text_bounds_2d_pixels(
