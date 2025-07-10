@@ -197,6 +197,10 @@ pub const GfxState = struct {
         return &eng.get().gfx;
     }
 
+    pub fn props(self: *const Self) PlatformProperties {
+        return self.platform.props();
+    }
+
     pub fn swapchain_size(self: *const Self) [2]u32 {
         return self.platform.swapchain_size();
     }
@@ -204,6 +208,14 @@ pub const GfxState = struct {
     pub fn swapchain_aspect(self: *const Self) f32 {
         const s = self.swapchain_size();
         return @as(f32, @floatFromInt(s[0])) / @as(f32, @floatFromInt(s[1]));
+    }
+
+    pub fn frames_in_flight(self: *const Self) u32 {
+        return self.platform.frames_in_flight();
+    }
+
+    pub fn current_frame_index(self: *const Self) u32 {
+        return self.platform.current_frame_index();
     }
 
     fn init_single_pixel_texture(colour: zm.F32x4) !Image.Ref {
@@ -270,6 +282,10 @@ pub const GfxState = struct {
     }
 };
 
+pub const PlatformProperties = struct {
+    descriptor_buffer_offset_alignment: u64,
+};
+
 pub const QueueFamily = enum {
     Graphics,
     Transfer,
@@ -278,8 +294,7 @@ pub const QueueFamily = enum {
 
 pub const VertexBufferInput = struct {
     buffer: Buffer.Ref,
-    stride: u32,
-    offset: u32,
+    offset: u64 = 0,
 };
 
 pub const IndexFormat = enum {
@@ -1588,11 +1603,12 @@ pub const CommandBuffer = struct {
         try self.platform.cmd_end();
     }
 
+    pub const SubpassContents = enum {
+        Inline,
+        SecondaryCommandBuffers,
+    };
+
     pub const BeginRenderPassInfo = struct {
-        pub const SubpassContents = enum {
-            Inline,
-            SecondaryCommandBuffers,
-        };
 
         render_pass: RenderPass.Ref,
         framebuffer: FrameBuffer.Ref,
@@ -1602,6 +1618,14 @@ pub const CommandBuffer = struct {
 
     pub fn cmd_begin_render_pass(self: *Self, info: BeginRenderPassInfo) void {
         self.platform.cmd_begin_render_pass(info);
+    }
+
+    pub const NextSubpassInfo = struct {
+        subpass_contents: SubpassContents = .Inline,
+    };
+
+    pub fn cmd_next_subpass(self: *Self, info: NextSubpassInfo) void {
+        self.platform.cmd_next_subpass(info);
     }
 
     pub fn cmd_end_render_pass(self: *Self) void {
@@ -1630,14 +1654,9 @@ pub const CommandBuffer = struct {
         self.platform.cmd_set_scissors(info);
     }
 
-    pub const VertexBufferBindInfo = struct {
-        buffer: Buffer.Ref,
-        offset: u64 = 0,
-    };
-
     pub const BindVertexBuffersInfo = struct {
         first_binding: u32 = 0,
-        buffers: []const VertexBufferBindInfo,
+        buffers: []const VertexBufferInput,
     };
 
     pub fn cmd_bind_vertex_buffers(self: *Self, info: BindVertexBuffersInfo) void {
@@ -1669,7 +1688,6 @@ pub const CommandBuffer = struct {
         graphics_pipeline: GraphicsPipeline.Ref,
         shader_stages: ShaderStageFlags,
         offset: u32,
-        size: u32,
         data: []const u8,
     };
 

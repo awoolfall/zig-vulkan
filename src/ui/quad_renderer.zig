@@ -177,9 +177,7 @@ pub const QuadRenderer = struct {
             _gfx.AttachmentInfo {
                 .name = "colour",
                 .format = _gfx.GfxState.ldr_format,
-                .load_op = .Clear,
-                .clear_value = zm.srgbToRgb(zm.f32x4(133.0/255.0, 193.0/255.0, 233.0/255.0, 1.0)),
-                .initial_layout = .Undefined,
+                .initial_layout = .ColorAttachmentOptimal,
                 .final_layout = .ColorAttachmentOptimal,
                 .blend_type = .PremultipliedAlpha,
             },
@@ -188,7 +186,7 @@ pub const QuadRenderer = struct {
                 .format = _gfx.GfxState.depth_format,
                 .load_op = .Clear,
                 .stencil_load_op = .Clear,
-                .initial_layout = .Undefined,
+                .initial_layout = .DepthStencilAttachmentOptimal,
                 .final_layout = .DepthStencilAttachmentOptimal,
             },
         };
@@ -524,7 +522,6 @@ pub const QuadRenderer = struct {
             cmd.cmd_push_constants(_gfx.CommandBuffer.PushConstantsInfo {
                 .graphics_pipeline = self.pipeline,
                 .shader_stages = .{ .Vertex = true, .Pixel = true, },
-                .size = 4,
                 .offset = 0,
                 .data = std.mem.sliceAsBytes(([_]u32{ @as(u32, @intCast(idx)) })[0..]),
             });

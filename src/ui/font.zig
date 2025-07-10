@@ -679,7 +679,6 @@ pub const Font = struct {
                 .graphics_pipeline = self.pipeline,
                 .shader_stages = .{ .Pixel = true, },
                 .offset = 0,
-                .size = 4,
                 .data = std.mem.toBytes(next_text_props_idx)[0..],
             });
 

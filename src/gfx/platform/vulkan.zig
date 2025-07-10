@@ -118,6 +118,8 @@ pub const GfxStateVulkan = struct {
     swapchain: SwapchainInfo,
     temp_frame_wait_fence: c.VkFence,
 
+    properties: gf.PlatformProperties,
+
     pub fn deinit(self: *Self) void {
         std.log.info("Vulkan deinit", .{});
         vkt(c.vkDeviceWaitIdle(self.device)) catch |err| {
@@ -211,9 +213,9 @@ pub const GfxStateVulkan = struct {
         var best_physical_device_idx: usize = std.math.maxInt(usize);
         std.log.info("Available physical devices:", .{});
         for (physical_device_storage, 0..) |physical_device, idx| {
-            var props: c.VkPhysicalDeviceProperties = undefined;
-            c.vkGetPhysicalDeviceProperties(physical_device, &props);
-            std.log.info("- {s}", .{std.mem.sliceTo(&props.deviceName, 0)});
+            var prop: c.VkPhysicalDeviceProperties = undefined;
+            c.vkGetPhysicalDeviceProperties(physical_device, &prop);
+            std.log.info("- {s}", .{std.mem.sliceTo(&prop.deviceName, 0)});
 
             var physical_device_extension_count: u32 = undefined;
             vkt(c.vkEnumerateDeviceExtensionProperties(physical_device, null, &physical_device_extension_count, null))
@@ -287,7 +289,7 @@ pub const GfxStateVulkan = struct {
             }
 
             // @TODO: better physical device selection
-            if (props.deviceType == c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            if (prop.deviceType == c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
                 best_physical_device_idx = idx;
             }
         }
@@ -296,6 +298,7 @@ pub const GfxStateVulkan = struct {
             return error.UnableToFindASuitablePhysicalDevice;
         }
         self.physical_device = physical_device_storage[best_physical_device_idx];
+        self.properties = discover_platform_properties(self.physical_device);
 
         var physical_device_props: c.VkPhysicalDeviceProperties = undefined;
         c.vkGetPhysicalDeviceProperties(self.physical_device, &physical_device_props);
@@ -691,12 +694,42 @@ pub const GfxStateVulkan = struct {
         };
     }
 
+    fn discover_platform_properties(physical_device: c.VkPhysicalDevice) gf.PlatformProperties {
+        var buffer_properties = c.VkPhysicalDeviceDescriptorBufferPropertiesEXT {
+            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
+            .pNext = null,
+        };
+
+        var physical_device_properties = c.VkPhysicalDeviceProperties2 {
+            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+            .pNext = @ptrCast(&buffer_properties),
+        };
+
+        c.vkGetPhysicalDeviceProperties2(physical_device, @ptrCast(&physical_device_properties));
+
+        return gf.PlatformProperties {
+            .descriptor_buffer_offset_alignment = buffer_properties.descriptorBufferOffsetAlignment,
+        };
+    }
+
     pub inline fn get() *Self {
         return &eng.get().gfx.platform;
     }
 
-    pub fn swapchain_size(self: *const Self) [2]u32 {
+    pub inline fn props(self: *const Self) gf.PlatformProperties {
+        return self.platform_properties;
+    }
+
+    pub inline fn swapchain_size(self: *const Self) [2]u32 {
         return .{ self.swapchain.extent.width, self.swapchain.extent.height };
+    }
+
+    pub inline fn frames_in_flight(self: *const Self) u32 {
+        return self.swapchain.swapchain_image_count();
+    }
+
+    pub inline fn current_frame_index(self: *const Self) u32 {
+        return self.swapchain.current_image_index;
     }
 
     pub fn begin_frame(self: *Self) !gf.Semaphore {
@@ -708,7 +741,7 @@ pub const GfxStateVulkan = struct {
         // };
         self.flush();
 
-        const image_available_semaphore = self.swapchain.image_available_semaphores.items[self.get_frame_index()];
+        const image_available_semaphore = self.swapchain.image_available_semaphores.items[self.current_frame_index()];
 
         try vkt(c.vkAcquireNextImageKHR(
             self.device,
@@ -765,14 +798,14 @@ pub const GfxStateVulkan = struct {
         const MAX_WAIT_SEMAPHORES = 16;
         std.debug.assert(wait_semaphores.len < MAX_WAIT_SEMAPHORES);
 
-        const present_transition_semaphore = self.swapchain.present_transition_semaphores.items[self.get_frame_index()];
+        const present_transition_semaphore = self.swapchain.present_transition_semaphores.items[self.current_frame_index()];
         {
             var cmd = try begin_single_time_command_buffer(&self.all_command_pool);
             defer end_single_time_command_buffer(&cmd, present_transition_semaphore);
 
             const image_barrier = c.VkImageMemoryBarrier {
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .image = self.swapchain.swapchain_images.items[@intCast(self.get_frame_index())],
+                .image = self.swapchain.swapchain_images.items[@intCast(self.current_frame_index())],
                 .oldLayout = imagelayout_to_vulkan(.ColorAttachmentOptimal),
                 .newLayout = imagelayout_to_vulkan(.PresentSrc),
                 .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
@@ -847,10 +880,6 @@ pub const GfxStateVulkan = struct {
             .Graphics, .Compute => self.queues.all_family_index,
             .Transfer => self.queues.cpu_gpu_transfer_family_index,
         };
-    }
-
-    pub inline fn get_frame_index(self: *const Self) u32 {
-        return self.swapchain.current_image_index;
     }
 };
 
@@ -927,19 +956,33 @@ const ShaderModule = struct {
         alloc.free(self.entry_point);
     }
 
-    pub fn init(
-        shader_data: []const u8, 
-        shader_entry_point: []const u8, 
+    pub const InitInfo = struct {
+        shader_data: []const u8,
+        shader_entry_point: []const u8,
         shader_stage: gf.ShaderStage,
-    ) !Self {
+        preprocessor_macros: []const gf.ShaderDefineTuple = &.{},
+    };
+
+    pub fn init(info: InitInfo) !Self {
         const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
+
+        var preproc_macro_arena = std.heap.ArenaAllocator.init(alloc);
+        defer preproc_macro_arena.deinit();
+        const macro_alloc = preproc_macro_arena.allocator();
+
+        const preprocessor_macros = try macro_alloc.alloc(slang.c.PreprocessorMacro, info.preprocessor_macros.len);
+        defer macro_alloc.free(preprocessor_macros);
+
+        for (info.preprocessor_macros, 0..) |m, idx| {
+            preprocessor_macros[idx].name = try macro_alloc.dupeZ(u8, m[0]);
+            preprocessor_macros[idx].value = try macro_alloc.dupeZ(u8, m[1]);
+        }
 
         const session_create_info = slang.SessionCreateInfo {
             .compile_target = slang.c.TARGET_SPIRV,
             .profile = "spirv_1_3",
-            .preprocessor_macros = &.{
-            },
+            .preprocessor_macros = preprocessor_macros,
             .compile_options = &.{
                 .{ .name = slang.c.VulkanUseEntryPointName, .value = .{ .kind = slang.c.Int, .intValue0 = 1, }, },
             },
@@ -951,7 +994,7 @@ const ShaderModule = struct {
         const diagnostics_blob = try slang.check(slang.c.create_blob());
         defer slang.c.destroy_blob(diagnostics_blob);
 
-        const shader_data_z = try gfx.platform.alloc.dupeZ(u8, shader_data);
+        const shader_data_z = try gfx.platform.alloc.dupeZ(u8, info.shader_data);
         defer gfx.platform.alloc.free(shader_data_z);
 
         const module_create_info = slang.c.ModuleCreateInfo {
@@ -967,7 +1010,7 @@ const ShaderModule = struct {
         };
         defer slang.c.destroy_module(slang_module);
 
-        const entry_point_z = try gfx.platform.alloc.dupeZ(u8, shader_entry_point);
+        const entry_point_z = try gfx.platform.alloc.dupeZ(u8, info.shader_entry_point);
         defer gfx.platform.alloc.free(entry_point_z);
 
         const entry_point_create_info = slang.c.EntryPointCreateInfo {
@@ -1019,7 +1062,7 @@ const ShaderModule = struct {
 
         const spirv_shader_code = slang.blob_slice(output_blob);
 
-        const entry_point = try alloc.dupeZ(u8, shader_entry_point);
+        const entry_point = try alloc.dupeZ(u8, info.shader_entry_point);
         errdefer alloc.free(entry_point);
 
         const aligned_data = try alloc.alignedAlloc(u8, 4, spirv_shader_code.len);
@@ -1038,7 +1081,7 @@ const ShaderModule = struct {
 
         const shader_stage_create_info = c.VkPipelineShaderStageCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = switch (shader_stage) {
+            .stage = switch (info.shader_stage) {
                 .Vertex => c.VK_SHADER_STAGE_VERTEX_BIT,
                 .Pixel => c.VK_SHADER_STAGE_FRAGMENT_BIT,
                 .Compute => c.VK_SHADER_STAGE_COMPUTE_BIT,
@@ -1078,11 +1121,15 @@ pub const VertexShaderVulkan = struct {
         vs_layout: gf.VertexInputLayoutInfo,
         options: gf.VertexShaderOptions,
     ) !Self {
-        _ = options;
         const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
 
-        const shader_module = try ShaderModule.init(vs_data, vs_func, gf.ShaderStage.Vertex);
+        const shader_module = try ShaderModule.init(.{
+            .shader_data = vs_data,
+            .shader_entry_point = vs_func,
+            .shader_stage = gf.ShaderStage.Vertex,
+            .preprocessor_macros = options.defines,
+        });
         errdefer shader_module.deinit();
 
         const vertex_input_bindings = try alloc.alloc(c.VkVertexInputBindingDescription, vs_layout.bindings.len);
@@ -1140,9 +1187,12 @@ pub const PixelShaderVulkan = struct {
         ps_func: []const u8, 
         options: gf.PixelShaderOptions,
     ) !Self {
-        _ = options;
-
-        const shader_module = try ShaderModule.init(ps_data, ps_func, gf.ShaderStage.Pixel);
+        const shader_module = try ShaderModule.init(.{
+            .shader_data = ps_data,
+            .shader_entry_point = ps_func,
+            .shader_stage = gf.ShaderStage.Pixel,
+            .preprocessor_macros = options.defines,
+        });
         errdefer shader_module.deinit();
 
         return .{
@@ -1880,13 +1930,28 @@ fn formatclearvalue_to_vulkan(format: gf.ImageFormat, clear_value: zm.F32x4) c.V
 
 pub const RenderPassVulkan = struct {
     const Self = @This();
+
+    const SubpassRefInfo = struct {
+        attachment_refs: []usize,
+        depth_ref: ?usize,
+    };
     
     vk_render_pass: c.VkRenderPass,
     vk_clear_values: []c.VkClearValue,
 
+    subpass_attachment_refs: []SubpassRefInfo,
+
     pub fn deinit(self: *const Self) void {
+        const alloc = GfxStateVulkan.get().alloc;
+
         c.vkDestroyRenderPass(GfxStateVulkan.get().device, self.vk_render_pass, null);
-        GfxStateVulkan.get().alloc.free(self.vk_clear_values);
+
+        alloc.free(self.vk_clear_values);
+
+        for (self.subpass_attachment_refs) |r| {
+            alloc.free(r.attachment_refs);
+        }
+        alloc.free(self.subpass_attachment_refs);
     }
 
     pub fn init(info: gf.RenderPassInfo) !RenderPassVulkan {
@@ -1896,29 +1961,38 @@ pub const RenderPassVulkan = struct {
         defer arena_obj.deinit();
         const arena = arena_obj.allocator();
 
-        const SubpassRefInfo = struct {
-            attachment_refs: []usize,
-            depth_ref: ?usize,
-        };
-        var subpass_refs = try arena.alloc(SubpassRefInfo, info.subpasses.len);
-        defer arena.free(subpass_refs);
+        const subpass_refs: []SubpassRefInfo = blk: {
+            var subpass_refs_list  = try std.ArrayList(SubpassRefInfo).initCapacity(alloc, info.subpasses.len);
+            defer subpass_refs_list.deinit();
+            errdefer for (subpass_refs_list.items) |s| { alloc.free(s.attachment_refs); };
 
-        for (info.subpasses, 0..) |subpass, sidx| {
-            subpass_refs[sidx].depth_ref = if (subpass.depth_attachment) |depth_name| blk: {
-                const attachment_idx = find_attachment_by_name(depth_name, info.attachments) catch {
-                    return error.UnableToFindDepthAttachmentName;
-                };
-                break :blk attachment_idx;
-            } else null;
+            for (info.subpasses) |subpass| {
+                const subpass_attachment_refs = try alloc.alloc(usize, subpass.attachments.len);
+                errdefer alloc.free(subpass_attachment_refs);
 
-            subpass_refs[sidx].attachment_refs = try arena.alloc(usize, subpass.attachments.len);
-            for (subpass.attachments, 0..) |subpass_attachment_name, subpass_aidx| {
-                const attachment_idx = find_attachment_by_name(subpass_attachment_name, info.attachments) catch {
-                    return error.UnableToFindColourAttachmentName;
-                };
-                subpass_refs[sidx].attachment_refs[subpass_aidx] = attachment_idx;
+                for (subpass.attachments, 0..) |subpass_attachment_name, subpass_aidx| {
+                    const attachment_idx = find_attachment_by_name(subpass_attachment_name, info.attachments) catch {
+                        return error.UnableToFindColourAttachmentName;
+                    };
+                    subpass_attachment_refs[subpass_aidx] = attachment_idx;
+                }
+
+                const depth_ref = if (subpass.depth_attachment) |depth_name| depth_blk: {
+                    const attachment_idx = find_attachment_by_name(depth_name, info.attachments) catch {
+                        return error.UnableToFindDepthAttachmentName;
+                    };
+                    break :depth_blk attachment_idx;
+                } else null;
+
+                try subpass_refs_list.append(SubpassRefInfo {
+                    .attachment_refs = subpass_attachment_refs,
+                    .depth_ref = depth_ref,
+                });
             }
-        }
+
+            break :blk try alloc.dupe(SubpassRefInfo, subpass_refs_list.items[0..]);
+        };
+        errdefer alloc.free(subpass_refs);
 
         var subpass_descriptions = try arena.alloc(c.VkSubpassDescription, subpass_refs.len);
         defer arena.free(subpass_descriptions);
@@ -1928,9 +2002,9 @@ pub const RenderPassVulkan = struct {
             // freed by arena allocator
             
             for (ref.attachment_refs, 0..) |aidx, ridx| {
-                attachment_refs[aidx] = .{
+                attachment_refs[ridx] = .{
                     .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // @TODO: depth? other layouts?
-                    .attachment = @intCast(ridx),
+                    .attachment = @intCast(aidx),
                 };
             }
 
@@ -2003,6 +2077,7 @@ pub const RenderPassVulkan = struct {
         return RenderPassVulkan {
             .vk_render_pass = vk_render_pass,
             .vk_clear_values = vk_clear_values,
+            .subpass_attachment_refs = subpass_refs,
         };
     }
 
@@ -2157,6 +2232,7 @@ pub const GraphicsPipelineVulkan = struct {
     
     pub fn init(info: gf.GraphicsPipelineInfo) !Self {
         const render_pass = try info.render_pass.get();
+        std.debug.assert(info.subpass_index < render_pass.platform.subpass_attachment_refs.len);
 
         const alloc = eng.get().frame_allocator;
         var arena_struct = std.heap.ArenaAllocator.init(alloc);
@@ -2231,13 +2307,18 @@ pub const GraphicsPipelineVulkan = struct {
             .depthBoundsTestEnable = c.VK_FALSE,
         };
 
-        var color_blend_attachments = try arena.alloc(c.VkPipelineColorBlendAttachmentState, info.attachments.len);
+        const subpass_attachment_refs = render_pass.platform.subpass_attachment_refs[info.subpass_index];
+
+        var color_blend_attachments = try arena.alloc(c.VkPipelineColorBlendAttachmentState, subpass_attachment_refs.attachment_refs.len);
         defer arena.free(color_blend_attachments);
 
         var color_blend_attachments_len: u32 = 0;
-        for (info.attachments) |*a| {
-            if (!a.format.is_depth()) {
-                color_blend_attachments[color_blend_attachments_len] = blendtype_to_vulkan(a.blend_type); 
+        for (subpass_attachment_refs.attachment_refs) |aidx| {
+            std.debug.assert(aidx < info.attachments.len);
+            const attachment = info.attachments[aidx];
+
+            if (!attachment.format.is_depth()) {
+                color_blend_attachments[color_blend_attachments_len] = blendtype_to_vulkan(attachment.blend_type); 
                 color_blend_attachments_len += 1;
             }
         }
@@ -2464,7 +2545,7 @@ pub const FrameBufferVulkan = struct {
 
     pub fn get_frame_vk_framebuffer(self: *const FrameBufferVulkan) c.VkFramebuffer {
         if (self.vk_framebuffers.len > 1) {
-            return self.vk_framebuffers[GfxStateVulkan.get().get_frame_index()];
+            return self.vk_framebuffers[GfxStateVulkan.get().current_frame_index()];
         } else {
             return self.vk_framebuffers[0];
         }
@@ -2935,6 +3016,13 @@ pub const CommandBufferVulkan = struct {
         try vkt(c.vkEndCommandBuffer(self.vk_command_buffer));
     }
 
+    fn subpasscontents_to_vulkan(subpasscontents: gf.CommandBuffer.SubpassContents) c.VkSubpassContents {
+        return switch (subpasscontents) {
+            .Inline => c.VK_SUBPASS_CONTENTS_INLINE,
+            .SecondaryCommandBuffers => c.VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS,
+        };
+    }
+
     pub inline fn cmd_begin_render_pass(self: *Self, info: gf.CommandBuffer.BeginRenderPassInfo) void {
         const render_pass = info.render_pass.get() catch return;
         const framebuffer = info.framebuffer.get() catch return;
@@ -2948,12 +3036,11 @@ pub const CommandBufferVulkan = struct {
             .renderArea = rect_to_vulkan(info.render_area),
         };
 
-        const subpass_contents: c.VkSubpassContents = switch (info.subpass_contents) {
-            .Inline => c.VK_SUBPASS_CONTENTS_INLINE,
-            .SecondaryCommandBuffers => c.VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS,
-        };
+        c.vkCmdBeginRenderPass(self.vk_command_buffer, &begin_info, subpasscontents_to_vulkan(info.subpass_contents));
+    }
 
-        c.vkCmdBeginRenderPass(self.vk_command_buffer, &begin_info, subpass_contents);
+    pub inline fn cmd_next_subpass(self: *Self, info: gf.CommandBuffer.NextSubpassInfo) void {
+        c.vkCmdNextSubpass(self.vk_command_buffer, subpasscontents_to_vulkan(info.subpass_contents));
     }
 
     pub inline fn cmd_end_render_pass(self: *Self) void {
@@ -3064,7 +3151,7 @@ pub const CommandBufferVulkan = struct {
             pipeline.platform.vk_pipeline_layout,
             shaderstageflags_to_vulkan(info.shader_stages),
             info.offset,
-            info.size,
+            @intCast(info.data.len),
             @ptrCast(info.data.ptr)
         );
     }
