@@ -79,10 +79,7 @@ pub const MeshPrimitive = struct {
     num_vertices: usize,
     indices_offset: usize,
     pos_offset: usize,
-    nor_offset: usize,
-    tex_coord_offset: usize,
-    tangents_offset: usize,
-    bitangents_offset: usize,
+    stride_bytes: usize,
     topology: PrimitiveTopology,
     material_template: ?usize,
     positions: [][3]f32,
@@ -493,6 +490,15 @@ pub const Model = struct {
         var mesh_tangents = std.ArrayList([3]f32).init(local_arena.allocator());
         var mesh_bitangents = std.ArrayList([3]f32).init(local_arena.allocator());
 
+        const positions_offset = 0;
+        const normals_offset = positions_offset + @sizeOf([3]f32);
+        const tangents_offset = normals_offset + @sizeOf([3]f32);
+        const bitangents_offset = tangents_offset + @sizeOf([3]f32);
+        const tex_coords_offset = bitangents_offset + @sizeOf([3]f32);
+        const bone_id_offset = tex_coords_offset + @sizeOf([2]f32);
+        const bone_weights_offset = bone_id_offset + @sizeOf([4]i32);
+        const buffer_stride = bone_weights_offset + @sizeOf([4]f32);
+
         // Create an array ready to store upcoming mesh primitives
         const mesh_primatives = try model_arena.alloc(MeshPrimitive, scene.meshes().len);
         errdefer model_arena.free(mesh_primatives);
@@ -521,10 +527,7 @@ pub const Model = struct {
                     .positions = undefined,
                     .indices_offset = mesh_indices.items.len,
                     .pos_offset = mesh_positions.items.len,
-                    .nor_offset = mesh_normals.items.len,
-                    .tex_coord_offset = mesh_tex_coords.items.len,
-                    .tangents_offset = mesh_tangents.items.len,
-                    .bitangents_offset = mesh_bitangents.items.len,
+                    .stride_bytes = buffer_stride,
                     .material_template = @intCast(mesh.material_index()),
                     .topology = .Triangles, // @TODO
                 };
@@ -532,18 +535,35 @@ pub const Model = struct {
                 // assert assimp sizes match what we expect
                 std.debug.assert(@sizeOf(assimp.Vector3D) == @sizeOf([3]f32));
                 std.debug.assert(@sizeOf(assimp.Vector4D) == @sizeOf([4]f32));
-                std.debug.assert(@sizeOf(c_uint) == @sizeOf(u32));
 
                 // copy positions
-                try mesh_positions.appendSlice(@as(*const [][3]f32, @ptrCast(&(mesh.vertices().?))).*);
+                const start_vertices_count = mesh_positions.items.len;
+                if (mesh.vertices()) |vertices| {
+                    for (vertices) |v| {
+                        try mesh_positions.append([3]f32{ v.x, v.y, v.z });
+                    }
+                } else {
+                    return error.MeshDoesNotHaveAnyPositions;
+                }
+                prim.num_vertices = mesh_positions.items.len - start_vertices_count;
+
+                const start_indices_count = mesh_indices.items.len;
                 if (mesh.faces()) |faces| {
                     for (faces) |*face| {
-                        try mesh_indices.appendSlice(@as(*const []u32, @ptrCast(&(face.indices().?))).*);
+                        if (face.indices()) |indices| {
+                            for (indices) |i| {
+                                try mesh_indices.append(@as(u32, @intCast(i)));
+                            }
+                        }
                     }
                 }
+                prim.num_indices = mesh_indices.items.len - start_indices_count;
+
                 // copy normals
                 if (mesh.normals()) |normals| {
-                    try mesh_normals.appendSlice(@as(*const [][3]f32, @ptrCast(&normals)).*);
+                    for (normals) |n| {
+                        try mesh_normals.append([3]f32{ n.x, n.y, n.z });
+                    }
                 }
                 // copy texcoords, converting to vec2
                 if (mesh.texcoords(0)) |texcoords| {
@@ -558,18 +578,19 @@ pub const Model = struct {
                 }
                 // copy tangents
                 if (mesh.tangents()) |tangents| {
-                    try mesh_tangents.appendSlice(@as(*const [][3]f32, @ptrCast(&tangents)).*);
+                    for (tangents) |t| {
+                        try mesh_tangents.append([3]f32{ t.x, t.y, t.z });
+                    }
                 }
                 // copy bitangents
                 if (mesh.bitangents()) |bitangents| {
-                    try mesh_bitangents.appendSlice(@as(*const [][3]f32, @ptrCast(&bitangents)).*);
+                    for (bitangents) |b| {
+                        try mesh_bitangents.append([3]f32{ b.x, b.y, b.z });
+                    }
                 }
 
-                prim.num_vertices = mesh_positions.items.len - prim.pos_offset;
-                prim.num_indices = mesh_indices.items.len - prim.indices_offset;
-
                 prim.positions = try model_arena.alloc([3]f32, prim.num_vertices);
-                @memcpy(prim.positions, mesh_positions.items[prim.pos_offset..]);
+                @memcpy(prim.positions, mesh_positions.items[start_vertices_count..]);
 
                 mesh_primatives[idx] = prim;
 
@@ -599,7 +620,7 @@ pub const Model = struct {
                     bone_info.items[@intCast(bone_id)].bone_offset = bn.offset_matrix();
 
                     for (bn.weights()) |*wg| {
-                        const vertId = prim.pos_offset + wg.mVertexId;
+                        const vertId = start_vertices_count + wg.mVertexId;
                         const weight = wg.mWeight;
                         std.debug.assert(weight >= 0.0);
 
@@ -1153,12 +1174,9 @@ pub const Model = struct {
             .topology = .Triangles,
             .indices_offset = 0,
             .pos_offset = 0,
-            .nor_offset = 0,
+            .stride_bytes = 88,
             .num_indices = shape.indices.len,
             .num_vertices = shape.positions.len,
-            .tangents_offset = 0,
-            .bitangents_offset = 0,
-            .tex_coord_offset = 0,
             .material_template = null,
         };
 
