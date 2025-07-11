@@ -173,20 +173,18 @@ pub const Buffers = struct {
         self.indices.deinit();
     }
 
-    inline fn copy_data_to_buffer(
-        comptime Datatype: type, 
-        buffer: []u8, 
-        offset: usize, 
-        num_positions: usize, 
-        data: ?[]const Datatype, 
-        default_elem: Datatype
+    inline fn interlace_data_into_buffer(
+        comptime DataType: type,
+        buffer: []u8,
+        vertex_pos: *usize,
+        data: ?[]const DataType,
+        index: usize,
+        default: DataType,
     ) void {
-        const casted_buffer: *const align(1) [](Datatype) = @ptrCast(&buffer[offset..]);
-        @memset(casted_buffer.*[0..num_positions], default_elem);
-        if (data) |d| {
-            assert(d.len == num_positions);
-            @memcpy(casted_buffer.*[0..num_positions], d[0..]);
-        }
+        const dat = if (data) |d| (d[index])[0..] else default[0..];
+        const size = @sizeOf(DataType);
+        @memcpy(buffer[vertex_pos.*..(vertex_pos.* + size)], std.mem.sliceAsBytes(dat));
+        vertex_pos.* += size;
     }
 
     fn init_with_data(
@@ -200,8 +198,6 @@ pub const Buffers = struct {
         mesh_bone_ids: ?[]const ([4]i32),
         mesh_weights: ?[]const ([4]f32),
     ) !Buffers {
-        const num_positions = mesh_positions.len;
-
         // Vertex buffer
         // Find offsets
         var vertices_buffer_length = mesh_positions.len * @sizeOf([3]f32);
@@ -209,14 +205,14 @@ pub const Buffers = struct {
         const normals_offset = vertices_buffer_length;
         vertices_buffer_length += mesh_positions.len * @sizeOf([3]f32);
 
-        const tex_coords_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([2]f32);
-
         const tangents_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([4]f32);
+        vertices_buffer_length += mesh_positions.len * @sizeOf([3]f32);
 
         const bitangents_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([4]f32);
+        vertices_buffer_length += mesh_positions.len * @sizeOf([3]f32);
+
+        const tex_coords_offset = vertices_buffer_length;
+        vertices_buffer_length += mesh_positions.len * @sizeOf([2]f32);
 
         const bone_ids_offset = vertices_buffer_length;
         vertices_buffer_length += mesh_positions.len * @sizeOf([4]i32);
@@ -228,17 +224,17 @@ pub const Buffers = struct {
         const vertices_data = try alloc.alloc(u8, vertices_buffer_length);
         defer alloc.free(vertices_data);
 
-        // copy positions
-        const positions_data: *const align(1) []([3]f32) = @ptrCast(&vertices_data[0..]);
-        @memcpy(positions_data.*[0..num_positions], mesh_positions[0..]);
-
-        // copy vertex attributes
-        copy_data_to_buffer([3]f32, vertices_data, normals_offset, num_positions, mesh_normals, [3]f32{0.0, 0.0, 0.0});
-        copy_data_to_buffer([2]f32, vertices_data, tex_coords_offset, num_positions, mesh_tex_coords, [2]f32{0.0, 0.0});
-        copy_data_to_buffer([3]f32, vertices_data, tangents_offset, num_positions, mesh_tangents, [3]f32{0.0, 0.0, 0.0});
-        copy_data_to_buffer([3]f32, vertices_data, bitangents_offset, num_positions, mesh_bitangents, [3]f32{0.0, 0.0, 0.0});
-        copy_data_to_buffer([4]i32, vertices_data, bone_ids_offset, num_positions, mesh_bone_ids, [4]i32{0, 0, 0, 0});
-        copy_data_to_buffer([4]f32, vertices_data, bone_weights_offset, num_positions, mesh_weights, [4]f32{0.0, 0.0, 0.0, 0.0});
+        // interlace vertex attributes into the vertices buffer
+        var vertex_pos: usize = 0;
+        for (0..mesh_positions.len) |idx| {
+            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_positions, idx, [3]f32{0.0, 0.0, 0.0});
+            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_normals, idx, [3]f32{0.0, 0.0, 1.0});
+            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_tangents, idx, [3]f32{0.0, 0.0, 0.0});
+            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_bitangents, idx, [3]f32{0.0, 0.0, 0.0});
+            interlace_data_into_buffer([2]f32, vertices_data, &vertex_pos, mesh_tex_coords, idx, [2]f32{0.0, 0.0});
+            interlace_data_into_buffer([4]i32, vertices_data, &vertex_pos, mesh_bone_ids, idx, [4]i32{0, 0, 0, 0});
+            interlace_data_into_buffer([4]f32, vertices_data, &vertex_pos, mesh_weights, idx, [4]f32{1.0, 0.0, 0.0, 0.0});
+        }
 
         // create gfx buffer
         const vertices_buffer = try gf.Buffer.init_with_data(

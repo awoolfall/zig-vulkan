@@ -679,7 +679,7 @@ pub const Font = struct {
                 .graphics_pipeline = self.pipeline,
                 .shader_stages = .{ .Pixel = true, },
                 .offset = 0,
-                .data = std.mem.toBytes(next_text_props_idx)[0..],
+                .data = std.mem.toBytes(@as(u32, @intCast(next_text_props_idx)))[0..],
             });
 
             // draw instanced all characters in this text item

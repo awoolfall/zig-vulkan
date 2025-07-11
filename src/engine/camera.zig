@@ -37,7 +37,15 @@ pub const Camera = struct {
     transform: Transform = .{},
 
     pub fn generate_perspective_matrix(self: *const Self, aspect_ratio: f32) zm.Mat {
-        return zm.perspectiveFovLh(self.field_of_view_y, aspect_ratio, self.far_field, self.near_field);
+        var perspective = zm.perspectiveFovRh(self.field_of_view_y, aspect_ratio, self.far_field, self.near_field);
+
+        switch (@import("build_options").graphics_backend) {
+            // flip Y to match Vulkan coordinate system of [+Y down, -Z forward, +X right]
+            .Vulkan => { perspective[1][1] *= -1.0; },
+            else => {},
+        }
+
+        return perspective;
     }
 
     pub fn fly_camera_update(
@@ -54,8 +62,8 @@ pub const Camera = struct {
                 float_from_bool(input.get_key(kc.KeyCode.A)) * -move_amount + 
                 float_from_bool(input.get_key(kc.KeyCode.D)) * move_amount;
             const cam_z = 
-                float_from_bool(input.get_key(kc.KeyCode.S)) * -move_amount + 
-                float_from_bool(input.get_key(kc.KeyCode.W)) * move_amount;
+                float_from_bool(input.get_key(kc.KeyCode.S)) * move_amount + 
+                float_from_bool(input.get_key(kc.KeyCode.W)) * -move_amount;
 
             self.local_transform.position += self.local_transform.forward_direction() * zm.f32x4s(cam_z);
             self.local_transform.position += self.local_transform.right_direction() * zm.f32x4s(cam_x);
@@ -76,14 +84,14 @@ pub const Camera = struct {
                 self.local_transform.rotation,
                 zm.quatFromAxisAngle(
                     zm.f32x4(0.0, 1.0, 0.0, 0.0),
-                    self.mouse_sensitivity * input.mouse_delta[0]
+                    self.mouse_sensitivity * -input.mouse_delta[0]
                 )
             );
             self.local_transform.rotation = zm.qmul(
                 self.local_transform.rotation,
                 zm.quatFromAxisAngle(
                     self.local_transform.right_direction(),
-                    self.mouse_sensitivity * input.mouse_delta[1]
+                    self.mouse_sensitivity * -input.mouse_delta[1]
                 )
             );
         }
