@@ -877,7 +877,7 @@ pub const Image = struct {
 
         const image = Image {
             .platform = platform,
-            .info = info,
+            .info = modified_info,
             .child_views = std.ArrayList(ImageView.Ref).init(eng.get().general_allocator),
         };
 

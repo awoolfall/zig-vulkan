@@ -13,8 +13,6 @@ const Rect = eng.Rect;
 pub const GfxStateVulkan = struct {
     const Self = @This();
 
-    const MAX_FRAMES_IN_FLIGHT = 2;
-
     pub const VertexShader = VertexShaderVulkan;
     pub const PixelShader = PixelShaderVulkan;
     pub const HullShader = HullShaderVulkan;
@@ -59,8 +57,8 @@ pub const GfxStateVulkan = struct {
         swapchain_images: std.ArrayList(c.VkImage),
         swapchain_image_views: std.ArrayList(c.VkImageView),
 
-        hdr_images: std.ArrayList(gf.Image.Ref),
-        hdr_image_views: std.ArrayList(gf.ImageView.Ref),
+        hdr_image: gf.Image.Ref,
+        hdr_image_view: gf.ImageView.Ref,
 
         surface_format: c.VkSurfaceFormatKHR,
         present_mode: c.VkPresentModeKHR,
@@ -71,14 +69,8 @@ pub const GfxStateVulkan = struct {
         present_transition_semaphores: std.ArrayList(gf.Semaphore),
 
         pub fn deinit(self: *@This(), vk_device: c.VkDevice) void {
-            for (self.hdr_image_views.items) |iv| {
-                iv.deinit();
-            }
-            self.hdr_image_views.deinit();
-            for (self.hdr_images.items) |i| {
-                i.deinit();
-            }
-            self.hdr_images.deinit();
+            self.hdr_image_view.deinit();
+            self.hdr_image.deinit();
 
             for (self.swapchain_image_views.items) |iv| {
                 c.vkDestroyImageView(vk_device, iv, null);
@@ -111,6 +103,8 @@ pub const GfxStateVulkan = struct {
     physical_device: c.VkPhysicalDevice,
     device: c.VkDevice,
     queues: VkQueues,
+
+    num_frames_in_flight: u32,
 
     all_command_pool: gf.CommandPool,
     transfer_command_pool: gf.CommandPool,
@@ -306,6 +300,12 @@ pub const GfxStateVulkan = struct {
 
         var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
         try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface, &surface_capabilities));
+
+        self.num_frames_in_flight = std.math.clamp(
+            surface_capabilities.minImageCount + 1,
+            surface_capabilities.minImageCount,
+            if (surface_capabilities.maxImageCount != 0) surface_capabilities.maxImageCount else std.math.maxInt(u32),
+        );
 
         var surface_format: c.VkSurfaceFormatKHR = .{
             .format = c.VK_FORMAT_B8G8R8A8_SRGB,
@@ -547,16 +547,10 @@ pub const GfxStateVulkan = struct {
             };
         }
 
-        var swapchain_image_count = std.math.clamp(
-            surface_capabilities.minImageCount + 1,
-            surface_capabilities.minImageCount,
-            if (surface_capabilities.maxImageCount != 0) surface_capabilities.maxImageCount else std.math.maxInt(u32),
-        );
-
         var swapchain_create_info = c.VkSwapchainCreateInfoKHR {
             .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
             .surface = self.surface,
-            .minImageCount = swapchain_image_count,
+            .minImageCount = self.frames_in_flight(),
             .imageFormat = opt.format.format,
             .imageColorSpace = opt.format.colorSpace,
             .imageExtent = swapchain_extent,
@@ -580,14 +574,16 @@ pub const GfxStateVulkan = struct {
         try vkt(c.vkCreateSwapchainKHR(self.device, &swapchain_create_info, null, &vk_swapchain));
         errdefer c.vkDestroySwapchainKHR(self.device, vk_swapchain, null);
 
-        try vkt(c.vkGetSwapchainImagesKHR(self.device, vk_swapchain, &swapchain_image_count, null));
+        var swapchain_images_count: u32 = 0;
+        try vkt(c.vkGetSwapchainImagesKHR(self.device, vk_swapchain, &swapchain_images_count, null));
+        std.debug.assert(swapchain_images_count == self.frames_in_flight());
 
-        var swapchain_images = try std.ArrayList(c.VkImage).initCapacity(self.alloc, swapchain_image_count);
-        try swapchain_images.resize(swapchain_image_count);
+        var swapchain_images = try std.ArrayList(c.VkImage).initCapacity(self.alloc, self.frames_in_flight());
+        try swapchain_images.resize(self.frames_in_flight());
         errdefer swapchain_images.deinit();
-        try vkt(c.vkGetSwapchainImagesKHR(self.device, vk_swapchain, &swapchain_image_count, swapchain_images.items.ptr));
+        try vkt(c.vkGetSwapchainImagesKHR(self.device, vk_swapchain, &swapchain_images_count, swapchain_images.items.ptr));
 
-        var swapchain_image_views = try std.ArrayList(c.VkImageView).initCapacity(self.alloc, swapchain_image_count);
+        var swapchain_image_views = try std.ArrayList(c.VkImageView).initCapacity(self.alloc, self.frames_in_flight());
         errdefer swapchain_image_views.deinit();
 
         for (swapchain_images.items) |img| {
@@ -621,70 +617,50 @@ pub const GfxStateVulkan = struct {
             swapchain_image_views.clearRetainingCapacity();
         }
 
-        var image_available_semaphores_list = try std.ArrayList(gf.Semaphore).initCapacity(self.alloc, swapchain_image_count);
+        var image_available_semaphores_list = try std.ArrayList(gf.Semaphore).initCapacity(self.alloc, self.frames_in_flight());
         errdefer image_available_semaphores_list.deinit();
         errdefer for (image_available_semaphores_list.items) |s| { s.deinit(); };
 
-        for (0..swapchain_image_count) |_| {
+        for (0..self.frames_in_flight()) |_| {
             const semaphore = try gf.Semaphore.init(.{});
             errdefer semaphore.deinit();
 
             try image_available_semaphores_list.append(semaphore);
         }
 
-        var present_transition_semaphores_list = try std.ArrayList(gf.Semaphore).initCapacity(self.alloc, swapchain_image_count);
+        var present_transition_semaphores_list = try std.ArrayList(gf.Semaphore).initCapacity(self.alloc, self.frames_in_flight());
         errdefer present_transition_semaphores_list.deinit();
         errdefer for (present_transition_semaphores_list.items) |s| { s.deinit(); };
 
-        for (0..swapchain_image_count) |_| {
+        for (0..self.frames_in_flight()) |_| {
             const semaphore = try gf.Semaphore.init(.{});
             errdefer semaphore.deinit();
 
             try present_transition_semaphores_list.append(semaphore);
         }
 
-        var vk_hdr_images_list = try std.ArrayList(gf.Image.Ref).initCapacity(self.alloc, swapchain_image_count);
-        errdefer vk_hdr_images_list.deinit();
+        const hdr_image = try gf.Image.init(.{
+            .format = gf.GfxState.hdr_format,
+            .width = swapchain_extent.width,
+            .height = swapchain_extent.height,
+            .depth = 1,
+            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, },
+            .access_flags = .{ .GpuWrite = true, },
+            .dst_layout = .ColorAttachmentOptimal,
+        }, null);
+        errdefer hdr_image.deinit();
 
-        errdefer {
-            for (vk_hdr_images_list.items) |i| { i.deinit(); }
-        }
-        for (swapchain_images.items) |_| {
-            const hdr_image = try gf.Image.init(.{
-                .format = gf.GfxState.hdr_format,
-                .width = swapchain_extent.width,
-                .height = swapchain_extent.height,
-                .depth = 1,
-                .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, },
-                .access_flags = .{ .GpuWrite = true, },
-                .dst_layout = .ColorAttachmentOptimal,
-            }, null);
-            errdefer hdr_image.deinit();
+        const hdr_image_view = try gf.ImageView.init(.{ .image = hdr_image, });
+        errdefer hdr_image_view.deinit();
 
-            try vk_hdr_images_list.append(hdr_image);
-        }
-
-        var vk_hdr_image_views_list = try std.ArrayList(gf.ImageView.Ref).initCapacity(self.alloc, swapchain_image_count);
-        errdefer vk_hdr_image_views_list.deinit();
-
-        errdefer {
-            for (vk_hdr_image_views_list.items) |i| { i.deinit(); }
-        }
-        for (vk_hdr_images_list.items) |i| {
-            const hdr_image_view = try gf.ImageView.init(.{ .image = i, });
-            errdefer hdr_image_view.deinit();
-
-            try vk_hdr_image_views_list.append(hdr_image_view);
-        }
-        
         std.log.info("swapchain extent is {}", .{swapchain_extent});
         return .{
             .swapchain = vk_swapchain,
             .swapchain_images = swapchain_images,
             .swapchain_image_views = swapchain_image_views,
 
-            .hdr_images = vk_hdr_images_list,
-            .hdr_image_views = vk_hdr_image_views_list,
+            .hdr_image = hdr_image,
+            .hdr_image_view = hdr_image_view,
 
             .extent = swapchain_extent,
             .surface_format = opt.format,
@@ -725,7 +701,7 @@ pub const GfxStateVulkan = struct {
     }
 
     pub inline fn frames_in_flight(self: *const Self) u32 {
-        return self.swapchain.swapchain_image_count();
+        return self.num_frames_in_flight;
     }
 
     pub inline fn current_frame_index(self: *const Self) u32 {
@@ -1527,18 +1503,21 @@ pub const BufferVulkan = struct {
 pub const ImageVulkan = struct {
     const Self = @This();
 
-    alloc: std.mem.Allocator,
-    false_data: []u8,
+    const ImageData = struct {
+        vk_image: c.VkImage,
+        vk_device_memory: c.VkDeviceMemory,
+    };
 
-    vk_image: c.VkImage,
-    vk_device_memory: c.VkDeviceMemory,
+    images: []ImageData,
     vk_format: c.VkFormat,
     format: gf.ImageFormat,
 
     pub fn deinit(self: *const Self) void {
-        self.alloc.free(self.false_data);
-        c.vkFreeMemory(GfxStateVulkan.get().device, self.vk_device_memory, null);
-        c.vkDestroyImage(GfxStateVulkan.get().device, self.vk_image, null);
+        for (self.images) |i| {
+            c.vkFreeMemory(GfxStateVulkan.get().device, i.vk_device_memory, null);
+            c.vkDestroyImage(GfxStateVulkan.get().device, i.vk_image, null);
+        }
+        GfxStateVulkan.get().alloc.free(self.images);
     }
 
     pub fn init(
@@ -1548,8 +1527,6 @@ pub const ImageVulkan = struct {
         std.debug.assert(data == null or (data != null and info.dst_layout != .Undefined));
 
         const alloc = GfxStateVulkan.get().alloc;
-        const false_data = if (data) |d| try alloc.dupe(u8, d) 
-            else try alloc.alloc(u8, info.height * info.width * info.array_length * info.format.byte_width());
 
         var usage_flags_plus = info.usage_flags;
         if (data != null) {
@@ -1559,50 +1536,67 @@ pub const ImageVulkan = struct {
 
         const vk_format = textureformat_to_vulkan(info.format);
 
-        const image_info = c.VkImageCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .format = vk_format,
-            .imageType = c.VK_IMAGE_TYPE_2D,
-            .extent = c.VkExtent3D {
-                .width = info.width,
-                .height = info.height,
-                .depth = 1,
-            },
-            .mipLevels = info.mip_levels,
-            .arrayLayers = info.array_length,
-            .tiling = c.VK_IMAGE_TILING_OPTIMAL,
-            .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
-            .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
-            .samples = c.VK_SAMPLE_COUNT_1_BIT,
-            .usage = vk_usage_flags,
+        const image_count = 
+            if (usage_flags_plus.RenderTarget or usage_flags_plus.DepthStencil) GfxStateVulkan.get().frames_in_flight()
+            else 1;
+
+        var images_list = try std.ArrayList(ImageData).initCapacity(alloc, image_count);
+        defer images_list.deinit();
+        errdefer for (images_list.items) |i| {
+            c.vkFreeMemory(GfxStateVulkan.get().device, i.vk_device_memory, null);
+            c.vkDestroyImage(GfxStateVulkan.get().device, i.vk_image, null);
         };
 
-        var vk_image: c.VkImage = undefined;
-        try vkt(c.vkCreateImage(GfxStateVulkan.get().device, &image_info, null, &vk_image));
-        errdefer c.vkDestroyImage(GfxStateVulkan.get().device, vk_image, null);
+        for (0..image_count) |_| {
+            const image_info = c.VkImageCreateInfo {
+                .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .format = vk_format,
+                .imageType = c.VK_IMAGE_TYPE_2D,
+                .extent = c.VkExtent3D {
+                    .width = info.width,
+                    .height = info.height,
+                    .depth = 1,
+                },
+                .mipLevels = info.mip_levels,
+                .arrayLayers = info.array_length,
+                .tiling = c.VK_IMAGE_TILING_OPTIMAL,
+                .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+                .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+                .samples = c.VK_SAMPLE_COUNT_1_BIT,
+                .usage = vk_usage_flags,
+            };
 
-        var memory_requirements: c.VkMemoryRequirements = undefined;
-        c.vkGetImageMemoryRequirements(GfxStateVulkan.get().device, vk_image, &memory_requirements);
+            var vk_image: c.VkImage = undefined;
+            try vkt(c.vkCreateImage(GfxStateVulkan.get().device, &image_info, null, &vk_image));
+            errdefer c.vkDestroyImage(GfxStateVulkan.get().device, vk_image, null);
 
-        const alloc_info = c.VkMemoryAllocateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize = memory_requirements.size,
-            .memoryTypeIndex = try find_vulkan_memory_type(memory_requirements.memoryTypeBits, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-        };
+            var memory_requirements: c.VkMemoryRequirements = undefined;
+            c.vkGetImageMemoryRequirements(GfxStateVulkan.get().device, vk_image, &memory_requirements);
 
-        // TODO better memory allocation strategy
-        var vk_device_memory: c.VkDeviceMemory = undefined;
-        try vkt(c.vkAllocateMemory(GfxStateVulkan.get().device, &alloc_info, null, &vk_device_memory));
-        errdefer c.vkFreeMemory(GfxStateVulkan.get().device, vk_device_memory, null);
+            const alloc_info = c.VkMemoryAllocateInfo {
+                .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = memory_requirements.size,
+                .memoryTypeIndex = try find_vulkan_memory_type(memory_requirements.memoryTypeBits, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+            };
 
-        try vkt(c.vkBindImageMemory(GfxStateVulkan.get().device, vk_image, vk_device_memory, 0));
+            // TODO better memory allocation strategy
+            var vk_device_memory: c.VkDeviceMemory = undefined;
+            try vkt(c.vkAllocateMemory(GfxStateVulkan.get().device, &alloc_info, null, &vk_device_memory));
+            errdefer c.vkFreeMemory(GfxStateVulkan.get().device, vk_device_memory, null);
+
+            try vkt(c.vkBindImageMemory(GfxStateVulkan.get().device, vk_image, vk_device_memory, 0));
+
+            try images_list.append(.{
+                .vk_image = vk_image,
+                .vk_device_memory = vk_device_memory,
+            });
+        }
+
+        const images = try alloc.dupe(ImageData, images_list.items[0..]);
+        errdefer alloc.free(images);
 
         var self = Self {
-            .alloc = alloc,
-            .false_data = false_data,
-
-            .vk_image = vk_image,
-            .vk_device_memory = vk_device_memory,
+            .images = images,
             .vk_format = vk_format,
             .format = info.format,
         };
@@ -1624,52 +1618,61 @@ pub const ImageVulkan = struct {
                 @memcpy(mapped_slice, d);
             }
 
-            try self.transition_layout(.Undefined, .TransferDstOptimal);
+            for (0..images.len) |image_idx| {
+                try self.transition_layout(image_idx, .Undefined, .TransferDstOptimal);
 
-            {
-                var command_buffer = try begin_single_time_command_buffer(&GfxStateVulkan.get().all_command_pool);
-                defer end_single_time_command_buffer(&command_buffer, null);
+                {
+                    var command_buffer = try begin_single_time_command_buffer(&GfxStateVulkan.get().all_command_pool);
+                    defer end_single_time_command_buffer(&command_buffer, null);
 
-                const region = c.VkBufferImageCopy {
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
+                    const region = c.VkBufferImageCopy {
+                        .bufferOffset = 0,
+                        .bufferRowLength = 0,
+                        .bufferImageHeight = 0,
 
-                    .imageSubresource = .{
-                        .aspectMask = 
-                            if (self.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT
-                            else c.VK_IMAGE_ASPECT_COLOR_BIT,
-                        .mipLevel = 0,
-                        .baseArrayLayer = 0,
-                        .layerCount = 1,
-                    },
+                        .imageSubresource = .{
+                            .aspectMask = 
+                                if (self.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT
+                                else c.VK_IMAGE_ASPECT_COLOR_BIT,
+                            .mipLevel = 0,
+                            .baseArrayLayer = 0,
+                            .layerCount = 1,
+                        },
 
-                    .imageOffset = .{ .x = 0, .y = 0, .z = 0, },
-                    .imageExtent = .{
-                        .width = info.width,
-                        .height = info.height,
-                        .depth = 1,
-                    }
-                };
-                c.vkCmdCopyBufferToImage(
-                    command_buffer.platform.vk_command_buffer,
-                    staging_buffer.vk_buffer,
-                    vk_image,
-                    c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    1,
-                    &region
-                );
+                        .imageOffset = .{ .x = 0, .y = 0, .z = 0, },
+                        .imageExtent = .{
+                            .width = info.width,
+                            .height = info.height,
+                            .depth = 1,
+                        }
+                    };
+
+                    c.vkCmdCopyBufferToImage(
+                        command_buffer.platform.vk_command_buffer,
+                        staging_buffer.vk_buffer,
+                        images[image_idx].vk_image,
+                        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        1,
+                        &region
+                    );
+                }
+
+                if (info.dst_layout != .Undefined) {
+                    try self.transition_layout(
+                        image_idx,
+                        if (data != null) .TransferDstOptimal else .Undefined,
+                        info.dst_layout
+                    );
+                }
             }
         }
 
-        if (info.dst_layout != .Undefined) {
-            try self.transition_layout(
-                if (data != null) .TransferDstOptimal else .Undefined,
-                info.dst_layout
-            );
-        }
-
         return self;
+    }
+
+    pub inline fn get_frame_image(self: *const Self) *const ImageData {
+        const idx = @min(GfxStateVulkan.get().current_frame_index(), self.images.len - 1);
+        return &self.images[idx];
     }
 
     pub fn map(self: *const Self, options: gf.Image.MapOptions) !MappedImage {
@@ -1692,6 +1695,7 @@ pub const ImageVulkan = struct {
 
     fn transition_layout(
         self: *Self, 
+        image_index: usize,
         old_layout: gf.ImageLayout, 
         new_layout: gf.ImageLayout,
     ) !void {
@@ -1746,7 +1750,7 @@ pub const ImageVulkan = struct {
 
         const image_barrier = c.VkImageMemoryBarrier {
             .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            .image = self.vk_image,
+            .image = self.images[image_index].vk_image,
             .oldLayout = imagelayout_to_vulkan(old_layout),
             .newLayout = imagelayout_to_vulkan(new_layout),
             .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
@@ -1776,13 +1780,19 @@ pub const ImageVulkan = struct {
 };
 
 pub const ImageViewVulkan = struct {
-    vk_image_view: c.VkImageView,
+    const Self = @This();
+
+    vk_image_views: []c.VkImageView,
     
     pub fn deinit(self: *const ImageViewVulkan) void {
-        c.vkDestroyImageView(GfxStateVulkan.get().device, self.vk_image_view, null);
+        for (self.vk_image_views) |v| {
+            c.vkDestroyImageView(GfxStateVulkan.get().device, v, null);
+        }
+        GfxStateVulkan.get().alloc.free(self.vk_image_views);
     }
 
     pub fn init(info: gf.ImageViewInfo) !ImageViewVulkan {
+        const alloc = GfxStateVulkan.get().alloc;
         const img = try info.image.get();
 
         const view_type: c.VkImageViewType = blk: { // TODO cube
@@ -1797,30 +1807,46 @@ pub const ImageViewVulkan = struct {
             }
         };
 
-        const image_view_info = c.VkImageViewCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = img.platform.vk_image, 
-            .viewType = view_type,
-            .format = img.platform.vk_format,
-            .subresourceRange = .{
-                .aspectMask = switch (img.info.format) {
-                    .D24S8_Unorm_Uint => c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
-                    else => c.VK_IMAGE_ASPECT_COLOR_BIT,
-                },
-                .baseMipLevel = info.base_mip_level,
-                .levelCount = info.mip_level_count,
-                .baseArrayLayer = info.base_array_layer,
-                .layerCount = info.array_layer_count,
-            },
-        };
+        var image_views_list = try std.ArrayList(c.VkImageView).initCapacity(alloc, img.platform.images.len);
+        defer image_views_list.deinit();
+        errdefer for (image_views_list.items) |v| { c.vkDestroyImageView(GfxStateVulkan.get().device, v, null); };
 
-        var vk_image_view: c.VkImageView = undefined;
-        try vkt(c.vkCreateImageView(GfxStateVulkan.get().device, &image_view_info, null, &vk_image_view));
-        errdefer c.vkDestroyImageView(GfxStateVulkan.get().device, vk_image_view, null);
+        for (img.platform.images) |i| {
+            const image_view_info = c.VkImageViewCreateInfo {
+                .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = i.vk_image, 
+                .viewType = view_type,
+                .format = img.platform.vk_format,
+                .subresourceRange = .{
+                    .aspectMask = switch (img.info.format) {
+                        .D24S8_Unorm_Uint => c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
+                        else => c.VK_IMAGE_ASPECT_COLOR_BIT,
+                    },
+                    .baseMipLevel = info.base_mip_level,
+                    .levelCount = info.mip_level_count,
+                    .baseArrayLayer = info.base_array_layer,
+                    .layerCount = info.array_layer_count,
+                },
+            };
+
+            var vk_image_view: c.VkImageView = undefined;
+            try vkt(c.vkCreateImageView(GfxStateVulkan.get().device, &image_view_info, null, &vk_image_view));
+            errdefer c.vkDestroyImageView(GfxStateVulkan.get().device, vk_image_view, null);
+
+            try image_views_list.append(vk_image_view);
+        }
+
+        const image_views = try alloc.dupe(c.VkImageView, image_views_list.items[0..]);
+        errdefer alloc.free(image_views);
 
         return ImageViewVulkan {
-            .vk_image_view = vk_image_view,
+            .vk_image_views = image_views,
         };
+    }
+
+    pub inline fn get_frame_view(self: *const Self) c.VkImageView {
+        const idx = @min(GfxStateVulkan.get().current_frame_index(), self.vk_image_views.len - 1);
+        return self.vk_image_views[idx];
     }
 };
 
@@ -2496,16 +2522,19 @@ pub const FrameBufferVulkan = struct {
                         break :blk GfxStateVulkan.get().swapchain.swapchain_image_views.items[fidx];
                     },
                     .SwapchainHDR => blk: {
-                        const image_view = try GfxStateVulkan.get().swapchain.hdr_image_views.items[fidx].get();
-                        break :blk image_view.platform.vk_image_view;
+                        const view = try GfxStateVulkan.get().swapchain.hdr_image_view.get();
+                        std.debug.assert(view.platform.vk_image_views.len == GfxStateVulkan.get().frames_in_flight());
+                        break :blk view.platform.vk_image_views[fidx];
                     },
-                    .SwapchainDepth => blk: { // TODO fidx depth buffers
+                    .SwapchainDepth => blk: {
                         const view = try gf.GfxState.get().default.depth_view.get();
-                        break :blk view.platform.vk_image_view;
+                        std.debug.assert(view.platform.vk_image_views.len == GfxStateVulkan.get().frames_in_flight());
+                        break :blk view.platform.vk_image_views[fidx];
                     },
                     .View => |v| blk: {
                         const view = try v.get();
-                        break :blk view.platform.vk_image_view;
+                        std.debug.assert(view.platform.vk_image_views.len == GfxStateVulkan.get().frames_in_flight());
+                        break :blk view.platform.vk_image_views[fidx];
                     },
                 };
 
@@ -2543,12 +2572,9 @@ pub const FrameBufferVulkan = struct {
         };
     }
 
-    pub fn get_frame_vk_framebuffer(self: *const FrameBufferVulkan) c.VkFramebuffer {
-        if (self.vk_framebuffers.len > 1) {
-            return self.vk_framebuffers[GfxStateVulkan.get().current_frame_index()];
-        } else {
-            return self.vk_framebuffers[0];
-        }
+    pub fn get_frame_framebuffer(self: *const FrameBufferVulkan) c.VkFramebuffer {
+        const idx = @min(GfxStateVulkan.get().current_frame_index(), self.vk_framebuffers.len - 1);
+        return self.vk_framebuffers[idx];
     }
 };
 
@@ -2807,7 +2833,7 @@ pub const DescriptorSetVulkan = struct {
                     const view_node = try arena.create(ImageViewWritesList.Node);
                     view_node.data = c.VkDescriptorImageInfo {
                         .sampler = null,
-                        .imageView = view.platform.vk_image_view,
+                        .imageView = view.platform.get_frame_view(),
                         .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     };
                     vk_view_writes.prepend(view_node);
@@ -2832,7 +2858,7 @@ pub const DescriptorSetVulkan = struct {
                     const view_node = try arena.create(ImageViewWritesList.Node);
                     view_node.data = c.VkDescriptorImageInfo {
                         .sampler = sampler.platform.vk_sampler,
-                        .imageView = view.platform.vk_image_view,
+                        .imageView = view.platform.get_frame_view(),
                         .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     };
                     vk_view_writes.prepend(view_node);
@@ -2859,7 +2885,7 @@ pub const DescriptorSetVulkan = struct {
                         const view_node = try arena.create(ImageViewWritesList.Node);
                         view_node.data = c.VkDescriptorImageInfo {
                             .sampler = null,
-                            .imageView = view.platform.vk_image_view,
+                            .imageView = view.platform.get_frame_view(),
                             .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         };
                         vk_view_writes.prepend(view_node);
@@ -2888,7 +2914,7 @@ pub const DescriptorSetVulkan = struct {
                         const view_node = try arena.create(ImageViewWritesList.Node);
                         view_node.data = c.VkDescriptorImageInfo {
                             .sampler = sampler.platform.vk_sampler,
-                            .imageView = view.platform.vk_image_view,
+                            .imageView = view.platform.get_frame_view(),
                             .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         };
                         vk_view_writes.prepend(view_node);
@@ -3030,7 +3056,7 @@ pub const CommandBufferVulkan = struct {
         const begin_info = c.VkRenderPassBeginInfo {
             .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .renderPass = render_pass.platform.vk_render_pass,
-            .framebuffer = framebuffer.platform.get_frame_vk_framebuffer(),
+            .framebuffer = framebuffer.platform.get_frame_framebuffer(),
             .pClearValues = @ptrCast(render_pass.platform.vk_clear_values.ptr),
             .clearValueCount = @intCast(render_pass.platform.vk_clear_values.len),
             .renderArea = rect_to_vulkan(info.render_area),
