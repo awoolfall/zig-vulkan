@@ -3209,9 +3209,9 @@ pub const CommandBufferVulkan = struct {
         std.debug.assert(info.buffer_barriers.len < max_barriers_per_type);
         std.debug.assert(info.image_barriers.len < max_barriers_per_type);
 
-        const vk_memory_barriers: [max_barriers_per_type]c.VkMemoryBarrier = undefined;
-        const vk_buffer_barriers: [max_barriers_per_type]c.VkBufferMemoryBarrier = undefined;
-        const vk_image_barriers: [max_barriers_per_type]c.VkImageMemoryBarrier = undefined;
+        var vk_memory_barriers: [max_barriers_per_type]c.VkMemoryBarrier = undefined;
+        var vk_buffer_barriers: [max_barriers_per_type]c.VkBufferMemoryBarrier = undefined;
+        var vk_image_barriers: [max_barriers_per_type]c.VkImageMemoryBarrier = undefined;
 
         for (info.memory_barriers, 0..) |b, idx| {
             vk_memory_barriers[idx] = c.VkMemoryBarrier {
@@ -3239,7 +3239,7 @@ pub const CommandBufferVulkan = struct {
             const image = b.image.get() catch unreachable;
             vk_image_barriers[idx] = c.VkImageMemoryBarrier {
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .image = image.platform.vk_image,
+                .image = image.platform.get_frame_image().vk_image, // TODO allow selecting inner image?
                 .oldLayout = if (b.old_layout) |l| imagelayout_to_vulkan(l) else c.VK_IMAGE_LAYOUT_UNDEFINED,
                 .newLayout = if (b.new_layout) |l| imagelayout_to_vulkan(l) else c.VK_IMAGE_LAYOUT_UNDEFINED,
                 .srcAccessMask = accessflags_to_vulkan(b.src_access_mask),
@@ -3254,8 +3254,6 @@ pub const CommandBufferVulkan = struct {
                     .layerCount = 1,
                 },
             };
-
-            image.platform.vk_layout = vk_image_barriers[idx].newLayout;
         }
 
         c.vkCmdPipelineBarrier(
@@ -3266,6 +3264,42 @@ pub const CommandBufferVulkan = struct {
             @intCast(info.memory_barriers.len), @ptrCast(vk_memory_barriers[0..].ptr),
             @intCast(info.buffer_barriers.len), @ptrCast(vk_buffer_barriers[0..].ptr),
             @intCast(info.image_barriers.len), @ptrCast(vk_image_barriers[0..].ptr),
+        );
+    }
+
+    pub inline fn cmd_copy_image_to_buffer(self: *Self, info: gf.CommandBuffer.CopyImageToBufferInfo) void {
+        const copy_info = c.VkBufferImageCopy {
+            .bufferOffset = info.buffer_offset,
+            .bufferRowLength = info.buffer_row_length,
+            .bufferImageHeight = info.buffer_image_height,
+            .imageSubresource = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, // TODO depth aspect?
+                .baseArrayLayer = info.base_array_layer,
+                .layerCount = info.layer_count,
+                .mipLevel = info.mip_level,
+            },
+            .imageOffset = .{
+                .x = info.image_offset[0],
+                .y = info.image_offset[1],
+                .z = info.image_offset[2],
+            },
+            .imageExtent = .{
+                .width = info.image_extent[0],
+                .height = info.image_extent[1],
+                .depth = info.image_extent[2],
+            },
+        };
+
+        const image = info.image.get() catch return;
+        const buffer = info.buffer.get() catch return;
+
+        c.vkCmdCopyImageToBuffer(
+            self.vk_command_buffer,
+            image.platform.get_frame_image().vk_image, // TODO allow selection of specific internal image. fix? using frame image should be recent enough (and prevent stalls, maybe)
+            c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            buffer.platform.vk_buffer,
+            1,
+            @ptrCast(&copy_info)
         );
     }
 };
@@ -3324,7 +3358,7 @@ pub const FenceVulkan = struct {
         vkt(c.vkWaitForFences(
                 GfxStateVulkan.get().device,
                 1,
-                self.vk_fence,
+                @ptrCast(&self.vk_fence),
                 bool_to_vulkan(true),
                 std.math.maxInt(u64)
         )) catch |err| {

@@ -905,9 +905,13 @@ pub const Imui = struct {
     fn render_imui_widget(
         self: *Self, 
         widget: *const Widget,
+        z_index: usize,
         scissor_rect: RectPixels,
         render_palette: Palette
     ) void {
+        _ = z_index;
+        const z_value = @as(f32, @floatFromInt(self.quad_renderer.frame_quads.items.len)) * 0.0001;
+
         if (widget.flags.render_quad) {
             const quad_texture_props = blk: { 
                 if (widget.texture) |tex_props| {
@@ -922,6 +926,7 @@ pub const Imui = struct {
 
             self.quad_renderer.submit_quad(.{
                 .rect = widget.computed.rect(),
+                .z_value = z_value,
                 .scissor = scissor_rect,
                 .colour = render_palette.background,
                 .border_colour = render_palette.border,
@@ -942,10 +947,12 @@ pub const Imui = struct {
 
             self.get_font(text.font).submit_text_2d(text.text, .{
                 .position = .{ .x = x, .y = y, },
+                .z_value = z_value + 0.00005,
                 .colour = 
                     if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
                     else render_palette.text_dark,
-                        .pixel_height = text.size,
+                .pixel_height = text.size,
+                .scissor = scissor_rect,
             }) catch |err| {
                 std.log.warn("Unable to submit text for rendering: {}", .{err});
             };
@@ -954,7 +961,8 @@ pub const Imui = struct {
 
     fn render_imui_recursive(
         self: *Self, 
-        widget_id: WidgetId, 
+        widget_id: WidgetId,
+        z_index: usize,
         parent_scissor: RectPixels,
         parent_palette: Palette
     ) void {
@@ -1015,7 +1023,7 @@ pub const Imui = struct {
         }
 
         if (widget.flags.render) {
-            self.render_imui_widget(widget, widget_scissor, widget_palette);
+            self.render_imui_widget(widget, z_index, widget_scissor, widget_palette);
         }
 
         // // debug wireframe
@@ -1030,10 +1038,10 @@ pub const Imui = struct {
         // );
 
         if (widget.first_child) |c| {
-            self.render_imui_recursive(c, widget_content_scissor, widget_palette);
+            self.render_imui_recursive(c, z_index + 1, widget_content_scissor, widget_palette);
         }
         if (widget.next_sibling) |s| {
-            self.render_imui_recursive(s, parent_scissor, parent_palette);
+            self.render_imui_recursive(s, z_index, parent_scissor, parent_palette);
         }
     }
 
@@ -1049,8 +1057,8 @@ pub const Imui = struct {
         };
         const render_palette = self.palette();
 
-        self.render_imui_recursive(.{ .location = .Standard, .index = 0 }, screen_scissor, render_palette);
-        self.render_imui_recursive(.{ .location = .Priority, .index = 0 }, screen_scissor, render_palette);
+        self.render_imui_recursive(.{ .location = .Standard, .index = 0 }, 0, screen_scissor, render_palette);
+        self.render_imui_recursive(.{ .location = .Priority, .index = 0 }, 0, screen_scissor, render_palette);
 
         self.quad_renderer.render_quads(cmd) catch |err| {
             std.log.warn("Unable to render quads: {}", .{err});

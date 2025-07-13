@@ -17,6 +17,7 @@ struct PixelBuffer
 struct PushConstants
 {
     uint32_t index;   
+    float z_value;
 };
 
 ConstantBuffer<VertexBuffer[500]> vertex_buffer : register(b0);
@@ -55,7 +56,7 @@ vs_out vs_main(uint vertId : SV_VertexID)
     float px = quad_bounds.x + (x * (quad_bounds.z - quad_bounds.x));
     float py = quad_bounds.y + (y * (quad_bounds.w - quad_bounds.y));
 
-    output.position = float4(px, py, 0.0, 1.0);
+    output.position = float4(px, py, push_constants.z_value, 1.0);
 
     float uvx = x;
     float uvy = y;

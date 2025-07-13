@@ -47,12 +47,18 @@ const CharacterInfoConstantBuffer = extern struct {
     atlas_bounds: Bounds = .{},
 };
 
+const PushConstants = extern struct {
+    index: u32,
+    z_value: f32,
+};
+
 const TextRenderInfo = struct {
     text: []u8,
     fg_colour: zm.F32x4,
     bg_colour: zm.F32x4 = zm.f32x4s(0.0),
     position: zm.F32x4,
     size: f32,
+    scissor: ?RectPixels,
 };
 
 const FontTextBufferData = struct {
@@ -358,8 +364,8 @@ pub const Font = struct {
             },
             .push_constants = &.{
                 _gfx.PushConstantLayoutInfo {
-                    .shader_stages = .{ .Pixel = true, },
-                    .size = 4,
+                    .shader_stages = .{ .Vertex = true, .Pixel = true, },
+                    .size = @sizeOf(PushConstants),
                     .offset = 0,
                 },
             },
@@ -485,8 +491,10 @@ pub const Font = struct {
 
     pub const FontRenderProperties2D = struct {
         position: struct { x: f32, y: f32 },
+        z_value: f32,
         pixel_height: f32 = 20.0,
         colour: zm.F32x4 = zm.f32x4(1.0, 1.0, 1.0, 1.0),
+        scissor: ?RectPixels = null,
     };
 
     pub fn submit_text_2d(
@@ -501,10 +509,11 @@ pub const Font = struct {
 
         try self.frame_texts.append(TextRenderInfo {
             .text = owned_text,
-            .position = zm.f32x4(props.position.x, props.position.y, 0.0, 0.0),
+            .position = zm.f32x4(props.position.x, props.position.y, props.z_value, 0.0),
             .fg_colour = props.colour,
             .bg_colour = props.colour * zm.f32x4(1.0, 1.0, 1.0, 0.0),
             .size = props.pixel_height,
+            .scissor = props.scissor,
         });
     }
 
@@ -674,12 +683,19 @@ pub const Font = struct {
                     / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),
             };
 
+            cmd.cmd_set_scissors(.{ .scissors = &.{ t.scissor orelse .full_screen_pixels(), }, } );
+
+            const push_constants = PushConstants {
+                .index = @intCast(next_text_props_idx),
+                .z_value = t.position[2],
+            };
+
             // set push constant to text props index
             cmd.cmd_push_constants(_gfx.CommandBuffer.PushConstantsInfo {
                 .graphics_pipeline = self.pipeline,
-                .shader_stages = .{ .Pixel = true, },
+                .shader_stages = .{ .Vertex = true, .Pixel = true, },
                 .offset = 0,
-                .data = std.mem.toBytes(@as(u32, @intCast(next_text_props_idx)))[0..],
+                .data = std.mem.asBytes(&push_constants),
             });
 
             // draw instanced all characters in this text item

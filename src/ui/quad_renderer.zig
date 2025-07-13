@@ -82,6 +82,11 @@ pub const QuadBufferFlags = packed struct(u32) {
     __unused: u31 = 0,
 };
 
+pub const PushConstants = extern struct {
+    index: u32,
+    z_value: f32,
+};
+
 const QuadRenderSet = struct {
     buffer_vertex: _gfx.Buffer.Ref,
     buffer_pixel: _gfx.Buffer.Ref,
@@ -250,11 +255,11 @@ pub const QuadRenderer = struct {
             .push_constants = &.{
                 _gfx.PushConstantLayoutInfo {
                     .shader_stages = .{ .Vertex = true, .Pixel = true, },
-                    .size = 4,
+                    .size = @sizeOf(PushConstants),
                     .offset = 0,
                 },
             },
-            .depth_test = .{ .write = true, },
+            .depth_test = .{ .write = true, }, //.compare_op = .Always, },
             .render_pass = render_pass,
             .subpass_index = 0,
         });
@@ -406,6 +411,7 @@ pub const QuadRenderer = struct {
 
     pub const QuadProperties = struct {
         rect: RectPixels,
+        z_value: f32,
         scissor: ?RectPixels = null,
         colour: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
         border_colour: zm.F32x4 = zm.f32x4s(0.0),
@@ -508,6 +514,8 @@ pub const QuadRenderer = struct {
             const render_set: usize = @divFloor(idx, QuadRenderer.MAX_QUADS_PER_BUFFER);
             const q_idx: usize = @mod(idx, QuadRenderer.MAX_QUADS_PER_BUFFER);
 
+            cmd.cmd_set_scissors(.{ .scissors = &.{ q.scissor orelse .full_screen_pixels() } });
+
             // TODO update quad image if required
             cmd.cmd_bind_descriptor_sets(_gfx.CommandBuffer.BindDescriptorSetInfo {
                 .graphics_pipeline = self.pipeline,
@@ -518,12 +526,17 @@ pub const QuadRenderer = struct {
                 },
             });
 
+            const push_constants = PushConstants {
+                .index = @intCast(idx),
+                .z_value = q.z_value,
+            };
+
             // push constant the index
             cmd.cmd_push_constants(_gfx.CommandBuffer.PushConstantsInfo {
                 .graphics_pipeline = self.pipeline,
                 .shader_stages = .{ .Vertex = true, .Pixel = true, },
                 .offset = 0,
-                .data = std.mem.sliceAsBytes(([_]u32{ @as(u32, @intCast(idx)) })[0..]),
+                .data = std.mem.asBytes(&push_constants),
             });
 
             // TODO instancing

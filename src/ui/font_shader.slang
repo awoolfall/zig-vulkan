@@ -15,6 +15,7 @@ ConstantBuffer<FontTextProps[1024]> font_text_props : register(b0);
 struct PushConstants
 {
     uint32_t index;   
+    float z_value;
 };
 
 [[vk::push_constant]]
@@ -44,7 +45,7 @@ vs_out vs_main(uint vertId : SV_VertexID, float4 quad_bounds : TEXCOORD0, float4
     float px = quad_bounds.x + (x * (quad_bounds.z - quad_bounds.x));
     float py = quad_bounds.y + (y * (quad_bounds.w - quad_bounds.y));
 
-    output.position = float4(px, py, 0.0, 1.0);
+    output.position = float4(px, py, push_constants.z_value, 1.0);
 
     float uvx = atlas_bounds.x + (x * (atlas_bounds.z - atlas_bounds.x));
     float uvy = atlas_bounds.y + (y * (atlas_bounds.w - atlas_bounds.y));

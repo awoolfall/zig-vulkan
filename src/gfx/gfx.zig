@@ -1755,6 +1755,26 @@ pub const CommandBuffer = struct {
     pub fn cmd_pipeline_barrier(self: *Self, info: PipelineBarrierInfo) void {
         self.platform.cmd_pipeline_barrier(info);
     }
+
+    pub const CopyImageToBufferInfo = struct {
+        image: Image.Ref,
+        buffer: Buffer.Ref,
+
+        buffer_offset: u64 = 0,
+        buffer_row_length: u32 = 0,
+        buffer_image_height: u32 = 0,
+
+        mip_level: u32 = 0,
+        base_array_layer: u32 = 0,
+        layer_count: u32 = 1,
+
+        image_offset: [3]i32 = .{ 0, 0, 0 },
+        image_extent: [3]u32,
+    };
+
+    pub fn cmd_copy_image_to_buffer(self: *Self, info: CopyImageToBufferInfo) void {
+        self.platform.cmd_copy_image_to_buffer(info);
+    }
 };
 
 pub const SemaphoreCreateInfo = struct {
@@ -1790,7 +1810,9 @@ pub const Fence = struct {
     }
 
     pub fn init(info: FenceCreateInfo) !Self {
-        return try GfxState.Platform.Fence.init(info);
+        return Self {
+            .platform = try GfxState.Platform.Fence.init(info),
+        };
     }
 
     pub fn wait(self: *Self) !void {
