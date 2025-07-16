@@ -20,13 +20,18 @@ struct PushConstants
     float z_value;
 };
 
+[[vk::binding(0, 0)]]
 ConstantBuffer<VertexBuffer[500]> vertex_buffer : register(b0);
+
+[[vk::binding(1, 0)]]
 ConstantBuffer<PixelBuffer[500]> pixel_buffer : register(b1);
 
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> push_constants;
 
+[[vk::binding(0, 1)]]
 Texture2D quad_texture : t0;
+[[vk::binding(1, 1)]]
 SamplerState quad_sampler : s0;
 
 inline float unpack(float4 packed_value, uint position)
@@ -102,8 +107,8 @@ float4 ps_main(vs_out input) : SV_TARGET
     // add texture colour before borders
     bool has_texture = ((data.flags >> 0) & 1) != 0;
     if (has_texture) {
-        // float4 texture_colour = quad_texture.Sample(quad_sampler, input.tex_coord.xy);
-        // colour = float4(colour.rgb * (1 - texture_colour.a) + texture_colour.rgb * texture_colour.a, colour.a);
+        float4 texture_colour = quad_texture.Sample(quad_sampler, input.tex_coord.xy);
+        colour = float4(colour.rgb * (1 - texture_colour.a) + texture_colour.rgb * texture_colour.a, colour.a);
     }
 
     // border colour

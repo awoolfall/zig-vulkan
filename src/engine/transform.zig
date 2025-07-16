@@ -29,7 +29,7 @@ pub inline fn up_direction(self: *const Self) zm.F32x4 {
 }
 
 pub inline fn forward_direction(self: *const Self) zm.F32x4 {
-    return zm.rotate(self.rotation, zm.f32x4(0.0, 0.0, 1.0, 0.0));
+    return zm.rotate(self.rotation, zm.f32x4(0.0, 0.0, -1.0, 0.0));
 }
 
 pub inline fn lerp(self: *const Self, other: *const Self, t: f32) Self {

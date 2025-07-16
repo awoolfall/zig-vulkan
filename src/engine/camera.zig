@@ -62,8 +62,8 @@ pub const Camera = struct {
                 float_from_bool(input.get_key(kc.KeyCode.A)) * -move_amount + 
                 float_from_bool(input.get_key(kc.KeyCode.D)) * move_amount;
             const cam_z = 
-                float_from_bool(input.get_key(kc.KeyCode.S)) * move_amount + 
-                float_from_bool(input.get_key(kc.KeyCode.W)) * -move_amount;
+                float_from_bool(input.get_key(kc.KeyCode.S)) * -move_amount + 
+                float_from_bool(input.get_key(kc.KeyCode.W)) * move_amount;
 
             self.local_transform.position += self.local_transform.forward_direction() * zm.f32x4s(cam_z);
             self.local_transform.position += self.local_transform.right_direction() * zm.f32x4s(cam_x);
@@ -124,7 +124,7 @@ pub const Camera = struct {
 
         // camera rotation
         if (input.get_key(kc.KeyCode.MouseRight)) {
-            self.damping_movement[0] = input.mouse_delta[0] * self.mouse_sensitivity;
+            self.damping_movement[0] = -input.mouse_delta[0] * self.mouse_sensitivity;
             self.damping_movement[1] = input.mouse_delta[1] * self.mouse_sensitivity;
         } else {
             self.damping_movement[0] = std.math.lerp(self.damping_movement[0], 0.0, self.damping_amount * time.delta_time_unscaled_f32());
@@ -154,7 +154,7 @@ pub const Camera = struct {
         self.local_transform.position = target_offset;
         self.local_transform.position[3] = 0.0;
 
-        self.local_transform.rotation = zm.quatFromMat(zm.inverse(zm.lookAtLh(self.local_transform.position, zm.f32x4s(0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0))));
+        self.local_transform.rotation = zm.quatFromMat(zm.inverse(zm.lookAtRh(self.local_transform.position, zm.f32x4s(0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0))));
 
         // update transform
         self.transform = self.local_transform;

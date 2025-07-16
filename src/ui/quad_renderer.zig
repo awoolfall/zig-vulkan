@@ -236,8 +236,13 @@ pub const QuadRenderer = struct {
         const image_descriptor_layout = try _gfx.DescriptorLayout.init(.{
             .bindings = &.{
                 _gfx.DescriptorBindingInfo {
-                    .binding = 2,
-                    .binding_type = .ImageViewAndSampler,
+                    .binding = 0,
+                    .binding_type = .ImageView,
+                    .shader_stages = .{ .Pixel = true, },
+                },
+                _gfx.DescriptorBindingInfo {
+                    .binding = 1,
+                    .binding_type = .Sampler,
                     .shader_stages = .{ .Pixel = true, },
                 }
             },
@@ -379,14 +384,15 @@ pub const QuadRenderer = struct {
             (default_images_set.get() catch unreachable).update(.{
                 .writes = &.{
                     .{
-                        .binding = 2,
-                        .data = .{ .ImageViewAndSampler = .{
-                            .view = _gfx.GfxState.get().default.diffuse_view,
-                            .sampler = _gfx.GfxState.get().default.sampler,
-                        } },
+                        .binding = 0,
+                        .data = .{ .ImageView = _gfx.GfxState.get().default.diffuse_view, },
                     },
+                    .{
+                        .binding = 1,
+                        .data = .{ .Sampler = _gfx.GfxState.get().default.sampler, },
                     },
-                }) catch |err| {
+                },
+            }) catch |err| {
                 std.log.warn("Unable to update set: {}", .{err});
             };
 
@@ -483,12 +489,13 @@ pub const QuadRenderer = struct {
                     image_set.update(.{
                         .writes = &.{
                             .{
-                                .binding = 2,
-                                .data = .{ .ImageViewAndSampler = .{
-                                    .view = image.texture_view,
-                                    .sampler = _gfx.GfxState.get().default.sampler,
-                                } },
+                                .binding = 0,
+                                .data = .{ .ImageView = image.texture_view, },
                             },
+                            .{
+                                .binding = 1,
+                                .data = .{ .Sampler = _gfx.GfxState.get().default.sampler, },
+                            }
                         },
                     }) catch |err| {
                         std.log.warn("Unable to update quad image set: {}", .{err});

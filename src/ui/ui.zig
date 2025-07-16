@@ -347,7 +347,8 @@ pub const Imui = struct {
     last_frame_arena: u8,
     arenas: [2]std.heap.ArenaAllocator,
 
-    scuffed_x_checkbox_image: _gfx.ImageView.Ref,
+    scuffed_x_checkbox_image: _gfx.Image.Ref,
+    scuffed_x_checkbox_image_view: _gfx.ImageView.Ref,
     image_sampler: _gfx.Sampler.Ref,
 
     pub fn deinit(self: *Self) void {
@@ -362,6 +363,7 @@ pub const Imui = struct {
         self.priority_widgets.deinit();
         self.last_frame_widgets.deinit();
 
+        self.scuffed_x_checkbox_image_view.deinit();
         self.scuffed_x_checkbox_image.deinit();
         self.image_sampler.deinit();
 
@@ -392,7 +394,7 @@ pub const Imui = struct {
             },
             scuffed_x_image.data,
         );
-        defer scuffed_x_checkbox_image.deinit();
+        errdefer scuffed_x_checkbox_image.deinit();
         
         var scuffed_x_checkbox_image_view = try _gfx.ImageView.init(.{ .image = scuffed_x_checkbox_image, });
         errdefer scuffed_x_checkbox_image_view.deinit();
@@ -421,7 +423,8 @@ pub const Imui = struct {
             .widgets = std.ArrayList(Widget).init(alloc),
             .priority_widgets = std.ArrayList(Widget).init(alloc),
             .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
-            .scuffed_x_checkbox_image = scuffed_x_checkbox_image_view,
+            .scuffed_x_checkbox_image = scuffed_x_checkbox_image,
+            .scuffed_x_checkbox_image_view = scuffed_x_checkbox_image_view,
             .image_sampler = try _gfx.Sampler.init(.{}),
             .last_frame_arena = 0,
             .arenas = [_]std.heap.ArenaAllocator{
@@ -1379,7 +1382,7 @@ pub const Imui = struct {
             .texture = blk: { 
                 if (checked.*) { 
                     break :blk .{
-                        .texture_view = self.scuffed_x_checkbox_image,
+                        .texture_view = self.scuffed_x_checkbox_image_view,
                         .sampler = self.image_sampler,
                     };
                 } else {

@@ -67,9 +67,12 @@ pub const Debug = struct {
     }
 
     pub fn draw_line(self: *Self, debug_line: DebugLine) void {
-        self.lines.append(debug_line) catch |err| {
-            std.log.warn("Failed to append debug line: {s}", .{@errorName(err)});
-        };
+        _ = self;
+        _ = debug_line;
+        // TODO
+        // self.lines.append(debug_line) catch |err| {
+        //     std.log.warn("Failed to append debug line: {s}", .{@errorName(err)});
+        // };
     }
 
     pub fn draw_point(self: *Self, debug_point: DebugPoint) void {
