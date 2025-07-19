@@ -33,7 +33,7 @@ pub const BloomFilter = struct {
 
     pub fn init() !BloomFilter {
         var full_screen_quad_vertex_shader = try gf.VertexShader.init_buffer(
-            FULL_SCREEN_QUAD_VS,
+            gf.GfxState.FULL_SCREEN_QUAD_VS,
             "vs_main",
             .{ .bindings = &.{}, .attributes = &.{}, },
             .{},
@@ -41,14 +41,14 @@ pub const BloomFilter = struct {
         errdefer full_screen_quad_vertex_shader.deinit();
 
         var downsample_pixel_shader = try gf.PixelShader.init_buffer(
-            FULL_SCREEN_QUAD_VS ++ BLOOM_DOWNSAMPLE_HLSL,
+            gf.GfxState.FULL_SCREEN_QUAD_VS ++ BLOOM_DOWNSAMPLE_HLSL,
             "ps_main",
             .{},
         );
         errdefer downsample_pixel_shader.deinit();
 
         var upsample_pixel_shader = try gf.PixelShader.init_buffer(
-            FULL_SCREEN_QUAD_VS ++ BLOOM_UPSAMPLE_HLSL,
+            gf.GfxState.FULL_SCREEN_QUAD_VS ++ BLOOM_UPSAMPLE_HLSL,
             "ps_main",
             .{},
         );
@@ -228,8 +228,6 @@ pub const BloomFilter = struct {
         }
     }
 };
-
-const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.hlsl");
 
 const BLOOM_DOWNSAMPLE_HLSL = \\
 \\  cbuffer camera_data : register(b0)

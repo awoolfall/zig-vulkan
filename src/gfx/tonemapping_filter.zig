@@ -3,63 +3,51 @@ const Self = @This();
 const std = @import("std");
 const eng = @import("../root.zig");
 const gf = eng.gfx;
+const zm = eng.zmath;
 const bloom = @import("bloom.zig");
-
-const HLSL = //
-\\  Texture2D hdr_buffer;
-\\  Texture2D bloom_buffer;
-\\  SamplerState hdr_sampler;
-\\
-\\  [shader("pixel")]
-\\  float4 ps_main(vs_out input) : SV_TARGET
-\\  {
-\\      float3 hdr_colour = hdr_buffer.Sample(hdr_sampler, input.uv).rgb;
-\\      float3 bloom_colour = bloom_buffer.Sample(hdr_sampler, input.uv).rgb;
-\\      float3 mixed_colour = lerp(hdr_colour, bloom_colour, 0.04);
-\\      
-\\      // ACES tonemapping
-\\      float3 c = mixed_colour;
-\\      float3 mapped_aces = (c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14);
-\\      float4 toned_colour = float4(saturate(mapped_aces), 1.0);
-\\
-\\ #ifdef BLACK_AND_WHITE
-\\      // gamma correct and convert to grayscale
-\\      toned_colour = pow(toned_colour, float4(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2, 1.0));
-\\      float value = toned_colour.r * 0.299 + toned_colour.g * 0.587 + toned_colour.b * 0.114;
-\\      value = saturate(value);
-\\      toned_colour = float4(value, value, value, 1.0);
-\\
-\\      // return to linear space
-\\      toned_colour = pow(toned_colour, float4(2.2, 2.2, 2.2, 1.0));
-\\ #endif
-\\
-\\      return toned_colour;
-\\  }
-;
 
 pub const ToneMappingOptions = packed struct(u32) {
     black_and_white: bool = false,
     __padding: u31 = 0,
 };
 
+const ToneMappingShaderSource = @embedFile("tonemapping.slang");
+
 vertex_shader: gf.VertexShader,
 pixel_shader: gf.PixelShader,
 black_and_white_pixel_shader: gf.PixelShader,
 sampler: gf.Sampler.Ref,
 
-    bloom_filter: bloom.BloomFilter,
+bloom_filter: bloom.BloomFilter,
 
-    pub fn deinit(self: *Self) void {
-        self.bloom_filter.deinit();
-        self.vertex_shader.deinit();
-        self.pixel_shader.deinit();
-        self.black_and_white_pixel_shader.deinit();
-        self.sampler.deinit();
-    }
+images_descriptor_layout: gf.DescriptorLayout.Ref,
+images_descriptor_pool: gf.DescriptorPool.Ref,
+images_descriptor_sets: std.ArrayList(gf.DescriptorSet.Ref),
+
+render_pass: gf.RenderPass.Ref,
+pipeline: gf.GraphicsPipeline.Ref,
+framebuffer: gf.FrameBuffer.Ref,
+
+pub fn deinit(self: *Self) void {
+    self.bloom_filter.deinit();
+    self.vertex_shader.deinit();
+    self.pixel_shader.deinit();
+    self.black_and_white_pixel_shader.deinit();
+    self.sampler.deinit();
+
+    self.framebuffer.deinit();
+    self.pipeline.deinit();
+    self.render_pass.deinit();
+
+    for (self.images_descriptor_sets.items) |s| { s.deinit(); }
+    self.images_descriptor_sets.deinit();
+    self.images_descriptor_pool.deinit();
+    self.images_descriptor_layout.deinit();
+}
 
 pub fn init() !Self {
     var vertex_shader = try gf.VertexShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS,
+        gf.GfxState.FULL_SCREEN_QUAD_VS ++ ToneMappingShaderSource,
         "vs_main",
         .{ .bindings = &.{}, .attributes = &.{} },
         .{},
@@ -67,14 +55,14 @@ pub fn init() !Self {
     errdefer vertex_shader.deinit();
 
     var pixel_shader = try gf.PixelShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS ++ HLSL,
+        gf.GfxState.FULL_SCREEN_QUAD_VS ++ ToneMappingShaderSource,
         "ps_main",
         .{},
     );
     errdefer pixel_shader.deinit();
 
     var black_and_white_pixel_shader = try gf.PixelShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS ++ HLSL,
+        gf.GfxState.FULL_SCREEN_QUAD_VS ++ ToneMappingShaderSource,
         "ps_main",
         .{
             .defines = &.{
@@ -87,6 +75,94 @@ pub fn init() !Self {
     var sampler = try gf.Sampler.init(.{});
     errdefer sampler.deinit();
 
+    const images_descriptor_layout = try gf.DescriptorLayout.init(.{
+        .bindings = &.{
+            gf.DescriptorBindingInfo {
+                .binding = 0,
+                .shader_stages = .{ .Pixel = true, },
+                .binding_type = .ImageView,
+            },
+            gf.DescriptorBindingInfo {
+                .binding = 1,
+                .shader_stages = .{ .Pixel = true, },
+                .binding_type = .Sampler,
+            },
+        },
+    });
+    errdefer images_descriptor_layout.deinit();
+
+    const images_descriptor_pool = try gf.DescriptorPool.init(.{
+        .max_sets = gf.GfxState.get().frames_in_flight(),
+        .strategy = .{ .Layout = images_descriptor_layout, },
+    });
+    errdefer images_descriptor_pool.deinit();
+
+    var images_descriptor_sets = try std.ArrayList(gf.DescriptorSet.Ref).initCapacity(eng.get().general_allocator, gf.GfxState.get().frames_in_flight());
+    errdefer images_descriptor_sets.deinit();
+    errdefer for (images_descriptor_sets.items) |s| { s.deinit(); };
+
+    for (0..gf.GfxState.get().frames_in_flight()) |_| {
+        const set = try (try images_descriptor_pool.get()).allocate_set(.{ .layout = images_descriptor_layout, });
+        errdefer set.deinit();
+
+        try images_descriptor_sets.append(set);
+    }
+
+    const attachments = &[_]gf.AttachmentInfo {
+        gf.AttachmentInfo {
+            .name = "ldr_colour",
+            .format = gf.GfxState.ldr_format,
+            .load_op = .Clear,
+            .clear_value = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+            .initial_layout = .Undefined,
+            .final_layout = .ColorAttachmentOptimal,
+        },
+    };
+
+    const render_pass = try gf.RenderPass.init(.{
+        .attachments = attachments,
+        .subpasses = &.{
+            gf.SubpassInfo {
+                .attachments = &.{
+                    "ldr_colour",
+                },
+                .depth_attachment = null,
+            },
+        },
+        .dependencies = &.{
+            gf.SubpassDependencyInfo {
+                .src_subpass = null,
+                .dst_subpass = 0,
+                .src_access_mask = .{ .color_attachment_write = true, },
+                .dst_access_mask = .{ .color_attachment_write = true, },
+                .src_stage_mask = .{ .all_graphics = true, },
+                .dst_stage_mask = .{ .color_attachment_output = true, },
+            },
+        },
+    });
+    errdefer render_pass.deinit();
+
+    const pipeline = try gf.GraphicsPipeline.init(.{
+        .render_pass = render_pass,
+        .subpass_index = 0,
+        .attachments = attachments,
+        .vertex_shader = &vertex_shader,
+        .pixel_shader = &pixel_shader,
+        .cull_mode = .CullNone,
+        .descriptor_set_layouts = &.{
+            images_descriptor_layout,
+        },
+    });
+    errdefer pipeline.deinit();
+
+    const framebuffer = try gf.FrameBuffer.init(.{
+        .render_pass = render_pass,
+        .attachments = &.{
+            .SwapchainLDR,
+        },
+    });
+    errdefer framebuffer.deinit();
+
     var bloom_filter = try bloom.BloomFilter.init();
     errdefer bloom_filter.deinit();
 
@@ -96,52 +172,61 @@ pub fn init() !Self {
         .black_and_white_pixel_shader = black_and_white_pixel_shader,
         .sampler = sampler,
         .bloom_filter = bloom_filter,
+
+        .images_descriptor_layout = images_descriptor_layout,
+        .images_descriptor_pool = images_descriptor_pool,
+        .images_descriptor_sets = images_descriptor_sets,
+
+        .render_pass = render_pass,
+        .pipeline = pipeline,
+        .framebuffer = framebuffer,
     };
 }
 
 pub fn apply_filter(
     self: *Self,
-    hdr_buffer: gf.ImageView.Ref,
-    options: ToneMappingOptions,
-    rtv: gf.ImageView.Ref,
-) void {
-    const gfx = gf.GfxState.get();
+    cmd: *gf.CommandBuffer,
+) !void {
+    cmd.cmd_begin_render_pass(.{
+        .render_pass = self.render_pass,
+        .framebuffer = self.framebuffer,
+        .render_area = .full_screen_pixels(),
+    });
+    defer cmd.cmd_end_render_pass();
 
-    self.bloom_filter.render_bloom_texture(hdr_buffer, 0.005);
+    cmd.cmd_bind_graphics_pipeline(self.pipeline);
 
-    const view = rtv.get() catch unreachable;
-    const viewport = gf.Viewport {
-        .width = @floatFromInt(view.size.width),
-        .height = @floatFromInt(view.size.height),
-        .top_left_x = 0,
-        .top_left_y = 0,
-        .min_depth = 0,
-        .max_depth = 0,
-    };
+    cmd.cmd_set_viewports(.{
+        .viewports = &.{ .full_screen_viewport(), },
+    });
+    cmd.cmd_set_scissors(.{
+        .scissors = &.{ .full_screen_pixels(), },
+    });
 
-    gfx.cmd_set_render_target(&.{rtv}, null);
+    const set = self.images_descriptor_sets.items[gf.GfxState.get().current_frame_index()];
 
-    gfx.cmd_set_viewport(viewport);
-    gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+    // TODO allow setting of images which contain multiple backing vulkan images, such as the hdr image used here
+    // we do this every frame since the backing image changes based on the current frame index.
+    try (try set.get()).update(.{
+        .writes = &.{
+            gf.DescriptorSetUpdateWriteInfo {
+                .binding = 0,
+                .data = .{ .ImageView = gf.GfxState.get().platform.swapchain.hdr_image_view, },
+            },
+            gf.DescriptorSetUpdateWriteInfo {
+                .binding = 1,
+                .data = .{ .Sampler = self.sampler, },
+            },
+        },
+    });
 
-    gfx.cmd_set_vertex_shader(&self.vertex_shader);
+    cmd.cmd_bind_descriptor_sets(.{
+        .graphics_pipeline = self.pipeline,
+        .descriptor_sets = &.{
+            set
+        },
+    });
 
-    if (options.black_and_white) {
-        gfx.cmd_set_pixel_shader(&self.black_and_white_pixel_shader);
-    } else {
-        gfx.cmd_set_pixel_shader(&self.pixel_shader);
-    }
-    gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
-    gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_buffer, self.bloom_filter.get_bloom_view()});
-
-    gfx.cmd_set_topology(.TriangleList);
-
-    gfx.cmd_draw(6, 0);
-
-    // unset hdr texture so it can be used as rtv again
-    gfx.cmd_set_shader_resources(.Pixel, 0, &.{null, null});
+    cmd.cmd_draw(.{ .vertex_count = 6, });
 }
 
-pub fn framebuffer_resized(self: *Self) !void {
-    try self.bloom_filter.framebuffer_resized();
-}

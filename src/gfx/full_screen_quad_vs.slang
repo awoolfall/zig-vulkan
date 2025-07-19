@@ -12,7 +12,7 @@ vs_out vs_main(uint vertId : SV_VertexID)
     float y = float(((uint(vertId) + 1u) / 3u)%2u) * 2.0 - 1.0;
 
     output.position = float4(x, y, 0.0, 1.0);
-    output.uv = float2(x, -y);
+    output.uv = float2(x, y);
     output.uv = (output.uv / 2.0) + 0.5;
 
     return output;

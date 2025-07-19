@@ -15,7 +15,7 @@ pub const GfxState = struct {
     const Self = @This();
     const Platform = pl.GfxPlatform;
 
-    pub const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.hlsl");
+    pub const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.slang");
 
     platform: Platform,
 
@@ -273,9 +273,6 @@ pub const GfxState = struct {
         switch (event.*) {
             .RESIZED => |new_size| { 
                 self.window_resized(@intCast(new_size.width), @intCast(new_size.height));
-
-                // send resize event to children
-                self.tone_mapping_filter.framebuffer_resized() catch unreachable; // TODO remove?
             },
             else => {},
         }

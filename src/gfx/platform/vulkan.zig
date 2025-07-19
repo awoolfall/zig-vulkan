@@ -644,7 +644,7 @@ pub const GfxStateVulkan = struct {
             .width = swapchain_extent.width,
             .height = swapchain_extent.height,
             .depth = 1,
-            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, },
+            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, .ShaderResource = true, },
             .access_flags = .{ .GpuWrite = true, },
             .dst_layout = .ColorAttachmentOptimal,
         }, null);
