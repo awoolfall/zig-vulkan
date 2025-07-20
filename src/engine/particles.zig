@@ -7,6 +7,7 @@ const eng = @import("../root.zig");
 const gf = @import("../gfx/gfx.zig");
 const es = @import("../easings.zig");
 const ms = @import("../engine/mesh.zig");
+const Camera = @import("../root.zig").camera.Camera;
 
 pub const ParticleSystem = struct {
     const Self = @This();
@@ -45,7 +46,11 @@ pub const ParticleSystem = struct {
     shader_watcher: eng.assets.FileWatcher,
 
     model_matrix_vertex_buffer: gf.Buffer.Ref,
-    constant_buffer: gf.Buffer.Ref,
+    camera_constant_buffer: gf.Buffer.Ref,
+
+    camera_descriptor_layout: gf.DescriptorLayout.Ref,
+    camera_descriptor_pool: gf.DescriptorPool.Ref,
+    camera_descriptor_set: gf.DescriptorSet.Ref,
 
     render_pass: gf.RenderPass.Ref,
     pipeline: gf.GraphicsPipeline.Ref,
@@ -65,12 +70,16 @@ pub const ParticleSystem = struct {
         self.pixel_shader.deinit();
         self.shader_watcher.deinit();
 
+        self.camera_descriptor_set.deinit();
+        self.camera_descriptor_pool.deinit();
+        self.camera_descriptor_layout.deinit();
+
         self.model_matrix_vertex_buffer.deinit();
-        self.constant_buffer.deinit();
+        self.camera_constant_buffer.deinit();
     }
 
     pub fn init(alloc: std.mem.Allocator, settings: ParticleSystemSettings) !Self {
-        const particle_path = try std.fs.path.join(alloc, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" });
+        const particle_path = try std.fs.path.join(alloc, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.slang" });
         defer alloc.free(particle_path);
 
         const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
@@ -79,13 +88,7 @@ pub const ParticleSystem = struct {
         };
         defer shader_file.close();
 
-        const shader_hlsl = shader_file.readToEndAlloc(eng.get().general_allocator, 1024 * 1024) catch |err| {
-            std.log.err("failed to read file: {}", .{err});
-            return error.UnableToRead;
-        };
-        defer eng.get().general_allocator.free(shader_hlsl);
-
-        const shaders = try init_shaders(shader_hlsl);
+        const shaders = try init_shaders();
         const vertex_shader = shaders[0];
         const pixel_shader = shaders[1];
 
@@ -99,12 +102,45 @@ pub const ParticleSystem = struct {
         );
         errdefer model_matrix_vertex_buffer.deinit();
 
-        const constant_buffer = try gf.Buffer.init(
+        const camera_constant_buffer = try gf.Buffer.init(
             @sizeOf(ConstantBuffer),
             .{ .ConstantBuffer = true, },
             .{ .CpuWrite = true, },
         );
-        errdefer constant_buffer.deinit();
+        errdefer camera_constant_buffer.deinit();
+
+        const camera_descriptor_layout = try gf.DescriptorLayout.init(.{
+            .bindings = &.{
+                gf.DescriptorBindingInfo {
+                    .binding = 0,
+                    .shader_stages = .{ .Vertex = true, .Pixel = true, },
+                    .binding_type = .UniformBuffer,
+                },
+            },
+        });
+        errdefer camera_descriptor_layout.deinit();
+
+        const camera_descriptor_pool = try gf.DescriptorPool.init(.{
+            .max_sets = 1,
+            .strategy = .{ .Layout = camera_descriptor_layout, },
+        });
+        errdefer camera_descriptor_pool.deinit();
+
+        const camera_descriptor_set = try (try camera_descriptor_pool.get()).allocate_set(.{
+            .layout = camera_descriptor_layout,
+        });
+        errdefer camera_descriptor_set.deinit();
+
+        try (try camera_descriptor_set.get()).update(.{
+            .writes = &.{
+                gf.DescriptorSetUpdateWriteInfo {
+                    .binding = 0,
+                    .data = .{ .UniformBuffer = .{
+                        .buffer = camera_constant_buffer,
+                    } },
+                },
+            },
+        });
         
         const attachments = [_]gf.AttachmentInfo {
             .{
@@ -148,9 +184,12 @@ pub const ParticleSystem = struct {
         var graphics_pipeline = try gf.GraphicsPipeline.init(.{
             .vertex_shader = &vertex_shader,
             .pixel_shader = &pixel_shader,
-            .depth_test = .{ .write = true, },
+            .depth_test = .{ .write = false, },
             .attachments = attachments[0..],
             .render_pass = render_pass,
+            .descriptor_set_layouts = &.{
+                camera_descriptor_layout,
+            },
         });
         errdefer graphics_pipeline.deinit();
 
@@ -176,26 +215,51 @@ pub const ParticleSystem = struct {
             .alloc = alloc,
             .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
             .noise = zn.FnlGenerator{},
+            .sort_particles = sort_particles,
+
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
             .shader_watcher = shader_watcher,
+
             .render_pass = render_pass,
             .pipeline = graphics_pipeline,
             .framebuffer = framebuffer,
+
             .model_matrix_vertex_buffer = model_matrix_vertex_buffer,
-            .constant_buffer = constant_buffer,
-            .sort_particles = sort_particles,
+            .camera_constant_buffer = camera_constant_buffer,
+
+            .camera_descriptor_layout = camera_descriptor_layout,
+            .camera_descriptor_pool = camera_descriptor_pool,
+            .camera_descriptor_set = camera_descriptor_set,
         };
     }
 
-    pub fn init_shaders(hlsl: []const u8) !struct {gf.VertexShader, gf.PixelShader} {
+    pub fn init_shaders() !struct {gf.VertexShader, gf.PixelShader} {
+        const particle_path = std.fs.path.join(eng.get().general_allocator, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.slang" }) catch |err| {
+            std.log.err("failed to join paths: {}", .{err});
+            return err;
+        };
+        defer eng.get().general_allocator.free(particle_path);
+
+        const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
+            std.log.err("failed to open file: {}", .{err});
+            return err;
+        };
+        defer shader_file.close();
+
+        const shader_source = shader_file.readToEndAlloc(eng.get().general_allocator, 1024 * 1024) catch |err| {
+            std.log.err("failed to read file: {}", .{err});
+            return err;
+        };
+        defer eng.get().general_allocator.free(shader_source);
+
         const stride: u32 = 
             @sizeOf([16]f32) +  // matrix
             @sizeOf([4]f32) +   // colour
             @sizeOf([4]f32) +   // velocity
             @sizeOf([4]f32);    // scale
         const vertex_shader = try gf.VertexShader.init_buffer(
-            hlsl,
+            shader_source,
             "vs_main",
             .{
                 .bindings = &.{
@@ -216,7 +280,7 @@ pub const ParticleSystem = struct {
         errdefer vertex_shader.deinit();
         
         const pixel_shader = try gf.PixelShader.init_buffer(
-            hlsl,
+            shader_source,
             "ps_main",
             .{},
         );
@@ -269,28 +333,11 @@ pub const ParticleSystem = struct {
     pub fn update(self: *Self, time: *const tm.TimeState) void {
         if (self.shader_watcher.was_modified_since_last_check()) {
             blk: {
-                const particle_path = std.fs.path.join(eng.get().general_allocator, &[_][]const u8{ @import("build_options").engine_src_path, "engine/particles.hlsl" }) catch |err| {
-                    std.log.err("failed to join paths: {}", .{err});
-                    break :blk;
-                };
-                defer eng.get().general_allocator.free(particle_path);
-
-                const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
-                    std.log.err("failed to open file: {}", .{err});
-                    break :blk;
-                };
-                defer shader_file.close();
-
-                const shader_hlsl = shader_file.readToEndAlloc(eng.get().general_allocator, 1024 * 1024) catch |err| {
-                    std.log.err("failed to read file: {}", .{err});
-                    break :blk;
-                };
-                defer eng.get().general_allocator.free(shader_hlsl);
-
-                const new_shaders = init_shaders(shader_hlsl) catch |err| {
+                const new_shaders = init_shaders() catch |err| {
                     std.log.err("failed to reload shaders: {}", .{err});
                     break :blk;
                 };
+                
                 self.vertex_shader.deinit();
                 self.pixel_shader.deinit();
                 self.vertex_shader = new_shaders[0];
@@ -418,82 +465,88 @@ pub const ParticleSystem = struct {
     };
 
     pub fn draw(
-        self: *Self, 
-        view_matrix: zm.Mat, 
-        proj_matrix: zm.Mat, 
-        rtv: gf.ImageView.Ref, 
-        depth_view: gf.ImageView.Ref, 
-    ) void {
-        const gfx = gf.GfxState.get();
-
+        self: *Self,
+        cmd: *gf.CommandBuffer,
+        camera: *const Camera,
+    ) !void {
         // update all particle model matrices
-        if (self.model_matrix_vertex_buffer.map(.{ .write = true, })) |mapped_buffer| {
+        blk: {
+            const model_matrix_buffer = self.model_matrix_vertex_buffer.get() catch |err| {
+                std.log.warn("Unable to get model matrix buffer: {}", .{err});
+                break :blk;
+            };
+
+            const mapped_buffer = model_matrix_buffer.map(.{ .write = true, }) catch |err| {
+                std.log.warn("Unable to map model matrix buffer: {}", .{err});
+                break :blk;
+            };
             defer mapped_buffer.unmap();
 
             const data = mapped_buffer.data_array(VertexBufferData, self.sort_particles.len);
             for (self.sort_particles, 0..) |*p, i| {
                 data[i] = p.dat;
             }
-        } else |_| {}
+        }
 
         // update camera constant buffer
-        if (self.constant_buffer.map(.{ .write = true, })) |mapped_buffer| {
+        blk: {
+            const camera_buffer = self.camera_constant_buffer.get() catch |err| {
+                std.log.warn("Unable to get camera buffer: {}", .{err});
+                break :blk;
+            };
+
+            const mapped_buffer = camera_buffer.map(.{ .write = true, }) catch |err| {
+                std.log.warn("Unable to map camera buffer: {}", .{err});
+                break :blk;
+            };
             defer mapped_buffer.unmap();
 
             mapped_buffer.data(ConstantBuffer).* = ConstantBuffer {
-                .view_matrix = view_matrix,
-                .proj_matrix = proj_matrix,
+                .view_matrix = camera.transform.generate_view_matrix(),
+                .proj_matrix = camera.generate_perspective_matrix(gf.GfxState.get().swapchain_aspect()),
                 .flags = @bitCast(ConstantBufferFlags { 
                     .circle_shader = (self.settings.shape == .Circle),
                     .velocity_aligned = (self.settings.alignment == .VelocityAligned) 
                 }),
             };
-        } else |_| {}
-
-        const command_buffer = gf.CommandBuffer.init(.{}) catch unreachable;
-        defer command_buffer.deinit();
-
-        {
-            command_buffer.cmd_begin();
-            defer command_buffer.cmd_end();
-
-            {
-                command_buffer.cmd_begin_render_pass(.{ .render_pass = self.render_pass, });
-                defer command_buffer.cmd_end_render_pass();
-
-                command_buffer.cmd_bind_graphics_pipeline(self.pipeline);
-                command_buffer.cmd_bind_descriptor_sets(.{
-                });
-                command_buffer.cmd_bind_vertex_buffers(.{
-                });
-                command_buffer.cmd_draw(.{
-                });
-            }
         }
 
-        gfx.cmd_set_rasterizer_state(.{ .FillBack = true, });
-        gfx.cmd_set_pixel_shader(&self.pixel_shader);
+        // TODO perform draw commands only once for all particle systems
+        cmd.cmd_begin_render_pass(.{
+            .render_pass = self.render_pass,
+            .framebuffer = self.framebuffer,
+            .render_area = .full_screen_pixels(),
+        });
+        defer cmd.cmd_end_render_pass();
 
-        gfx.cmd_set_render_target(&.{rtv}, depth_view);
-
-        gfx.cmd_set_vertex_shader(&self.vertex_shader);
-        gfx.cmd_set_constant_buffers(.Vertex, 0, &.{&self.constant_buffer});
-        gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.constant_buffer});
-
-        gfx.cmd_set_topology(.TriangleList);
-
-        const model_matrix_stride: c_uint = @sizeOf(VertexBufferData);
-        gfx.cmd_set_vertex_buffers(0, &.{
-            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 0 * @sizeOf([4]f32) },
-            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 1 * @sizeOf([4]f32) },
-            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 2 * @sizeOf([4]f32) },
-            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 3 * @sizeOf([4]f32) },
-            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 4 * @sizeOf([4]f32) },
-            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 5 * @sizeOf([4]f32) },
-            .{ .buffer = &self.model_matrix_vertex_buffer, .stride = model_matrix_stride, .offset = 6 * @sizeOf([4]f32) },
+        cmd.cmd_set_viewports(.{
+            .viewports = &.{ .full_screen_viewport(), },
+        });
+        cmd.cmd_set_scissors(.{
+            .scissors = &.{ .full_screen_pixels(), },
         });
 
-        gfx.cmd_draw_instanced(6, @intCast(self.particles.len), 0, 0);
+        cmd.cmd_bind_graphics_pipeline(self.pipeline);
+
+        cmd.cmd_bind_vertex_buffers(.{
+            .buffers = &.{
+                gf.VertexBufferInput {
+                    .buffer = self.model_matrix_vertex_buffer,
+                },
+                },
+            });
+
+        cmd.cmd_bind_descriptor_sets(.{
+            .graphics_pipeline = self.pipeline,
+            .descriptor_sets = &.{
+                self.camera_descriptor_set,
+            },
+            });
+
+        cmd.cmd_draw(.{
+            .vertex_count = 6,
+            .instance_count = @intCast(self.particles.len),
+        });
     }
 
     fn random_v(rand: std.Random) zm.F32x4 {

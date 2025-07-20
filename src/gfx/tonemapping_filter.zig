@@ -133,9 +133,9 @@ pub fn init() !Self {
             gf.SubpassDependencyInfo {
                 .src_subpass = null,
                 .dst_subpass = 0,
-                .src_access_mask = .{ .color_attachment_write = true, },
+                .src_access_mask = .{},
                 .dst_access_mask = .{ .color_attachment_write = true, },
-                .src_stage_mask = .{ .all_graphics = true, },
+                .src_stage_mask = .{ .color_attachment_output = true, },
                 .dst_stage_mask = .{ .color_attachment_output = true, },
             },
         },

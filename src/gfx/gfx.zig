@@ -1606,7 +1606,6 @@ pub const CommandBuffer = struct {
     };
 
     pub const BeginRenderPassInfo = struct {
-
         render_pass: RenderPass.Ref,
         framebuffer: FrameBuffer.Ref,
         render_area: Rect,
