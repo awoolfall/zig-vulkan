@@ -596,7 +596,7 @@ pub const Font = struct {
                 // update mapped buffer
                 if (mapped_text_props_buffer) |b| { b.unmap(); }
                 const text_props_buffer = self.text_props_buffers.items[@intCast(text_props_buffer_idx)].text_buffer.get() catch unreachable;
-                mapped_text_props_buffer = text_props_buffer.map(.{ .write = true, }) catch |err| {
+                mapped_text_props_buffer = text_props_buffer.map(.{ .write = .EveryFrame, }) catch |err| {
                     std.log.err("Unable to map text props buffer: {}", .{err});
                     break :for_frame_texts_blk;
                 };
@@ -625,7 +625,7 @@ pub const Font = struct {
                 // update mapped buffer
                 if (mapped_vertex_buffer) |b| { b.unmap(); }
                 const vertex_buffer = self.character_vertex_buffers.items[@intCast(vertex_buffer_idx)].get() catch unreachable;
-                mapped_vertex_buffer = vertex_buffer.map(.{ .write = true, }) catch |err| {
+                mapped_vertex_buffer = vertex_buffer.map(.{ .write = .EveryFrame, }) catch |err| {
                     std.log.err("Unable to map character vertex buffer: {}", .{err});
                     break :for_frame_texts_blk;
                 };

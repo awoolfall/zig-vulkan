@@ -103,6 +103,7 @@ const QuadRenderSet = struct {
         self.buffers_descriptor_pool.deinit();
 
         for (self.image_descriptor_sets.items) |s| { s.deinit(); }
+        self.default_images_set.deinit();
         self.image_descriptor_sets.deinit();
         self.images_descriptor_pool.deinit();
 
@@ -452,12 +453,12 @@ pub const QuadRenderer = struct {
             }
 
             const buffer_vertex = render_set.buffer_vertex.get() catch unreachable;
-            const mapped_vertex = buffer_vertex.map(.{ .write = true, }) catch unreachable;
+            const mapped_vertex = buffer_vertex.map(.{ .write = .EveryFrame, }) catch unreachable;
             defer mapped_vertex.unmap();
             const vertex_data_array = mapped_vertex.data_array(QuadBufferVertexBuffer, QuadRenderer.MAX_QUADS_PER_BUFFER);
 
             const buffer_pixel = render_set.buffer_pixel.get() catch unreachable;
-            const mapped_pixel = buffer_pixel.map(.{ .write = true, }) catch unreachable;
+            const mapped_pixel = buffer_pixel.map(.{ .write = .EveryFrame, }) catch unreachable;
             defer mapped_pixel.unmap();
             const pixel_data_array = mapped_pixel.data_array(QuadBufferPixelBuffer, QuadRenderer.MAX_QUADS_PER_BUFFER);
 

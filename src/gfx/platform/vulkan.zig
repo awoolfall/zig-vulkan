@@ -12,6 +12,7 @@ const Rect = eng.Rect;
 
 pub const GfxStateVulkan = struct {
     const Self = @This();
+    const ENABLE_VALIDATION_LAYERS: bool = true;
 
     pub const VertexShader = VertexShaderVulkan;
     pub const PixelShader = PixelShaderVulkan;
@@ -57,9 +58,6 @@ pub const GfxStateVulkan = struct {
         swapchain_images: std.ArrayList(c.VkImage),
         swapchain_image_views: std.ArrayList(c.VkImageView),
 
-        hdr_image: gf.Image.Ref,
-        hdr_image_view: gf.ImageView.Ref,
-
         surface_format: c.VkSurfaceFormatKHR,
         present_mode: c.VkPresentModeKHR,
         extent: c.VkExtent2D,
@@ -69,9 +67,6 @@ pub const GfxStateVulkan = struct {
         present_transition_semaphores: std.ArrayList(gf.Semaphore),
 
         pub fn deinit(self: *@This(), vk_device: c.VkDevice) void {
-            self.hdr_image_view.deinit();
-            self.hdr_image.deinit();
-
             for (self.swapchain_image_views.items) |iv| {
                 c.vkDestroyImageView(vk_device, iv, null);
             }
@@ -91,6 +86,12 @@ pub const GfxStateVulkan = struct {
             return @intCast(self.swapchain_images.items.len);
         }
     };
+    
+    const BufferUpdates = struct {
+        vk_buffers: []const c.VkBuffer,
+        size: u64,
+        count: usize,
+    };
 
     alloc: std.mem.Allocator,
 
@@ -101,10 +102,14 @@ pub const GfxStateVulkan = struct {
     instance: c.VkInstance,
     surface: c.VkSurfaceKHR,
     physical_device: c.VkPhysicalDevice,
+    physical_device_properties: c.VkPhysicalDeviceProperties,
     device: c.VkDevice,
     queues: VkQueues,
 
+    debug_messenger: ?c.VkDebugUtilsMessengerEXT,
+
     num_frames_in_flight: u32,
+    frame_count: usize = 0,
 
     all_command_pool: gf.CommandPool,
     transfer_command_pool: gf.CommandPool,
@@ -114,11 +119,15 @@ pub const GfxStateVulkan = struct {
 
     properties: gf.PlatformProperties,
 
+    buffer_updates: std.ArrayList(BufferUpdates),
+
     pub fn deinit(self: *Self) void {
         std.log.info("Vulkan deinit", .{});
         vkt(c.vkDeviceWaitIdle(self.device)) catch |err| {
             std.log.err("Unable to wait for device idle: {}", .{err});
         };
+
+        self.buffer_updates.deinit();
         
         c.vkDestroyFence(self.device, self.temp_frame_wait_fence, null);
         self.swapchain.deinit(self.device);
@@ -127,6 +136,15 @@ pub const GfxStateVulkan = struct {
         self.transfer_command_pool.deinit();
         c.vkDestroyDevice(self.device, null);
         c.vkDestroySurfaceKHR(self.instance, self.surface, null);
+
+        if (self.debug_messenger) |m| blk: {
+            const vkDestroyDebugUtilsMessengerEXT = @as(
+                c.PFN_vkDestroyDebugUtilsMessengerEXT,
+                @ptrCast(c.vkGetInstanceProcAddr(self.instance, "vkDestroyDebugUtilsMessengerEXT"))
+            ) orelse break :blk;
+
+            vkDestroyDebugUtilsMessengerEXT(self.instance, m, null);
+        }
         c.vkDestroyInstance(self.instance, null);
 
         slang.c.deinitialise(self.slang_global);
@@ -148,11 +166,41 @@ pub const GfxStateVulkan = struct {
             c.VK_API_VERSION_VARIANT(vk_version),
         });
 
+        var required_instance_layers = std.ArrayList([*c]const u8).init(alloc);
+        defer required_instance_layers.deinit();
+        if (Self.ENABLE_VALIDATION_LAYERS) {
+            try required_instance_layers.append("VK_LAYER_KHRONOS_validation");
+        }
+
+        var instance_layer_count: u32 = 0;
+        try vkt(c.vkEnumerateInstanceLayerProperties(&instance_layer_count, null));
+
+        const instance_layers = try alloc.alloc(c.VkLayerProperties, instance_layer_count);
+        defer alloc.free(instance_layers);
+        try vkt(c.vkEnumerateInstanceLayerProperties(&instance_layer_count, @ptrCast(instance_layers.ptr)));
+
+        for (required_instance_layers.items) |required_layer| {
+            var found: bool = false;
+            for (instance_layers) |layer| {
+                if (std.mem.eql(u8, std.mem.sliceTo(layer.layerName[0..], 0), std.mem.sliceTo(required_layer[0..], 0))) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                std.log.err("Required instance layer does not exist: {s}", .{required_layer});
+                return error.RequiredInstanceLayerDoesNotExist;
+            }
+        }
+
         var instance_extensions = std.ArrayList([*c]const u8).init(alloc);
         defer instance_extensions.deinit();
         try instance_extensions.append(c.VK_KHR_SURFACE_EXTENSION_NAME);
         if (@import("builtin").os.tag == .windows) {
             try instance_extensions.append(c.VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+        }
+        if (Self.ENABLE_VALIDATION_LAYERS) {
+            try instance_extensions.append(c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
 
         var device_extensions = std.ArrayList([*c]const u8).init(alloc);
@@ -165,8 +213,8 @@ pub const GfxStateVulkan = struct {
 
         const create_instance_info = c.VkInstanceCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-            .enabledLayerCount = 0,
-            .ppEnabledLayerNames = null,
+            .enabledLayerCount = @intCast(required_instance_layers.items.len),
+            .ppEnabledLayerNames = @ptrCast(required_instance_layers.items.ptr),
             .enabledExtensionCount = @intCast(instance_extensions.items.len),
             .ppEnabledExtensionNames = @ptrCast(instance_extensions.items.ptr),
             .flags = 0,// | c.VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
@@ -176,6 +224,40 @@ pub const GfxStateVulkan = struct {
 
         try vkt(c.vkCreateInstance(&create_instance_info, null, &self.instance));
         errdefer c.vkDestroyInstance(self.instance, null);
+
+        self.debug_messenger = null;
+        if (Self.ENABLE_VALIDATION_LAYERS) {
+            const debug_messenger_create_info = c.VkDebugUtilsMessengerCreateInfoEXT {
+                .sType = c.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                .messageSeverity = 
+                    c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                    c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                    c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+                .messageType = 
+                    c.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                    c.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                    c.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+                .pfnUserCallback = &Self.debug_callback,
+            };
+
+            const vkCreateDebugUtilsMessengerEXT = @as(
+                c.PFN_vkCreateDebugUtilsMessengerEXT,
+                @ptrCast(c.vkGetInstanceProcAddr(self.instance, "vkCreateDebugUtilsMessengerEXT"))
+            ) orelse return error.ExtensionNotPresent;
+
+            var debug_messenger: c.VkDebugUtilsMessengerEXT = undefined;
+            try vkt(vkCreateDebugUtilsMessengerEXT(self.instance, &debug_messenger_create_info, null, @ptrCast(&debug_messenger)));
+            self.debug_messenger = debug_messenger;
+        }
+        errdefer if (self.debug_messenger) |m| blk: {
+            const vkDestroyDebugUtilsMessengerEXT = @as(
+                c.PFN_vkDestroyDebugUtilsMessengerEXT,
+                @ptrCast(c.vkGetInstanceProcAddr(self.instance, "vkDestroyDebugUtilsMessengerEXT"))
+            ) orelse break :blk;
+
+            vkDestroyDebugUtilsMessengerEXT(self.instance, m, null);
+            self.debug_messenger = null;
+        };
 
         switch (@import("builtin").os.tag) {
             .windows => {
@@ -292,6 +374,8 @@ pub const GfxStateVulkan = struct {
             return error.UnableToFindASuitablePhysicalDevice;
         }
         self.physical_device = physical_device_storage[best_physical_device_idx];
+        c.vkGetPhysicalDeviceProperties(self.physical_device, &self.physical_device_properties);
+
         self.properties = discover_platform_properties(self.physical_device);
 
         var physical_device_props: c.VkPhysicalDeviceProperties = undefined;
@@ -523,7 +607,75 @@ pub const GfxStateVulkan = struct {
         });
         errdefer self.swapchain.deinit(self.device);
 
+        self.buffer_updates = try std.ArrayList(BufferUpdates).initCapacity(self.alloc, 32);
+        errdefer self.buffer_updates.deinit();
+
         std.log.info("success!", .{});
+    }
+
+    pub fn debug_callback (
+        severity: c.VkDebugUtilsMessageSeverityFlagBitsEXT,
+        messageType: c.VkDebugUtilsMessageTypeFlagsEXT,
+        pCallbackData: ?*const c.VkDebugUtilsMessengerCallbackDataEXT,
+        pUserData: ?*const anyopaque,
+    ) callconv(.C) c.VkBool32 {
+        _ = messageType;
+        _ = pUserData;
+
+        std.debug.print("\n\x1b[{s}mVulkan Validation [{s}]:\n{s}\x1b[0m\n\n", .{
+            switch (severity) {
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT => "33", // yellow
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT => "31", // red
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT => "0", // normal
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT => "0", // normal
+                else => "0",
+            },
+            switch (severity) {
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT => "WARNING",
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT => "ERROR",
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT => "INFO",
+                c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT => "VERBOSE",
+                else => "???",
+            },
+            pCallbackData.?.pMessage,
+        });
+
+        var addresses: [32]usize = undefined;
+        var stack_trace = std.builtin.StackTrace { .index = 0, .instruction_addresses = &addresses, };
+        std.debug.captureStackTrace(null, &stack_trace);
+
+        std.debug.print("stack trace:\n", .{});
+        for (stack_trace.instruction_addresses[0..stack_trace.index]) |addr| {
+            const debug_info = std.debug.getSelfDebugInfo() catch {
+                std.debug.print("\terror.FailedToGetDebugInfo\n", .{});
+                continue;
+            };
+
+            const module_info = debug_info.getModuleForAddress(addr) catch {
+                std.debug.print("\terror.FailedToGetModuleForAddress\n", .{});
+                continue;
+            };
+
+            const symbol_info = module_info.getSymbolAtAddress(debug_info.allocator, addr) catch {
+                std.debug.print("\terror.FailedToGetSymbolAtAddress\n", .{});
+                continue;
+            };
+
+            const source_location = symbol_info.source_location orelse std.debug.SourceLocation {
+                .file_name = "unknown",
+                .column = 0,
+                .line = 0,
+            };
+
+            std.debug.print("\t{s}:{}\n", .{
+                source_location.file_name,
+                source_location.line,
+            });
+        }
+        std.debug.print("\n", .{});
+
+        // do not abort call
+        return c.VK_FALSE;
     }
 
     const SwapchainCreateOptions = struct {
@@ -639,28 +791,11 @@ pub const GfxStateVulkan = struct {
             try present_transition_semaphores_list.append(semaphore);
         }
 
-        const hdr_image = try gf.Image.init(.{
-            .format = gf.GfxState.hdr_format,
-            .width = swapchain_extent.width,
-            .height = swapchain_extent.height,
-            .depth = 1,
-            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, .ShaderResource = true, },
-            .access_flags = .{ .GpuWrite = true, },
-            .dst_layout = .ColorAttachmentOptimal,
-        }, null);
-        errdefer hdr_image.deinit();
-
-        const hdr_image_view = try gf.ImageView.init(.{ .image = hdr_image, });
-        errdefer hdr_image_view.deinit();
-
         std.log.info("swapchain extent is {}", .{swapchain_extent});
         return .{
             .swapchain = vk_swapchain,
             .swapchain_images = swapchain_images,
             .swapchain_image_views = swapchain_image_views,
-
-            .hdr_image = hdr_image,
-            .hdr_image_view = hdr_image_view,
 
             .extent = swapchain_extent,
             .surface_format = opt.format,
@@ -693,7 +828,7 @@ pub const GfxStateVulkan = struct {
     }
 
     pub inline fn props(self: *const Self) gf.PlatformProperties {
-        return self.platform_properties;
+        return self.properties;
     }
 
     pub inline fn swapchain_size(self: *const Self) [2]u32 {
@@ -727,8 +862,45 @@ pub const GfxStateVulkan = struct {
             @ptrCast(c.VK_NULL_HANDLE),
             &self.swapchain.current_image_index
         ));
+        self.frame_count += 1;
+
+        // Update frame in flight resources before continuing to the new frame
+        self.copy_updated_fif_buffers() catch |err| {
+            std.log.warn("Unable to update fif buffers: {}", .{err});
+        };
 
         return image_available_semaphore;
+    }
+
+    fn copy_updated_fif_buffers(self: *Self) !void {
+        var cmd = try begin_single_time_command_buffer(&self.all_command_pool);
+        defer end_single_time_command_buffer(&cmd, null);
+
+        const cfi = self.current_frame_index();
+        const cfi_minus_one = (cfi + self.frames_in_flight() - 1) % self.frames_in_flight();
+
+        std.log.info("fif update count is {}", .{self.buffer_updates.items.len});
+
+        var iter = std.mem.reverseIterator(self.buffer_updates.items);
+        while (iter.nextPtr()) |update| {
+            const buffer_copy_region = c.VkBufferCopy {
+                .size = update.size,
+                .dstOffset = 0,
+                .srcOffset = 0,
+            };
+            c.vkCmdCopyBuffer(
+                cmd.platform.vk_command_buffer,
+                update.vk_buffers[cfi_minus_one],
+                update.vk_buffers[cfi],
+                1,
+                &buffer_copy_region
+            );
+            update.count += 1;
+
+            if (update.count >= self.frames_in_flight()) {
+                _ = self.buffer_updates.swapRemove(iter.index);
+            }
+        }
     }
 
     pub inline fn submit_command_buffer(self: *Self, info: gf.GfxState.SubmitInfo) !void {
@@ -1346,14 +1518,29 @@ fn begin_single_time_command_buffer(command_pool: *gf.CommandPool) !gf.CommandBu
 
 fn end_single_time_command_buffer(cmd: *gf.CommandBuffer, signal_semaphore: ?gf.Semaphore) void {
     if (cmd.cmd_end()) {
+        var fence_exists: bool = true;
+        var fence = gf.Fence.init(.{}) catch |err| blk: {
+            std.log.warn("Unable to create fence: {}", .{err});
+            fence_exists = false;
+            break :blk undefined;
+        };
+        defer if (fence_exists) { fence.deinit(); };
+
         GfxStateVulkan.get().submit_command_buffer(.{
             .command_buffers = &.{ cmd },
             .signal_semaphores = if (signal_semaphore) |s| &.{ &s } else &.{},
+            .fence = fence,
         }) catch |err| {
             std.log.warn("Unable to submit one time command buffer: {}", .{err});
         };
 
-        GfxStateVulkan.get().flush();
+        fence.wait() catch |err| {
+            std.log.warn("Unable to wait on fence: {}", .{err});
+            GfxStateVulkan.get().flush();
+        };
+        if (!fence_exists) {
+            GfxStateVulkan.get().flush();
+        }
     } else |err| {
         std.log.warn("Unable to end command buffer: {}", .{err});
     }
@@ -1361,16 +1548,28 @@ fn end_single_time_command_buffer(cmd: *gf.CommandBuffer, signal_semaphore: ?gf.
     cmd.deinit();
 }
 
+inline fn align_up(value: anytype, alignment: anytype) @TypeOf(value) {
+    return @divFloor(value + alignment - 1, alignment) * alignment;
+}
+
+inline fn lcm(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    return (a * b) / std.math.gcd(a, b);
+}
+
 pub const BufferVulkan = struct {
     const Self = @This();
 
-    vk_buffer_info: c.VkBufferCreateInfo,
-    vk_buffer: c.VkBuffer,
+    buffer_size: u64,
+    aligned_buffer_size: u64,
+    vk_buffers: []c.VkBuffer,
     vk_device_memory: c.VkDeviceMemory,
 
     pub fn deinit(self: *const Self) void {
         c.vkFreeMemory(eng.get().gfx.platform.device, self.vk_device_memory, null);
-        c.vkDestroyBuffer(eng.get().gfx.platform.device, self.vk_buffer, null);
+        for (self.vk_buffers) |buf| {
+            c.vkDestroyBuffer(eng.get().gfx.platform.device, buf, null);
+        }
+        GfxStateVulkan.get().alloc.free(self.vk_buffers);
     }
 
     pub fn init(
@@ -1378,6 +1577,9 @@ pub const BufferVulkan = struct {
         usage_flags: gf.BufferUsageFlags,
         access_flags: gf.AccessFlags,
     ) !Self {
+        const fif = GfxStateVulkan.get().frames_in_flight();
+        const alloc = GfxStateVulkan.get().alloc;
+
         // @TODO: use the dedicated transfer queue
         const use_shared = false; // gfx.platform.queues.has_distinct_transfer_queue() and
             // (access_flags.CpuRead or access_flags.CpuWrite);
@@ -1386,30 +1588,64 @@ pub const BufferVulkan = struct {
             GfxStateVulkan.get().queues.cpu_gpu_transfer_family_index
         };
 
+
+        const buffer_is_immutable = (access_flags.CpuWrite == false and access_flags.GpuWrite == false);
+        const vk_buffer_count = if (buffer_is_immutable) 1 else fif;
+
+        var usage_flags_plus = usage_flags;
+        // Allow FiF transfers
+        if (vk_buffer_count == fif) {
+            usage_flags_plus.TransferSrc = true;
+            usage_flags_plus.TransferDst = true;
+        }
+
         const buffer_create_info = c.VkBufferCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .sharingMode = if (use_shared) c.VK_SHARING_MODE_CONCURRENT else c.VK_SHARING_MODE_EXCLUSIVE,
             .pQueueFamilyIndices = @ptrCast(family_indices.ptr),
             .queueFamilyIndexCount = if (use_shared) @intCast(family_indices.len) else 1,
             .size = @intCast(byte_size),
-            .usage = convert_buffer_usage_flags_to_vulkan(usage_flags),
+            .usage = convert_buffer_usage_flags_to_vulkan(usage_flags_plus),
         };
         std.debug.assert(buffer_create_info.usage != 0);
 
-        var vk_buffer: c.VkBuffer = undefined;
-        try vkt(c.vkCreateBuffer(GfxStateVulkan.get().device, &buffer_create_info, null, &vk_buffer));
-        errdefer c.vkDestroyBuffer(GfxStateVulkan.get().device, vk_buffer, null);
+        var vk_buffers_list = try std.ArrayList(c.VkBuffer).initCapacity(alloc, vk_buffer_count);
+        defer vk_buffers_list.deinit();
+        errdefer for (vk_buffers_list.items) |b| { c.vkDestroyBuffer(GfxStateVulkan.get().device, b, null); };
+
+        for (0..vk_buffer_count) |_| {
+            var vk_buffer: c.VkBuffer = undefined;
+            try vkt(c.vkCreateBuffer(GfxStateVulkan.get().device, &buffer_create_info, null, &vk_buffer));
+            errdefer c.vkDestroyBuffer(GfxStateVulkan.get().device, vk_buffer, null);
+
+            try vk_buffers_list.append(vk_buffer);
+        }
 
         var vk_memory_requirements: c.VkMemoryRequirements = undefined;
-        c.vkGetBufferMemoryRequirements(GfxStateVulkan.get().device, vk_buffer, &vk_memory_requirements);
+        c.vkGetBufferMemoryRequirements(GfxStateVulkan.get().device, vk_buffers_list.items[0], &vk_memory_requirements);
 
         const memory_properties: c.VkMemoryPropertyFlags = if (access_flags.CpuRead or access_flags.CpuWrite)
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
             else c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
+        const vk_limits = GfxStateVulkan.get().physical_device_properties.limits;
+
+        var lcm_alignment: u64 = 1;
+        if (access_flags.CpuRead or access_flags.CpuWrite) {
+            lcm_alignment = lcm(lcm_alignment, vk_limits.minMemoryMapAlignment);
+        }
+        if (usage_flags_plus.ConstantBuffer) {
+            lcm_alignment = lcm(lcm_alignment, vk_limits.minUniformBufferOffsetAlignment);
+        }
+        // TODO check if this will explode alignment value or not
+        // if (usage_flags_plus.TransferSrc or usage_flags_plus.TransferDst) {
+        //     lcm_alignment = lcm(lcm_alignment, vk_limits.optimalBufferCopyOffsetAlignment);
+        // }
+        const vk_buffer_size_aligned = align_up(vk_memory_requirements.size, lcm_alignment);
+
         const memory_allocate_info = c.VkMemoryAllocateInfo {
             .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize = vk_memory_requirements.size,
+            .allocationSize = vk_buffer_size_aligned * vk_buffer_count,
             .memoryTypeIndex = try find_vulkan_memory_type(
                 vk_memory_requirements.memoryTypeBits,
                 memory_properties,
@@ -1421,11 +1657,17 @@ pub const BufferVulkan = struct {
         try vkt(c.vkAllocateMemory(GfxStateVulkan.get().device, &memory_allocate_info, null, &vk_device_memory));
         errdefer c.vkFreeMemory(GfxStateVulkan.get().device, vk_device_memory, null);
 
-        try vkt(c.vkBindBufferMemory(GfxStateVulkan.get().device, vk_buffer, vk_device_memory, 0));
+        for (vk_buffers_list.items, 0..) |vk_buffer, idx| {
+            try vkt(c.vkBindBufferMemory(GfxStateVulkan.get().device, vk_buffer, vk_device_memory, idx * vk_buffer_size_aligned));
+        }
+
+        const vk_buffers = try alloc.dupe(c.VkBuffer, vk_buffers_list.items[0..]);
+        errdefer alloc.free(vk_buffers);
 
         return .{
-            .vk_buffer_info = buffer_create_info,
-            .vk_buffer = vk_buffer,
+            .buffer_size = @intCast(byte_size),
+            .aligned_buffer_size = @intCast(vk_buffer_size_aligned),
+            .vk_buffers = vk_buffers,
             .vk_device_memory = vk_device_memory,
         };
     }
@@ -1441,39 +1683,129 @@ pub const BufferVulkan = struct {
         const self = try Self.init(@intCast(data.len), usage_flags_plus, access_flags);
         errdefer self.deinit();
 
-        const staging = try Self.init(
-            @intCast(data.len), 
-            .{ .TransferSrc = true, },
-            .{ .CpuWrite = true, },
-        );
+        const staging = try Self.init_staging(data.len);
         defer staging.deinit();
 
         {
             var data_ptr: ?*anyopaque = undefined;
-            try vkt(c.vkMapMemory(GfxStateVulkan.get().device, staging.vk_device_memory, 0, staging.vk_buffer_info.size, 0, &data_ptr));
+            try vkt(c.vkMapMemory(GfxStateVulkan.get().device, staging.vk_device_memory, 0, staging.buffer_size, 0, &data_ptr));
             defer c.vkUnmapMemory(GfxStateVulkan.get().device, staging.vk_device_memory);
 
-            @memcpy(@as([*]u8, @ptrCast(data_ptr))[0..(staging.vk_buffer_info.size)], data[0..]);
+            @memcpy(@as([*]u8, @ptrCast(data_ptr))[0..(data.len)], data[0..]);
         }
 
         var command_buffer = try begin_single_time_command_buffer(&GfxStateVulkan.get().all_command_pool);
 
-        const buffer_copy_region = c.VkBufferCopy {
-            .size = staging.vk_buffer_info.size,
-            .dstOffset = 0,
-            .srcOffset = 0,
-        };
-        c.vkCmdCopyBuffer(command_buffer.platform.vk_command_buffer, staging.vk_buffer, self.vk_buffer, 1, &buffer_copy_region);
+        for (self.vk_buffers) |vk_buffer| {
+            const buffer_copy_region = c.VkBufferCopy {
+                .size = data.len,
+                .dstOffset = 0,
+                .srcOffset = 0,
+            };
+            c.vkCmdCopyBuffer(command_buffer.platform.vk_command_buffer, staging.get_frame_vk_buffer(), vk_buffer, 1, &buffer_copy_region);
+        }
 
         end_single_time_command_buffer(&command_buffer, null);
 
         return self;
     }
 
+    fn init_staging(
+        byte_size: usize,
+    ) !Self {
+        const alloc = GfxStateVulkan.get().alloc;
+
+        // @TODO: use the dedicated transfer queue
+        const use_shared = false; // gfx.platform.queues.has_distinct_transfer_queue() and
+            // (access_flags.CpuRead or access_flags.CpuWrite);
+        const family_indices: []const u32 = &.{
+            GfxStateVulkan.get().queues.all_family_index,
+            GfxStateVulkan.get().queues.cpu_gpu_transfer_family_index
+        };
+
+        const buffer_create_info = c.VkBufferCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .sharingMode = if (use_shared) c.VK_SHARING_MODE_CONCURRENT else c.VK_SHARING_MODE_EXCLUSIVE,
+            .pQueueFamilyIndices = @ptrCast(family_indices.ptr),
+            .queueFamilyIndexCount = if (use_shared) @intCast(family_indices.len) else 1,
+            .size = @intCast(byte_size),
+            .usage = convert_buffer_usage_flags_to_vulkan(.{ .TransferSrc = true, }),
+        };
+        std.debug.assert(buffer_create_info.usage != 0);
+
+        var vk_buffer: c.VkBuffer = undefined;
+        try vkt(c.vkCreateBuffer(GfxStateVulkan.get().device, &buffer_create_info, null, &vk_buffer));
+        errdefer c.vkDestroyBuffer(GfxStateVulkan.get().device, vk_buffer, null);
+
+        var vk_memory_requirements: c.VkMemoryRequirements = undefined;
+        c.vkGetBufferMemoryRequirements(GfxStateVulkan.get().device, vk_buffer, &vk_memory_requirements);
+
+        const memory_properties: c.VkMemoryPropertyFlags = 
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+        const vk_limits = GfxStateVulkan.get().physical_device_properties.limits;
+
+        var lcm_alignment: u64 = 1;
+        lcm_alignment = lcm(lcm_alignment, vk_limits.minMemoryMapAlignment);
+        lcm_alignment = lcm(lcm_alignment, vk_limits.optimalBufferCopyOffsetAlignment);
+        const vk_buffer_size_aligned = align_up(vk_memory_requirements.size, lcm_alignment);
+
+        const memory_allocate_info = c.VkMemoryAllocateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = vk_buffer_size_aligned,
+            .memoryTypeIndex = try find_vulkan_memory_type(
+                vk_memory_requirements.memoryTypeBits,
+                memory_properties,
+            ),
+        };
+
+        // TODO better memory allocation strategy
+        var vk_device_memory: c.VkDeviceMemory = undefined;
+        try vkt(c.vkAllocateMemory(GfxStateVulkan.get().device, &memory_allocate_info, null, &vk_device_memory));
+        errdefer c.vkFreeMemory(GfxStateVulkan.get().device, vk_device_memory, null);
+
+        try vkt(c.vkBindBufferMemory(GfxStateVulkan.get().device, vk_buffer, vk_device_memory, 0));
+
+        const vk_buffers = try alloc.alloc(c.VkBuffer, 1);
+        errdefer alloc.free(vk_buffers);
+
+        vk_buffers[0] = vk_buffer;
+
+        return .{
+            .buffer_size = @intCast(byte_size),
+            .aligned_buffer_size = @intCast(vk_buffer_size_aligned),
+            .vk_buffers = vk_buffers,
+            .vk_device_memory = vk_device_memory,
+        };
+    }
+
     pub fn map(self: *const Self, options: gf.Buffer.MapOptions) !MappedBuffer {
-        _ = options;
+        const cfi = GfxStateVulkan.get().current_frame_index();
+
         var data_ptr: ?*anyopaque = undefined;
-        try vkt(c.vkMapMemory(GfxStateVulkan.get().device, self.vk_device_memory, 0, self.vk_buffer_info.size, 0, &data_ptr));
+        try vkt(c.vkMapMemory(
+                GfxStateVulkan.get().device,
+                self.vk_device_memory,
+                @as(u64, @intCast(cfi)) * self.aligned_buffer_size,
+                self.buffer_size,
+                0,
+                &data_ptr
+        ));
+
+        if (options.write == .Infrequent and self.vk_buffers.len > 1) {
+            for (GfxStateVulkan.get().buffer_updates.items) |*item| {
+                if (item.vk_buffers[0] == self.vk_buffers[0]) {
+                    item.count = 0;
+                    break;
+                }
+            } else {
+                try GfxStateVulkan.get().buffer_updates.append(GfxStateVulkan.BufferUpdates {
+                    .vk_buffers = self.vk_buffers,
+                    .size = self.buffer_size,
+                    .count = 0,
+                });
+            }
+        }
 
         return MappedBuffer {
             .data_ptr = data_ptr,
@@ -1498,6 +1830,10 @@ pub const BufferVulkan = struct {
         }
     };
 
+    pub fn get_frame_vk_buffer(self: *const BufferVulkan) c.VkBuffer {
+        const cfi = GfxStateVulkan.get().current_frame_index();
+        return self.vk_buffers[@as(usize, @intCast(cfi)) % self.vk_buffers.len];
+    }
 };
 
 pub const ImageVulkan = struct {
@@ -1560,7 +1896,7 @@ pub const ImageVulkan = struct {
                 .mipLevels = info.mip_levels,
                 .arrayLayers = info.array_length,
                 .tiling = c.VK_IMAGE_TILING_OPTIMAL,
-                .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+                .initialLayout = imagelayout_to_vulkan(.Undefined),
                 .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
                 .samples = c.VK_SAMPLE_COUNT_1_BIT,
                 .usage = vk_usage_flags,
@@ -1603,15 +1939,11 @@ pub const ImageVulkan = struct {
 
         if (data) |d| {
             const buffer_length = info.width * info.height * info.array_length * info.format.byte_width();
-            const staging_buffer = try BufferVulkan.init(
-                @intCast(buffer_length),
-                .{ .TransferSrc = true, },
-                .{ .CpuWrite = true, },
-            );
+            const staging_buffer = try BufferVulkan.init_staging(@intCast(buffer_length));
             defer staging_buffer.deinit();
 
             {
-                var mapped_buffer = try staging_buffer.map(.{ .write = true, });
+                var mapped_buffer = try staging_buffer.map(.{ .write = .Infrequent, });
                 defer mapped_buffer.unmap();
 
                 const mapped_slice = mapped_buffer.data_array(u8, buffer_length);
@@ -1649,29 +1981,30 @@ pub const ImageVulkan = struct {
 
                     c.vkCmdCopyBufferToImage(
                         command_buffer.platform.vk_command_buffer,
-                        staging_buffer.vk_buffer,
+                        staging_buffer.get_frame_vk_buffer(),
                         images[image_idx].vk_image,
                         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         1,
                         &region
                     );
                 }
-
-                if (info.dst_layout != .Undefined) {
-                    try self.transition_layout(
-                        image_idx,
-                        if (data != null) .TransferDstOptimal else .Undefined,
-                        info.dst_layout
-                    );
-                }
             }
+        }
+
+        for (0..images.len) |image_idx| {
+            try self.transition_layout(
+                image_idx,
+                if (data) |_| .TransferDstOptimal else .Undefined,
+                info.dst_layout
+            );
         }
 
         return self;
     }
 
     pub inline fn get_frame_image(self: *const Self) *const ImageData {
-        const idx = @min(GfxStateVulkan.get().current_frame_index(), self.images.len - 1);
+        const idx = GfxStateVulkan.get().current_frame_index();
+        std.debug.assert(idx < self.images.len);
         return &self.images[idx];
     }
 
@@ -1762,9 +2095,9 @@ pub const ImageVulkan = struct {
                     if (self.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT
                     else c.VK_IMAGE_ASPECT_COLOR_BIT,
                 .baseMipLevel = 0,
-                .levelCount = 1,
+                .levelCount = c.VK_REMAINING_MIP_LEVELS,
                 .baseArrayLayer = 0,
-                .layerCount = 1,
+                .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
             },
         };
         c.vkCmdPipelineBarrier(
@@ -1845,7 +2178,9 @@ pub const ImageViewVulkan = struct {
     }
 
     pub inline fn get_frame_view(self: *const Self) c.VkImageView {
-        const idx = @min(GfxStateVulkan.get().current_frame_index(), self.vk_image_views.len - 1);
+        if (self.vk_image_views.len == 1) { return self.vk_image_views[0]; }
+        const idx = GfxStateVulkan.get().current_frame_index();
+        std.debug.assert(idx < self.vk_image_views.len);
         return self.vk_image_views[idx];
     }
 };
@@ -2496,11 +2831,11 @@ pub const FrameBufferVulkan = struct {
             var swapchain_index: ?usize = null;
             for (info.attachments, 0..) |a, i| {
                 switch (a) {
-                    .SwapchainLDR, .SwapchainHDR, .SwapchainDepth => {
+                    .SwapchainLDR, .SwapchainHDR, .SwapchainDepth, .View => { // TODO is this correct?
                         swapchain_index = i;
                         break;
                     },
-                    else => {},
+                    //else => {},
                 }
             }
             break :blk (swapchain_index != null);
@@ -2522,7 +2857,7 @@ pub const FrameBufferVulkan = struct {
                         break :blk GfxStateVulkan.get().swapchain.swapchain_image_views.items[fidx];
                     },
                     .SwapchainHDR => blk: {
-                        const view = try GfxStateVulkan.get().swapchain.hdr_image_view.get();
+                        const view = try gf.GfxState.get().default.hdr_image_view.get();
                         std.debug.assert(view.platform.vk_image_views.len == GfxStateVulkan.get().frames_in_flight());
                         break :blk view.platform.vk_image_views[fidx];
                     },
@@ -2693,12 +3028,12 @@ pub const DescriptorPoolVulkan = struct {
 
         for (vk_pool_sizes) |*pool_size| {
             // TODO check we can actually create this many in the pool
-            pool_size.descriptorCount *= info.max_sets;
+            pool_size.descriptorCount *= info.max_sets * GfxStateVulkan.get().frames_in_flight();
         }
 
         const pool_info = c.VkDescriptorPoolCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-            .maxSets = info.max_sets,
+            .maxSets = info.max_sets * GfxStateVulkan.get().frames_in_flight(),
             .pPoolSizes = @ptrCast(vk_pool_sizes.ptr),
             .poolSizeCount = @intCast(vk_pool_sizes.len),
         };
@@ -2718,10 +3053,13 @@ pub const DescriptorPoolVulkan = struct {
         info: gf.DescriptorSetInfo,
         number_of_sets: u32
     ) ![]gf.DescriptorSet {
+        const fif = GfxStateVulkan.get().frames_in_flight();
+        const number_of_vk_sets = number_of_sets * fif;
+
         // todo multiple sets using multiple different layouts?
         const layout = try info.layout.get();
 
-        const layouts = try alloc.alloc(c.VkDescriptorSetLayout, number_of_sets);
+        const layouts = try alloc.alloc(c.VkDescriptorSetLayout, number_of_vk_sets);
         defer alloc.free(layouts);
 
         for (layouts) |*l| {
@@ -2735,18 +3073,32 @@ pub const DescriptorPoolVulkan = struct {
             .descriptorSetCount = @intCast(layouts.len),
         };
 
-        const sets = try alloc.alloc(gf.DescriptorSet, number_of_sets);
-        errdefer alloc.free(sets);
-
-        const vk_sets = try alloc.alloc(c.VkDescriptorSet, number_of_sets);
+        const vk_sets = try alloc.alloc(c.VkDescriptorSet, number_of_vk_sets);
         defer alloc.free(vk_sets);
 
         try vkt(c.vkAllocateDescriptorSets(GfxStateVulkan.get().device, &alloc_info, @ptrCast(vk_sets.ptr)));
+        errdefer {
+            if (false) { // TODO free individual sets
+                vkt(c.vkFreeDescriptorSets(GfxStateVulkan.get().device, self.vk_pool, @intCast(vk_sets.len), @ptrCast(vk_sets.ptr))) catch |err| {
+                    std.log.err("Unable to free descriptor sets: {}", .{err});
+                };
+            }
+        }
 
-        for (vk_sets, 0..) |vk_set, idx| {
+        const sets = try alloc.alloc(gf.DescriptorSet, number_of_sets);
+        errdefer alloc.free(sets);
+
+        var vk_sets_window_iter = std.mem.window(c.VkDescriptorSet, vk_sets, fif, fif);
+        var idx: usize = 0;
+        while (vk_sets_window_iter.next()) |vk_set_chunk| {
             sets[idx] = gf.DescriptorSet {
-                .platform = DescriptorSetVulkan.init(vk_set),
+                .platform = try DescriptorSetVulkan.init(self.vk_pool, vk_set_chunk, false),
             };
+            idx += 1;
+        }
+
+        if (idx != number_of_sets) {
+            return error.WasntAbleToFillAllRequestedSets;
         }
 
         return sets;
@@ -2754,20 +3106,116 @@ pub const DescriptorPoolVulkan = struct {
 };
 
 pub const DescriptorSetVulkan = struct {
-    vk_set: c.VkDescriptorSet,
+    vk_sets: []c.VkDescriptorSet,
+    vk_pool: c.VkDescriptorPool,
+    can_free_individual_sets: bool, // TODO free individual sets?
+
+    last_update_info: ?gf.DescriptorSetUpdateInfo = null,
+    updated_sets: []bool,
 
     pub fn deinit(self: *const DescriptorSetVulkan) void {
-        _ = self;
+        const alloc = GfxStateVulkan.get().alloc;
+
+        if (self.can_free_individual_sets) {
+            vkt(c.vkFreeDescriptorSets(GfxStateVulkan.get().device, self.vk_pool, @intCast(self.vk_sets.len), @ptrCast(self.vk_sets.ptr))) catch |err| {
+                std.log.err("Unable to free descriptor sets: {}", .{err});
+            };
+        }
+        alloc.free(self.vk_sets);
+        
+        alloc.free(self.updated_sets);
+        self.deinit_update_info();
     }
 
-    fn init(vk_set: c.VkDescriptorSet) DescriptorSetVulkan {
+    fn init(vk_pool: c.VkDescriptorPool, vk_sets: []const c.VkDescriptorSet, can_free_individual_sets: bool) !DescriptorSetVulkan {
+        const updated_sets = try GfxStateVulkan.get().alloc.alloc(bool, vk_sets.len);
+        errdefer GfxStateVulkan.get().alloc.free(updated_sets);
+        @memset(updated_sets[0..], false);
+
+        const owned_vk_sets = try GfxStateVulkan.get().alloc.dupe(c.VkDescriptorSet, vk_sets);
+        errdefer GfxStateVulkan.get().alloc.free(owned_vk_sets);
+
         return .{
-            .vk_set = vk_set,
+            .vk_sets = owned_vk_sets,
+            .vk_pool = vk_pool,
+            .can_free_individual_sets = can_free_individual_sets,
+            .updated_sets = updated_sets,
         };
     }
 
-    pub fn update(self: *const DescriptorSetVulkan, info: gf.DescriptorSetUpdateInfo) !void {
+    fn deinit_update_info(self: *const DescriptorSetVulkan) void {
         const alloc = GfxStateVulkan.get().alloc;
+
+        if (self.last_update_info) |info| {
+            for (info.writes) |w| {
+                switch (w.data) {
+                    .UniformBufferArray => |a| { alloc.free(a); },
+                    .StorageBufferArray => |a| { alloc.free(a); },
+                    .ImageViewArray => |a| { alloc.free(a); },
+                    .SamplerArray => |a| { alloc.free(a); },
+                    .ImageViewAndSamplerArray => |a| { alloc.free(a); },
+                    else => {},
+                }
+            }
+            alloc.free(info.writes);
+        }
+    }
+
+    fn get_frame_set(self: *const DescriptorSetVulkan) c.VkDescriptorSet {
+        return self.vk_sets[@min(GfxStateVulkan.get().current_frame_index(), self.vk_sets.len)];
+    }
+
+    pub fn update(self: *DescriptorSetVulkan, info: gf.DescriptorSetUpdateInfo) !void {
+        const alloc = GfxStateVulkan.get().alloc;
+        const owned_writes = try alloc.dupe(gf.DescriptorSetUpdateWriteInfo, info.writes);
+        errdefer alloc.free(owned_writes);
+
+        for (owned_writes) |*w| {
+            switch (w.data) {
+                .UniformBufferArray => |a| {
+                    w.data = .{ .UniformBufferArray = try alloc.dupe(gf.DescriptorSetWriteBufferInfo, a), };
+                },
+                .StorageBufferArray => |a| {
+                    w.data = .{ .StorageBufferArray = try alloc.dupe(gf.DescriptorSetWriteBufferInfo, a), };
+                },
+                .ImageViewArray => |a| {
+                    w.data = .{ .ImageViewArray = try alloc.dupe(gf.ImageView.Ref, a), };
+                },
+                .SamplerArray => |a| {
+                    w.data = .{ .SamplerArray = try alloc.dupe(gf.Sampler.Ref, a), };
+                },
+                .ImageViewAndSamplerArray => |a| {
+                    w.data = .{ .ImageViewAndSamplerArray = try alloc.dupe(gf.ImageViewAndSampler, a), };
+                },
+                else => {},
+            }
+        }
+
+        const owned_info = gf.DescriptorSetUpdateInfo {
+            .writes = owned_writes,
+        };
+
+        self.deinit_update_info();
+        self.last_update_info = owned_info;
+
+        @memset(self.updated_sets[0..], false);
+    }
+
+    pub fn perform_updates_if_required(self: *const DescriptorSetVulkan) !void {
+        std.debug.assert(GfxStateVulkan.get().current_frame_index() < self.updated_sets.len);
+        const cfi = GfxStateVulkan.get().current_frame_index();
+
+        if (!self.updated_sets[cfi]) {
+            try self.perform_updates_on_current_frame_set();
+            self.updated_sets[cfi] = true;
+        }
+    }
+
+    fn perform_updates_on_current_frame_set(self: *const DescriptorSetVulkan) !void {
+        const alloc = GfxStateVulkan.get().alloc;
+        const cfi = GfxStateVulkan.get().current_frame_index();
+        std.debug.assert(cfi < self.vk_sets.len);
+        const info = self.last_update_info orelse return error.NoLastSetUpdateInfo;
 
         var arena_obj = std.heap.ArenaAllocator.init(alloc);
         defer arena_obj.deinit();
@@ -2787,7 +3235,7 @@ pub const DescriptorSetVulkan = struct {
 
             vk_write_info.* = c.VkWriteDescriptorSet {
                 .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = self.vk_set,
+                .dstSet = self.vk_sets[cfi],
                 .dstBinding = write.binding,
                 .dstArrayElement = write.array_element,
                 .descriptorCount = @intCast(switch (write.data) {
@@ -2820,7 +3268,7 @@ pub const DescriptorSetVulkan = struct {
 
                     const buffer_node = try arena.create(BufferWritesList.Node);
                     buffer_node.data = c.VkDescriptorBufferInfo {
-                        .buffer = buffer.platform.vk_buffer,
+                        .buffer = buffer.platform.get_frame_vk_buffer(), // TODO frames in flight is a pain in the ass
                         .offset = bw.offset,
                         .range = bw.range,
                     };
@@ -2857,8 +3305,8 @@ pub const DescriptorSetVulkan = struct {
 
                     const view_node = try arena.create(ImageViewWritesList.Node);
                     view_node.data = c.VkDescriptorImageInfo {
-                        .sampler = sampler.platform.vk_sampler,
                         .imageView = view.platform.get_frame_view(),
+                        .sampler = sampler.platform.vk_sampler,
                         .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     };
                     vk_view_writes.prepend(view_node);
@@ -2870,7 +3318,7 @@ pub const DescriptorSetVulkan = struct {
 
                         const buffer_node = try arena.create(BufferWritesList.Node);
                         buffer_node.data = c.VkDescriptorBufferInfo {
-                            .buffer = buffer.platform.vk_buffer,
+                            .buffer = buffer.platform.get_frame_vk_buffer(),
                             .offset = bw.offset,
                             .range = bw.range,
                         };
@@ -2913,8 +3361,8 @@ pub const DescriptorSetVulkan = struct {
 
                         const view_node = try arena.create(ImageViewWritesList.Node);
                         view_node.data = c.VkDescriptorImageInfo {
-                            .sampler = sampler.platform.vk_sampler,
                             .imageView = view.platform.get_frame_view(),
+                            .sampler = sampler.platform.vk_sampler,
                             .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         };
                         vk_view_writes.prepend(view_node);
@@ -3125,7 +3573,7 @@ pub const CommandBufferVulkan = struct {
         var vk_device_sizes: [max_vertex_buffers]c.VkDeviceSize = undefined;
         for (info.buffers, 0..) |b, idx| {
             const buffer = b.buffer.get() catch unreachable;
-            vk_buffers[idx] = buffer.platform.vk_buffer;
+            vk_buffers[idx] = buffer.platform.get_frame_vk_buffer();
             vk_device_sizes[idx] = b.offset;
         }
         c.vkCmdBindVertexBuffers(
@@ -3141,7 +3589,7 @@ pub const CommandBufferVulkan = struct {
         const buffer = info.buffer.get() catch unreachable;
         c.vkCmdBindIndexBuffer(
             self.vk_command_buffer,
-            buffer.platform.vk_buffer,
+            buffer.platform.get_frame_vk_buffer(),
             info.offset,
             indexformat_to_vulkan(info.index_format)
         );
@@ -3154,7 +3602,11 @@ pub const CommandBufferVulkan = struct {
         var vk_descriptor_sets: [max_descriptor_sets]c.VkDescriptorSet = undefined;
         for (info.descriptor_sets, 0..) |s, idx| {
             const set = s.get() catch unreachable;
-            vk_descriptor_sets[idx] = set.platform.vk_set;
+            set.platform.perform_updates_if_required() catch |err| {
+                std.log.warn("Unable to perform updates on the bound descriptor set: {}", .{err});
+            };
+
+            vk_descriptor_sets[idx] = set.platform.get_frame_set();
         }
 
         const pipeline = info.graphics_pipeline.get() catch unreachable;
@@ -3225,7 +3677,7 @@ pub const CommandBufferVulkan = struct {
             const buffer = b.buffer.get() catch unreachable;
             vk_buffer_barriers[idx] = c.VkBufferMemoryBarrier {
                 .sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-                .buffer = buffer.platform.vk_buffer,
+                .buffer = buffer.platform.get_frame_vk_buffer(),
                 .offset = b.offset,
                 .size = b.size,
                 .srcAccessMask = accessflags_to_vulkan(b.src_access_mask),
@@ -3248,10 +3700,14 @@ pub const CommandBufferVulkan = struct {
                 .dstQueueFamilyIndex = if (b.dst_queue) |q| GfxStateVulkan.get().get_queue_family_index(q) else c.VK_QUEUE_FAMILY_IGNORED,
                 .subresourceRange = .{
                     .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1,
+                    .baseMipLevel = b.subresource_range.base_mip_level,
+                    .levelCount = 
+                        if (b.subresource_range.mip_level_count >= image.info.mip_levels - b.subresource_range.base_mip_level) c.VK_REMAINING_MIP_LEVELS
+                        else b.subresource_range.mip_level_count,
+                    .baseArrayLayer = b.subresource_range.base_array_layer,
+                    .layerCount =
+                        if (b.subresource_range.array_layer_count >= image.info.array_length - b.subresource_range.base_array_layer) c.VK_REMAINING_ARRAY_LAYERS
+                        else b.subresource_range.array_layer_count,
                 },
             };
         }
@@ -3297,7 +3753,7 @@ pub const CommandBufferVulkan = struct {
             self.vk_command_buffer,
             image.platform.get_frame_image().vk_image, // TODO allow selection of specific internal image. fix? using frame image should be recent enough (and prevent stalls, maybe)
             c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            buffer.platform.vk_buffer,
+            buffer.platform.get_frame_vk_buffer(),
             1,
             @ptrCast(&copy_info)
         );

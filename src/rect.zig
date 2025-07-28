@@ -20,8 +20,17 @@ pub inline fn lt_rb(lt: f32, rb: f32) Self {
 }
 
 pub inline fn full_screen_pixels() Self {
+    return full_screen_pixels_mip(0);
+}
+
+pub inline fn full_screen_pixels_mip(mip_level: usize) Self {
     const size = eng.get().gfx.swapchain_size();
-    return .{ .left = 0.0, .top = 0.0, .right = @floatFromInt(size[0]), .bottom = @floatFromInt(size[1]), };
+    return .{
+        .left = 0.0,
+        .top = 0.0,
+        .right = @floatFromInt(@max(size[0] >> @intCast(mip_level), 1)),
+        .bottom = @floatFromInt(@max(size[1] >> @intCast(mip_level), 1)),
+    };
 }
 
 pub inline fn translate(self: *const Self, x: i32, y: i32) Self {

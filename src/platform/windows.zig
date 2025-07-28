@@ -35,6 +35,10 @@ pub const Win32Window = struct {
         _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
         errdefer w32.CoUninitialize();
 
+        if (w32.SetProcessDPIAware() != w32.TRUE) {
+            std.log.warn("Failed to set window DPI awareness", .{});
+        }
+
         const hInstance: w32.HINSTANCE = @ptrCast(w32.GetModuleHandleA(null));
         var wc = w32.WNDCLASSEXA{
             .lpfnWndProc = Win32Window.window_proc,

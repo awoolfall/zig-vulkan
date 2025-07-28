@@ -135,6 +135,7 @@ pub const Debug = struct {
                 .initial_layout = .Undefined,
                 .final_layout = .DepthStencilAttachmentOptimal,
                 .load_op = .Clear,
+                .stencil_load_op = .Clear,
             },
         };
 
@@ -251,7 +252,7 @@ pub const Debug = struct {
         });
 
         {
-            const mapped_camera_buffer = try (try self.camera_buffer.get()).map(.{ .write = true, });
+            const mapped_camera_buffer = try (try self.camera_buffer.get()).map(.{ .write = .EveryFrame, });
             defer mapped_camera_buffer.unmap();
 
             mapped_camera_buffer.data(CameraData).* = CameraData {
@@ -268,7 +269,7 @@ pub const Debug = struct {
         const lines_slice = self.lines.constSlice();
 
         {
-            const mapped_lines_buffer = try (try self.lines_instance_buffer.get()).map(.{ .write = true, });
+            const mapped_lines_buffer = try (try self.lines_instance_buffer.get()).map(.{ .write = .EveryFrame, });
             defer mapped_lines_buffer.unmap();
 
             const mapped_slice = mapped_lines_buffer.data_array(LineDetails, Self.MAX_LINES);

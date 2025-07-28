@@ -1,13 +1,13 @@
 const std = @import("std");
 const zm = @import("zmath");
 const zn = @import("znoise");
-const Transform = @import("transform.zig");
-const tm = @import("time.zig");
-const eng = @import("../root.zig");
-const gf = @import("../gfx/gfx.zig");
-const es = @import("../easings.zig");
-const ms = @import("../engine/mesh.zig");
-const Camera = @import("../root.zig").camera.Camera;
+const eng = @import("self");
+const Transform = eng.Transform;
+const tm = eng.time;
+const gf = eng.gfx;
+const es = eng.easings;
+const ms = eng.mesh;
+const Camera = eng.camera.Camera;
 
 pub const ParticleSystem = struct {
     const Self = @This();
@@ -476,7 +476,7 @@ pub const ParticleSystem = struct {
                 break :blk;
             };
 
-            const mapped_buffer = model_matrix_buffer.map(.{ .write = true, }) catch |err| {
+            const mapped_buffer = model_matrix_buffer.map(.{ .write = .EveryFrame, }) catch |err| {
                 std.log.warn("Unable to map model matrix buffer: {}", .{err});
                 break :blk;
             };
@@ -495,7 +495,7 @@ pub const ParticleSystem = struct {
                 break :blk;
             };
 
-            const mapped_buffer = camera_buffer.map(.{ .write = true, }) catch |err| {
+            const mapped_buffer = camera_buffer.map(.{ .write = .EveryFrame, }) catch |err| {
                 std.log.warn("Unable to map camera buffer: {}", .{err});
                 break :blk;
             };

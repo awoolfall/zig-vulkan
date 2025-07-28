@@ -4,7 +4,6 @@ const std = @import("std");
 const eng = @import("../root.zig");
 const gf = eng.gfx;
 const zm = eng.zmath;
-const bloom = @import("bloom.zig");
 
 pub const ToneMappingOptions = packed struct(u32) {
     black_and_white: bool = false,
@@ -18,8 +17,6 @@ pixel_shader: gf.PixelShader,
 black_and_white_pixel_shader: gf.PixelShader,
 sampler: gf.Sampler.Ref,
 
-bloom_filter: bloom.BloomFilter,
-
 images_descriptor_layout: gf.DescriptorLayout.Ref,
 images_descriptor_pool: gf.DescriptorPool.Ref,
 images_descriptor_sets: std.ArrayList(gf.DescriptorSet.Ref),
@@ -29,7 +26,6 @@ pipeline: gf.GraphicsPipeline.Ref,
 framebuffer: gf.FrameBuffer.Ref,
 
 pub fn deinit(self: *Self) void {
-    self.bloom_filter.deinit();
     self.vertex_shader.deinit();
     self.pixel_shader.deinit();
     self.black_and_white_pixel_shader.deinit();
@@ -163,15 +159,11 @@ pub fn init() !Self {
     });
     errdefer framebuffer.deinit();
 
-    var bloom_filter = try bloom.BloomFilter.init();
-    errdefer bloom_filter.deinit();
-
     return Self {
         .vertex_shader = vertex_shader,
         .pixel_shader = pixel_shader,
         .black_and_white_pixel_shader = black_and_white_pixel_shader,
         .sampler = sampler,
-        .bloom_filter = bloom_filter,
 
         .images_descriptor_layout = images_descriptor_layout,
         .images_descriptor_pool = images_descriptor_pool,
@@ -211,7 +203,7 @@ pub fn apply_filter(
         .writes = &.{
             gf.DescriptorSetUpdateWriteInfo {
                 .binding = 0,
-                .data = .{ .ImageView = gf.GfxState.get().platform.swapchain.hdr_image_view, },
+                .data = .{ .ImageView = gf.GfxState.get().default.hdr_image_view, },
             },
             gf.DescriptorSetUpdateWriteInfo {
                 .binding = 1,

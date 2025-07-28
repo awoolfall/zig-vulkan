@@ -6,7 +6,8 @@ const path = @import("../engine/path.zig");
 const bloom = @import("bloom.zig");
 const pl = @import("../platform/platform.zig");
 const gen = @import("self").gen;
-const ToneMappingAndBloomFilter = @import("tonemapping_filter.zig");
+const ToneMappingFilter = @import("tonemapping_filter.zig");
+const BloomFilter = @import("bloom.zig");
 
 const eng = @import("../root.zig");
 const Rect = eng.Rect;
@@ -34,13 +35,17 @@ pub const GfxState = struct {
 
     command_pools: gen.GenerationalList(CommandPool),
 
-    tone_mapping_filter: ToneMappingAndBloomFilter,
+    tone_mapping_filter: ToneMappingFilter,
+    bloom_filter: BloomFilter,
 
     default: struct {
-        sampler: Sampler.Ref,
+        hdr_image: Image.Ref,
+        hdr_image_view: ImageView.Ref,
 
         depth_image: Image.Ref,
         depth_view: ImageView.Ref,
+
+        sampler: Sampler.Ref,
 
         diffuse: Image.Ref,
         diffuse_view: ImageView.Ref,
@@ -69,10 +74,13 @@ pub const GfxState = struct {
         std.log.debug("gfx deinit", .{});
 
         self.tone_mapping_filter.deinit();
+        self.bloom_filter.deinit();
 
-        self.default.sampler.deinit();
+        self.default.hdr_image_view.deinit();
+        self.default.hdr_image.deinit();
         self.default.depth_view.deinit();
         self.default.depth_image.deinit();
+        self.default.sampler.deinit();
         self.default.diffuse_view.deinit();
         self.default.diffuse.deinit();
         self.default.normals_view.deinit();
@@ -143,8 +151,18 @@ pub const GfxState = struct {
         errdefer self.platform.deinit();
         
 
-        self.tone_mapping_filter = try ToneMappingAndBloomFilter.init();
-        errdefer self.tone_mapping_filter.deinit();
+        self.default.hdr_image = try Image.init(.{
+            .format = GfxState.hdr_format,
+            .match_swapchain_extent = true,
+
+            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, .ShaderResource = true, },
+            .access_flags = .{ .GpuWrite = true, },
+            .dst_layout = .ColorAttachmentOptimal,
+        }, null);
+        errdefer self.default.hdr_image.deinit();
+
+        self.default.hdr_image_view = try ImageView.init(.{ .image = self.default.hdr_image, });
+        errdefer self.default.hdr_image_view.deinit();
 
         self.default.depth_image = try Image.init(.{
             .format = Self.depth_format,
@@ -191,6 +209,13 @@ pub const GfxState = struct {
 
         self.default.emission_view = try ImageView.init(.{ .image = self.default.emission, });
         errdefer self.default.emission_view.deinit();
+
+
+        self.tone_mapping_filter = try ToneMappingFilter.init();
+        errdefer self.tone_mapping_filter.deinit();
+
+        self.bloom_filter = try BloomFilter.init();
+        errdefer self.bloom_filter.deinit();
     }
 
     pub inline fn get() *Self {
@@ -329,11 +354,15 @@ pub const Viewport = struct {
     min_depth: f32 = 0.0,
     max_depth: f32 = 1.0,
 
-    pub fn full_screen_viewport() Viewport {
+    pub inline fn full_screen_viewport() Viewport {
+        return full_screen_viewport_mip(0);
+    }
+
+    pub inline fn full_screen_viewport_mip(mip_level: usize) Viewport {
         const size = GfxState.get().swapchain_size();
         return Viewport {
-            .width = @floatFromInt(size[0]),
-            .height = @floatFromInt(size[1]),
+            .width = @floatFromInt(@max(size[0] >> @intCast(mip_level), 1)),
+            .height = @floatFromInt(@max(size[1] >> @intCast(mip_level), 1)),
         };
     }
 };
@@ -795,8 +824,13 @@ pub const Buffer = struct {
     }
 
     pub const MapOptions = struct {
+        pub const WriteOptions = enum {
+            NoWrite,
+            Infrequent,
+            EveryFrame,
+        };
         read: bool = false,
-        write: bool = false,
+        write: WriteOptions = .NoWrite,
     };
 
     pub fn map(self: *const Buffer, options: MapOptions) !MappedBuffer {
@@ -1731,7 +1765,13 @@ pub const CommandBuffer = struct {
 
     pub const ImageMemoryBarrierInfo = struct {
         image: Image.Ref,
-        // subresource_range: ??
+        subresource_range: struct {
+            //aspect_mask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            base_mip_level: u32 = 0,
+            mip_level_count: u32 = std.math.maxInt(u32),
+            base_array_layer: u32 = 0,
+            array_layer_count: u32 = std.math.maxInt(u32),
+        } = .{},
         src_access_mask: AccessMaskFlags,
         dst_access_mask: AccessMaskFlags,
         old_layout: ?ImageLayout = null,
