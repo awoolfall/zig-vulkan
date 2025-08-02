@@ -222,10 +222,6 @@ pub const GfxState = struct {
         return &eng.get().gfx;
     }
 
-    pub fn props(self: *const Self) PlatformProperties {
-        return self.platform.props();
-    }
-
     pub fn swapchain_size(self: *const Self) [2]u32 {
         return self.platform.swapchain_size();
     }
@@ -302,10 +298,6 @@ pub const GfxState = struct {
             else => {},
         }
     }
-};
-
-pub const PlatformProperties = struct {
-    descriptor_buffer_offset_alignment: u64,
 };
 
 pub const QueueFamily = enum {

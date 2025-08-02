@@ -18,6 +18,7 @@ const PushConstantData = extern struct {
     mip_level: f32,
     filter_radius: f32,
     aspect_ratio: f32,
+    blur_amount: f32,
 };
 
 full_screen_quad_vertex_shader: gf.VertexShader,
@@ -193,6 +194,7 @@ pub fn init() !Self {
             .format = gf.GfxState.hdr_format,
             .initial_layout = .ColorAttachmentOptimal,
             .final_layout = .ColorAttachmentOptimal,
+            .blend_type = .Simple,
         },
     };
 
@@ -402,6 +404,7 @@ pub fn render_bloom(
             .aspect_ratio = gf.GfxState.get().swapchain_aspect(),
             .filter_radius = 0.005,
             .src_texel_size = .{ @floatFromInt(size[0]), @floatFromInt(size[1]) },
+            .blur_amount = 0.03,
         };
 
         cmd.cmd_push_constants(.{
@@ -421,7 +424,7 @@ pub fn render_bloom(
     // transition_image_to_colour_attachment(cmd, self.bloom_images.get(1), 0, MIP_LEVELS);
 
     // Upsample
-    for (1..MIP_LEVELS) |inv_mip_level| {
+    for (1..(MIP_LEVELS - 1)) |inv_mip_level| {
         const mip_level = MIP_LEVELS - inv_mip_level;
         const shader_index = mip_level % 2;
         const colour_attachment_index = (mip_level + 1) % 2;
@@ -430,19 +433,18 @@ pub fn render_bloom(
         transition_image_to_colour_attachment(cmd, self.bloom_images.get(colour_attachment_index), mip_level - 1, 1);
 
         cmd.cmd_begin_render_pass(.{
-            .render_pass = self.downsample_render_pass,
-            .framebuffer =  if (mip_level == 1) self.hdr_framebuffer
-                            else self.bloom_layers.get(mip_level - 1).downsample_framebuffers.get(colour_attachment_index),
+            .render_pass = self.upsample_render_pass,
+            .framebuffer =  self.bloom_layers.get(mip_level - 1).upsample_framebuffers.get(colour_attachment_index),
             .render_area = .full_screen_pixels_mip(mip_level - 1),
         });
         defer cmd.cmd_end_render_pass();
 
-        cmd.cmd_bind_graphics_pipeline(self.downsample_pipeline);
+        cmd.cmd_bind_graphics_pipeline(self.upsample_pipeline);
         cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport_mip(mip_level - 1), }, });
         cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels_mip(mip_level - 1), }, });
 
         cmd.cmd_bind_descriptor_sets(.{
-            .graphics_pipeline = self.downsample_pipeline,
+            .graphics_pipeline = self.upsample_pipeline,
             .descriptor_sets = &.{
                 self.bloom_layers.get(mip_level).image_descriptor_sets.get(shader_index),
             },
@@ -457,10 +459,11 @@ pub fn render_bloom(
             .aspect_ratio = gf.GfxState.get().swapchain_aspect(),
             .filter_radius = 0.005,
             .src_texel_size = .{ @floatFromInt(size[0]), @floatFromInt(size[1]) },
+            .blur_amount = 0.03,
         };
 
         cmd.cmd_push_constants(.{
-            .graphics_pipeline = self.downsample_pipeline,
+            .graphics_pipeline = self.upsample_pipeline,
             .shader_stages = .{ .Pixel = true, },
             .offset = 0,
             .data = std.mem.asBytes(&push_constants),
@@ -471,6 +474,56 @@ pub fn render_bloom(
 
     // TODO merge last bloom frame with hdr buffer. This was in tonemapping but should probs be 
     // moved here.
+
+    // Perform final upscale merging into the hdr buffer
+    {
+    const mip_level = 1;
+    const shader_index = mip_level % 2;
+    const colour_attachment_index = (mip_level + 1) % 2;
+
+    transition_image_to_shader_read_only(cmd, self.bloom_images.get(shader_index), mip_level, 1);
+    transition_image_to_colour_attachment(cmd, self.bloom_images.get(colour_attachment_index), mip_level - 1, 1);
+
+    cmd.cmd_begin_render_pass(.{
+        .render_pass = self.upsample_render_pass,
+        .framebuffer =  self.hdr_framebuffer,
+        .render_area = .full_screen_pixels_mip(0),
+    });
+    defer cmd.cmd_end_render_pass();
+
+    cmd.cmd_bind_graphics_pipeline(self.upsample_pipeline);
+    cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport_mip(0), }, });
+    cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels_mip(0), }, });
+
+    cmd.cmd_bind_descriptor_sets(.{
+        .graphics_pipeline = self.upsample_pipeline,
+        .descriptor_sets = &.{
+            self.bloom_layers.get(mip_level).image_descriptor_sets.get(shader_index),
+        },
+        });
+
+    var size = gf.GfxState.get().swapchain_size();
+    size[0] >>= @intCast(mip_level);
+    size[1] >>= @intCast(mip_level);
+
+    const push_constants = PushConstantData {
+        .mip_level = @floatFromInt(mip_level),
+        .aspect_ratio = gf.GfxState.get().swapchain_aspect(),
+        .filter_radius = 0.005,
+        .src_texel_size = .{ @floatFromInt(size[0]), @floatFromInt(size[1]) },
+        .blur_amount = 0.03,
+    };
+
+    cmd.cmd_push_constants(.{
+        .graphics_pipeline = self.upsample_pipeline,
+        .shader_stages = .{ .Pixel = true, },
+        .offset = 0,
+        .data = std.mem.asBytes(&push_constants),
+    });
+
+    cmd.cmd_draw(.{ .vertex_count = 6, });
+    }
+
 }
 
 pub fn render_bloom_texture(

@@ -117,8 +117,6 @@ pub const GfxStateVulkan = struct {
     swapchain: SwapchainInfo,
     temp_frame_wait_fence: c.VkFence,
 
-    properties: gf.PlatformProperties,
-
     buffer_updates: std.ArrayList(BufferUpdates),
 
     pub fn deinit(self: *Self) void {
@@ -158,6 +156,7 @@ pub const GfxStateVulkan = struct {
         if (self.slang_global == null) { return error.UnableToCreateGlobalSlang; }
         errdefer slang.c.deinitialise(self.slang_global);
 
+        // Request vulkan version
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));
         std.log.info("vulkan version is {}.{}.{}", .{
@@ -166,6 +165,7 @@ pub const GfxStateVulkan = struct {
             c.VK_API_VERSION_VARIANT(vk_version),
         });
 
+        // Declare required instance layers
         var required_instance_layers = std.ArrayList([*c]const u8).init(alloc);
         defer required_instance_layers.deinit();
         if (Self.ENABLE_VALIDATION_LAYERS) {
@@ -179,6 +179,7 @@ pub const GfxStateVulkan = struct {
         defer alloc.free(instance_layers);
         try vkt(c.vkEnumerateInstanceLayerProperties(&instance_layer_count, @ptrCast(instance_layers.ptr)));
 
+        // Check required layers are available
         for (required_instance_layers.items) |required_layer| {
             var found: bool = false;
             for (instance_layers) |layer| {
@@ -193,6 +194,7 @@ pub const GfxStateVulkan = struct {
             }
         }
 
+        // Declare required instance extensions
         var instance_extensions = std.ArrayList([*c]const u8).init(alloc);
         defer instance_extensions.deinit();
         try instance_extensions.append(c.VK_KHR_SURFACE_EXTENSION_NAME);
@@ -203,14 +205,17 @@ pub const GfxStateVulkan = struct {
             try instance_extensions.append(c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
 
+        // Declare required device extensions
         var device_extensions = std.ArrayList([*c]const u8).init(alloc);
         defer device_extensions.deinit();
         try device_extensions.append(c.VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
+        // Declare required physical device features
         const required_physical_device_features_info = c.VkPhysicalDeviceFeatures {
             .independentBlend = bool_to_vulkan(true),
         };
 
+        // Create vulkan instance
         const create_instance_info = c.VkInstanceCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .enabledLayerCount = @intCast(required_instance_layers.items.len),
@@ -225,6 +230,7 @@ pub const GfxStateVulkan = struct {
         try vkt(c.vkCreateInstance(&create_instance_info, null, &self.instance));
         errdefer c.vkDestroyInstance(self.instance, null);
 
+        // Create vulkan debug messenger
         self.debug_messenger = null;
         if (Self.ENABLE_VALIDATION_LAYERS) {
             const debug_messenger_create_info = c.VkDebugUtilsMessengerCreateInfoEXT {
@@ -259,6 +265,7 @@ pub const GfxStateVulkan = struct {
             self.debug_messenger = null;
         };
 
+        // Create vulkan surface
         switch (@import("builtin").os.tag) {
             .windows => {
                 const surface_create_info = vk.VkWin32SurfaceCreateInfoKHR {
@@ -266,19 +273,14 @@ pub const GfxStateVulkan = struct {
                     .hwnd = window.hwnd,
                     .hinstance = window.hInstance,
                 };
-                // const surface_create_info = c.VkWin32SurfaceCreateInfoKHR{
-                //     .sType = c.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
-                //     // .hwnd = @ptrCast(@alignCast(window.hwnd)),
-                //     // .hinstance = @ptrCast(@alignCast(window.hInstance)),
-                //     .hwnd = @alignCast(@ptrCast(@as(*align(@alignOf(c.HWND)) *anyopaque, @alignCast(@ptrCast(window.hwnd))))),
-                //     .hinstance = @alignCast(@ptrCast(@as(*align(@alignOf(c.HINSTANCE)) *anyopaque, @alignCast(@ptrCast(window.hInstance))))),
-                // };
+
                 try vkt(c.vkCreateWin32SurfaceKHR(self.instance, @ptrCast(&surface_create_info), null, &self.surface));
             },
             else => @compileError("Platform not implemented"),
         }
         errdefer c.vkDestroySurfaceKHR(self.instance, self.surface, null);
 
+        // Discover all available physical devices
         var physical_device_count: u32 = 0;
         try vkt(c.vkEnumeratePhysicalDevices(self.instance, &physical_device_count, null));
 
@@ -286,9 +288,11 @@ pub const GfxStateVulkan = struct {
         defer alloc.free(physical_device_storage);
         try vkt(c.vkEnumeratePhysicalDevices(self.instance, &physical_device_count, physical_device_storage.ptr));
 
+        // Discover the most appropriate physical device to use
         var best_physical_device_idx: usize = std.math.maxInt(usize);
         std.log.info("Available physical devices:", .{});
         for (physical_device_storage, 0..) |physical_device, idx| {
+            // Retrieve physical device properties
             var prop: c.VkPhysicalDeviceProperties = undefined;
             c.vkGetPhysicalDeviceProperties(physical_device, &prop);
             std.log.info("- {s}", .{std.mem.sliceTo(&prop.deviceName, 0)});
@@ -302,6 +306,10 @@ pub const GfxStateVulkan = struct {
             vkt(c.vkEnumerateDeviceExtensionProperties(physical_device, null, &physical_device_extension_count, physical_device_extension_storage.ptr))
                 catch continue;
 
+            var vk_physical_device_features: c.VkPhysicalDeviceFeatures = undefined;
+            c.vkGetPhysicalDeviceFeatures(physical_device, &vk_physical_device_features);
+
+            // Check physical device supports the required extensions
             const found_all_required_extensions = extension_check: {
                 for (device_extensions.items) |required_extension| {
                     var found = false;
@@ -323,9 +331,7 @@ pub const GfxStateVulkan = struct {
                 continue;
             }
 
-            var vk_physical_device_features: c.VkPhysicalDeviceFeatures = undefined;
-            c.vkGetPhysicalDeviceFeatures(physical_device, &vk_physical_device_features);
-
+            // Check physical device supports all required features
             var supports_all_features: bool = true;
             inline for (@typeInfo(c.VkPhysicalDeviceFeatures).@"struct".fields) |field| {
                 if (@field(required_physical_device_features_info, field.name) == bool_to_vulkan(true)) {
@@ -337,10 +343,7 @@ pub const GfxStateVulkan = struct {
             }
             if (!supports_all_features) { continue; }
 
-            var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
-            vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, self.surface, &surface_capabilities))
-                catch continue;
-
+            // Retrieve physical device surface properties
             var surface_fomats_count: u32 = 0;
             vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, self.surface, &surface_fomats_count, null))
                 catch continue;
@@ -359,6 +362,7 @@ pub const GfxStateVulkan = struct {
             vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, self.surface, &surface_present_modes_count, surface_present_modes.ptr))
                 catch continue;
 
+            // Check physical device supports the required surface properties
             if (surface_fomats_count == 0 or surface_present_modes_count == 0) {
                 std.log.info("  - doesn't satisfy all surface requirements", .{});
                 continue;
@@ -370,33 +374,38 @@ pub const GfxStateVulkan = struct {
             }
         }
 
+        // If a suitable physical device was not found then return error
         if (best_physical_device_idx >= physical_device_count) {
             return error.UnableToFindASuitablePhysicalDevice;
         }
+
+        // Assign the selected physical device
         self.physical_device = physical_device_storage[best_physical_device_idx];
+
+        // Record physical device properties
         c.vkGetPhysicalDeviceProperties(self.physical_device, &self.physical_device_properties);
 
-        self.properties = discover_platform_properties(self.physical_device);
+        std.log.info("Selected {s} as the physical device.", .{std.mem.sliceTo(&self.physical_device_properties.deviceName, 0)});
 
-        var physical_device_props: c.VkPhysicalDeviceProperties = undefined;
-        c.vkGetPhysicalDeviceProperties(self.physical_device, &physical_device_props);
-        std.log.info("Selected {s} as the physical device.", .{std.mem.sliceTo(&physical_device_props.deviceName, 0)});
-
+        // Get physical device surface capabilities
         var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
         try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface, &surface_capabilities));
 
+        // Select number of frames in flight
         self.num_frames_in_flight = std.math.clamp(
             surface_capabilities.minImageCount + 1,
             surface_capabilities.minImageCount,
             if (surface_capabilities.maxImageCount != 0) surface_capabilities.maxImageCount else std.math.maxInt(u32),
         );
 
+        // Define preferred surface format and present mode
         var surface_format: c.VkSurfaceFormatKHR = .{
             .format = c.VK_FORMAT_B8G8R8A8_SRGB,
             .colorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
         };
         var present_mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_MAILBOX_KHR;
 
+        // Select closest surface format and present mode to the preferred
         var surface_fomats_count: u32 = 0;
         try vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(self.physical_device, self.surface, &surface_fomats_count, null));
 
@@ -439,6 +448,7 @@ pub const GfxStateVulkan = struct {
             }
         }
 
+        // Get available queue family properties
         var queue_family_properties_count: u32 = 0;
         c.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &queue_family_properties_count, null);
 
@@ -450,6 +460,7 @@ pub const GfxStateVulkan = struct {
             queue_family_properties_storage.ptr
         );
 
+        // Select queue family indices
         var all_queue_idx: u32 = std.math.maxInt(u32);
         var present_queue_idx: u32 = std.math.maxInt(u32);
         var transfer_queue_idx: u32 = std.math.maxInt(u32);
@@ -481,6 +492,7 @@ pub const GfxStateVulkan = struct {
             return error.UnableToFindAllRequiredQueuesOnPhysicalDevice;
         }
 
+        // Define queue create infos
         const queue_priority = [3]f32{1.0, 1.0, 1.0};
         var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).init(alloc);
         defer queue_create_infos.deinit();
@@ -516,6 +528,7 @@ pub const GfxStateVulkan = struct {
             });
         }
 
+        // Create vulkan device
         const create_device_info = c.VkDeviceCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
             .pNext = null,
@@ -536,6 +549,7 @@ pub const GfxStateVulkan = struct {
         errdefer c.vkDestroyDevice(self.device, null);
         errdefer vkt(c.vkDeviceWaitIdle(self.device)) catch unreachable;
 
+        // Retrieve created queues from vulkan device
         var vk_all_queue: c.VkQueue = undefined;
         c.vkGetDeviceQueue(self.device, all_queue_idx, 0, &vk_all_queue);
 
@@ -565,6 +579,7 @@ pub const GfxStateVulkan = struct {
             .cpu_gpu_transfer_family_index = if (vk_cpu_gpu_transfer_queue) |_| transfer_queue_idx else all_queue_idx,
         };
 
+        // Create common command pools for queues
         const transfer_command_pool_create_info = c.VkCommandPoolCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .queueFamilyIndex = self.queues.cpu_gpu_transfer_family_index,
@@ -589,6 +604,8 @@ pub const GfxStateVulkan = struct {
         errdefer self.all_command_pool.deinit();
         errdefer vkt(c.vkDeviceWaitIdle(self.device)) catch unreachable;
 
+        // Create frame wait fence?
+        // TODO remove?
         const frame_wait_fence_info = c.VkFenceCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
@@ -597,7 +614,7 @@ pub const GfxStateVulkan = struct {
         try vkt(c.vkCreateFence(self.device, &frame_wait_fence_info, null, &self.temp_frame_wait_fence));
         errdefer c.vkDestroyFence(self.device, self.temp_frame_wait_fence, null);
 
-
+        // Create swap chain
         const window_size = try window.get_client_size();
         self.swapchain = try self.create_swapchain(.{
             .width = @intCast(@max(window_size.width, 1)),
@@ -607,6 +624,7 @@ pub const GfxStateVulkan = struct {
         });
         errdefer self.swapchain.deinit(self.device);
 
+        // Create FiF buffer updates structure
         self.buffer_updates = try std.ArrayList(BufferUpdates).initCapacity(self.alloc, 32);
         errdefer self.buffer_updates.deinit();
 
@@ -805,24 +823,6 @@ pub const GfxStateVulkan = struct {
         };
     }
 
-    fn discover_platform_properties(physical_device: c.VkPhysicalDevice) gf.PlatformProperties {
-        var buffer_properties = c.VkPhysicalDeviceDescriptorBufferPropertiesEXT {
-            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
-            .pNext = null,
-        };
-
-        var physical_device_properties = c.VkPhysicalDeviceProperties2 {
-            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-            .pNext = @ptrCast(&buffer_properties),
-        };
-
-        c.vkGetPhysicalDeviceProperties2(physical_device, @ptrCast(&physical_device_properties));
-
-        return gf.PlatformProperties {
-            .descriptor_buffer_offset_alignment = buffer_properties.descriptorBufferOffsetAlignment,
-        };
-    }
-
     pub inline fn get() *Self {
         return &eng.get().gfx.platform;
     }
@@ -863,6 +863,7 @@ pub const GfxStateVulkan = struct {
             &self.swapchain.current_image_index
         ));
         self.frame_count += 1;
+        // TODO do I have to wait on a fence for image acquisition before updating buffers?
 
         // Update frame in flight resources before continuing to the new frame
         self.copy_updated_fif_buffers() catch |err| {
@@ -879,7 +880,7 @@ pub const GfxStateVulkan = struct {
         const cfi = self.current_frame_index();
         const cfi_minus_one = (cfi + self.frames_in_flight() - 1) % self.frames_in_flight();
 
-        std.log.info("fif update count is {}", .{self.buffer_updates.items.len});
+        // std.log.info("fif update count is {}", .{self.buffer_updates.items.len});
 
         var iter = std.mem.reverseIterator(self.buffer_updates.items);
         while (iter.nextPtr()) |update| {
@@ -1565,10 +1566,23 @@ pub const BufferVulkan = struct {
     vk_device_memory: c.VkDeviceMemory,
 
     pub fn deinit(self: *const Self) void {
+        // Remove this buffer from FiF buffer data propogation structure
+        {
+            var iter = std.mem.reverseIterator(GfxStateVulkan.get().buffer_updates.items);
+            while (iter.nextPtr()) |item| {
+                if (item.vk_buffers[0] == self.vk_buffers[0]) {
+                    _ = GfxStateVulkan.get().buffer_updates.swapRemove(iter.index);
+                }
+            }
+        }
+
+        // Free vulkan memory and destroy vulkan buffers
         c.vkFreeMemory(eng.get().gfx.platform.device, self.vk_device_memory, null);
         for (self.vk_buffers) |buf| {
             c.vkDestroyBuffer(eng.get().gfx.platform.device, buf, null);
         }
+
+        // Free cpu memory assosciated with buffer
         GfxStateVulkan.get().alloc.free(self.vk_buffers);
     }
 

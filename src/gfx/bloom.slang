@@ -4,6 +4,7 @@ struct PushConstants
     float mip_level;
     float filter_radius;
     float aspect_ratio;
+    float blur_amount;
 };
 
 [[vk::push_constant]]
@@ -83,5 +84,5 @@ float4 ps_upsample(vs_out input) : SV_TARGET
     upsample += (a+c+g+i);
     upsample *= 1.0 / 16.0;
 
-    return float4(upsample, 1.0);
+    return float4(upsample, (mip_level == 1) ? push_constants.blur_amount : 1.0);
 }
