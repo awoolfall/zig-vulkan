@@ -63,9 +63,10 @@ pub fn resolve_asset_path(self: *const Self, alloc: std.mem.Allocator, path: []c
     }
 }
 
-pub fn find_asset_id(self: *const Self, AssetType: type, asset_name: []const u8) ?AssetId(AssetType) {
-    const asset_id = AssetId(AssetType).deserialize(asset_name) catch return null;
-    _ = (self.get_asset(AssetType, asset_id) catch return null);
+pub fn find_asset_id(self: *const Self, AssetType: type, asset_name: []const u8) !AssetId(AssetType) {
+    _ = self;
+    const asset_id = try AssetId(AssetType).deserialize(asset_name);
+    //_ = try self.get_asset(AssetType, asset_id);
     return asset_id;
 }
 
@@ -73,47 +74,19 @@ pub fn get_asset(self: *const Self, AssetType: type, asset_id: AssetId(AssetType
     const pack = self.asset_packs.getPtr(asset_id.pack_id)
         orelse return error.AssetPackDoesNotExist;
 
-    const asset_hashmap = try pack.get_asset_hashmap(AssetType);
-
-    const asset_path = asset_hashmap.getPtr(asset_id.asset_id) 
+    const asset_path = pack.assets.getPtr(asset_id.asset_id) 
         orelse return error.AssetDoesNotExistInPack;
 
-    if (asset_path.asset.file_watcher()) |watcher| {
+    const asset = try asset_path.asset.get(AssetType);
+
+    if (asset.file_watcher()) |watcher| {
         if (watcher.was_modified_since_last_check()) {
-            asset_path.asset.reload(self.allocator) catch |err| {
+            asset.reload(self.allocator) catch |err| {
                 std.log.warn("Unable to reload asset: {}", .{err});
             };
         }
     }
 
-    return asset_path.asset.loaded_asset() 
-        orelse error.AssetNotLoaded;
+    return asset.loaded_asset() orelse error.AssetNotLoaded;
 }
 
-// pub fn find_animation_id(self: *const Self, animation_name: []const u8) ?AnimationAssetId {
-//     const animation_name_hash = std.hash_map.hashString(animation_name);
-//     for (self.loaded_asset_packs.data.items, 0..) |*it, idx| {
-//         if (it.item_data) |*pack| {
-//             if (pack.animations.contains(animation_name_hash)) {
-//                 return AnimationAssetId {
-//                     .asset_id = .{
-//                         .asset_pack_id = gen.GenerationalIndex {
-//                             .index = idx,
-//                             .generation = it.generation,
-//                         },
-//                         .id = animation_name_hash,
-//                     },
-//                 };
-//             }
-//         }
-//     }
-//     return null;
-// }
-//
-// pub fn get_animation(self: *const Self, animation_id: AnimationAssetId) !*an.BoneAnimation {
-//     const pack = self.loaded_asset_packs.get(animation_id.asset_id.asset_pack_id) orelse return error.AssetPackNotLoaded;
-//     const aa = try (pack.animations.getPtr(animation_id.asset_id.id) orelse error.AnimationDoesNotExistInPack);
-//     const lm = try (pack.models.getPtr(aa.model) orelse error.ModelDoesNotExistInPack);
-//     return &lm.model.animations[aa.animation];
-// }
-//

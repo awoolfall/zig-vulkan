@@ -1,17 +1,72 @@
 const Self = @This();
 
 const std = @import("std");
+const eng = @import("self");
 const AssetId = @import("asset_id.zig").AssetId;
+
 const ma = @import("model_asset.zig");
 const ta = @import("texture2d_asset.zig");
 const aa = @import("animation_asset.zig");
 
-pub fn AssetPath(comptime T: type) type {
-    return struct {
-        unique_name: []u8,
-        asset: T,
+pub const AssetType = union(enum) {
+    Model: ma.ModelAsset,
+    Animation: aa.AnimationAsset,
+    Image: ta.ImageAsset,
+
+    pub fn get(self: *AssetType, comptime A: type) !*A {
+        switch (A) {
+            ma.ModelAsset => switch (self.*) {
+                .Model => |*a| return a,
+                else => return error.AssetTypeMismatch,
+            },
+            aa.AnimationAsset => switch (self.*) {
+                .Animation => |*a| return a,
+                else => return error.AssetTypeMismatch,
+            },
+            ta.ImageAsset => switch (self.*) {
+                .Image => |*a| return a,
+                else => return error.AssetTypeMismatch,
+            },
+            else => return error.NotAnAssetType,
+        }
+    }
+
+    pub const Paths = union(enum) {
+        Model: ma.ModelAsset.Path,
+        Animation: struct { model_name: []const u8, animation_id: u64, },
+        Image: ta.ImageAsset.Path,
     };
-}
+};
+
+pub const Asset = struct {
+    unique_name: []const u8,
+    asset: AssetType,
+
+    pub fn deinit(self: *Asset, alloc: std.mem.Allocator) void {
+        alloc.free(self.unique_name);
+        switch (self.asset) {
+            .Model => |*a| a.deinit(),
+            .Animation => |*a| a.deinit(),
+            .Image => |*a| a.deinit(),
+        }
+    }
+
+    pub fn load(self: *Asset, alloc: std.mem.Allocator) !void {
+        try switch (self.asset) {
+            .Model => |*a| a.load(alloc),
+            .Animation => |*a| a.load(alloc),
+            .Image => |*a| a.load(alloc),
+        };
+    }
+
+    pub fn unload(self: *Asset) void {
+        switch (self.asset) {
+            .Model => |*a| a.unload(),
+            .Animation => |*a| a.unload(),
+            .Image => |*a| a.unload(),
+        }
+    }
+};
 
 alloc: std.mem.Allocator,
 
@@ -20,36 +75,16 @@ is_loaded: bool = false,
 unique_name: []u8,
 unique_name_hash: u64,
 
-models: std.AutoHashMap(u64, AssetPath(ma.ModelAsset)),
-animations: std.AutoHashMap(u64, AssetPath(aa.AnimationAsset)),
-images: std.AutoHashMap(u64, AssetPath(ta.ImageAsset)),
+assets: std.AutoHashMap(u64, Asset),
 
 pub fn deinit(self: *Self) void {
     self.alloc.free(self.unique_name);
 
-    {
-        var iter = self.models.valueIterator();
-        while (iter.next()) |a| {
-            self.alloc.free(a.unique_name);
-            a.asset.deinit();
-        }
-        self.models.deinit();
+    var asset_iter = self.assets.valueIterator();
+    while (asset_iter.next()) |a| {
+        a.deinit(self.alloc);
     }
-    {
-        var iter = self.animations.valueIterator();
-        while (iter.next()) |a| {
-            self.alloc.free(a.unique_name);
-        }
-        self.animations.deinit();
-    }
-    {
-        var iter = self.images.valueIterator();
-        while (iter.next()) |a| {
-            self.alloc.free(a.unique_name);
-            a.asset.deinit();
-        }
-        self.images.deinit();
-    }
+    self.assets.deinit();
 }
 
 pub fn init(alloc: std.mem.Allocator, unique_name: []const u8) !Self {
@@ -62,26 +97,16 @@ pub fn init(alloc: std.mem.Allocator, unique_name: []const u8) !Self {
         .unique_name = owned_unique_name,
         .unique_name_hash = std.hash_map.hashString(owned_unique_name),
 
-        .models = std.AutoHashMap(u64, AssetPath(ma.ModelAsset)).init(alloc),
-        .animations = std.AutoHashMap(u64, AssetPath(aa.AnimationAsset)).init(alloc),
-        .images = std.AutoHashMap(u64, AssetPath(ta.ImageAsset)).init(alloc),
+        .assets = std.AutoHashMap(u64, Asset).init(alloc),
     };
 }
 
 pub fn unload(self: *Self) void {
     if (!self.is_loaded) { return; }
 
-    {
-        var iter = self.models.valueIterator();
-        while (iter.next()) |a| {
-            a.asset.unload();
-        }
-    }
-    {
-        var iter = self.images.valueIterator();
-        while (iter.next()) |a| {
-            a.asset.unload();
-        }
+    var asset_iter = self.assets.valueIterator();
+    while (asset_iter.next()) |a| {
+        a.unload();
     }
 
     self.is_loaded = false;
@@ -90,68 +115,50 @@ pub fn unload(self: *Self) void {
 pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
     if (self.is_loaded) { return; }
 
-    {
-        var iter = self.models.valueIterator();
-        while (iter.next()) |a| {
-            // TODO: safely unload if one fails
-            try a.asset.load(alloc);
-        }
-    }
-    {
-        var iter = self.images.valueIterator();
-        while (iter.next()) |a| {
-            try a.asset.load(alloc);
-        }
+    var asset_iter = self.assets.valueIterator();
+    while (asset_iter.next()) |a| {
+        // TODO: safely unload if one fails
+        try a.load(alloc);
     }
 
     self.is_loaded = true;
-}
-
-pub fn get_asset_hashmap(self: *Self, AssetType: type) !*std.AutoHashMap(u64, AssetPath(AssetType)) {
-    switch (AssetType) {
-        ma.ModelAsset => return &self.models,
-        aa.AnimationAsset => return &self.animations,
-        ta.ImageAsset => return &self.images,
-        else => return error.InvalidAssetType,
-    }
 }
 
 pub fn add_model(self: *Self, name: []const u8, path: ma.ModelAssetPath) !void {
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
-    try self.models.put(
+    try self.assets.put(
         std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = try ma.ModelAsset.init(self.alloc, path),
-        }
+            .asset = .{ .Model = try ma.ModelAsset.init(self.alloc, path), },
+        },
     );
 }
 
 pub fn define_animation(self: *Self, name: []const u8, base_model: []const u8, animation_id: usize) !void {
-    const base_model_name_hash = std.hash_map.hashString(base_model);
-    if (!self.models.contains(base_model_name_hash)) {
+    const model_asset_id = AssetId(ma.ModelAsset) {
+        .pack_id = self.unique_name_hash,
+        .asset_id = std.hash_map.hashString(base_model),
+    };
+
+    if (!self.assets.contains(model_asset_id.asset_id)) {
         return error.ModelDoesNotExistInAssetPack;
     }
 
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
-    try self.animations.put(
-        std.hash_map.hashString(owned_name),
+    try self.assets.put(
+        std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = .{ 
-                .animation = .{
-                    .base_model = .{
-                        .pack_id = self.unique_name_hash,
-                        .asset_id = base_model_name_hash,
-                    },
-                    .animation_id = animation_id,
-                },
-            },
-        }
+            .asset = .{ .Animation = try aa.AnimationAsset.init(self.alloc, .{
+                .model_id = model_asset_id,
+                .animation_id = animation_id,
+            }), },
+        },
     );
 }
 
@@ -159,11 +166,49 @@ pub fn add_image(self: *Self, name: []const u8, path: ta.ImagePath) !void {
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
-    try self.images.put(
-        std.hash_map.hashString(owned_name),
+    try self.assets.put(
+        std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = try ta.ImageAsset.init(self.alloc, path),
-        }
+            .asset = .{ .Image = try ta.ImageAsset.init(self.alloc, path), },
+        },
     );
+}
+
+const AssetSerialized = struct {
+    name: []const u8,
+    path: AssetType.Paths,
+};
+
+pub fn init_from_file(alloc: std.mem.Allocator, pack_name: []const u8, file_path: []const u8) !Self {
+    var arena_struct = std.heap.ArenaAllocator.init(alloc);
+    defer arena_struct.deinit();
+    const arena = arena_struct.allocator();
+
+    const file_stat = try std.fs.cwd().statFile(file_path);
+
+    const file_slice = try std.fs.cwd().readFileAlloc(arena, file_path, file_stat.size);
+    defer arena.free(file_slice);
+
+    const file_slice_0 = try std.mem.concatWithSentinel(arena, u8, &.{ file_slice }, 0);
+    defer arena.free(file_slice_0);
+
+    var zon_status = std.zon.parse.Status {};
+    const pack_data = std.zon.parse.fromSlice([]const AssetSerialized, arena, file_slice_0, &zon_status, .{}) catch |err| {
+        std.log.err("Failed to load asset pack '{s}' from file '{s}'\n{}", .{pack_name, file_path, zon_status});
+        return err;
+    };
+
+    var pack = try Self.init(alloc, pack_name);
+    errdefer pack.deinit();
+
+    for (pack_data) |asset| {
+        switch (asset.path) {
+            .Model => |p| try pack.add_model(asset.name, p),
+            .Animation => |p| try pack.define_animation(asset.name, p.model_name, p.animation_id),
+            .Image => |p| try pack.add_image(asset.name, p),
+        }
+    }
+
+    return pack;
 }

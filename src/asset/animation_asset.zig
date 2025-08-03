@@ -6,6 +6,11 @@ const FileWatcher = @import("file_watcher.zig");
 const ModelAsset = @import("model_asset.zig").ModelAsset;
 const ModelAssetId = @import("asset_id.zig").AssetId(ModelAsset);
 
+const AnimationPath = struct {
+    model_id: ModelAssetId,
+    animation_id: u64,
+};
+
 pub const AnimationAsset = struct {
     const Self = @This();
     pub const BaseType = struct {
@@ -20,6 +25,7 @@ pub const AnimationAsset = struct {
             return &model.animations[self.animation_id];
         }
     };
+    pub const Path = AnimationPath;
 
     animation: BaseType,
 
@@ -27,11 +33,13 @@ pub const AnimationAsset = struct {
         _ = self;
     }
 
-    pub fn init(model_id: ModelAssetId, animation_id: u64) !Self {
+    pub fn init(alloc: std.mem.Allocator, path: Self.Path) !Self {
+        _ = alloc;
+
         return .{
             .animation = .{
-                .base_model = model_id,
-                .animation_id = animation_id,
+                .base_model = path.model_id,
+                .animation_id = path.animation_id,
             },
         };
     }

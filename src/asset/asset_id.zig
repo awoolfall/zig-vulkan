@@ -15,9 +15,11 @@ pub fn AssetId(comptime AssetType: type) type {
             const asset_manager = &eng.get().asset_manager;
 
             const pack = asset_manager.asset_packs.getPtr(self.pack_id) orelse return error.AssetPackNotLoaded;
-            const asset_hashmap = try pack.get_asset_hashmap(AssetType);
 
-            const asset = asset_hashmap.get(self.asset_id) orelse return error.AssetNotFound;
+            const asset = pack.assets.getPtr(self.asset_id) orelse return error.AssetNotFound;
+
+            // check type matches
+            _ = asset.asset.get(AssetType) catch |err| return err;
 
             return try std.mem.join(alloc, &[_]u8{ SerializeSplitChar }, &[_][]const u8{ pack.unique_name, asset.unique_name });
         }

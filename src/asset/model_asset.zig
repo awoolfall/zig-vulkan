@@ -35,6 +35,7 @@ pub const ModelAssetPath = union(enum) {
 pub const ModelAsset = struct {
     const Self = @This();
     pub const BaseType = ms.Model;
+    pub const Path = ModelAssetPath;
 
     arena: std.heap.ArenaAllocator,
     path: ModelAssetPath,
@@ -48,7 +49,7 @@ pub const ModelAsset = struct {
         self.arena.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, path: ModelAssetPath) !Self {
+    pub fn init(alloc: std.mem.Allocator, path: Self.Path) !Self {
         var arena = std.heap.ArenaAllocator.init(alloc);
         errdefer arena.deinit();
 

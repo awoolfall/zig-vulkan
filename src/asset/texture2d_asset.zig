@@ -12,6 +12,7 @@ pub const ImagePath = union(enum) {
 pub const ImageAsset = struct {
     const Self = @This();
     pub const BaseType = gf.Image.Ref;
+    pub const Path = ImagePath;
 
     arena: std.heap.ArenaAllocator,
 
@@ -26,7 +27,7 @@ pub const ImageAsset = struct {
         self.arena.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, path: ImagePath) !Self {
+    pub fn init(alloc: std.mem.Allocator, path: Self.Path) !Self {
         var arena = std.heap.ArenaAllocator.init(alloc);
         errdefer arena.deinit();
 
