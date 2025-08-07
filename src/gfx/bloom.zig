@@ -9,10 +9,6 @@ const Self = @This();
 const MIP_LEVELS: u32 = 5;
 const BloomShaderSource = @embedFile("bloom.slang");
 
-const ConstantBufferData = extern struct {
-    resolution_or_radius: [4]f32,
-};
-
 const PushConstantData = extern struct {
     src_texel_size: [2]f32,
     mip_level: f32,
@@ -361,9 +357,15 @@ fn transition_image_to_colour_attachment(
     });
 }
 
+const BloomSettings = struct {
+    filter_radius: f32 = 0.02,
+    blur_amount: f32 = 0.03,
+};
+
 pub fn render_bloom(
     self: *const Self,
     cmd: *gf.CommandBuffer,
+    settings: BloomSettings,
 ) !void {
     // Transition HDR image to shader resource
     transition_image_to_shader_read_only(cmd, gf.GfxState.get().default.hdr_image, 0, 1);
@@ -402,9 +404,9 @@ pub fn render_bloom(
         const push_constants = PushConstantData {
             .mip_level = @floatFromInt(mip_level),
             .aspect_ratio = gf.GfxState.get().swapchain_aspect(),
-            .filter_radius = 0.005,
+            .filter_radius = settings.filter_radius,
             .src_texel_size = .{ @floatFromInt(size[0]), @floatFromInt(size[1]) },
-            .blur_amount = 0.03,
+            .blur_amount = settings.blur_amount,
         };
 
         cmd.cmd_push_constants(.{
@@ -457,9 +459,9 @@ pub fn render_bloom(
         const push_constants = PushConstantData {
             .mip_level = @floatFromInt(mip_level),
             .aspect_ratio = gf.GfxState.get().swapchain_aspect(),
-            .filter_radius = 0.005,
+            .filter_radius = settings.filter_radius,
             .src_texel_size = .{ @floatFromInt(size[0]), @floatFromInt(size[1]) },
-            .blur_amount = 0.03,
+            .blur_amount = settings.blur_amount,
         };
 
         cmd.cmd_push_constants(.{
@@ -472,155 +474,53 @@ pub fn render_bloom(
         cmd.cmd_draw(.{ .vertex_count = 6, });
     }
 
-    // TODO merge last bloom frame with hdr buffer. This was in tonemapping but should probs be 
-    // moved here.
-
     // Perform final upscale merging into the hdr buffer
     {
-    const mip_level = 1;
-    const shader_index = mip_level % 2;
-    const colour_attachment_index = (mip_level + 1) % 2;
+        const mip_level = 1;
+        const shader_index = mip_level % 2;
+        const colour_attachment_index = (mip_level + 1) % 2;
 
-    transition_image_to_shader_read_only(cmd, self.bloom_images.get(shader_index), mip_level, 1);
-    transition_image_to_colour_attachment(cmd, self.bloom_images.get(colour_attachment_index), mip_level - 1, 1);
+        transition_image_to_shader_read_only(cmd, self.bloom_images.get(shader_index), mip_level, 1);
+        transition_image_to_colour_attachment(cmd, self.bloom_images.get(colour_attachment_index), mip_level - 1, 1);
 
-    cmd.cmd_begin_render_pass(.{
-        .render_pass = self.upsample_render_pass,
-        .framebuffer =  self.hdr_framebuffer,
-        .render_area = .full_screen_pixels_mip(0),
-    });
-    defer cmd.cmd_end_render_pass();
+        cmd.cmd_begin_render_pass(.{
+            .render_pass = self.upsample_render_pass,
+            .framebuffer =  self.hdr_framebuffer,
+            .render_area = .full_screen_pixels_mip(0),
+        });
+        defer cmd.cmd_end_render_pass();
 
-    cmd.cmd_bind_graphics_pipeline(self.upsample_pipeline);
-    cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport_mip(0), }, });
-    cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels_mip(0), }, });
+        cmd.cmd_bind_graphics_pipeline(self.upsample_pipeline);
+        cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport_mip(0), }, });
+        cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels_mip(0), }, });
 
-    cmd.cmd_bind_descriptor_sets(.{
-        .graphics_pipeline = self.upsample_pipeline,
-        .descriptor_sets = &.{
-            self.bloom_layers.get(mip_level).image_descriptor_sets.get(shader_index),
-        },
+        cmd.cmd_bind_descriptor_sets(.{
+            .graphics_pipeline = self.upsample_pipeline,
+            .descriptor_sets = &.{
+                self.bloom_layers.get(mip_level).image_descriptor_sets.get(shader_index),
+            },
+            });
+
+        var size = gf.GfxState.get().swapchain_size();
+        size[0] >>= @intCast(mip_level);
+        size[1] >>= @intCast(mip_level);
+
+        const push_constants = PushConstantData {
+            .mip_level = @floatFromInt(mip_level),
+            .aspect_ratio = gf.GfxState.get().swapchain_aspect(),
+            .filter_radius = settings.filter_radius,
+            .src_texel_size = .{ @floatFromInt(size[0]), @floatFromInt(size[1]) },
+            .blur_amount = settings.blur_amount,
+        };
+
+        cmd.cmd_push_constants(.{
+            .graphics_pipeline = self.upsample_pipeline,
+            .shader_stages = .{ .Pixel = true, },
+            .offset = 0,
+            .data = std.mem.asBytes(&push_constants),
         });
 
-    var size = gf.GfxState.get().swapchain_size();
-    size[0] >>= @intCast(mip_level);
-    size[1] >>= @intCast(mip_level);
-
-    const push_constants = PushConstantData {
-        .mip_level = @floatFromInt(mip_level),
-        .aspect_ratio = gf.GfxState.get().swapchain_aspect(),
-        .filter_radius = 0.005,
-        .src_texel_size = .{ @floatFromInt(size[0]), @floatFromInt(size[1]) },
-        .blur_amount = 0.03,
-    };
-
-    cmd.cmd_push_constants(.{
-        .graphics_pipeline = self.upsample_pipeline,
-        .shader_stages = .{ .Pixel = true, },
-        .offset = 0,
-        .data = std.mem.asBytes(&push_constants),
-    });
-
-    cmd.cmd_draw(.{ .vertex_count = 6, });
-    }
-
-}
-
-pub fn render_bloom_texture(
-    self: *const Self,
-    hdr_source_view: gf.ImageView.Ref,
-    filter_radius: f32,
-) void {
-    const gfx = gf.GfxState.get();
-
-    var hdr_source: gf.ImageView.Ref = hdr_source_view;
-    var rtv: [MIP_LEVELS]gf.ImageView.Ref = self.bloom_mip_textures[0].rtv;
-
-    // Downsample
-    gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
-    gfx.cmd_set_vertex_shader(&self.full_screen_quad_vertex_shader);
-    gfx.cmd_set_pixel_shader(&self.downsample_pixel_shader);
-    gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
-    gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.constant_buffer});
-    gfx.cmd_set_topology(.TriangleList);
-
-    for (0..MIP_LEVELS) |mip_level| {
-        const mip_level_minus_one = @max(@as(i32, @intCast(mip_level)) - 1, 0);
-        {
-            var mapped_buffer = self.constant_buffer.map(.{ .write = true, }) catch unreachable;
-            defer mapped_buffer.unmap();
-
-            const data = mapped_buffer.data(ConstantBufferData);
-            const view_minus_one = rtv[mip_level_minus_one].get() catch unreachable;
-            data.resolution_or_radius[0] = 1.0 / @as(f32, @floatFromInt(view_minus_one.size.width));
-            data.resolution_or_radius[1] = 1.0 / @as(f32, @floatFromInt(view_minus_one.size.height));
-            data.resolution_or_radius[2] = @floatFromInt(mip_level_minus_one);
-        }
-
-        const view = rtv[mip_level].get() catch unreachable;
-        const viewport = gf.Viewport {
-            .width = @floatFromInt(view.size.width),
-            .height = @floatFromInt(view.size.height),
-            .top_left_x = 0.0,
-            .top_left_y = 0.0,
-            .min_depth = 0.0,
-            .max_depth = 0.0,
-        };
-
-        gfx.cmd_set_render_target(&.{rtv[mip_level]}, null);
-        gfx.cmd_set_viewport(viewport);
-        gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_source});
-
-        gfx.cmd_draw(6, 0);
-
-        // unset hdr texture so it can be used as rtv again
-        gfx.cmd_set_shader_resources(.Pixel, 0, &.{null});
-
-        hdr_source = self.bloom_mip_textures[mip_level % 2].view;
-        rtv = self.bloom_mip_textures[(mip_level + 1) % 2].rtv;
-    }
-
-    // Upsample
-    gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
-    gfx.cmd_set_vertex_shader(&self.full_screen_quad_vertex_shader);
-    gfx.cmd_set_pixel_shader(&self.upsample_pixel_shader);
-    gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
-    gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.constant_buffer});
-    gfx.cmd_set_topology(.TriangleList);
-
-    for (1..MIP_LEVELS) |inv_mip_level| {
-        const mip_level = MIP_LEVELS - inv_mip_level - 1;
-
-        hdr_source = self.bloom_mip_textures[(mip_level + 1) % 2].view;
-        rtv = self.bloom_mip_textures[mip_level % 2].rtv;
-
-        const view = rtv[mip_level].get() catch unreachable;
-        const viewport = gf.Viewport {
-            .width = @floatFromInt(view.size.width),
-            .height = @floatFromInt(view.size.height),
-            .top_left_x = 0.0,
-            .top_left_y = 0.0,
-            .min_depth = 0.0,
-            .max_depth = 0.0,
-        };
-        
-        {
-            var mapped_buffer = self.constant_buffer.map(.{ .write = true, }) catch unreachable;
-            defer mapped_buffer.unmap();
-            const data = mapped_buffer.data(ConstantBufferData);
-            data.resolution_or_radius[0] = filter_radius;
-            data.resolution_or_radius[1] = @floatFromInt(mip_level + 1);
-            data.resolution_or_radius[2] = viewport.width / viewport.height;
-        }
-
-        gfx.cmd_set_render_target(&.{rtv[mip_level]}, null);
-        gfx.cmd_set_viewport(viewport);
-        gfx.cmd_set_shader_resources(.Pixel, 0, &.{hdr_source});
-
-        gfx.cmd_draw(6, 0);
-
-        // unset hdr texture so it can be used as rtv again
-        gfx.cmd_set_shader_resources(.Pixel, 0, &.{null});
+        cmd.cmd_draw(.{ .vertex_count = 6, });
     }
 }
 

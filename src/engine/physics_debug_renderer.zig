@@ -2,48 +2,89 @@ const std = @import("std");
 const zphy = @import("zphysics");
 const zwindows = @import("zwindows");
 const zm = @import("zmath");
-const d3d11 = zwindows.d3d11;
-const _gfx = @import("../gfx/gfx.zig");
-const cm = @import("../engine/camera.zig");
-const tm = @import("../engine/transform.zig");
+const eng = @import("self");
+const gfx = eng.gfx;
+const cm = eng.camera;
+const Transform = eng.Transform;
 
-const CameraStruct = extern struct {
-    projection: [16]f32,
-    view: [16]f32,
+const PushConstantCamera = extern struct {
+    vp: zm.Mat,
+};
+const PushConstantsBody = extern struct {
+    model: zm.Mat,
+    colour: zm.F32x4,
 };
 
-const MaterialStruct = extern struct {
-    model_matrix: [16]f32,
-    material_color: [4]f32,
-};
+const SHADER_SLANG = @embedFile("physics_debug_renderer.slang");
 
 pub const D3D11DebugRenderer = extern struct {
-    const MyRenderPrimitive = extern struct {
-        buffer: ?*d3d11.IBuffer = null,
+    const MyRenderPrimitive = struct {
+        buffer: gfx.Buffer.Ref,
         num_vertices: u32 = 0,
         indices_offset: u32 = 0,
         num_indices: u32 = 0,
+
+        pub fn deinit(self: *const MyRenderPrimitive) void {
+            self.buffer.deinit();
+        }
 
         pub fn has_indices(self: *const MyRenderPrimitive) bool {
             return self.num_indices != 0;
         }
     };
-    const MaxPrimitives = 2048;
+
+    const Data = struct {
+        primitives: std.DoublyLinkedList(MyRenderPrimitive),
+        alloc: std.mem.Allocator,
+        vertex_shader: gfx.VertexShader,
+        pixel_shader: gfx.PixelShader,
+        render_pass: gfx.RenderPass.Ref,
+        pipeline: gfx.GraphicsPipeline.Ref,
+        framebuffer: gfx.FrameBuffer.Ref,
+
+        pub fn deinit(self: *Data) void {
+            while (self.primitives.pop()) |prim| {
+                prim.data.deinit();
+                self.alloc.destroy(prim);
+            }
+
+            self.framebuffer.deinit();
+            self.pipeline.deinit();
+            self.render_pass.deinit();
+
+            self.vertex_shader.deinit();
+            self.pixel_shader.deinit();
+        }
+    };
+
+    pub const Vertex = extern struct {
+        position: [3]f32,
+        normal: [3]f32,
+        uv: [2]f32,
+        color: [4]f32,
+
+        pub fn from_zphy(vertex: *const zphy.DebugRenderer.Vertex) Vertex {
+            return Vertex {
+                .position = vertex.position,
+                .normal = vertex.normal,
+                .uv = vertex.uv,
+                .color = [4]f32{
+                    @as(f32, @floatFromInt(vertex.color.comp.r)) / 255.0,
+                    @as(f32, @floatFromInt(vertex.color.comp.g)) / 255.0,
+                    @as(f32, @floatFromInt(vertex.color.comp.b)) / 255.0,
+                    @as(f32, @floatFromInt(vertex.color.comp.a)) / 255.0,
+                },
+            };
+        }
+    };
 
     usingnamespace zphy.DebugRenderer.Methods(@This());
     __v: *const zphy.DebugRenderer.VTable(@This()) = &vtable,
 
-    primitives: [MaxPrimitives]MyRenderPrimitive = [_]MyRenderPrimitive{.{}} ** MaxPrimitives,
-    prim_head: i32 = -1,
-    gfx: *_gfx.GfxState,
-    gfx_data: extern struct {
-        vso_input_layout: *d3d11.IInputLayout,
-        vso: *d3d11.IVertexShader,
-        pso: *d3d11.IPixelShader,
-        rasterization_state: *d3d11.IRasterizerState,
-        model_matrix_buffer: *d3d11.IBuffer,
-        camera_buffer: *d3d11.IBuffer,
-    },
+    data: *Data,
+
+    // this will be set immediately before zphy render callbacks
+    cmd: ?*gfx.CommandBuffer = null,
 
     const vtable = zphy.DebugRenderer.VTable(@This()){
         .drawLine = drawLine,
@@ -55,210 +96,154 @@ pub const D3D11DebugRenderer = extern struct {
     };
 
     pub fn deinit(self: *D3D11DebugRenderer) void {
-        for (self.primitives) |prim| {
-            if (prim.buffer != null) {
-                _ = prim.buffer.?.Release();
-            }
-        }
-        _ = self.gfx_data.camera_buffer.Release();
-        _ = self.gfx_data.model_matrix_buffer.Release();
-        _ = self.gfx_data.rasterization_state.Release();
-        _ = self.gfx_data.vso_input_layout.Release();
-        _ = self.gfx_data.vso.Release();
-        _ = self.gfx_data.pso.Release();
+        const alloc = self.data.alloc;
+        self.data.deinit();
+        alloc.destroy(self.data);
     }
 
-    pub fn init(gfx: *_gfx.GfxState) !D3D11DebugRenderer {
-        const shader_buffer = \\
-\\  cbuffer camera_data : register(b0)
-\\  {
-\\      row_major float4x4 projection;
-\\      row_major float4x4 view;
-\\  }
-\\ 
-\\  cbuffer instance_data : register(b1)
-\\  {
-\\      row_major float4x4 model_matrix;
-\\      float4 material_color;
-\\  }
-\\ 
-\\  struct vs_in
-\\  {
-\\      float3 pos : POS;
-\\      float3 normals : NORMAL;
-\\      float2 tex_coord : TEXCOORD;
-\\      float3 color: COLOR;
-\\  };
-\\ 
-\\  struct vs_out
-\\  {
-\\      float4 position : SV_POSITION;
-\\      float4 colour : POS;
-\\  };
-\\ 
-\\  vs_out vs_main(vs_in input)
-\\  {
-\\      vs_out output = (vs_out) 0;
-\\      float4x4 vp = mul(view, projection);
-\\      float4x4 mvp = mul(model_matrix, vp);
-\\      output.position = mul(float4(input.pos, 1.0), mvp);
-\\      output.colour = float4(input.color * material_color.xyz, 1.0);
-\\      return output;
-\\  }
-\\ 
-\\  float4 ps_main(vs_out input) : SV_TARGET
-\\  {
-\\      return input.colour;
-\\  }
-;
-
-        var vs_blob: *zwindows.d3d.IBlob = undefined;
-        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(shader_buffer, shader_buffer.len, null, null, null, "vs_main", "vs_5_0", 0, 0, @ptrCast(&vs_blob), null));
-        defer _ = vs_blob.Release();
-
-        var vso: *d3d11.IVertexShader = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateVertexShader(vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), null, @ptrCast(&vso)));
-        errdefer _ = vso.Release();
-
-        var ps_blob: *zwindows.d3d.IBlob = undefined;
-        try zwindows.hrErrorOnFail(zwindows.d3dcompiler.D3DCompile(shader_buffer, shader_buffer.len, null, null, null, "ps_main", "ps_5_0", 0, 0, @ptrCast(&ps_blob), null));
-        defer _ = ps_blob.Release();
-
-        // Create vertex and pixel shaders
-        var pso: *d3d11.IPixelShader = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreatePixelShader(ps_blob.GetBufferPointer(), ps_blob.GetBufferSize(), null, @ptrCast(&pso)));
-        errdefer _ = pso.Release();
-
-        const vso_input_layout_desc = [_]d3d11.INPUT_ELEMENT_DESC {
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "POS",
-                .SemanticIndex = 0,
-                .Format = zwindows.dxgi.FORMAT.R32G32B32_FLOAT,
-                .InputSlot = 0,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
+    pub fn init() !D3D11DebugRenderer {
+        const vertex_shader = try gfx.VertexShader.init_buffer(
+            SHADER_SLANG,
+            "vs_main",
+            gfx.VertexInputLayoutInfo {
+                .bindings = &.{
+                    gfx.VertexInputBinding {
+                        .binding = 0, .input_rate = .Vertex, .stride = 12 + 12 + 8 + 16,
+                    },
+                },
+                .attributes = &.{
+                    .{ .location = 0, .binding = 0, .name = "POS", .format = .F32x3, .offset = 0 },
+                    .{ .location = 1, .binding = 0, .name = "NORMAL", .format = .F32x3, .offset = 12 },
+                    .{ .location = 2, .binding = 0, .name = "TEXCOORD0", .format = .F32x2, .offset = 24 },
+                    .{ .location = 3, .binding = 0, .name = "COLOR", .format = .F32x4, .offset = 32 },
+                },
             },
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "NORMAL",
-                .SemanticIndex = 0,
-                .Format = zwindows.dxgi.FORMAT.R32G32B32_FLOAT,
-                .InputSlot = 1,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
+            .{}
+        );
+        errdefer vertex_shader.deinit();
+
+        const pixel_shader = try gfx.PixelShader.init_buffer(
+            SHADER_SLANG,
+            "ps_main",
+            .{}
+        );
+        errdefer pixel_shader.deinit();
+
+        const attachments = &[_]gfx.AttachmentInfo {
+            gfx.AttachmentInfo {
+                .name = "colour",
+                .format = gfx.GfxState.ldr_format,
+                .initial_layout = .ColorAttachmentOptimal,
+                .final_layout = .ColorAttachmentOptimal,
             },
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "TEXCOORD",
-                .SemanticIndex = 0,
-                .Format = zwindows.dxgi.FORMAT.R32G32_FLOAT,
-                .InputSlot = 2,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
-            },
-            d3d11.INPUT_ELEMENT_DESC {
-                .SemanticName = "COLOR",
-                .SemanticIndex = 0,
-                .Format = zwindows.dxgi.FORMAT.R8G8B8A8_UNORM,
-                .InputSlot = 3,
-                .AlignedByteOffset = d3d11.APPEND_ALIGNED_ELEMENT,
-                .InputSlotClass = d3d11.INPUT_CLASSIFICATION.INPUT_PER_VERTEX_DATA,
-                .InstanceDataStepRate = 0,
+            gfx.AttachmentInfo {
+                .name = "depth",
+                .format = gfx.GfxState.depth_format,
+                .initial_layout = .DepthStencilAttachmentOptimal,
+                .final_layout = .DepthStencilAttachmentOptimal,
             },
         };
-        var vso_input_layout: *d3d11.IInputLayout = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateInputLayout(vso_input_layout_desc[0..], vso_input_layout_desc.len, vs_blob.GetBufferPointer(), vs_blob.GetBufferSize(), @ptrCast(&vso_input_layout)));
-        errdefer _ = vso_input_layout.Release();
 
-        // Define rasterizer state
-        var rasterization_state: *d3d11.IRasterizerState = undefined;
-        var rasterizer_state_desc = d3d11.RASTERIZER_DESC {
-            .FillMode = d3d11.FILL_MODE.WIREFRAME,
-            .CullMode = d3d11.CULL_MODE.BACK,
-        };
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateRasterizerState(&rasterizer_state_desc, @ptrCast(&rasterization_state)));
-        errdefer _ = rasterization_state.Release();
-
-        // Create model constant buffer
-        const model_constant_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @intCast(@sizeOf(MaterialStruct)),
-            .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
-        };
-        var model_buffer: *d3d11.IBuffer = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateBuffer(&model_constant_buffer_desc, null, @ptrCast(&model_buffer)));
-        errdefer _ = model_buffer.Release();
-
-        // Create camera constant buffer
-        const camera_constant_buffer_desc = d3d11.BUFFER_DESC {
-            .ByteWidth = @sizeOf(CameraStruct),
-            .Usage = d3d11.USAGE.DYNAMIC,
-            .BindFlags = d3d11.BIND_FLAG { .CONSTANT_BUFFER = true, },
-            .CPUAccessFlags = d3d11.CPU_ACCCESS_FLAG { .WRITE = true, },
-        };
-        var camera_data_buffer: *d3d11.IBuffer = undefined;
-        try zwindows.hrErrorOnFail(gfx.platform.device.CreateBuffer(&camera_constant_buffer_desc, null, @ptrCast(&camera_data_buffer)));
-        errdefer _ = camera_data_buffer.Release();
-
-        return D3D11DebugRenderer{
-            .gfx = gfx,
-            .gfx_data = .{
-                .vso_input_layout = vso_input_layout,
-                .vso = vso,
-                .pso = pso,
-                .rasterization_state = rasterization_state,
-                .model_matrix_buffer = model_buffer,
-                .camera_buffer = camera_data_buffer,
+        const render_pass = try gfx.RenderPass.init(.{
+            .attachments = attachments,
+            .subpasses = &.{
+                gfx.SubpassInfo {
+                    .attachments = &.{ "colour" },
+                    .depth_attachment = "depth",
+                },
             },
+            .dependencies = &.{
+                gfx.SubpassDependencyInfo {
+                    .src_subpass = null,
+                    .dst_subpass = 0,
+                    .src_stage_mask = .{ .color_attachment_output = true, },
+                    .src_access_mask = .{},
+                    .dst_stage_mask = .{ .color_attachment_output = true, },
+                    .dst_access_mask = .{ .color_attachment_write = true, },
+                },
+            },
+        });
+        errdefer render_pass.deinit();
+
+        const pipeline = try gfx.GraphicsPipeline.init(.{
+            .render_pass = render_pass,
+            .subpass_index = 0,
+            .attachments = attachments,
+            .vertex_shader = &vertex_shader,
+            .pixel_shader = &pixel_shader,
+            .rasterization_fill_mode = .Line,
+            .cull_mode = .CullNone,
+            .push_constants = &.{
+                gfx.PushConstantLayoutInfo {
+                    .shader_stages = .{ .Vertex = true, },
+                    .offset = 0,
+                    .size = @sizeOf(PushConstantCamera) + @sizeOf(PushConstantsBody),
+                },
+            },
+            //.depth_test = .{ .write = false, },
+        });
+        errdefer pipeline.deinit();
+
+        const framebuffer = try gfx.FrameBuffer.init(.{
+            .render_pass = render_pass,
+            .attachments = &[_]gfx.FrameBufferAttachmentInfo {
+                .SwapchainLDR,
+                .SwapchainDepth,
+            },
+        });
+        errdefer framebuffer.deinit();
+
+        const data = try eng.get().general_allocator.create(Data);
+        errdefer eng.get().general_allocator.destroy(data);
+
+        data.* = .{
+            .alloc = eng.get().general_allocator,
+            .primitives = std.DoublyLinkedList(MyRenderPrimitive){},
+            .vertex_shader = vertex_shader,
+            .pixel_shader = pixel_shader,
+            .render_pass = render_pass,
+            .pipeline = pipeline,
+            .framebuffer = framebuffer,
+        };
+
+        return D3D11DebugRenderer {
+            .data = data,
         };
     }
 
     pub fn draw_bodies(
         self: *D3D11DebugRenderer, 
-        phys: *zphy.PhysicsSystem, 
-        rtv: *d3d11.IRenderTargetView, 
-        rtv_width: i32,
-        rtv_height: i32,
-        proj: [16]f32,
-        view: [16]f32
+        cmd: *gfx.CommandBuffer,
+        projection: zm.Mat,
+        view: zm.Mat,
     ) void {
-        { // Update camera buffer
-            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-            zwindows.hrPanicOnFail(self.gfx.platform.context.Map(@ptrCast(self.gfx_data.camera_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-            defer self.gfx.platform.context.Unmap(@ptrCast(self.gfx_data.camera_buffer), 0);
+        cmd.cmd_begin_render_pass(.{
+            .render_pass = self.data.render_pass,
+            .framebuffer = self.data.framebuffer,
+            .render_area = .full_screen_pixels(),
+        });
+        defer cmd.cmd_end_render_pass();
 
-            var buffer_data: *CameraStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-            buffer_data.view = view;
-            buffer_data.projection = proj;
-        }
+        cmd.cmd_bind_graphics_pipeline(self.data.pipeline);
 
-        const viewport = d3d11.VIEWPORT {
-            .Width = @floatFromInt(rtv_width),
-            .Height = @floatFromInt(rtv_height),
-            .TopLeftX = 0,
-            .TopLeftY = 0,
-            .MinDepth = 0.0,
-            .MaxDepth = 1.0,
+        cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport() } });
+        cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels() } });
+
+        const camera_push_constants = PushConstantCamera {
+            .vp = zm.mul(view, projection),
         };
-        self.gfx.platform.context.RSSetViewports(1, @ptrCast(&viewport));
 
-        self.gfx.platform.context.PSSetShader(self.gfx_data.pso, null, 0);
+        cmd.cmd_push_constants(.{
+            .graphics_pipeline = self.data.pipeline,
+            .shader_stages = .{ .Vertex = true, },
+            .offset = 0,
+            .data = std.mem.asBytes(&camera_push_constants),
+        });
 
-        self.gfx.platform.context.OMSetRenderTargets(1, @ptrCast(&rtv), null);
-        self.gfx.platform.context.OMSetBlendState(null, null, 0xffffffff);
+        self.cmd = cmd;
+        defer self.cmd = null;
 
-        self.gfx.platform.context.VSSetShader(self.gfx_data.vso, null, 0);
-        self.gfx.platform.context.VSSetConstantBuffers(0, 1, @ptrCast(&self.gfx_data.camera_buffer));
-
-        self.gfx.platform.context.IASetPrimitiveTopology(d3d11.PRIMITIVE_TOPOLOGY.TRIANGLELIST);
-        self.gfx.platform.context.IASetInputLayout(self.gfx_data.vso_input_layout);
-
-        self.gfx.platform.context.RSSetState(self.gfx_data.rasterization_state);
-
-        // Issue debug draw command to physics system
-        phys.drawBodies(&.{}, null);
+        eng.get().physics.zphy.drawBodies(&.{}, null);
     }
 
     pub fn shouldBodyDraw(_: *const zphy.Body) align(zphy.DebugRenderer.BodyDrawFilterFuncAlignment) callconv(.C) bool {
@@ -298,35 +283,43 @@ pub const D3D11DebugRenderer = extern struct {
         triangles: [*]zphy.DebugRenderer.Triangle,
         triangle_count: u32,
     ) callconv(.C) *anyopaque {
-        self.prim_head += 1;
-        const prim = &self.primitives[@as(usize, @intCast(self.prim_head))];
+        const alloc = self.data.alloc;
 
-        const buffer_length: c_uint = @sizeOf(zphy.DebugRenderer.Triangle) * triangle_count;
-
-        var buffer_data = std.heap.page_allocator.alloc(u8, buffer_length) catch unreachable;
-        defer std.heap.page_allocator.free(buffer_data);
-        @memcpy(buffer_data[0..], @as([*]u8, @ptrCast(triangles)));
-
-        const buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = buffer_length,
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, .INDEX_BUFFER = true },
+        const prim = alloc.create(std.DoublyLinkedList(MyRenderPrimitive).Node) catch |err| {
+            std.log.err("Unable to add physics debug primitive: {}", .{err});
+            unreachable;
         };
-        var buffer: *d3d11.IBuffer = undefined;
-        zwindows.hrErrorOnFail(self.gfx.platform.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(buffer_data), }, @ptrCast(&buffer)))
-            catch |err| {
-                std.log.warn("Unable to create buffer in physics debug renderer: {}", .{err});
-                return zphy.DebugRenderer.createTriangleBatch(prim);
-            };
-        errdefer _ = buffer.Release();
+        errdefer alloc.destroy(prim);
 
-        prim.* = MyRenderPrimitive {
+        self.data.primitives.append(prim);
+        errdefer _ = self.data.primitives.pop();
+
+        var buffer_data = alloc.alloc(Vertex, triangle_count * 3) catch unreachable;
+        defer alloc.free(buffer_data);
+        for (triangles[0..triangle_count], 0..) |tri, t_idx| {
+            buffer_data[(t_idx * 3) + 0] = Vertex.from_zphy(&tri.v[0]);
+            buffer_data[(t_idx * 3) + 1] = Vertex.from_zphy(&tri.v[1]);
+            buffer_data[(t_idx * 3) + 2] = Vertex.from_zphy(&tri.v[2]);
+        }
+
+        const buffer = gfx.Buffer.init_with_data(
+            std.mem.sliceAsBytes(buffer_data),
+            .{ .VertexBuffer = true, },
+            .{}
+        ) catch |err| {
+            std.log.err("Unable to create buffer for physics debug renderer: {}", .{err});
+            unreachable;
+        };
+        errdefer buffer.deinit();
+
+        prim.data = MyRenderPrimitive {
             .buffer = buffer,
             .num_vertices = triangle_count * 3,
             .indices_offset = 0,
             .num_indices = 0,
         };
-        return zphy.DebugRenderer.createTriangleBatch(prim);
+
+        return zphy.DebugRenderer.createTriangleBatch(&prim.data);
     }
 
     fn createTriangleBatchIndexed(
@@ -336,39 +329,48 @@ pub const D3D11DebugRenderer = extern struct {
         indices: [*]u32,
         index_count: u32,
     ) callconv(.C) *anyopaque {
-        self.prim_head += 1;
-        const prim = &self.primitives[@as(usize, @intCast(self.prim_head))];
+        const alloc = self.data.alloc;
 
-        const vert_byte_length = @sizeOf(zphy.DebugRenderer.Vertex) * vertex_count;
-        const buffer_length: c_uint = 
-            vert_byte_length + 
-            @sizeOf(u32) * index_count;
-
-        var buffer_data = std.heap.page_allocator.alloc(u8, buffer_length) catch unreachable;
-        defer std.heap.page_allocator.free(buffer_data);
-        @memcpy(buffer_data[0..vert_byte_length], @as([*]u8, @ptrCast(vertices)));
-        @memcpy(buffer_data[vert_byte_length..], @as([*]u8, @ptrCast(indices)));
-
-        const buffer_desc = d3d11.BUFFER_DESC {
-            .Usage = d3d11.USAGE.IMMUTABLE,
-            .ByteWidth = buffer_length,
-            .BindFlags = d3d11.BIND_FLAG{ .VERTEX_BUFFER = true, .INDEX_BUFFER = true },
+        const prim = alloc.create(std.DoublyLinkedList(MyRenderPrimitive).Node) catch |err| {
+            std.log.err("Unable to add physics debug primitive: {}", .{err});
+            unreachable;
         };
-        var buffer: *d3d11.IBuffer = undefined;
-        zwindows.hrErrorOnFail(self.gfx.platform.device.CreateBuffer(&buffer_desc, &d3d11.SUBRESOURCE_DATA{ .pSysMem = @ptrCast(buffer_data), }, @ptrCast(&buffer)))
-            catch |err| {
-                std.log.warn("Unable to create indexed buffer in physics debug renderer: {}", .{err});
-                return zphy.DebugRenderer.createTriangleBatch(prim);
-            };
-        errdefer _ = buffer.Release();
+        errdefer alloc.destroy(prim);
 
-        prim.* = MyRenderPrimitive {
+        self.data.primitives.append(prim);
+        errdefer _ = self.data.primitives.pop();
+
+        const vertices_byte_length = @sizeOf(Vertex) * vertex_count;
+        const indices_byte_length = @sizeOf(u32) * index_count;
+
+        var buffer_data = alloc.alloc(u8, vertices_byte_length + indices_byte_length) catch unreachable;
+        defer alloc.free(buffer_data);
+
+        const vertex_buffer_data = std.mem.bytesAsSlice(Vertex, buffer_data[0..vertices_byte_length]);
+        for (vertices[0..vertex_count], 0..) |vert, idx| {
+            vertex_buffer_data[idx] = Vertex.from_zphy(&vert);
+        }
+        const indices_buffer_data = std.mem.bytesAsSlice(u32, buffer_data[vertices_byte_length..]);
+        @memcpy(indices_buffer_data[0..], indices[0..]);
+
+        const buffer = gfx.Buffer.init_with_data(
+            buffer_data,
+            .{ .VertexBuffer = true, .IndexBuffer = true, },
+            .{}
+        ) catch |err| {
+            std.log.err("Unable to create buffer for physics debug renderer: {}", .{err});
+            unreachable;
+        };
+        errdefer buffer.deinit();
+
+        prim.data = MyRenderPrimitive {
             .buffer = buffer,
             .num_vertices = vertex_count,
-            .indices_offset = vert_byte_length,
+            .indices_offset = vertices_byte_length,
             .num_indices = index_count,
         };
-        return zphy.DebugRenderer.createTriangleBatch(prim);
+
+        return zphy.DebugRenderer.createTriangleBatch(&prim.data);
     }
 
     fn drawGeometry(
@@ -388,56 +390,53 @@ pub const D3D11DebugRenderer = extern struct {
         _ = cast_shadow;
         _ = draw_mode;
 
+        const cmd = self.cmd orelse {
+            std.log.err("Command buffer was not set in physics debug renderer", .{});
+            return;
+        };
+
         if (geometry.num_LODs < 1) { 
             std.log.warn("Unable to draw physics debug geometry, num LODs is less than 1", .{});
             return; 
         }
 
-        { // Setup model buffer from transform
-            var mapped_subresource: d3d11.MAPPED_SUBRESOURCE = undefined;
-            zwindows.hrPanicOnFail(self.gfx.platform.context.Map(@ptrCast(self.gfx_data.model_matrix_buffer), 0, d3d11.MAP.WRITE_DISCARD, d3d11.MAP_FLAG{}, @ptrCast(&mapped_subresource)));
-            defer self.gfx.platform.context.Unmap(@ptrCast(self.gfx_data.model_matrix_buffer), 0);
+        const object_push_constants = PushConstantsBody {
+            .model = zm.Mat {
+                zm.loadArr4(model_matrix.column_0),
+                zm.loadArr4(model_matrix.column_1),
+                zm.loadArr4(model_matrix.column_2),
+                zm.loadArr4(model_matrix.column_3),
+            },
+            .colour = zm.f32x4(
+                @as(f32, @floatFromInt(color.comp.r)) / 255.0,
+                @as(f32, @floatFromInt(color.comp.g)) / 255.0,
+                @as(f32, @floatFromInt(color.comp.b)) / 255.0,
+                @as(f32, @floatFromInt(color.comp.a)) / 255.0
+            ),
+        };
 
-            var buffer_data: *MaterialStruct = @ptrCast(@alignCast(mapped_subresource.pData));
-
-            for (model_matrix.column_0, 0..) |v, idx| {
-                (buffer_data.model_matrix)[idx] = @floatCast(v);
-            }
-            for (model_matrix.column_1, 0..) |v, idx| {
-                (buffer_data.model_matrix)[idx + 4] = @floatCast(v);
-            }
-            for (model_matrix.column_2, 0..) |v, idx| {
-                (buffer_data.model_matrix)[idx + 8] = @floatCast(v);
-            }
-            for (model_matrix.column_3, 0..) |v, idx| {
-                (buffer_data.model_matrix)[idx + 12] = @floatCast(v);
-            }
-
-            buffer_data.material_color[0] = (@as(f32, @floatFromInt(color.comp.r)) / 255.0);
-            buffer_data.material_color[1] = (@as(f32, @floatFromInt(color.comp.g)) / 255.0);
-            buffer_data.material_color[2] = (@as(f32, @floatFromInt(color.comp.b)) / 255.0);
-            buffer_data.material_color[3] = (@as(f32, @floatFromInt(color.comp.a)) / 255.0);
-        }
-        self.gfx.platform.context.VSSetConstantBuffers(1, 1, @ptrCast(&self.gfx_data.model_matrix_buffer));
+        cmd.cmd_push_constants(.{
+            .graphics_pipeline = self.data.pipeline,
+            .shader_stages = .{ .Vertex = true },
+            .offset = @sizeOf(PushConstantCamera),
+            .data = std.mem.asBytes(&object_push_constants),
+        });
 
         const render_data: *const MyRenderPrimitive = @ptrCast(@alignCast(zphy.DebugRenderer.getPrimitiveFromBatch(geometry.LODs[0].batch)));
-        std.debug.assert(render_data.buffer != null);
 
-        const stride: c_uint = @sizeOf(zphy.DebugRenderer.Vertex);
-        const pos_offset: c_uint = 0;
-        self.gfx.platform.context.IASetVertexBuffers(0, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&pos_offset));
-        const norm_offset: c_uint = @sizeOf(f32) * 3;
-        self.gfx.platform.context.IASetVertexBuffers(1, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&norm_offset));
-        const uv_offset: c_uint = @sizeOf(f32) * 3 + @sizeOf(f32) * 3;
-        self.gfx.platform.context.IASetVertexBuffers(2, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&uv_offset));
-        const col_offset: c_uint = @sizeOf(f32) * 3 + @sizeOf(f32) * 3 + @sizeOf(f32) * 2;
-        self.gfx.platform.context.IASetVertexBuffers(3, 1, @ptrCast(&render_data.buffer.?), @ptrCast(&stride), @ptrCast(&col_offset));
+        cmd.cmd_bind_vertex_buffers(.{
+            .buffers = &.{ .{ .buffer = render_data.buffer } },
+        });
 
         if (render_data.has_indices()) {
-            self.gfx.platform.context.IASetIndexBuffer(render_data.buffer, zwindows.dxgi.FORMAT.R32_UINT, render_data.indices_offset);
-            self.gfx.platform.context.DrawIndexed(@intCast(render_data.num_indices), @intCast(0), @intCast(0));
+            cmd.cmd_bind_index_buffer(.{
+                .buffer = render_data.buffer,
+                .index_format = .U32,
+                .offset = render_data.indices_offset,
+            });
+            cmd.cmd_draw_indexed(.{ .index_count = render_data.num_indices });
         } else {
-            self.gfx.platform.context.Draw(@intCast(render_data.num_vertices), @intCast(0));
+            cmd.cmd_draw(.{ .vertex_count = render_data.num_vertices });
         }
     }
 

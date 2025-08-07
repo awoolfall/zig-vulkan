@@ -213,6 +213,7 @@ pub const GfxStateVulkan = struct {
         // Declare required physical device features
         const required_physical_device_features_info = c.VkPhysicalDeviceFeatures {
             .independentBlend = bool_to_vulkan(true),
+            .fillModeNonSolid = bool_to_vulkan(true),
         };
 
         // Create vulkan instance

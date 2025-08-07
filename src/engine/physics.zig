@@ -10,7 +10,7 @@ const Transform = @import("../engine/transform.zig");
 const _gfx = @import("../gfx/gfx.zig");
 
 inline fn debug_renderer_enabled() bool {
-    return @import("../platform/platform.zig").GfxPlatform == @import("../gfx/platform/d3d11.zig").GfxStateD3D11;
+    return true;
 }
 const DebugRenderer = if (debug_renderer_enabled()) @import("physics_debug_renderer.zig").D3D11DebugRenderer else void;
 
@@ -31,7 +31,7 @@ pub const PhysicsSystem = struct {
     last_update_time: std.time.Instant,
     last_update_time_offset: u64 = 0,
 
-    pub fn init(alloc: std.mem.Allocator, asset_manager: *as.AssetManager, gfx: *_gfx.GfxState) !Self {
+    pub fn init(alloc: std.mem.Allocator, asset_manager: *as.AssetManager) !Self {
         try zphy.init(alloc, .{});
         errdefer zphy.deinit();
 
@@ -63,7 +63,7 @@ pub const PhysicsSystem = struct {
         var debug_renderer: ?*DebugRenderer = null;
         if (debug_renderer_enabled()) {
             debug_renderer = try alloc.create(DebugRenderer);
-            debug_renderer.?.* = try DebugRenderer.init(gfx);
+            debug_renderer.?.* = try DebugRenderer.init();
 
             try zphy.DebugRenderer.createSingleton(debug_renderer.?);
             errdefer zphy.DebugRenderer.destroySingleton();
@@ -202,9 +202,9 @@ pub const PhysicsSystem = struct {
         }
     }
 
-    pub fn debug_draw_bodies(self: *Self, rtv: _gfx.ImageView.Ref, width: i32, height: i32, projection: [16]f32, view: [16]f32) void {
+    pub fn debug_draw_bodies(self: *Self, cmd: *_gfx.CommandBuffer, projection: zm.Mat, view: zm.Mat) void {
         if (debug_renderer_enabled()) {
-            self._debug_renderer.draw_bodies(self.zphy, rtv.platform.view, width, height, projection, view);
+            self._debug_renderer.draw_bodies(cmd, projection, view);
         }
     }
 

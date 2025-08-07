@@ -128,7 +128,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.debug.deinit();
 
     Log.debug("Calling physics init", .{});
-    engine.physics = try ph.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager, &engine.gfx);
+    engine.physics = try ph.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager);
     errdefer engine.physics.deinit();
 
     engine.entities = try EntityList.init(engine.general_allocator);
