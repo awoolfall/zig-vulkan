@@ -1796,12 +1796,13 @@ pub const BufferVulkan = struct {
 
     pub fn map(self: *const Self, options: gf.Buffer.MapOptions) !MappedBuffer {
         const cfi = GfxStateVulkan.get().current_frame_index();
+        const buffer_index = cfi % self.vk_buffers.len;
 
         var data_ptr: ?*anyopaque = undefined;
         try vkt(c.vkMapMemory(
                 GfxStateVulkan.get().device,
                 self.vk_device_memory,
-                @as(u64, @intCast(cfi)) * self.aligned_buffer_size,
+                @as(u64, @intCast(buffer_index)) * self.aligned_buffer_size,
                 self.buffer_size,
                 0,
                 &data_ptr
@@ -2019,8 +2020,7 @@ pub const ImageVulkan = struct {
 
     pub inline fn get_frame_image(self: *const Self) *const ImageData {
         const idx = GfxStateVulkan.get().current_frame_index();
-        std.debug.assert(idx < self.images.len);
-        return &self.images[idx];
+        return &self.images[@as(usize, @intCast(idx)) % self.images.len];
     }
 
     pub fn map(self: *const Self, options: gf.Image.MapOptions) !MappedImage {
@@ -3416,7 +3416,7 @@ pub const CommandPoolVulkan = struct {
     }
 
     pub fn init(info: gf.CommandPoolInfo) !CommandPoolVulkan {
-        std.debug.assert(poolflags_to_vulkan(info) != 0);
+        //std.debug.assert(poolflags_to_vulkan(info) != 0);
 
         const pool_info = c.VkCommandPoolCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -3488,11 +3488,11 @@ pub const CommandBufferVulkan = struct {
         c.vkFreeCommandBuffers(GfxStateVulkan.get().device, self.vk_pool, 1, &self.vk_command_buffer);
     }
 
-    pub inline fn reset(self: *Self) !void {
+    pub fn reset(self: *Self) !void {
         try vkt(c.vkResetCommandBuffer(self.vk_command_buffer, 0));
     }
 
-    pub inline fn cmd_begin(self: *Self, info: gf.CommandBuffer.BeginInfo) !void {
+    pub fn cmd_begin(self: *Self, info: gf.CommandBuffer.BeginInfo) !void {
         const begin_info = c.VkCommandBufferBeginInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .flags = commandbufferbeginflags_to_vulkan(info),
@@ -3501,7 +3501,7 @@ pub const CommandBufferVulkan = struct {
         try vkt(c.vkBeginCommandBuffer(self.vk_command_buffer, &begin_info));
     }
 
-    pub inline fn cmd_end(self: *Self) !void {
+    pub fn cmd_end(self: *Self) !void {
         try vkt(c.vkEndCommandBuffer(self.vk_command_buffer));
     }
 
@@ -3512,7 +3512,7 @@ pub const CommandBufferVulkan = struct {
         };
     }
 
-    pub inline fn cmd_begin_render_pass(self: *Self, info: gf.CommandBuffer.BeginRenderPassInfo) void {
+    pub fn cmd_begin_render_pass(self: *Self, info: gf.CommandBuffer.BeginRenderPassInfo) void {
         const render_pass = info.render_pass.get() catch return;
         const framebuffer = info.framebuffer.get() catch return;
         
@@ -3528,21 +3528,21 @@ pub const CommandBufferVulkan = struct {
         c.vkCmdBeginRenderPass(self.vk_command_buffer, &begin_info, subpasscontents_to_vulkan(info.subpass_contents));
     }
 
-    pub inline fn cmd_next_subpass(self: *Self, info: gf.CommandBuffer.NextSubpassInfo) void {
+    pub fn cmd_next_subpass(self: *Self, info: gf.CommandBuffer.NextSubpassInfo) void {
         c.vkCmdNextSubpass(self.vk_command_buffer, subpasscontents_to_vulkan(info.subpass_contents));
     }
 
-    pub inline fn cmd_end_render_pass(self: *Self) void {
+    pub fn cmd_end_render_pass(self: *Self) void {
         c.vkCmdEndRenderPass(self.vk_command_buffer);
     }
 
-    pub inline fn cmd_bind_graphics_pipeline(self: *Self, pipeline: gf.GraphicsPipeline.Ref) void {
+    pub fn cmd_bind_graphics_pipeline(self: *Self, pipeline: gf.GraphicsPipeline.Ref) void {
         const p = pipeline.get() catch return;
         c.vkCmdBindPipeline(self.vk_command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, p.platform.vk_graphics_pipeline);
     }
 
     const max_vk_viewports = 6;
-    pub inline fn cmd_set_viewports(self: *Self, info: gf.CommandBuffer.SetViewportsInfo) void {
+    pub fn cmd_set_viewports(self: *Self, info: gf.CommandBuffer.SetViewportsInfo) void {
         std.debug.assert(info.viewports.len <= max_vk_viewports);
 
         var vk_viewports: [max_vk_viewports]c.VkViewport = undefined;
@@ -3565,7 +3565,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_set_scissors(self: *Self, info: gf.CommandBuffer.SetScissorsInfo) void {
+    pub fn cmd_set_scissors(self: *Self, info: gf.CommandBuffer.SetScissorsInfo) void {
         std.debug.assert(info.scissors.len <= max_vk_viewports);
 
         var vk_scissors: [max_vk_viewports]c.VkRect2D = undefined;
@@ -3580,7 +3580,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_bind_vertex_buffers(self: *Self, info: gf.CommandBuffer.BindVertexBuffersInfo) void {
+    pub fn cmd_bind_vertex_buffers(self: *Self, info: gf.CommandBuffer.BindVertexBuffersInfo) void {
         const max_vertex_buffers = 16;
         std.debug.assert(info.buffers.len <= max_vertex_buffers);
 
@@ -3600,7 +3600,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_bind_index_buffer(self: *Self, info: gf.CommandBuffer.BindIndexBufferInfo) void {
+    pub fn cmd_bind_index_buffer(self: *Self, info: gf.CommandBuffer.BindIndexBufferInfo) void {
         const buffer = info.buffer.get() catch unreachable;
         c.vkCmdBindIndexBuffer(
             self.vk_command_buffer,
@@ -3610,7 +3610,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_bind_descriptor_sets(self: *Self, info: gf.CommandBuffer.BindDescriptorSetInfo) void {
+    pub fn cmd_bind_descriptor_sets(self: *Self, info: gf.CommandBuffer.BindDescriptorSetInfo) void {
         const max_descriptor_sets = 16;
         std.debug.assert(info.descriptor_sets.len <= 16);
 
@@ -3637,7 +3637,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_push_constants(self: *Self, info: gf.CommandBuffer.PushConstantsInfo) void {
+    pub fn cmd_push_constants(self: *Self, info: gf.CommandBuffer.PushConstantsInfo) void {
         const pipeline = info.graphics_pipeline.get() catch unreachable;
         c.vkCmdPushConstants(
             self.vk_command_buffer,
@@ -3649,7 +3649,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_draw(self: *Self, info: gf.CommandBuffer.DrawInfo) void {
+    pub fn cmd_draw(self: *Self, info: gf.CommandBuffer.DrawInfo) void {
         c.vkCmdDraw(
             self.vk_command_buffer,
             info.vertex_count,
@@ -3659,7 +3659,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_draw_indexed(self: *Self, info: gf.CommandBuffer.DrawIndexedInfo) void {
+    pub fn cmd_draw_indexed(self: *Self, info: gf.CommandBuffer.DrawIndexedInfo) void {
         c.vkCmdDrawIndexed(
             self.vk_command_buffer,
             info.index_count,
@@ -3670,7 +3670,7 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_pipeline_barrier(self: *Self, info: gf.CommandBuffer.PipelineBarrierInfo) void {
+    pub fn cmd_pipeline_barrier(self: *Self, info: gf.CommandBuffer.PipelineBarrierInfo) void {
         const max_barriers_per_type = 8;
         std.debug.assert(info.memory_barriers.len < max_barriers_per_type);
         std.debug.assert(info.buffer_barriers.len < max_barriers_per_type);
@@ -3738,28 +3738,35 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
-    pub inline fn cmd_copy_image_to_buffer(self: *Self, info: gf.CommandBuffer.CopyImageToBufferInfo) void {
-        const copy_info = c.VkBufferImageCopy {
-            .bufferOffset = info.buffer_offset,
-            .bufferRowLength = info.buffer_row_length,
-            .bufferImageHeight = info.buffer_image_height,
-            .imageSubresource = .{
-                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, // TODO depth aspect?
-                .baseArrayLayer = info.base_array_layer,
-                .layerCount = info.layer_count,
-                .mipLevel = info.mip_level,
-            },
-            .imageOffset = .{
-                .x = info.image_offset[0],
-                .y = info.image_offset[1],
-                .z = info.image_offset[2],
-            },
-            .imageExtent = .{
-                .width = info.image_extent[0],
-                .height = info.image_extent[1],
-                .depth = info.image_extent[2],
-            },
-        };
+    pub fn cmd_copy_image_to_buffer(self: *Self, info: gf.CommandBuffer.CopyImageToBufferInfo) void {
+        const MAX_COPY_REGIONS = 16;
+        var vk_copy_regions = std.BoundedArray(c.VkBufferImageCopy, MAX_COPY_REGIONS).init(0) catch unreachable;
+
+        for (info.copy_regions) |copy_region| {
+            vk_copy_regions.append(c.VkBufferImageCopy {
+                .bufferOffset = copy_region.buffer_offset,
+                .bufferRowLength = copy_region.buffer_row_length,
+                .bufferImageHeight = copy_region.buffer_image_height,
+                .imageSubresource = .{
+                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, // TODO depth aspect?
+                    .baseArrayLayer = copy_region.base_array_layer,
+                    .layerCount = copy_region.layer_count,
+                    .mipLevel = copy_region.mip_level,
+                },
+                .imageOffset = .{
+                    .x = copy_region.image_offset[0],
+                    .y = copy_region.image_offset[1],
+                    .z = copy_region.image_offset[2],
+                },
+                .imageExtent = .{
+                    .width = copy_region.image_extent[0],
+                    .height = copy_region.image_extent[1],
+                    .depth = copy_region.image_extent[2],
+                },
+            }) catch |err| {
+                std.debug.panic("Unable to append copy region: {}", .{err});
+            };
+        }
 
         const image = info.image.get() catch return;
         const buffer = info.buffer.get() catch return;
@@ -3769,8 +3776,51 @@ pub const CommandBufferVulkan = struct {
             image.platform.get_frame_image().vk_image, // TODO allow selection of specific internal image. fix? using frame image should be recent enough (and prevent stalls, maybe)
             c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             buffer.platform.get_frame_vk_buffer(),
-            1,
-            @ptrCast(&copy_info)
+            @intCast(vk_copy_regions.slice().len),
+            @ptrCast(vk_copy_regions.slice().ptr)
+        );
+    }
+
+    pub fn cmd_copy_buffer_to_image(self: *Self, info: gf.CommandBuffer.CopyBufferToImageInfo) void {
+        const MAX_COPY_REGIONS = 16;
+        var vk_copy_regions = std.BoundedArray(c.VkBufferImageCopy, MAX_COPY_REGIONS).init(0) catch unreachable;
+
+        for (info.copy_regions) |copy_region| {
+            vk_copy_regions.append(c.VkBufferImageCopy {
+                .bufferOffset = copy_region.buffer_offset,
+                .bufferRowLength = copy_region.buffer_row_length,
+                .bufferImageHeight = copy_region.buffer_image_height,
+                .imageSubresource = .{
+                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, // TODO depth aspect?
+                    .baseArrayLayer = copy_region.base_array_layer,
+                    .layerCount = copy_region.layer_count,
+                    .mipLevel = copy_region.mip_level,
+                },
+                .imageOffset = .{
+                    .x = copy_region.image_offset[0],
+                    .y = copy_region.image_offset[1],
+                    .z = copy_region.image_offset[2],
+                },
+                .imageExtent = .{
+                    .width = copy_region.image_extent[0],
+                    .height = copy_region.image_extent[1],
+                    .depth = copy_region.image_extent[2],
+                },
+            }) catch |err| {
+                std.debug.panic("Unable to append copy region: {}", .{err});
+            };
+        }
+
+        const image = info.image.get() catch return;
+        const buffer = info.buffer.get() catch return;
+
+        c.vkCmdCopyBufferToImage(
+            self.vk_command_buffer,
+            buffer.platform.get_frame_vk_buffer(),
+            image.platform.get_frame_image().vk_image, // TODO allow selection of specific internal image. fix? using frame image should be recent enough (and prevent stalls, maybe)
+            c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            @intCast(vk_copy_regions.slice().len),
+            @ptrCast(vk_copy_regions.slice().ptr)
         );
     }
 };

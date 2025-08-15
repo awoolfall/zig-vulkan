@@ -3,13 +3,15 @@ const Self = @This();
 const std = @import("std");
 
 arena: std.heap.ArenaAllocator,
-dir: []const u8,
-filename: []const u8,
+dirstr: []const u8,
+dir: std.fs.Dir,
+filename: ?[]const u8,
 last_modified: i128,
 last_check_time: std.time.Instant,
 check_interval_ns: u64,
 
 pub fn deinit(self: *Self) void {
+    self.dir.close();
     self.arena.deinit();
 }
 
@@ -26,27 +28,70 @@ pub fn init(alloc: std.mem.Allocator, path: []const u8, check_interval_ms: u64) 
         std.log.err("Invalid path '{s}'", .{path_copy});
         return error.InvalidPath;
     };
-    const filename = std.fs.path.basename(path_copy);
 
-    var dir = std.fs.openDirAbsolute(dirstr, .{}) catch |err| {
-        std.log.err("Failed to open directory '{s}': {}", .{ dirstr, err });
-        return error.DirectoryNotFound;
+    var parent_dir = try std.fs.openDirAbsolute(dirstr, .{});
+    defer parent_dir.close();
+
+    const filename: []const u8 = std.fs.path.basename(path_copy);
+
+    const file_stat: ?std.fs.Dir.Stat = parent_dir.statFile(filename) catch |err| blk: {
+        if (err == std.fs.Dir.StatFileError.IsDir) {
+            break :blk null;
+        }
+        return err;
     };
-    defer dir.close();
 
-    const stat = dir.statFile(filename) catch |err| {
-        std.log.err("Failed to stat file '{s}': {}", .{ filename, err });
-        return error.FileNotFound;
-    };
+    const is_file = file_stat != null;
 
-    return Self {
+    var dir = 
+        if (is_file) try std.fs.openDirAbsolute(dirstr, .{ .iterate = true, })
+        else try std.fs.openDirAbsolute(path_copy, .{ .iterate = true, });
+    errdefer dir.close();
+
+    var self = Self {
         .arena = arena,
-        .dir = dirstr,
-        .filename = filename,
-        .last_modified = stat.mtime,
+        .dir = dir,
+        .dirstr = if (is_file) dirstr else path_copy,
+        .filename = if (is_file) filename else null,
+        .last_modified = undefined,
         .last_check_time = try std.time.Instant.now(),
         .check_interval_ns = check_interval_ms * std.time.ns_per_ms,
     };
+
+    self.last_modified = self.stat_latest_modify_time() catch |err| {
+        std.log.err("Failed to get stat in file watch '{s}|{s}': {}", .{
+            self.dirstr,
+            self.filename orelse "<null>",
+            err
+        });
+        return err;
+    };
+
+    return self;
+}
+
+fn stat_latest_modify_time(self: *const Self) !i128 {
+    if (self.filename) |f| {
+        const stat = try self.dir.statFile(f);
+        return stat.mtime;
+    } else {
+        var latest_mtime: i128 = 0;
+
+        var iter = self.dir.iterate();
+        while (true) {
+            const entry = iter.next() catch break orelse break;
+            if (entry.kind == .file) {
+                const stat = try self.dir.statFile(entry.name);
+                latest_mtime = @max(stat.mtime, latest_mtime);
+            }
+        }
+
+        if (latest_mtime == 0) {
+            return error.NoFilesExistInDirectory;
+        }
+
+        return latest_mtime;
+    }
 }
 
 pub fn was_modified_since_last_check(self: *Self) bool {
@@ -56,19 +101,22 @@ pub fn was_modified_since_last_check(self: *Self) bool {
     }
     self.last_check_time = now;
 
-    var dir = std.fs.openDirAbsolute(self.dir, .{}) catch |err| {
-        std.log.err("Failed to open directory '{s}': {}", .{ self.dir, err });
-        return false;
-    };
-    defer dir.close();
-
-    const stat = dir.statFile(self.filename) catch |err| {
-        std.log.err("Failed to stat file '{s}': {}", .{ self.filename, err });
+    const new_mtime = self.stat_latest_modify_time() catch |err| {
+        std.log.err("Failed to get stat in file watch '{s}|{s}': {}", .{
+            self.dirstr,
+            self.filename orelse "<null>",
+            err
+        });
         return false;
     };
 
-    const modified = stat.mtime != self.last_modified;
-    self.last_modified = stat.mtime;
+    const modified = new_mtime > self.last_modified;
+    self.last_modified = new_mtime;
+
+    if (modified) { std.log.info("{s}|{s} was modified!", .{
+            self.dirstr,
+            self.filename orelse "<null>",
+    }); }
     return modified;
 }
 

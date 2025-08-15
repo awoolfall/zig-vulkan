@@ -26,8 +26,7 @@ pub const ModelAssetPath = union(enum) {
         slices: i32,
     },
     Sphere: struct {
-        slices: i32 = 32,
-        stacks: i32 = 16,
+        subdivisions: i32,
     },
     Cube: struct {},
 };
@@ -155,7 +154,7 @@ pub const ModelAsset = struct {
                 return try ms.Model.cone(alloc, d.slices);
             },
             .Sphere => |s| {
-                return try ms.Model.sphere(alloc, s.slices, s.stacks);
+                return try ms.Model.sphere(alloc, s.subdivisions);
             },
             .Cube => {
                 return try ms.Model.cube(alloc);

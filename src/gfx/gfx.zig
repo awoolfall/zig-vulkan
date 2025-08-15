@@ -1787,7 +1787,14 @@ pub const CommandBuffer = struct {
     pub const CopyImageToBufferInfo = struct {
         image: Image.Ref,
         buffer: Buffer.Ref,
+        copy_regions: []const CopyRegionInfo,
+    };
 
+    pub fn cmd_copy_image_to_buffer(self: *Self, info: CopyImageToBufferInfo) void {
+        self.platform.cmd_copy_image_to_buffer(info);
+    }
+
+    pub const CopyRegionInfo = struct {
         buffer_offset: u64 = 0,
         buffer_row_length: u32 = 0,
         buffer_image_height: u32 = 0,
@@ -1800,8 +1807,14 @@ pub const CommandBuffer = struct {
         image_extent: [3]u32,
     };
 
-    pub fn cmd_copy_image_to_buffer(self: *Self, info: CopyImageToBufferInfo) void {
-        self.platform.cmd_copy_image_to_buffer(info);
+    pub const CopyBufferToImageInfo = struct {
+        buffer: Buffer.Ref,
+        image: Image.Ref,
+        copy_regions: []const CopyRegionInfo,
+    };
+
+    pub fn cmd_copy_buffer_to_image(self: *Self, info: CopyBufferToImageInfo) void {
+        self.platform.cmd_copy_buffer_to_image(info);
     }
 };
 

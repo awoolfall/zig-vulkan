@@ -46,6 +46,8 @@ general_allocator: std.mem.Allocator,
 frame_arena: std.heap.ArenaAllocator,
 frame_allocator: std.mem.Allocator,
 
+core_asset_pack_id: u64,
+
 pub export fn deinit(self: *Self) void {
     self.gfx.flush();
 
@@ -63,6 +65,11 @@ pub export fn deinit(self: *Self) void {
     defer self.debug.deinit();
     defer self.physics.deinit();
     defer self.entities.deinit();
+
+    defer self.asset_manager.unload_asset_pack(self.core_asset_pack_id) catch |err| {
+        std.log.err("Unable to unload core asset pack: {}", .{err});
+    };
+
     defer self.general_allocator.destroy(self.app);
     defer self.app.deinit();
 }
@@ -139,6 +146,22 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.general_allocator.destroy(engine.app);
 
     Log.debug("Engine inited!", .{});
+
+    // load core assets
+    var core_asset_pack = blk: {
+        const core_asset_pack_zon = @embedFile("core_assets.zon");
+        const core_asset_pack_zon_0 = try engine.general_allocator.dupeZ(u8, core_asset_pack_zon[0..]);
+        defer engine.general_allocator.free(core_asset_pack_zon_0);
+
+        break :blk try assets.AssetPack.init_from_buffer(engine.general_allocator, "core", core_asset_pack_zon_0);
+    };
+    errdefer core_asset_pack.deinit();
+
+    engine.core_asset_pack_id = try engine.asset_manager.add_asset_pack(core_asset_pack);
+    try engine.asset_manager.load_asset_pack(engine.core_asset_pack_id);
+    errdefer engine.asset_manager.unload_asset_pack(engine.core_asset_pack_id) catch |err| {
+        std.log.err("Unable to unload core asset pack: {}", .{err});
+    };
 
     Log.debug("Calling app init!", .{});
     engine.app.init() catch |err| {

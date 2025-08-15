@@ -39,8 +39,8 @@ pub const ImageLoader = struct {
         force_channels: ?u8 = null,
     };
 
-    pub fn load_from_file(alloc: std.mem.Allocator, file_path: path.Path, options: Options) !Image {
-        const cpath = try file_path.resolve_path_c_str(alloc);
+    pub fn load_from_file(alloc: std.mem.Allocator, file_path: []const u8, options: Options) !Image {
+        const cpath = try alloc.dupeZ(u8, file_path);
         defer alloc.free(cpath);
 
         const ext = std.fs.path.extension(cpath);

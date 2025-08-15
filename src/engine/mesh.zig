@@ -1355,9 +1355,14 @@ pub const Model = struct {
         return try init_from_shape(alloc, &shape);
     }
 
-    pub fn sphere(alloc: std.mem.Allocator, slices: i32, stacks: i32) !Model {
+    pub fn sphere(alloc: std.mem.Allocator, subdivisions: i32) !Model {
+        if (subdivisions > 5) {
+            std.log.warn("zmesh sphere subdivisions greater than 5 is not recommended due to triangle count", .{});
+        }
+
         // Generate sphere shape
-        var shape = zmesh.Shape.initParametricSphere(slices, stacks);
+        //var shape = zmesh.Shape.initParametricSphere(slices, stacks);
+        var shape = zmesh.Shape.initSubdividedSphere(subdivisions);
         defer shape.deinit();
 
         // flat shaded

@@ -180,22 +180,14 @@ const AssetSerialized = struct {
     path: AssetType.Paths,
 };
 
-pub fn init_from_file(alloc: std.mem.Allocator, pack_name: []const u8, file_path: []const u8) !Self {
+pub fn init_from_buffer(alloc: std.mem.Allocator, pack_name: []const u8, data: [:0]const u8) !Self {
     var arena_struct = std.heap.ArenaAllocator.init(alloc);
     defer arena_struct.deinit();
     const arena = arena_struct.allocator();
 
-    const file_stat = try std.fs.cwd().statFile(file_path);
-
-    const file_slice = try std.fs.cwd().readFileAlloc(arena, file_path, file_stat.size);
-    defer arena.free(file_slice);
-
-    const file_slice_0 = try std.mem.concatWithSentinel(arena, u8, &.{ file_slice }, 0);
-    defer arena.free(file_slice_0);
-
     var zon_status = std.zon.parse.Status {};
-    const pack_data = std.zon.parse.fromSlice([]const AssetSerialized, arena, file_slice_0, &zon_status, .{}) catch |err| {
-        std.log.err("Failed to load asset pack '{s}' from file '{s}'\n{}", .{pack_name, file_path, zon_status});
+    const pack_data = std.zon.parse.fromSlice([]const AssetSerialized, arena, data, &zon_status, .{}) catch |err| {
+        std.log.err("Failed to load asset pack '{s}'\n{}", .{pack_name, zon_status});
         return err;
     };
 
@@ -211,4 +203,20 @@ pub fn init_from_file(alloc: std.mem.Allocator, pack_name: []const u8, file_path
     }
 
     return pack;
+}
+
+pub fn init_from_file(alloc: std.mem.Allocator, pack_name: []const u8, file_path: []const u8) !Self {
+    var arena_struct = std.heap.ArenaAllocator.init(alloc);
+    defer arena_struct.deinit();
+    const arena = arena_struct.allocator();
+
+    const file_stat = try std.fs.cwd().statFile(file_path);
+
+    const file_slice = try std.fs.cwd().readFileAlloc(arena, file_path, file_stat.size);
+    defer arena.free(file_slice);
+
+    const file_slice_0 = try std.mem.concatWithSentinel(arena, u8, &.{ file_slice }, 0);
+    defer arena.free(file_slice_0);
+
+    return try Self.init_from_buffer(alloc, pack_name, file_slice_0);
 }
