@@ -248,17 +248,7 @@ pub const ImageAsset = struct {
     }
 
     fn load_single_image(alloc: std.mem.Allocator, asset_path: eng.path.Path) !gf.Image.Ref {
-        const path_string = try asset_path.resolve_path(alloc);
-        defer alloc.free(path_string);
-
-        var image = im.ImageLoader.load_from_file(
-            alloc, 
-            path_string,
-            .{}
-        ) catch |err| {
-            std.log.err("Failed to load image: {}", .{err});
-            return error.ImageLoadFailed;
-        };
+        var image = try Self.load_single_image_cpu(alloc, asset_path);
         defer image.deinit();
 
         return gf.Image.init(
@@ -434,5 +424,72 @@ pub const ImageAsset = struct {
         gf.GfxState.get().flush();
 
         return image;
+    }
+
+    pub fn load_image_cpu(self: *const Self, alloc: std.mem.Allocator, array_layer: usize) !im.Image {
+        switch (self.path) {
+            .Path => |p| {
+                const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
+                defer asset_path.deinit();
+
+                const pp = try asset_path.resolve_path(alloc);
+                defer alloc.free(pp);
+
+                var dir: ?std.fs.Dir = std.fs.openDirAbsolute(pp, .{ .iterate = true }) catch null;
+                defer if (dir) |*d| { d.close(); };
+
+                if (dir) |texture_array_dir| {
+                    return try Self.load_image_array_layer_cpu(alloc, texture_array_dir, array_layer);
+                } else {
+                    return try Self.load_single_image_cpu(alloc, asset_path);
+                }
+            },
+        }
+    }
+
+    fn load_single_image_cpu(alloc: std.mem.Allocator, asset_path: eng.path.Path) !im.Image {
+        const path_string = try asset_path.resolve_path(alloc);
+        defer alloc.free(path_string);
+
+        return im.ImageLoader.load_from_file(
+            alloc, 
+            path_string,
+            .{}
+        ) catch |err| {
+            std.log.err("Failed to load image: {}", .{err});
+            return error.ImageLoadFailed;
+        };
+    }
+
+    fn load_image_array_layer_cpu(alloc: std.mem.Allocator, asset_dir: std.fs.Dir, array_layer: usize) !im.Image {
+        var dir_iter = asset_dir.iterate();
+        while (try dir_iter.next()) |item| {
+            if (item.kind == .file) {
+                const filename_stem = std.fs.path.stem(item.name);
+                const filename_int = std.fmt.parseUnsigned(u32, filename_stem, 10) catch |err| {
+                    std.log.warn("Unable to parse image array filename stem to integer '{s}': {}", .{item.name, err});
+                    continue;
+                };
+
+                // continue until filename int is found
+                if (filename_int != array_layer) {
+                    continue;
+                }
+
+                const absolute_file_path = try asset_dir.realpathAlloc(alloc, item.name);
+                defer alloc.free(absolute_file_path);
+
+                return im.ImageLoader.load_from_file(
+                    alloc, 
+                    absolute_file_path,
+                    .{}
+                ) catch |err| {
+                    std.log.err("Failed to load image: {}", .{err});
+                    return error.ImageLoadFailed;
+                };
+            }
+        } else {
+            return error.ArrayLayerFileDoesNotExist;
+        }
     }
 };
