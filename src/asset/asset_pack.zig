@@ -2,28 +2,25 @@ const Self = @This();
 
 const std = @import("std");
 const eng = @import("self");
+const as = eng.assets;
 const AssetId = @import("asset_id.zig").AssetId;
 
-const ma = @import("model_asset.zig");
-const ta = @import("texture2d_asset.zig");
-const aa = @import("animation_asset.zig");
-
 pub const AssetType = union(enum) {
-    Model: ma.ModelAsset,
-    Animation: aa.AnimationAsset,
-    Image: ta.ImageAsset,
+    Model: as.ModelAsset,
+    Animation: as.AnimationAsset,
+    Image: as.ImageAsset,
 
     pub fn get(self: *AssetType, comptime A: type) !*A {
         switch (A) {
-            ma.ModelAsset => switch (self.*) {
+            as.ModelAsset => switch (self.*) {
                 .Model => |*a| return a,
                 else => return error.AssetTypeMismatch,
             },
-            aa.AnimationAsset => switch (self.*) {
+            as.AnimationAsset => switch (self.*) {
                 .Animation => |*a| return a,
                 else => return error.AssetTypeMismatch,
             },
-            ta.ImageAsset => switch (self.*) {
+            as.ImageAsset => switch (self.*) {
                 .Image => |*a| return a,
                 else => return error.AssetTypeMismatch,
             },
@@ -32,9 +29,9 @@ pub const AssetType = union(enum) {
     }
 
     pub const Paths = union(enum) {
-        Model: ma.ModelAsset.Path,
+        Model: as.ModelAsset.Path,
         Animation: struct { model_name: []const u8, animation_id: u64, },
-        Image: ta.ImageAsset.Path,
+        Image: as.ImageAsset.Path,
     };
 };
 
@@ -124,7 +121,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
     self.is_loaded = true;
 }
 
-pub fn add_model(self: *Self, name: []const u8, path: ma.ModelAssetPath) !void {
+pub fn add_model(self: *Self, name: []const u8, path: as.ModelAsset.Path) !void {
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
@@ -132,13 +129,13 @@ pub fn add_model(self: *Self, name: []const u8, path: ma.ModelAssetPath) !void {
         std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = .{ .Model = try ma.ModelAsset.init(self.alloc, path), },
+            .asset = .{ .Model = try as.ModelAsset.init(self.alloc, path), },
         },
     );
 }
 
 pub fn define_animation(self: *Self, name: []const u8, base_model: []const u8, animation_id: usize) !void {
-    const model_asset_id = AssetId(ma.ModelAsset) {
+    const model_asset_id = AssetId(as.ModelAsset) {
         .pack_id = self.unique_name_hash,
         .asset_id = std.hash_map.hashString(base_model),
     };
@@ -154,7 +151,7 @@ pub fn define_animation(self: *Self, name: []const u8, base_model: []const u8, a
         std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = .{ .Animation = try aa.AnimationAsset.init(self.alloc, .{
+            .asset = .{ .Animation = try as.AnimationAsset.init(self.alloc, .{
                 .model_id = model_asset_id,
                 .animation_id = animation_id,
             }), },
@@ -162,7 +159,7 @@ pub fn define_animation(self: *Self, name: []const u8, base_model: []const u8, a
     );
 }
 
-pub fn add_image(self: *Self, name: []const u8, path: ta.ImagePath) !void {
+pub fn add_image(self: *Self, name: []const u8, path: as.ImageAsset.Path) !void {
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
@@ -170,7 +167,7 @@ pub fn add_image(self: *Self, name: []const u8, path: ta.ImagePath) !void {
         std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = .{ .Image = try ta.ImageAsset.init(self.alloc, path), },
+            .asset = .{ .Image = try as.ImageAsset.init(self.alloc, path), },
         },
     );
 }

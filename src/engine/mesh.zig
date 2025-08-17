@@ -445,6 +445,7 @@ pub const Model = struct {
                         material.diffuse_map = MaterialTextureMap {
                             .map = try gf.ImageView.init(.{
                                 .image = textures[idx],
+                                .view_type = .ImageView2D,
                             }),
                             .uv_index = @truncate(p.uvindex),
                             .sampler = try gf.Sampler.init(.{
@@ -468,7 +469,10 @@ pub const Model = struct {
                         }
 
                         material.normals_map = MaterialTextureMap {
-                            .map = try gf.ImageView.init(.{ .image = textures[idx], }),
+                            .map = try gf.ImageView.init(.{
+                                .image = textures[idx],
+                                .view_type = .ImageView2D,
+                            }),
                             .uv_index = @truncate(p.uvindex),
                             .sampler = try gf.Sampler.init(.{
                                 .filter_min_mag = .Linear,

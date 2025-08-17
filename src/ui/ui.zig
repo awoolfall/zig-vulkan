@@ -396,7 +396,10 @@ pub const Imui = struct {
         );
         errdefer scuffed_x_checkbox_image.deinit();
         
-        var scuffed_x_checkbox_image_view = try _gfx.ImageView.init(.{ .image = scuffed_x_checkbox_image, });
+        var scuffed_x_checkbox_image_view = try _gfx.ImageView.init(.{
+            .image = scuffed_x_checkbox_image,
+            .view_type = .ImageView2D,
+        });
         errdefer scuffed_x_checkbox_image_view.deinit();
 
         // Initialize fonts

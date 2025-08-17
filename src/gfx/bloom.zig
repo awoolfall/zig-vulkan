@@ -573,8 +573,11 @@ const BloomLayer = struct {
         for (0..2) |i| {
             const view = try gf.ImageView.init(.{
                 .image = images[i],
-                .base_mip_level = @intCast(mip_level),
-                .mip_level_count = 1,
+                .view_type = .ImageView2D,
+                .mip_levels = .{
+                    .base_mip_level = @intCast(mip_level),
+                    .mip_level_count = 1,
+                },
             });
             errdefer view.deinit();
 

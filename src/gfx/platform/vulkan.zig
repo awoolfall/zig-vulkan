@@ -2143,16 +2143,10 @@ pub const ImageViewVulkan = struct {
         const alloc = GfxStateVulkan.get().alloc;
         const img = try info.image.get();
 
-        const view_type: c.VkImageViewType = blk: { // TODO cube
-            if (img.info.depth == 1) {
-                break :blk 
-                    if (info.array_layer_count == 1) c.VK_IMAGE_VIEW_TYPE_2D
-                    else c.VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-            } else {
-                break :blk
-                    if (info.array_layer_count == 1) c.VK_IMAGE_VIEW_TYPE_3D
-                    else return error.CannotCreateImageView3DArray;
-            }
+        const view_type: c.VkImageViewType = switch (info.view_type) {
+            .ImageView1D => c.VK_IMAGE_VIEW_TYPE_1D,
+            .ImageView2D => c.VK_IMAGE_VIEW_TYPE_2D,
+            .ImageView2DArray => c.VK_IMAGE_VIEW_TYPE_2D_ARRAY,
         };
 
         var image_views_list = try std.ArrayList(c.VkImageView).initCapacity(alloc, img.platform.images.len);
@@ -2170,10 +2164,10 @@ pub const ImageViewVulkan = struct {
                         .D24S8_Unorm_Uint => c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
                         else => c.VK_IMAGE_ASPECT_COLOR_BIT,
                     },
-                    .baseMipLevel = info.base_mip_level,
-                    .levelCount = info.mip_level_count,
-                    .baseArrayLayer = info.base_array_layer,
-                    .layerCount = info.array_layer_count,
+                    .baseMipLevel = info.mip_levels.?.base_mip_level,
+                    .levelCount = info.mip_levels.?.mip_level_count,
+                    .baseArrayLayer = info.array_layers.?.base_array_layer,
+                    .layerCount = info.array_layers.?.array_layer_count,
                 },
             };
 
@@ -2820,7 +2814,7 @@ inline fn framebufferattachment_extent(framebuffer_attachment: gf.FrameBufferAtt
             break :blk .{
                 .width = view.size.width,
                 .height = view.size.height,
-                .layers = view.info.array_layer_count,
+                .layers = view.info.array_layers.?.array_layer_count,
             };
         },
     };

@@ -15,6 +15,23 @@ pub const Image = struct {
     pub fn deinit(self: *Image) void {
         self.alloc.free(self.data);
     }
+
+    pub fn to_zstbi(self: *const Image) !stbi.Image {
+        const zstbi_image = try stbi.Image.createEmpty(
+            self.width,
+            self.height,
+            self.num_components,
+            .{
+                .bytes_per_component = self.bytes_per_component,
+                .bytes_per_row = self.bytes_per_row,
+            }
+        );
+        errdefer zstbi_image.deinit();
+        
+        @memcpy(zstbi_image.data[0..], self.data[0..]);
+
+        return zstbi_image;
+    }
 };
 
 pub const ImageLoader = struct {

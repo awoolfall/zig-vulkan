@@ -1,14 +1,11 @@
 const std = @import("std");
 const en = @import("../root.zig");
+const assets = @import("asset.zig");
 
 const AssetPack = @import("asset_pack.zig");
 const AssetPath = AssetPack.AssetPath;
 
 const AssetId = @import("asset_id.zig").AssetId;
-
-const ModelAsset = @import("model_asset.zig").ModelAsset;
-const AnimationAsset = @import("animation_asset.zig").AnimationAsset;
-const Texture2DAsset = @import("texture2d_asset.zig").Texture2dAsset;
 
 const Self = @This();
 
@@ -70,14 +67,18 @@ pub fn find_asset_id(self: *const Self, AssetType: type, asset_name: []const u8)
     return asset_id;
 }
 
-pub fn get_asset(self: *const Self, AssetType: type, asset_id: AssetId(AssetType)) !*AssetType.BaseType {
+pub fn get_asset_entry(self: *const Self, AssetType: type, asset_id: AssetId(AssetType)) !*AssetType {
     const pack = self.asset_packs.getPtr(asset_id.pack_id)
         orelse return error.AssetPackDoesNotExist;
 
     const asset_path = pack.assets.getPtr(asset_id.asset_id) 
         orelse return error.AssetDoesNotExistInPack;
 
-    const asset = try asset_path.asset.get(AssetType);
+    return try asset_path.asset.get(AssetType);
+}
+
+pub fn get_asset(self: *const Self, AssetType: type, asset_id: AssetId(AssetType)) !*AssetType.BaseType {
+    const asset = try self.get_asset_entry(AssetType, asset_id);
 
     if (asset.file_watcher()) |watcher| {
         if (watcher.was_modified_since_last_check()) {

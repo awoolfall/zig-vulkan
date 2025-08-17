@@ -1,5 +1,6 @@
 const std = @import("std");
 const eng = @import("../root.zig");
+const zstbi = @import("zstbi");
 const im = eng.image;
 const gf = eng.gfx;
 const pt = eng.path;
@@ -21,6 +22,7 @@ pub const ImageAsset = struct {
     loaded: ?struct {
         watcher: ?FileWatcher = null,
         image: gf.Image.Ref,
+        is_image_array: bool,
     } = null,
 
     pub fn deinit(self: *Self) void {
@@ -56,6 +58,21 @@ pub const ImageAsset = struct {
     }
 
     pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
+        const is_image_array = switch (self.path) {
+            .Path => |p| blk: {
+                const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
+                defer asset_path.deinit();
+
+                const pp = try asset_path.resolve_path(alloc);
+                defer alloc.free(pp);
+
+                var dir: ?std.fs.Dir = std.fs.openDirAbsolute(pp, .{ .iterate = true }) catch null;
+                defer if (dir) |*d| { d.close(); };
+                
+                break :blk (dir != null);
+            },
+        };
+
         const image = try load_image(alloc, &self.path);
         errdefer image.deinit();
 
@@ -72,6 +89,7 @@ pub const ImageAsset = struct {
         self.loaded = .{
             .image = image,
             .watcher = watcher,
+            .is_image_array = is_image_array,
         };
     }
 
@@ -96,7 +114,101 @@ pub const ImageAsset = struct {
         return &loaded.image;
     }
 
-    pub fn load_image(alloc: std.mem.Allocator, path: *const ImagePath) !gf.Image.Ref {
+    pub const WriteImageOptions = struct {
+        array_layer: usize = 0,
+        mip_level: usize = 0,
+    };
+
+    pub fn write_image(self: *Self, options: WriteImageOptions, image_data: *im.Image) !void {
+        const image_ref = self.loaded_asset() orelse return error.AssetIsNotLoaded;
+        const image = image_ref.get() catch return error.FailedToGetImage;
+
+        // Run checks
+        const required_data_length = 
+            image.info.width *
+            image.info.height *
+            image.info.depth *
+            image.info.array_length *
+            image.info.format.byte_width();
+        if (image_data.data.len < required_data_length) {
+            return error.DataIsNotRequiredLength;
+        }
+
+        if (options.array_layer >= image.info.array_length) {
+            if (!self.loaded.?.is_image_array) {
+                return error.NotAnImageArray;
+            }
+            if (options.array_layer > 128) {
+                return error.LayerTooLarge;
+            }
+        }
+
+        if (options.mip_level >= image.info.mip_levels) {
+            return error.MipLevelTooLarge;
+        }
+
+        // Find file on disk
+        const dir_string = std.fs.path.dirname(self.path.Path);
+        const dir = try std.fs.openDirAbsolute(dir_string, .{ .iterate = self.loaded.?.is_image_array, });
+        defer dir.close();
+
+        const alloc = eng.get().general_allocator;
+
+        const filename_z = 
+            if (!self.loaded.?.is_image_array) blk: {
+                const file_string = std.fs.path.basename(self.path.Path);
+                _ = try dir.statFile(file_string);
+
+                break :blk alloc.dupeZ(u8, file_string);
+            }
+            else blk: {
+                var maybe_extension: ?[]u8 = null;
+
+                var iter = dir.iterate();
+                while (true) {
+                    const entry = iter.next() catch break orelse break;
+                    if (entry.kind == .file) {
+                        if (maybe_extension == null) {
+                            maybe_extension = std.fs.path.extension(entry.name);
+                        }
+
+                        const file_stem = std.fs.path.stem(entry.name);
+                        const file_number = std.fmt.parseUnsigned(u32, file_stem, 10) catch continue;
+                        if (file_number == options.array_layer) {
+                            break :blk try alloc.dupeZ(u8, entry.name);
+                        }
+                    }
+                } else {
+                    const extension = maybe_extension orelse return error.CouldNotDetermineAppropriateExtension;
+                    break :blk try std.fmt.allocPrintZ(alloc, "{}{s}", .{options.array_layer, extension});
+                }
+            };
+        defer alloc.free(filename_z);
+
+        const extension = std.fs.path.extension(filename_z);
+
+        if (std.mem.eql(u8, extension, ".f32")) {
+            const file = try dir.createFile(filename_z, .{});
+            defer file.close();
+
+            std.log.info("Writing image data to {s}//{s}", .{dir_string, filename_z});
+            try file.writeAll(image_data.data);
+        } else if (std.mem.eql(u8, extension, ".png")) {
+            const zstbi_image = try image_data.to_zstbi();
+            defer zstbi_image.deinit();
+
+            const cwd = std.fs.cwd();
+            try dir.setAsCwd();
+            defer cwd.setAsCwd() catch unreachable;
+
+            std.log.info("Writing image data to {s}//{s}", .{dir_string, filename_z});
+            try zstbi_image.writeToFile(filename_z, .png);
+        } else {
+            return error.UnsupportedExtension;
+        }
+    }
+    
+    fn load_image(alloc: std.mem.Allocator, path: *const ImagePath) !gf.Image.Ref {
         switch (path.*) {
             .Path => |p| {
                 const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });

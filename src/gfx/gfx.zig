@@ -161,7 +161,10 @@ pub const GfxState = struct {
         }, null);
         errdefer self.default.hdr_image.deinit();
 
-        self.default.hdr_image_view = try ImageView.init(.{ .image = self.default.hdr_image, });
+        self.default.hdr_image_view = try ImageView.init(.{
+            .image = self.default.hdr_image,
+            .view_type = .ImageView2D,
+        });
         errdefer self.default.hdr_image_view.deinit();
 
         self.default.depth_image = try Image.init(.{
@@ -174,7 +177,10 @@ pub const GfxState = struct {
         }, null);
         errdefer self.default.depth_image.deinit();
 
-        self.default.depth_view = try ImageView.init(.{ .image = self.default.depth_image, });
+        self.default.depth_view = try ImageView.init(.{
+            .image = self.default.depth_image,
+            .view_type = .ImageView2D,
+        });
         errdefer self.default.depth_view.deinit();
 
         self.default.sampler = try Sampler.init(.{});
@@ -183,31 +189,46 @@ pub const GfxState = struct {
         self.default.diffuse = try init_single_pixel_texture(zm.f32x4s(1.0));
         errdefer self.default.diffuse.deinit();
 
-        self.default.diffuse_view = try ImageView.init(.{ .image = self.default.diffuse, });
+        self.default.diffuse_view = try ImageView.init(.{
+            .image = self.default.diffuse,
+            .view_type = .ImageView2D,
+        });
         errdefer self.default.diffuse_view.deinit();
 
         self.default.normals = try init_single_pixel_texture(zm.f32x4(0.5, 0.5, 1.0, 1.0));
         errdefer self.default.normals.deinit();
 
-        self.default.normals_view = try ImageView.init(.{ .image = self.default.normals, });
+        self.default.normals_view = try ImageView.init(.{
+            .image = self.default.normals,
+            .view_type = .ImageView2D,
+        });
         errdefer self.default.normals_view.deinit();
 
         self.default.metallic_roughness = try init_single_pixel_texture(zm.f32x4(0.0, 1.0, 1.0, 1.0));
         errdefer self.default.metallic_roughness.deinit();
 
-        self.default.metallic_roughness_view = try ImageView.init(.{ .image = self.default.metallic_roughness, });
+        self.default.metallic_roughness_view = try ImageView.init(.{
+            .image = self.default.metallic_roughness,
+            .view_type = .ImageView2D,
+        });
         errdefer self.default.metallic_roughness_view.deinit();
         
         self.default.ambient_occlusion = try init_single_pixel_texture(zm.f32x4s(1.0));
         errdefer self.default.ambient_occlusion.deinit();
 
-        self.default.ambient_occlusion_view = try ImageView.init(.{ .image = self.default.ambient_occlusion, });
+        self.default.ambient_occlusion_view = try ImageView.init(.{
+            .image = self.default.ambient_occlusion,
+            .view_type = .ImageView2D,
+        });
         errdefer self.default.ambient_occlusion_view.deinit();
 
         self.default.emission = try init_single_pixel_texture(zm.f32x4(0.0, 0.0, 0.0, 1.0));
         errdefer self.default.emission.deinit();
 
-        self.default.emission_view = try ImageView.init(.{ .image = self.default.emission, });
+        self.default.emission_view = try ImageView.init(.{
+            .image = self.default.emission,
+            .view_type = .ImageView2D,
+        });
         errdefer self.default.emission_view.deinit();
 
 
@@ -964,12 +985,23 @@ pub const Image = struct {
     };
 };
 
+pub const ImageViewType = enum {
+    ImageView1D,
+    ImageView2D,
+    ImageView2DArray,
+};
+
 pub const ImageViewInfo = struct {
     image: Image.Ref,
-    base_mip_level: u32 = 0,
-    mip_level_count: u32 = 1,
-    base_array_layer: u32 = 0,
-    array_layer_count: u32 = 1,
+    view_type: ImageViewType,
+    mip_levels: ?struct {
+        base_mip_level: u32 = 0,
+        mip_level_count: u32,
+    } = null,
+    array_layers: ?struct {
+        base_array_layer: u32 = 0,
+        array_layer_count: u32,
+    } = null,
 };
 
 pub const ImageView = struct {
@@ -984,17 +1016,31 @@ pub const ImageView = struct {
     }
 
     pub fn init(info: ImageViewInfo) !ImageView.Ref {
-        const platform = try GfxState.Platform.ImageView.init(info);
-        errdefer platform.deinit();
-
         const image = try info.image.get();
+
+        var adjusted_info = info;
+        if (adjusted_info.array_layers == null) {
+            adjusted_info.array_layers = .{
+                .base_array_layer = 0,
+                .array_layer_count = image.info.array_length,
+            };
+        }
+        if (adjusted_info.mip_levels == null) {
+            adjusted_info.mip_levels = .{
+                .base_mip_level = 0,
+                .mip_level_count = image.info.mip_levels,
+            };
+        }
+
+        const platform = try GfxState.Platform.ImageView.init(adjusted_info);
+        errdefer platform.deinit();
 
         const image_view = ImageView {
             .platform = platform,
-            .info = info,
+            .info = adjusted_info,
             .size = .{
-                .width = @divFloor(image.info.width, std.math.pow(u32, 2, info.base_mip_level)),
-                .height = @divFloor(image.info.height, std.math.pow(u32, 2, info.base_mip_level)),
+                .width = @divFloor(image.info.width, std.math.pow(u32, 2, adjusted_info.mip_levels.?.base_mip_level)),
+                .height = @divFloor(image.info.height, std.math.pow(u32, 2, adjusted_info.mip_levels.?.base_mip_level)),
             },
         };
 

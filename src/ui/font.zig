@@ -222,7 +222,10 @@ pub const Font = struct {
         );
         errdefer msdf_image.deinit();
 
-        const msdf_image_view = try _gfx.ImageView.init(.{ .image = msdf_image, });
+        const msdf_image_view = try _gfx.ImageView.init(.{
+            .image = msdf_image,
+            .view_type = .ImageView2D,
+        });
         errdefer msdf_image_view.deinit();
 
         // create sampler
