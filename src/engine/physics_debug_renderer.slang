@@ -21,6 +21,8 @@ struct vs_out
 {
     float4 position : SV_POSITION;
     float4 colour : POS;
+    float3 normals : NORMAL;
+    float2 tex_coord : TEXCOORD;
 };
 
 [shader("vertex")]
@@ -30,6 +32,8 @@ vs_out vs_main(vs_in input)
     float4x4 mvp = mul(push_constants.model_matrix, push_constants.vp);
     output.position = mul(float4(input.pos, 1.0), mvp);
     output.colour = float4(input.color * push_constants.colour.rgb, 1.0);
+    output.normals = input.normals;
+    output.tex_coord = input.tex_coord;
     return output;
 }
 

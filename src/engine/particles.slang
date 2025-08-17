@@ -1,9 +1,6 @@
 struct vs_in 
 {
-    float4 rowX : RowX;
-    float4 rowY : RowY;
-    float4 rowZ : RowZ;
-    float4 rowW : RowW;
+    float4 position : Position;
     float4 colour: Colour;
     float4 velocity: Velocity;
     float4 scale: Scale;
@@ -29,41 +26,12 @@ ConstantBuffer<CameraData> camera_data : register(b0);
 vs_out vs_main(uint vertId : SV_VertexID, vs_in input)
 {
     vs_out output = (vs_out) 0;
-    float4x4 model_matrix = float4x4(input.rowX, input.rowY, input.rowZ, input.rowW);
 
     float x = float(((uint(vertId) + 2u) / 3u)%2u);
     float y = float(((uint(vertId) + 1u) / 3u)%2u);
 
-    float4x4 vp = mul(camera_data.view_matrix, camera_data.projection_matrix);
-    float4x4 mv = mul(model_matrix, camera_data.view_matrix);
-    float4x4 mv_noscale = mv;
-    mv_noscale[0] = float4(1.0, 0.0, 0.0, mv[0][3]);
-    mv_noscale[1] = float4(0.0, 1.0, 0.0, mv[1][3]);
-    mv_noscale[2] = float4(0.0, 0.0, 1.0, mv[2][3]);
-    float4x4 mvp = mul(mv, camera_data.projection_matrix);
-    float4x4 mvp_noscale = mul(mv_noscale, camera_data.projection_matrix);
-
-    float4 right_v = float4(1.0, 0.0, 0.0, 0.0);
-    float4 up_v = float4(0.0, 1.0, 0.0, 0.0);
-    if (((camera_data.flags & 2) != 0) && length(input.velocity.xyz) > 0.0) {
-        float4 cam_vel = mul(input.velocity, mvp);
-        cam_vel = float4(cam_vel.xyz, 0.0) + float4(normalize(cam_vel.xyz), 0.0);
-        right_v = normalize(float4(cross(normalize(cam_vel.xyz), float3(0.0, 0.0, 1.0)), 0.0));
-        up_v = cam_vel;
-
-        float4 p0 = input.rowW + (input.velocity * 0.5);
-        p0 = mul(vp, p0);
-        float4 p1 = input.rowW + (input.velocity * -0.5);
-        p1 = mul(vp, p1);
-        up_v = float4(normalize(p1.xy - p0.xy), 0.0, 0.0);
-        right_v = up_v.yxzw * float4(1.0, -1.0, 1.0, 1.0);
-        up_v = up_v * length(input.velocity) * (1.0 - dot(p1.xyz - p0.xyz, float3(0.0, 0.0, 1.0)));
-    }
-    float4 pos = right_v * (x - 0.5) + up_v * (y - 0.5);
-    pos.w = 1.0;
-
-    float4 p0 = input.rowW;
-    float4 p1 = input.rowW;
+    float4 p0 = input.position;
+    float4 p1 = input.position;
     float3 up = float3(0.0, 1.0, 0.0);
     float3 right = float3(1.0, 0.0, 0.0);
 
@@ -78,11 +46,13 @@ vs_out vs_main(uint vertId : SV_VertexID, vs_in input)
     p0 = mul(p0, camera_data.view_matrix);
     p1 = mul(p1, camera_data.view_matrix);
 
-    pos = lerp(p0, p1, y) + float4(up, 0.0) * (y - 0.5) * input.scale.y + float4(right, 0.0) * (x - 0.5) * input.scale.x;
+    float4 pos = lerp(p0, p1, y) + float4(up, 0.0) * (y - 0.5) * input.scale.y + float4(right, 0.0) * (x - 0.5) * input.scale.x;
 
     output.position = mul(pos, camera_data.projection_matrix);// mul(pos, mvp_noscale);
     output.uv = float2(x, y);
     output.uv = (output.uv - 0.5) * 2.0;
+
+    float4 up_v = float4(0.0, 1.0, 0.0, 0.0);
     output.uv_scale = float2(1.0, length(up_v));
 
     output.colour = input.colour;

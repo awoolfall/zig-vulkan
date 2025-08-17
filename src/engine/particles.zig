@@ -13,7 +13,7 @@ pub const ParticleSystem = struct {
     const Self = @This();
 
     const VertexBufferData = extern struct {
-        model_matrix: zm.Mat,
+        position: zm.F32x4,
         colour: zm.F32x4,
         velocity: zm.F32x4,
         scale: zm.F32x4,
@@ -266,13 +266,10 @@ pub const ParticleSystem = struct {
                     .{ .binding = 0, .stride = stride, .input_rate = .Instance },
                 },
                 .attributes = &.{
-                    .{ .name = "RowX",      .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "RowY",      .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "RowZ",      .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "RowW",      .location = 3, .binding = 0, .offset = 3 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "Colour",    .location = 4, .binding = 0, .offset = 4 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "Velocity",  .location = 5, .binding = 0, .offset = 5 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "Scale",     .location = 6, .binding = 0, .offset = 6 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "Position",  .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "Colour",    .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "Velocity",  .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
+                    .{ .name = "Scale",     .location = 3, .binding = 0, .offset = 3 * @sizeOf([4]f32), .format = .F32x4, },
                 },
             },
             .{},
@@ -393,7 +390,7 @@ pub const ParticleSystem = struct {
 
             // render prep
             if (maybe_particle.*) |*p| {
-                self.sort_particles[i].dat.model_matrix = p.transform.generate_model_matrix();
+                self.sort_particles[i].dat.position = p.transform.position;
                 self.sort_particles[i].dat.colour = p.colour;
                 self.sort_particles[i].dat.velocity = p.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0);
                 self.sort_particles[i].dat.scale = p.transform.scale;
@@ -401,8 +398,7 @@ pub const ParticleSystem = struct {
                     self.sort_particles[i].dat.velocity *= zm.f32x4s(self.settings.alignment.VelocityAligned);
                 }
             } else {
-                const zero_size = zm.scaling(0.0, 0.0, 0.0);
-                self.sort_particles[i].dat.model_matrix = zero_size;
+                self.sort_particles[i].dat.position = zm.f32x4s(0.0);
                 self.sort_particles[i].dat.colour = zm.f32x4s(0.0);
                 self.sort_particles[i].dat.velocity = zm.f32x4s(0.0);
                 self.sort_particles[i].dat.scale = zm.f32x4s(0.0);
