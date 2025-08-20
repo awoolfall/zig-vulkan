@@ -259,7 +259,9 @@ Session* create_session(SlangGlobal* global, SessionCreateInfo create_info)
     sessionDesc.preprocessorMacroCount = preprocessor_macro_descriptions.size();
     sessionDesc.compilerOptionEntries = options.data();
     sessionDesc.compilerOptionEntryCount = options.size();
-
+    sessionDesc.searchPaths = create_info.p_search_paths;
+    sessionDesc.searchPathCount = create_info.search_paths_count;
+    
     Slang::ComPtr<slang::ISession> session;
     auto res = global->session->createSession(sessionDesc, session.writeRef());
 

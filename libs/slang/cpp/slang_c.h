@@ -253,6 +253,9 @@ struct SessionCreateInfo
 
     const struct CompilerOption* p_compile_options;
     uint32_t compile_options_count;
+
+    const char* const* const p_search_paths;
+    uint32_t search_paths_count;
 };
 
 SLANGC_API struct Session* create_session(struct SlangGlobal* global, struct SessionCreateInfo create_info);

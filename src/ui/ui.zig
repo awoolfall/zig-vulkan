@@ -935,7 +935,11 @@ pub const Imui = struct {
                 .z_value = z_value,
                 .scissor = scissor_rect,
                 .colour = render_palette.background,
-                .border_colour = render_palette.border,
+                .border_colour = 
+                    // if (widget.key == self.active_item) zm.f32x4(1.0, 0.0, 0.0, 1.0)
+                    // else if (widget.key == self.hot_item) zm.f32x4(0.0, 1.0, 0.0, 1.0)
+                    // else 
+                        render_palette.border,
                 .border_width_px = qr.RectEdges.from_rect_pixels(widget.border_width_px),
                 .corner_radii_px = widget.corner_radii_px,
                 .texture = quad_texture_props,

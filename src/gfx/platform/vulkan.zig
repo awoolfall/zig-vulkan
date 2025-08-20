@@ -1136,6 +1136,9 @@ const ShaderModule = struct {
             .compile_options = &.{
                 .{ .name = slang.c.VulkanUseEntryPointName, .value = .{ .kind = slang.c.Int, .intValue0 = 1, }, },
             },
+            .search_paths = &.{
+                "libs/engine/src/" // TODO integrate with asset manager, cant use relative throguh app /libs/engine/...
+            },
         };
 
         const slang_session = try slang.check(slang.c.create_session(gfx.platform.slang_global, session_create_info.to_slang()));

@@ -56,8 +56,8 @@ pub const Win32Window = struct {
         // width and height is what we want client rect to be 
         // CreateWindowExA takes in absolute height and width including title bar and border
         // Convert using AdjustWindowRectEx then pass rect into CreateWindowExA
-        const width = 1600;
-        const height = 900;
+        const width = 1920;
+        const height = 1080;
 
         var rect = w32.RECT {
             .left = 0,

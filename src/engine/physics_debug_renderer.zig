@@ -135,6 +135,7 @@ pub const D3D11DebugRenderer = extern struct {
                 .format = gfx.GfxState.ldr_format,
                 .initial_layout = .ColorAttachmentOptimal,
                 .final_layout = .ColorAttachmentOptimal,
+                .blend_type = .Simple,
             },
             gfx.AttachmentInfo {
                 .name = "depth",

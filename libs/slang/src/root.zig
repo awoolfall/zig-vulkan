@@ -27,6 +27,7 @@ pub const SessionCreateInfo = struct {
     profile: []const u8,
     preprocessor_macros: []const c.PreprocessorMacro = &.{},
     compile_options: []const c.CompilerOption = &.{},
+    search_paths: []const [:0]const u8 = &.{},
     
     pub fn to_slang(self: *const @This()) c.SessionCreateInfo {
         return .{
@@ -36,6 +37,8 @@ pub const SessionCreateInfo = struct {
             .preprocessor_macros_count = @intCast(self.preprocessor_macros.len),
             .p_compile_options = if (self.compile_options.len > 0) @ptrCast(self.compile_options.ptr) else null,
             .compile_options_count = @intCast(self.compile_options.len),
+            .p_search_paths = if (self.search_paths.len > 0) @ptrCast(self.search_paths.ptr) else null,
+            .search_paths_count = @intCast(self.search_paths.len),
         };
     }
 };
