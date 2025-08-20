@@ -215,6 +215,11 @@ pub const GfxStateVulkan = struct {
             .independentBlend = bool_to_vulkan(true),
             .fillModeNonSolid = bool_to_vulkan(true),
         };
+        const required_physical_device_features_info_11 = c.VkPhysicalDeviceVulkan11Features {
+            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+            .pNext = null,
+            .shaderDrawParameters = bool_to_vulkan(true),
+        };
 
         // Create vulkan instance
         const create_instance_info = c.VkInstanceCreateInfo {
@@ -307,8 +312,15 @@ pub const GfxStateVulkan = struct {
             vkt(c.vkEnumerateDeviceExtensionProperties(physical_device, null, &physical_device_extension_count, physical_device_extension_storage.ptr))
                 catch continue;
 
-            var vk_physical_device_features: c.VkPhysicalDeviceFeatures = undefined;
-            c.vkGetPhysicalDeviceFeatures(physical_device, &vk_physical_device_features);
+            var vk_physical_device_features_vulkan_11 = c.VkPhysicalDeviceVulkan11Features {
+                .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+                .pNext = null,
+            };
+            var vk_physical_device_features_2 = c.VkPhysicalDeviceFeatures2 {
+                .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                .pNext = @ptrCast(&vk_physical_device_features_vulkan_11),
+            };
+            c.vkGetPhysicalDeviceFeatures2(physical_device, @ptrCast(&vk_physical_device_features_2));
 
             // Check physical device supports the required extensions
             const found_all_required_extensions = extension_check: {
@@ -336,9 +348,19 @@ pub const GfxStateVulkan = struct {
             var supports_all_features: bool = true;
             inline for (@typeInfo(c.VkPhysicalDeviceFeatures).@"struct".fields) |field| {
                 if (@field(required_physical_device_features_info, field.name) == bool_to_vulkan(true)) {
-                    if (@field(vk_physical_device_features, field.name) != bool_to_vulkan(true)) {
+                    if (@field(vk_physical_device_features_2.features, field.name) != bool_to_vulkan(true)) {
                         std.log.info("  - doesn't support feature '{s}'", .{field.name});
                         supports_all_features = false;
+                    }
+                }
+            }
+            inline for (@typeInfo(c.VkPhysicalDeviceVulkan11Features).@"struct".fields) |field| {
+                if (field.type == bool) {
+                    if (@field(required_physical_device_features_info_11, field.name) == bool_to_vulkan(true)) {
+                        if (@field(vk_physical_device_features_vulkan_11, field.name) != bool_to_vulkan(true)) {
+                            std.log.info("  - doesn't support feature '{s}'", .{field.name});
+                            supports_all_features = false;
+                        }
                     }
                 }
             }
@@ -532,7 +554,7 @@ pub const GfxStateVulkan = struct {
         // Create vulkan device
         const create_device_info = c.VkDeviceCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .pNext = null,
+            .pNext = &required_physical_device_features_info_11,
             .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
             .pQueueCreateInfos = queue_create_infos.items.ptr,
             .enabledExtensionCount = @intCast(device_extensions.items.len),
