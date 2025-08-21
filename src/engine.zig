@@ -117,8 +117,9 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.window.deinit();
 
     Log.debug("Calling GFX init!", .{});
-    try engine.gfx.init(engine.general_allocator, &engine.window);
+    engine.gfx = try gf.GfxState.init(engine.general_allocator, &engine.window);
     errdefer engine.gfx.deinit();
+    try engine.gfx.init_late(&engine.window);
 
     engine.asset_manager = blk: {
         const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "../../res"});
@@ -141,12 +142,6 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.entities = try EntityList.init(engine.general_allocator);
     errdefer engine.entities.deinit();
 
-    Log.debug("Creating app!", .{});
-    engine.app = try engine.general_allocator.create(App);
-    errdefer engine.general_allocator.destroy(engine.app);
-
-    Log.debug("Engine inited!", .{});
-
     // load core assets
     var core_asset_pack = blk: {
         const core_asset_pack_zon = @embedFile("core_assets.zon");
@@ -163,8 +158,14 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
         std.log.err("Unable to unload core asset pack: {}", .{err});
     };
 
+    Log.debug("Engine inited!", .{});
+
+    Log.debug("Creating app!", .{});
+    engine.app = try engine.general_allocator.create(App);
+    errdefer engine.general_allocator.destroy(engine.app);
+
     Log.debug("Calling app init!", .{});
-    engine.app.init() catch |err| {
+    engine.app.* = App.init() catch |err| {
         Log.err("App init failed! Error: {s}", .{@errorName(err)});
         unreachable;
     };
