@@ -904,13 +904,7 @@ pub const GfxStateVulkan = struct {
     }
 
     pub fn begin_frame(self: *Self) !gf.Semaphore {
-        // vkt(c.vkWaitForFences(self.device, 1, &self.temp_frame_wait_fence, bool_to_vulkan(true), std.math.maxInt(u64))) catch |err| {
-        //     std.log.warn("Failed waiting for fence: {}", .{err});
-        // };
-        // vkt(c.vkResetFences(self.device, 1, &self.temp_frame_wait_fence)) catch |err| {
-        //     std.log.warn("Failed to reset fence: {}", .{err});
-        // };
-        self.flush();
+        self.frame_count += 1;
 
         const image_available_semaphore = self.swapchain.image_available_semaphores.items[self.current_frame_index()];
 
@@ -933,7 +927,6 @@ pub const GfxStateVulkan = struct {
             };
             break;
         }
-        self.frame_count += 1;
         // TODO do I have to wait on a fence for image acquisition before updating buffers?
 
         // Update frame in flight resources before continuing to the new frame

@@ -327,6 +327,10 @@ pub const Imui = struct {
     next_hot_item: ?WidgetId = null,
     next_active_item: ?WidgetId = null,
 
+    // focus item
+    focus_item: ?Key = null,
+    should_clear_focus_next_frame: bool = false,
+
     input: *const in.InputState,
     time: *const tm.TimeState,
     window: *const platform.Window,
@@ -591,8 +595,24 @@ pub const Imui = struct {
         return false;
     }
 
+    pub fn any_of_widgets_is_focus(self: *const Self, widget_keys: []const Key) bool {
+        if (self.focus_item) |hi| {
+            for (widget_keys) |k| {
+                if (hi == k) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     pub fn has_focus(self: *const Self) bool {
-        return self.hot_item != null or self.active_item != null;
+        //return self.focus_item != null;
+        return self.hot_item != null or self.active_item != null or self.focus_item != null;
+    }
+
+    pub fn clear_focus_item(self: *Self) void {
+        self.focus_item = null;
     }
 
     pub fn get_widget(self: *Self, widget_id: WidgetId) ?*Widget {
@@ -1087,8 +1107,17 @@ pub const Imui = struct {
         // reset hot and active items
         self.hot_item = if (self.next_hot_item) |ni| self.get_widget(ni).?.key else null;
         self.active_item = if (self.next_active_item) |ni| self.get_widget(ni).?.key else null;
+
         self.next_hot_item = null;
         self.next_active_item = null;
+
+        // set focus item
+        if (self.active_item) |ak| {
+            self.focus_item = ak;
+        } else if (self.should_clear_focus_next_frame) {
+            self.clear_focus_item();
+        }
+        self.should_clear_focus_next_frame = engine.get().input.get_key_down(self.primary_interact_key);
 
         // fill last frame widgets with widgets from current frame
         self.last_frame_widgets.clearRetainingCapacity();
@@ -1686,7 +1715,7 @@ pub const Imui = struct {
         const box_signals = self.generate_widget_signals(l);
         const text_signals = self.generate_widget_signals(text_input_widget_id);
 
-        const line_edit_is_hot_widget = self.any_of_widgets_is_hot(&.{ 
+        const line_edit_is_focus_widget = self.any_of_widgets_is_focus(&.{ 
             self.get_widget(box_signals.id).?.key, 
             self.get_widget(text_signals.id).?.key
         });
@@ -1720,7 +1749,7 @@ pub const Imui = struct {
             .background_colour = self.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
                 (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
             .flags = .{
-                .render = (line_edit_is_hot_widget or state.cursor != state.mark),
+                .render = (line_edit_is_focus_widget or state.cursor != state.mark),
             },
         };
         _ = self.add_widget(cursor, .{});
@@ -1769,9 +1798,8 @@ pub const Imui = struct {
             state.mark = state.cursor;
         }
 
-        // Handle keyboard input if hovering
-        // @TODO: handle keyboard input if _focused_, not hovering
-        if (line_edit_is_hot_widget) {
+        // Handle keyboard input if focused
+        if (line_edit_is_focus_widget) {
             for (self.input.char_events) |c| {
                 if (c != null) {
                     switch (c.?[0]) {
@@ -1821,9 +1849,10 @@ pub const Imui = struct {
                 }
             }
 
-            // Remove selection if escape pressed
+            // Remove selection and clear focus if escape pressed
             if (self.input.get_key_down(in.KeyCode.Escape)) {
                 state.mark = state.cursor;
+                self.clear_focus_item();
             }
 
             // Handle arrow keys
