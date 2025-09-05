@@ -306,28 +306,29 @@ pub const PhysicsSystem = struct {
         return BodyWriteLock.init(body_id, self);
     }
 
-    pub fn construct_entity_user_data_raw(old_user_data: u64, additional_data: u16) u64 {
-        var ret: u64 = 0x00;
-        ret |= @as(u64, @intCast(old_user_data & 0xffffffffffff)); // keep generational index entity id
-        ret |= @as(u64, @intCast(additional_data)) << (32 + 16);
-        return ret;
-    }
+    const UserDataStruct = packed struct(u64) {
+        index: u32,
+        generation: u16,
+        additional_data: u16,
+    };
 
     pub fn construct_entity_user_data(generational_idx: eng.gen.GenerationalIndex, additional_data: u16) u64 {
-        var ret: u64 = 0x00;
-        ret |= @as(u64, @intCast(generational_idx.index));
-        ret |= @as(u64, @intCast(generational_idx.generation)) << 32;
-        ret |= @as(u64, @intCast(additional_data)) << (32 + 16);
-        return ret;
+        const entity_user_data = UserDataStruct {
+            .index = @intCast(generational_idx.index),
+            .generation = generational_idx.generation,
+            .additional_data = additional_data,
+        };
+        return @bitCast(entity_user_data);
     }
 
     pub fn extract_entity_from_user_data(user_data: u64) struct{ entity: eng.gen.GenerationalIndex, additional_data: u16 } {
+        const entity_user_data: UserDataStruct = @bitCast(user_data);
         return .{
             .entity = eng.gen.GenerationalIndex {
-                .index = @intCast(user_data & 0xffffffff),
-                .generation = @intCast((user_data >> 32) & 0xffff),
+                .index = @intCast(entity_user_data.index),
+                .generation = entity_user_data.generation,
             },
-            .additional_data = @intCast((user_data >> (32 + 16)) & 0xffff),
+            .additional_data = entity_user_data.additional_data,
         };
     }
 

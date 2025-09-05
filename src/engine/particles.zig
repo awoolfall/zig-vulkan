@@ -254,7 +254,7 @@ pub const ParticleSystem = struct {
         defer eng.get().general_allocator.free(shader_source);
 
         const stride: u32 = 
-            @sizeOf([16]f32) +  // matrix
+            @sizeOf([4]f32) +   // position
             @sizeOf([4]f32) +   // colour
             @sizeOf([4]f32) +   // velocity
             @sizeOf([4]f32);    // scale
@@ -478,7 +478,7 @@ pub const ParticleSystem = struct {
             };
             defer mapped_buffer.unmap();
 
-            const data = mapped_buffer.data_array(VertexBufferData, self.sort_particles.len);
+            const data = mapped_buffer.data_array(VertexBufferData, self.settings.max_particles);
             for (self.sort_particles, 0..) |*p, i| {
                 data[i] = p.dat;
             }
@@ -539,9 +539,10 @@ pub const ParticleSystem = struct {
             },
             });
 
+        eng.get().gfx.flush();
         cmd.cmd_draw(.{
             .vertex_count = 6,
-            .instance_count = @intCast(self.particles.len),
+            .instance_count = @intCast(self.sort_particles.len),
         });
     }
 

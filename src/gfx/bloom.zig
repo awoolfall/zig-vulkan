@@ -6,7 +6,7 @@ const gf = eng.gfx;
 // https://learnopengl.com/Guest-Articles/2022/Phys.-Based-Bloom
 
 const Self = @This();
-const MIP_LEVELS: u32 = 5;
+const MIP_LEVELS: u32 = 7;
 const BloomShaderSource = @embedFile("bloom.slang");
 
 const PushConstantData = extern struct {
