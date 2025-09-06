@@ -21,7 +21,8 @@ pub const Transform = @import("engine/transform.zig");
 
 pub const camera = @import("engine/camera.zig");
 pub const path = @import("engine/path.zig");
-pub const particles = @import("engine/particles.zig");
+pub const particles = @import("particles/particle_system.zig");
+pub const particles_renderer = @import("particles/particle_renderer.zig");
 pub const easings = @import("easings.zig");
 pub const animation = @import("engine/anim_controller.zig");
 pub const ui = @import("ui/ui.zig");

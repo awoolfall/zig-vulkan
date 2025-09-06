@@ -18,9 +18,16 @@ struct CameraData
 {
     float4x4 view_matrix;
     float4x4 projection_matrix;
-    uint flags;
 };
 ConstantBuffer<CameraData> camera_data : register(b0);
+
+struct PushConstants
+{
+    uint flags;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<PushConstants> push_constants;
 
 [shader("vertex")]
 vs_out vs_main(uint vertId : SV_VertexID, vs_in input)
@@ -35,7 +42,7 @@ vs_out vs_main(uint vertId : SV_VertexID, vs_in input)
     float3 up = float3(0.0, 1.0, 0.0);
     float3 right = float3(1.0, 0.0, 0.0);
 
-    if (((camera_data.flags & 2) != 0) && length(input.velocity.xyz) > 0.0) {
+    if (((push_constants.flags & 2) != 0) && length(input.velocity.xyz) > 0.0) {
         p0 = p0 + ((input.velocity * 0.5) * input.scale.y);
         p1 = p1 - ((input.velocity * 0.5) * input.scale.y);
 
@@ -67,7 +74,7 @@ float4 ps_main(vs_out input) : SV_TARGET
     float2 uv = input.uv;
 
     // is_circle
-    if ((camera_data.flags & 1) != 0) {
+    if ((push_constants.flags & 1) != 0) {
         // if velocity aligned we want to extend the middle of the circle while keeping
         // the ends perfectly circular. Manipulate uvs to create this (saber-like) effect
         uv.y = (uv.y * input.uv_scale.y) - (uv.y / abs(uv.y)) * (input.uv_scale.y - 1.0);
