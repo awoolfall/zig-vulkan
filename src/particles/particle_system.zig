@@ -69,6 +69,13 @@ pub const ParticleSystem = struct {
         };
     }
 
+    pub fn resize(self: *Self, new_particle_count: usize) !void {
+        self.settings.max_particles = @truncate(new_particle_count);
+
+        self.particles_extra_data = try self.alloc.realloc(self.particles_extra_data, self.settings.max_particles);
+        self.particles_render_data = try self.alloc.realloc(self.particles_render_data, self.settings.max_particles);
+    }
+
     pub fn emit_particle_burst(self: *Self) void {
         for (0..self.settings.burst_count) |_| {
             self.emit_particle();
@@ -357,3 +364,38 @@ pub fn ValueTimeline(comptime T: type) type {
     };
 }
 
+pub const StatelessPRNG = struct {
+    /// Generates a pseudo-random u64 from a seed using a hash-based approach
+    pub fn random_u64(seed: u64) u64 {
+        return std.Random.SplitMix64.init(seed).next();
+    }
+    
+    /// Generates a pseudo-random u32 from a seed
+    pub fn random_u32(seed: u64) u32 {
+        return @truncate(random_u64(seed));
+    }
+    
+    /// Generates a pseudo-random f64 in range [0.0, 1.0) from a seed
+    pub fn random_f64(seed: u64) f64 {
+        const max_u64 = @as(f64, @floatFromInt(std.math.maxInt(u64)));
+        return @as(f64, @floatFromInt(random_u64(seed))) / max_u64;
+    }
+    
+    /// Generates a pseudo-random f32 in range [0.0, 1.0) from a seed
+    pub fn random_f32(seed: u64) f32 {
+        const max_u32 = @as(f32, @floatFromInt(std.math.maxInt(u32)));
+        return @as(f32, @floatFromInt(random_u32(seed))) / max_u32;
+    }
+    
+    /// Generates a pseudo-random integer in range [0, max) from a seed
+    pub fn random_range(seed: u64, max: u64) u64 {
+        if (max == 0) return 0;
+        return random_u64(seed) % max;
+    }
+    
+    /// Generates a pseudo-random integer in range [min, max] from a seed
+    pub fn random_range_inclusive(seed: u64, min: u64, max: u64) u64 {
+        if (max <= min) return min;
+        return min + random_range(seed, max - min + 1);
+    }
+};

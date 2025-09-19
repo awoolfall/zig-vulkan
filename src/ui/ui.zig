@@ -210,6 +210,8 @@ pub const Imui = struct {
         pivot: [2]f32 = .{0.0, 0.0},
         pixel_offset: [2]f32 = .{0.0, 0.0},
 
+        widget_data: ?*anyopaque = null,
+
         pub fn content_rect(self: *const Widget) RectPixels {
             const rect = self.computed.rect();
             return RectPixels {
@@ -227,6 +229,7 @@ pub const Imui = struct {
             hover: bool = false,
             dragged: bool = false,
             data_changed: bool = false,
+            init: bool = false,
             id: T,
         };
     }
@@ -626,6 +629,52 @@ pub const Imui = struct {
                 return &self.priority_widgets.items[widget_id.index];
             },
         }
+    }
+
+    pub const WidgetDataState = enum {
+        Init,
+        Cont,
+    };
+
+    pub fn get_widget_data(self: *Self, comptime WidgetDataType: type, widget_id: WidgetId) !struct { *WidgetDataType, WidgetDataState } {
+        const widget = self.get_widget(widget_id) orelse return error.UnableToGetWidget;
+
+        var widget_data_state: WidgetDataState = .Cont;
+
+        if (widget.widget_data == null) {
+            const widget_data = try self.arena().allocator().create(WidgetDataType);
+            widget.widget_data = widget_data;
+
+            if (self.get_widget_from_last_frame(widget_id)) |lfw| {
+                widget_data_state = .Cont;
+
+                const lfw_data_ptr: *WidgetDataType = @alignCast(@ptrCast(lfw.widget_data orelse return error.LastFrameWidgetHadNullData));
+                switch (@typeInfo(WidgetDataType)) {
+                    .@"struct", .@"enum", .@"union" => {
+                        widget_data.* = try lfw_data_ptr.clone(self.arena().allocator());
+                    },
+                    else => {
+                        widget_data.* = lfw_data_ptr.*;
+                    }
+                }
+            } else {
+                widget_data_state = .Init;
+
+                switch (@typeInfo(WidgetDataType)) {
+                    .@"struct", .@"enum", .@"union" => {
+                        widget_data.* = try WidgetDataType.init(self.arena().allocator());
+                    },
+                    else => {
+                        widget_data.* = std.mem.zeroes(WidgetDataType);
+                    }
+                }
+            }
+        }
+
+        return .{
+            @alignCast(@ptrCast(widget.widget_data orelse return error.WidgetDoesNotHaveData)),
+            widget_data_state,
+        };
     }
 
     pub fn get_widget_from_last_frame(self: *Self, widget_id: WidgetId) ?*const Widget {
@@ -1053,19 +1102,20 @@ pub const Imui = struct {
         }
 
         if (widget.flags.render) {
-            self.render_imui_widget(widget, z_index, widget_scissor, widget_palette);
-        }
+            var p = widget_palette;
 
-        // // debug wireframe
-        // self.quad_renderer.render_quad(
-        //     widget.computed.rect(),
-        //     .{
-        //         .colour = zm.f32x4(0.0, 0.0, 1.0, 1.0),
-        //         .wireframe = true,
-        //     },
-        //     rtv.*,
-        //     &engine.get().gfx
-        // );
+            const __debug_colours = false;
+            if (__debug_colours) {
+                if (self.hot_item == widget.key) {
+                    p.background = zm.f32x4(0.0, 0.0, 1.0, 1.0);
+                }
+                if (self.active_item == widget.key) {
+                    p.background = zm.f32x4(1.0, 0.0, 0.0, 1.0);
+                }
+            }
+
+            self.render_imui_widget(widget, z_index, widget_scissor, p);
+        }
 
         if (widget.first_child) |c| {
             self.render_imui_recursive(c, z_index + 1, widget_content_scissor, widget_palette);
@@ -1155,9 +1205,10 @@ pub const Imui = struct {
             .id = widget_id,
         };
         const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
+        widget_signal.init = (last_frame_widget == null);
 
         if (last_frame_widget) |lfw| {
-            const lfw_contains_cursor = lfw.computed.rect().contains([2]f32{
+            const lfw_contains_cursor = lfw.computed.total_rect().contains([2]f32{
                 @floatFromInt(self.input.cursor_position[0]),
                 @floatFromInt(self.input.cursor_position[1]),
             });
@@ -1219,6 +1270,7 @@ pub const Imui = struct {
         };
 
         inline for (signals) |s| {
+            combined.init = combined.init or s.init;
             combined.clicked = combined.clicked or s.clicked;
             combined.hover = combined.hover or s.hover;
             combined.dragged = combined.dragged or s.dragged;
@@ -1305,6 +1357,11 @@ pub const Imui = struct {
         const widget_id = self.add_widget(widget, .{});
         self.push_layout_id(widget_id);
         return widget_id;
+    }
+
+    pub fn set_floating_layout_position(self: *Self, widget_id: WidgetId, floating_x: f32, floating_y: f32) void {
+        const widget = self.get_widget(widget_id) orelse return;
+        widget.computed.relative_position = [2]f32 { floating_x, floating_y };
     }
 
     pub fn pop_layout(self: *Self) void {
@@ -1471,8 +1528,10 @@ pub const Imui = struct {
         return combined_signals;
     }
 
-    pub fn collapsible(self: *Self, is_open: *bool, text: []const u8, key: anytype) WidgetSignal(WidgetId) {
+    pub fn collapsible(self: *Self, text: []const u8, is_open_param: ?*bool, key: anytype) WidgetSignal(WidgetId) {
         const l = self.push_layout(.X, key ++ .{@src()});
+        const is_open = is_open_param orelse (self.get_widget_data(bool, l) catch unreachable)[0];
+
         if (self.get_widget(l)) |lw| {
             lw.semantic_size[0].kind = .ParentPercentage;
             lw.semantic_size[0].value = 1.0;
@@ -1639,10 +1698,20 @@ pub const Imui = struct {
             self.text.deinit();
         }
 
-        pub fn init(allocator: std.mem.Allocator) TextInputState {
+        pub fn init(allocator: std.mem.Allocator) !TextInputState {
             return TextInputState {
                 .text = std.ArrayList(u8).init(allocator),
             };
+        }
+
+        pub fn clone(self: *TextInputState, alloc: std.mem.Allocator) !TextInputState {
+            var state = TextInputState {
+                .cursor = self.cursor,
+                .mark = self.mark,
+                .text = try std.ArrayList(u8).initCapacity(alloc, self.text.items.len),
+            };
+            try state.text.appendSlice(self.text.items);
+            return state;
         }
     };
 
@@ -1659,7 +1728,7 @@ pub const Imui = struct {
             text_input_widget.text_content.?.size;
     }
 
-    pub fn line_edit(self: *Self, state: *TextInputState, key: anytype) WidgetSignal(TextInputId) {
+    pub fn line_edit(self: *Self, key: anytype) WidgetSignal(TextInputId) {
         const font_to_use = FontEnum.GeistMono;
 
         // Background box, stack children
@@ -1679,6 +1748,10 @@ pub const Imui = struct {
             lw.padding_px = .all(4);
             lw.corner_radii_px = .all(4);
         }
+        const state, _ = self.get_widget_data(TextInputState, l) catch |err| {
+            std.log.err("Unable to get widget data: {}", .{err});
+            unreachable;
+        };
 
         const content_box = self.push_layout(.X, key ++ .{@src()});
         if (self.get_widget(content_box)) |content_box_widget| {
@@ -2008,12 +2081,55 @@ pub const Imui = struct {
         return self.generate_widget_signals(image_widget_id);
     }
 
-    pub const ComboBoxData = struct {
-        default_text: []const u8,
+    pub const ComboBoxState = struct {
+        default_text: std.ArrayList(u8),
         can_be_default: bool = true,
-        options: []const []const u8,
+        options: std.ArrayList(std.ArrayList(u8)),
         selected_index: ?usize = null,
         dropdown_is_open: bool = false,
+
+        pub fn deinit(self: *ComboBoxState) void {
+            self.default_text.deinit();
+            for (self.options.items) |o| {
+                o.deinit();
+            }
+            self.options.deinit();
+        }
+
+        pub fn init(alloc: std.mem.Allocator) !ComboBoxState {
+            return ComboBoxState {
+                .default_text = std.ArrayList(u8).init(alloc),
+                .options = std.ArrayList(std.ArrayList(u8)).init(alloc),
+            };
+        }
+
+        pub fn clone(self: *ComboBoxState, alloc: std.mem.Allocator) !ComboBoxState {
+            var state = ComboBoxState {
+                .default_text = undefined,
+                .can_be_default = self.can_be_default,
+                .options = undefined,
+                .selected_index = self.selected_index,
+                .dropdown_is_open = self.dropdown_is_open,
+            };
+
+            state.default_text = try std.ArrayList(u8).initCapacity(alloc, self.default_text.items.len);
+            try state.default_text.appendSlice(self.default_text.items);
+
+            state.options = try std.ArrayList(std.ArrayList(u8)).initCapacity(alloc, self.options.items.len);
+            for (self.options.items) |*opt| {
+                var new_option = try std.ArrayList(u8).initCapacity(alloc, opt.items.len);
+                try new_option.appendSlice(opt.items);
+                try state.options.append(new_option);
+            }
+
+            return state;
+        }
+
+        pub fn append_option(self: *ComboBoxState, option: []const u8) !void {
+            var option_list = try std.ArrayList(u8).initCapacity(self.options.allocator, option.len);
+            try option_list.appendSlice(option);
+            try self.options.append(option_list);
+        }
     };
 
     fn set_combobox_background_layout(self: *const Self, widget: *Widget) void {
@@ -2028,18 +2144,24 @@ pub const Imui = struct {
         widget.corner_radii_px = .all(4);
     }
 
-    pub fn combobox(self: *Self, data: *ComboBoxData, key: anytype) WidgetSignal(WidgetId) {
-        // ensure data elements are valid
-        if (data.selected_index) |*si| { si.* = @min(si.*, data.options.len - 1); }
-        if (!data.can_be_default and data.selected_index == null) { data.selected_index = 0; }
-
+    pub fn combobox(self: *Self, key: anytype) WidgetSignal(WidgetId) {
         // push the container layout
         const container_layout = self.push_layout(.Y, key ++ .{@src()});
+        const container_signals = self.generate_widget_signals(container_layout);
         if (self.get_widget(container_layout)) |container_widget| {
             container_widget.semantic_size[0] = .{
                 .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0,
             };
         }
+
+        const data, _ = self.get_widget_data(ComboBoxState, container_layout) catch |err| {
+            std.log.err("Unable to get combobox state: {}", .{err});
+            unreachable;
+        };
+
+        // ensure data elements are valid
+        if (data.selected_index) |*si| { si.* = @min(si.*, data.options.items.len - 1); }
+        if (!data.can_be_default and data.selected_index == null) { data.selected_index = 0; }
         
         // push the background layout of the primary combobox
         const background = self.push_layout(.X, key ++ .{@src()});
@@ -2069,7 +2191,7 @@ pub const Imui = struct {
                 };
             }
 
-            const selected_label = if (data.selected_index) |si| data.options[si] else data.default_text;
+            const selected_label = if (data.selected_index) |si| data.options.items[si].items else data.default_text.items;
             _ = self.label(selected_label);
             const arrow_label = self.label("▽");
             if (self.get_widget(arrow_label.id)) |arrow_label_widget| {
@@ -2098,7 +2220,7 @@ pub const Imui = struct {
             }
 
             // push each of the options into the dropdown menu
-            for (data.options, 0..) |option, i| {
+            for (data.options.items, 0..) |option, i| {
                 const option_background = self.push_layout(.X, key ++ .{@src(), i});
                 defer self.pop_layout();
 
@@ -2131,7 +2253,7 @@ pub const Imui = struct {
                         _ = self.label("▶ ");
                     }
                 }
-                _ = self.label(option);
+                _ = self.label(option.items);
             }
 
             self.pop_layout(); // options background layout
@@ -2147,6 +2269,7 @@ pub const Imui = struct {
 
         return WidgetSignal(WidgetId) {
             .id = container_layout,
+            .init = container_signals.init,
             .data_changed = new_option_selected,
             .hover = false, // TODO
             .clicked = false, // TODO

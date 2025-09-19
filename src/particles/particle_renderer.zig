@@ -385,7 +385,6 @@ pub const ParticleRenderer = struct {
             };
         }
 
-        // TODO perform draw commands only once for all particle systems
         cmd.cmd_begin_render_pass(.{
             .render_pass = self.render_pass,
             .framebuffer = self.framebuffer,
@@ -431,23 +430,6 @@ pub const ParticleRenderer = struct {
                 .instance_count = @intCast(s.num_instances),
             });
         }
-    }
-
-    fn random_v(rand: std.Random) zm.F32x4 {
-        return zm.f32x4(
-            rand.float(f32),
-            rand.float(f32),
-            rand.float(f32),
-            rand.float(f32)
-        );
-    }
-
-    fn f32_variance(self: *Self, value: f32, variance: f32) f32 {
-        return value + (((self.rand.random().float(f32) - 0.5) * 2.0) * variance);
-    }
-
-    fn f32x4_variance(self: *Self, value: zm.F32x4, variance: zm.F32x4) zm.F32x4 {
-        return value + (((random_v(self.rand.random()) - zm.f32x4s(0.5)) * zm.f32x4s(2.0)) * variance);
     }
 };
 
