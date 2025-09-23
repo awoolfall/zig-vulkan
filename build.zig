@@ -55,9 +55,12 @@ pub fn build(b: *std.Build) !void {
     engine.addImport("app", b.createModule(.{}));
 
     if (os == .windows) {
-        const zwindows = b.dependency("zwindows", .{
-        });
-        engine.addImport("zwindows", zwindows.module("zwindows"));
+        engine.linkSystemLibrary("user32", .{});
+        engine.linkSystemLibrary("ole32", .{});
+        // const zwindows = b.dependency("zwindows", .{
+        // });
+        // engine.addImport("zwindows", zwindows.module("zwindows"));
+        
         // const zwin32_path = zwin32.path("").getPath(b);
         // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
         // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
@@ -125,7 +128,10 @@ pub fn build(b: *std.Build) !void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .cwd_relative = "src/tests.zig" },
+        .root_module = b.createModule(.{
+            .root_source_file = .{ .cwd_relative = "src/tests.zig" },
+            .target = target,
+        }),
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);

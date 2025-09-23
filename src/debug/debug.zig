@@ -19,11 +19,14 @@ pub const Debug = struct {
         projection: zm.Mat,
     };
 
+    alloc: std.mem.Allocator,
+
     render_pass: gfx.RenderPass.Ref,
     lines_pipeline: gfx.GraphicsPipeline.Ref,
     framebuffer: gfx.FrameBuffer.Ref,
 
-    lines: std.BoundedArray(DebugLine, MAX_LINES),
+    lines: std.ArrayList(DebugLine),
+
     lines_vertex_shader: gfx.VertexShader,
     lines_pixel_shader: gfx.PixelShader,
     lines_instance_buffer: gfx.Buffer.Ref,
@@ -46,11 +49,11 @@ pub const Debug = struct {
         self.camera_descriptor_pool.deinit();
         self.camera_descriptor_layout.deinit();
         self.camera_buffer.deinit();
+
+        self.lines.deinit(self.alloc);
     }
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
-        _ = allocator;
-
+    pub fn init(alloc: std.mem.Allocator) !Self {
         const lines_vertex_shader = try gfx.VertexShader.init_buffer(
             LINES_HLSL,
             "vs_main",
@@ -183,7 +186,8 @@ pub const Debug = struct {
         errdefer framebuffer.deinit();
 
         return Self{
-            .lines = try std.BoundedArray(DebugLine, MAX_LINES).init(0),
+            .alloc = alloc,
+            .lines = try std.ArrayList(DebugLine).initCapacity(alloc, MAX_LINES),
             .lines_vertex_shader = lines_vertex_shader,
             .lines_pixel_shader = lines_pixel_shader,
             .lines_instance_buffer = lines_instance_buffer,
@@ -200,7 +204,7 @@ pub const Debug = struct {
     }
 
     pub fn draw_line(self: *Self, debug_line: DebugLine) void {
-        self.lines.append(debug_line) catch |err| {
+        self.lines.append(self.alloc, debug_line) catch |err| {
             std.log.warn("Failed to append debug line: {s}", .{@errorName(err)});
         };
     }
@@ -225,7 +229,7 @@ pub const Debug = struct {
     }
 
     pub fn render_cmd(self: *Self, cmd: *gfx.CommandBuffer, camera: *const Camera) !void {
-        defer self.lines.clear();
+        defer self.lines.clearRetainingCapacity();
 
         cmd.cmd_begin_render_pass(gfx.CommandBuffer.BeginRenderPassInfo {
             .render_pass = self.render_pass,
@@ -266,14 +270,12 @@ pub const Debug = struct {
             .descriptor_sets = &.{ self.camera_descriptor_set, },
         });
 
-        const lines_slice = self.lines.constSlice();
-
         {
             const mapped_lines_buffer = try (try self.lines_instance_buffer.get()).map(.{ .write = .EveryFrame, });
             defer mapped_lines_buffer.unmap();
 
             const mapped_slice = mapped_lines_buffer.data_array(LineDetails, Self.MAX_LINES);
-            for (lines_slice, 0..) |line, idx| {
+            for (self.lines.items, 0..) |line, idx| {
                 mapped_slice[idx] = LineDetails {
                     .start_point = line.p0,
                     .end_point = line.p1,
@@ -284,7 +286,7 @@ pub const Debug = struct {
 
         cmd.cmd_draw(gfx.CommandBuffer.DrawInfo {
             .vertex_count = 6,
-            .instance_count = @intCast(lines_slice.len),
+            .instance_count = @intCast(self.lines.items.len),
         });
     }
 

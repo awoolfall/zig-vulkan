@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSafe });
     const target = b.standardTargetOptions(.{});
 
     const options = .{
@@ -44,13 +44,17 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "assimp_options", .module = options_module },
         },
+        .optimize = .ReleaseSafe,
     });
     assimp_module.addIncludePath(b.path("libs/assimp/include"));
 
-    const unzip = b.addStaticLibrary(.{
+    const unzip = b.addLibrary(.{
+        .linkage = .static,
         .name = "unzip",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const zlib_conf_step = b.addConfigHeader(.{ 
@@ -89,10 +93,13 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const zip = b.addStaticLibrary(.{
+    const zip = b.addLibrary(.{
+        .linkage = .static,
         .name = "zip",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     zip.addIncludePath(b.path("libs/assimp/contrib/zip/src"));
@@ -110,10 +117,13 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const pugixml = b.addStaticLibrary(.{
+    const pugixml = b.addLibrary(.{
+        .linkage = .static,
         .name = "pugixml",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     pugixml.addIncludePath(b.path("libs/assimp/contrib/pugixml/src"));
@@ -130,10 +140,13 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const openddlparser = b.addStaticLibrary(.{
+    const openddlparser = b.addLibrary(.{
+        .linkage = .static,
         .name = "openddlparser",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     openddlparser.addIncludePath(b.path("libs/assimp/contrib/openddlparser/code"));
@@ -157,10 +170,13 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const cencode = b.addStaticLibrary(.{
+    const cencode = b.addLibrary(.{
+        .linkage = .static,
         .name = "cencode",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     cencode.addIncludePath(b.path("libs/assimp/code/AssetLib/Assjson/"));
@@ -175,10 +191,13 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const poly2tri = b.addStaticLibrary(.{
+    const poly2tri = b.addLibrary(.{
+        .linkage = .static,
         .name = "poly2tri",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     poly2tri.addIncludePath(b.path("libs/assimp/contrib/poly2tri"));
@@ -199,10 +218,13 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const assimp = b.addStaticLibrary(.{
+    const assimp = b.addLibrary(.{
+        .linkage = .static,
         .name = "assimp",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(assimp);
 

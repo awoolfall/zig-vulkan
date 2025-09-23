@@ -101,12 +101,12 @@ pub const EntityList = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator) !EntityList {
-        var list = gen.GenerationalList(EntitySuperStruct).init(alloc);
+        var list = try gen.GenerationalList(EntitySuperStruct).init(alloc);
         errdefer list.deinit();
 
         // index 0 is reserved
         // this was done so that the selection texture can set the value 0 to mean 'no entity'
-        try list.data.append(.{ .item_data = null, .generation = 1 });
+        try list.data.append(alloc, .{ .item_data = null, .generation = 1 });
 
         return EntityList {
             .list = list,

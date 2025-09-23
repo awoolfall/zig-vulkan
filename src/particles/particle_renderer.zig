@@ -56,7 +56,7 @@ pub const ParticleRenderer = struct {
     staged_particle_count: usize = 0,
 
     pub fn deinit(self: *Self) void {
-        self.staged_particle_sets.deinit();
+        self.staged_particle_sets.deinit(eng.get().general_allocator);
 
         self.framebuffer.deinit();
         self.pipeline.deinit();
@@ -73,7 +73,7 @@ pub const ParticleRenderer = struct {
         for (self.instaces_data_buffers.items) |b| {
             b.deinit();
         }
-        self.instaces_data_buffers.deinit();
+        self.instaces_data_buffers.deinit(eng.get().general_allocator);
 
         self.camera_constant_buffer.deinit();
     }
@@ -203,7 +203,7 @@ pub const ParticleRenderer = struct {
         errdefer framebuffer.deinit();
 
         return Self {
-            .staged_particle_sets = std.ArrayList(StagedParticleSet).init(eng.get().general_allocator),
+            .staged_particle_sets = try std.ArrayList(StagedParticleSet).initCapacity(eng.get().general_allocator, 32),
 
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
@@ -213,7 +213,7 @@ pub const ParticleRenderer = struct {
             .pipeline = graphics_pipeline,
             .framebuffer = framebuffer,
 
-            .instaces_data_buffers = std.ArrayList(gf.Buffer.Ref).init(eng.get().general_allocator),
+            .instaces_data_buffers = try std.ArrayList(gf.Buffer.Ref).initCapacity(eng.get().general_allocator, 4),
             .camera_constant_buffer = camera_constant_buffer,
 
             .camera_descriptor_layout = camera_descriptor_layout,
@@ -293,7 +293,7 @@ pub const ParticleRenderer = struct {
         );
         errdefer instance_buffer.deinit();
 
-        try self.instaces_data_buffers.append(instance_buffer);
+        try self.instaces_data_buffers.append(eng.get().general_allocator, instance_buffer);
     }
 
     pub fn push_particle_system(self: *Self, particle_system: *const ps.ParticleSystem) !void {
@@ -331,7 +331,7 @@ pub const ParticleRenderer = struct {
                 .num_instances = copy_amount,
             };
 
-            try self.staged_particle_sets.append(particle_set);
+            try self.staged_particle_sets.append(eng.get().general_allocator, particle_set);
 
             staged_particles += copy_amount;
             self.staged_particle_count += copy_amount;

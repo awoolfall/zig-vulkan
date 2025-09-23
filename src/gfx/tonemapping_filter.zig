@@ -19,7 +19,7 @@ sampler: gf.Sampler.Ref,
 
 images_descriptor_layout: gf.DescriptorLayout.Ref,
 images_descriptor_pool: gf.DescriptorPool.Ref,
-images_descriptor_sets: std.ArrayList(gf.DescriptorSet.Ref),
+images_descriptor_set: gf.DescriptorSet.Ref,
 
 render_pass: gf.RenderPass.Ref,
 pipeline: gf.GraphicsPipeline.Ref,
@@ -35,8 +35,7 @@ pub fn deinit(self: *Self) void {
     self.pipeline.deinit();
     self.render_pass.deinit();
 
-    for (self.images_descriptor_sets.items) |s| { s.deinit(); }
-    self.images_descriptor_sets.deinit();
+    self.images_descriptor_set.deinit();
     self.images_descriptor_pool.deinit();
     self.images_descriptor_layout.deinit();
 }
@@ -93,16 +92,21 @@ pub fn init() !Self {
     });
     errdefer images_descriptor_pool.deinit();
 
-    var images_descriptor_sets = try std.ArrayList(gf.DescriptorSet.Ref).initCapacity(eng.get().general_allocator, gf.GfxState.get().frames_in_flight());
-    errdefer images_descriptor_sets.deinit();
-    errdefer for (images_descriptor_sets.items) |s| { s.deinit(); };
+    const images_descriptor_set = try (try images_descriptor_pool.get()).allocate_set(.{ .layout = images_descriptor_layout, });
+    errdefer images_descriptor_set.deinit();
 
-    for (0..gf.GfxState.get().frames_in_flight()) |_| {
-        const set = try (try images_descriptor_pool.get()).allocate_set(.{ .layout = images_descriptor_layout, });
-        errdefer set.deinit();
-
-        try images_descriptor_sets.append(set);
-    }
+    try (try images_descriptor_set.get()).update(.{
+        .writes = &.{
+            gf.DescriptorSetUpdateWriteInfo {
+                .binding = 0,
+                .data = .{ .ImageView = gf.GfxState.get().default.hdr_image_view, },
+            },
+            gf.DescriptorSetUpdateWriteInfo {
+                .binding = 1,
+                .data = .{ .Sampler = sampler, },
+            },
+        },
+    });
 
     const attachments = &[_]gf.AttachmentInfo {
         gf.AttachmentInfo {
@@ -167,7 +171,7 @@ pub fn init() !Self {
 
         .images_descriptor_layout = images_descriptor_layout,
         .images_descriptor_pool = images_descriptor_pool,
-        .images_descriptor_sets = images_descriptor_sets,
+        .images_descriptor_set = images_descriptor_set,
 
         .render_pass = render_pass,
         .pipeline = pipeline,
@@ -195,27 +199,10 @@ pub fn apply_filter(
         .scissors = &.{ .full_screen_pixels(), },
     });
 
-    const set = self.images_descriptor_sets.items[gf.GfxState.get().current_frame_index()];
-
-    // TODO allow setting of images which contain multiple backing vulkan images, such as the hdr image used here
-    // we do this every frame since the backing image changes based on the current frame index.
-    try (try set.get()).update(.{
-        .writes = &.{
-            gf.DescriptorSetUpdateWriteInfo {
-                .binding = 0,
-                .data = .{ .ImageView = gf.GfxState.get().default.hdr_image_view, },
-            },
-            gf.DescriptorSetUpdateWriteInfo {
-                .binding = 1,
-                .data = .{ .Sampler = self.sampler, },
-            },
-        },
-    });
-
     cmd.cmd_bind_descriptor_sets(.{
         .graphics_pipeline = self.pipeline,
         .descriptor_sets = &.{
-            set
+            self.images_descriptor_set
         },
     });
 

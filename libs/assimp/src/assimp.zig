@@ -506,7 +506,7 @@ pub const SkeletonBone = opaque {
     }
 
     pub fn node(pself: Ptr) ?Node.Ptr {
-        return pself.cast().mNode;
+        return @ptrCast(pself.cast().mNode);
     }
 
     pub fn mesh(pself: Ptr) Mesh.Ptr {

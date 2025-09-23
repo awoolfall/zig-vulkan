@@ -25,19 +25,25 @@ pub fn build(b: *std.Build) !void {
     slang.addIncludePath(b.path("cpp"));
 
     const slangc = if (options.shared) blk: {
-        const lib = b.addSharedLibrary(.{
+        const lib = b.addLibrary(.{
+            .linkage = .static,
             .name = "slang",
-            .target = target,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+            }),
         });
         if (target.result.os.tag == .windows) {
             lib.root_module.addCMacro("SLANGC_API", "extern __declspec(dllexport)");
         }
         break :blk lib;
-    } else b.addStaticLibrary(.{
+    } else b.addLibrary(.{
+        .linkage = .static,
         .name = "slang",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(slangc);
 

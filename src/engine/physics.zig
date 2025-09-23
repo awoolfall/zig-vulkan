@@ -211,13 +211,13 @@ pub const PhysicsSystem = struct {
     pub fn create_shape(self: *const Self, shape: ShapeSettings) !*zphy.Shape {
         var shape_settings = switch (shape.shape) {
             .Capsule => |*c| 
-                (try zphy.CapsuleShapeSettings.create(c.half_height, c.radius)).asShapeSettingsMut(),
+                (try zphy.CapsuleShapeSettings.create(c.half_height, c.radius)).asShapeSettings(),
             .Sphere => |*s| 
-                (try zphy.SphereShapeSettings.create(s.radius)).asShapeSettingsMut(),
+                (try zphy.SphereShapeSettings.create(s.radius)).asShapeSettings(),
             .Box => |*b| 
-                (try zphy.BoxShapeSettings.create([3]f32{b.width/2.0, b.height/2.0, b.depth/2.0})).asShapeSettingsMut(),
+                (try zphy.BoxShapeSettings.create([3]f32{b.width/2.0, b.height/2.0, b.depth/2.0})).asShapeSettings(),
             .ModelCompoundConvexHull => |m|
-                (try (try self.asset_manager.get_asset(as.ModelAsset, m)).gen_static_compound_physics_shape()).asShapeSettingsMut(),
+                (try (try self.asset_manager.get_asset(as.ModelAsset, m)).gen_static_compound_physics_shape()).asShapeSettings(),
             };
         defer shape_settings.release();
 
@@ -225,7 +225,7 @@ pub const PhysicsSystem = struct {
             const scale_shape = try zphy.DecoratedShapeSettings.createScaled(shape_settings, zm.vecToArr3(shape.offset_transform.scale));
 
             shape_settings.release();
-            shape_settings = scale_shape.asShapeSettingsMut();
+            shape_settings = scale_shape.asShapeSettings();
         }
 
         if (zm.any(shape.offset_transform.position != zm.f32x4s(0.0), 3) or zm.any(shape.offset_transform.rotation != zm.qidentity(), 4)) {
@@ -236,7 +236,7 @@ pub const PhysicsSystem = struct {
             );
 
             shape_settings.release();
-            shape_settings = decorated_shape.asShapeSettingsMut();
+            shape_settings = decorated_shape.asShapeSettings();
         }
 
         return try shape_settings.createShape();
@@ -405,7 +405,6 @@ pub const broad_phase_layers = struct {
 };
 
 const BroadPhaseLayerInterface = extern struct {
-    usingnamespace zphy.BroadPhaseLayerInterface.Methods(@This());
     __v: *const zphy.BroadPhaseLayerInterface.VTable = &vtable,
 
     object_to_broad_phase: [object_layers.len]zphy.BroadPhaseLayer = undefined,
@@ -422,21 +421,20 @@ const BroadPhaseLayerInterface = extern struct {
         return layer_interface;
     }
 
-    fn _getNumBroadPhaseLayers(_: *const zphy.BroadPhaseLayerInterface) callconv(.C) u32 {
+    fn _getNumBroadPhaseLayers(_: *const zphy.BroadPhaseLayerInterface) callconv(.c) u32 {
         return broad_phase_layers.len;
     }
 
     fn _getBroadPhaseLayer(
         iself: *const zphy.BroadPhaseLayerInterface,
         layer: zphy.ObjectLayer,
-    ) callconv(.C) zphy.BroadPhaseLayer {
+    ) callconv(.c) zphy.BroadPhaseLayer {
         const self = @as(*const BroadPhaseLayerInterface, @ptrCast(iself));
         return self.object_to_broad_phase[layer];
     }
 };
 
 const ObjectVsBroadPhaseLayerFilter = extern struct {
-    usingnamespace zphy.ObjectVsBroadPhaseLayerFilter.Methods(@This());
     __v: *const zphy.ObjectVsBroadPhaseLayerFilter.VTable = &vtable,
 
     const vtable = zphy.ObjectVsBroadPhaseLayerFilter.VTable{ .shouldCollide = _shouldCollide };
@@ -445,7 +443,7 @@ const ObjectVsBroadPhaseLayerFilter = extern struct {
         _: *const zphy.ObjectVsBroadPhaseLayerFilter,
         layer1: zphy.ObjectLayer,
         layer2: zphy.BroadPhaseLayer,
-    ) callconv(.C) bool {
+    ) callconv(.c) bool {
         return switch (layer1) {
             object_layers.non_moving => layer2 == broad_phase_layers.moving,
             object_layers.moving => true,
@@ -455,7 +453,6 @@ const ObjectVsBroadPhaseLayerFilter = extern struct {
 };
 
 const ObjectLayerPairFilter = extern struct {
-    usingnamespace zphy.ObjectLayerPairFilter.Methods(@This());
     __v: *const zphy.ObjectLayerPairFilter.VTable = &vtable,
 
     const vtable = zphy.ObjectLayerPairFilter.VTable{ .shouldCollide = _shouldCollide };
@@ -464,7 +461,7 @@ const ObjectLayerPairFilter = extern struct {
         _: *const zphy.ObjectLayerPairFilter,
         object1: zphy.ObjectLayer,
         object2: zphy.ObjectLayer,
-    ) callconv(.C) bool {
+    ) callconv(.c) bool {
         return switch (object1) {
             object_layers.non_moving => object2 == object_layers.moving,
             object_layers.moving => true,
@@ -474,7 +471,6 @@ const ObjectLayerPairFilter = extern struct {
 };
 
 const ContactListener = extern struct {
-    usingnamespace zphy.ContactListener.Methods(@This());
     __v: *const zphy.ContactListener.VTable = &vtable,
 
     const vtable = zphy.ContactListener.VTable{ .onContactValidate = _onContactValidate };
@@ -496,9 +492,8 @@ const ContactListener = extern struct {
 };
 
 pub const IgnoreIdsBodyFilter = extern struct { 
-    usingnamespace zphy.BodyFilter.Methods(@This());
-
     __v: *const zphy.BodyFilter.VTable = &vtable,
+
     body_ids_to_ignore: [IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE]zphy.BodyId,
     length: usize = 0,
 
@@ -510,7 +505,7 @@ pub const IgnoreIdsBodyFilter = extern struct {
 
     pub fn init(body_ids_to_ignore: []const zphy.BodyId) IgnoreIdsBodyFilter {
         std.debug.assert(body_ids_to_ignore.len <= IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE);
-        var biti = [_]zphy.BodyId{0} ** IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE;
+        var biti = [_]zphy.BodyId{zphy.BodyId.invalid} ** IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE;
         @memcpy(biti[0..body_ids_to_ignore.len], body_ids_to_ignore[0..]);
         return IgnoreIdsBodyFilter {
             .body_ids_to_ignore = biti,
@@ -518,7 +513,7 @@ pub const IgnoreIdsBodyFilter = extern struct {
         };
     }
 
-    fn _shouldCollide(self: *const zphy.BodyFilter, body_id: *const BodyId) callconv(.C) bool {
+    fn _shouldCollide(self: *const zphy.BodyFilter, body_id: *const BodyId) callconv(.c) bool {
         const pself: *const IgnoreIdsBodyFilter = @ptrCast(self);
         for (0..pself.length) |i| {
             if (body_id.* == pself.body_ids_to_ignore[i]) { return false; }
@@ -526,8 +521,8 @@ pub const IgnoreIdsBodyFilter = extern struct {
         return true;
     }
 
-    fn _shouldCollideLocked(self: *const zphy.BodyFilter, body: *const zphy.Body) callconv(.C) bool {
-        return self.shouldCollide(&body.getId());
+    fn _shouldCollideLocked(self: *const zphy.BodyFilter, body: *const zphy.Body) callconv(.c) bool {
+        return _shouldCollide(self, &body.getId());
     }
 };
 

@@ -28,8 +28,8 @@ downsample_pipeline: gf.GraphicsPipeline.Ref,
 upsample_render_pass: gf.RenderPass.Ref,
 upsample_pipeline: gf.GraphicsPipeline.Ref,
 
-bloom_images: std.BoundedArray(gf.Image.Ref, 2),
-bloom_layers: std.BoundedArray(BloomLayer, MIP_LEVELS),
+bloom_images: [2]gf.Image.Ref,
+bloom_layers: [MIP_LEVELS]BloomLayer,
 
 images_descriptor_layout: gf.DescriptorLayout.Ref,
 images_descriptor_pool: gf.DescriptorPool.Ref,
@@ -38,10 +38,10 @@ hdr_framebuffer: gf.FrameBuffer.Ref,
 hdr_descriptor_set: gf.DescriptorSet.Ref,
 
 pub fn deinit(self: *Self) void {
-    for (self.bloom_layers.slice()) |*l| {
+    for (&self.bloom_layers) |*l| {
         l.deinit();
     }
-    for (self.bloom_images.slice()) |*i| {
+    for (&self.bloom_images) |*i| {
         i.deinit();
     }
 
@@ -114,8 +114,9 @@ pub fn init() !Self {
     });
     errdefer images_descriptor_pool.deinit();
     
-    var bloom_images = try std.BoundedArray(gf.Image.Ref, 2).init(0);
-    errdefer for (bloom_images.slice()) |i| { i.deinit(); };
+    var bloom_images_buffer: [2]gf.Image.Ref = undefined;
+    var bloom_images = std.ArrayList(gf.Image.Ref).initBuffer(&bloom_images_buffer);
+    errdefer for (bloom_images.items) |i| { i.deinit(); };
 
     for (0..2) |i| {
         const image = try gf.Image.init(.{
@@ -129,7 +130,7 @@ pub fn init() !Self {
         }, null);
         errdefer image.deinit();
 
-        try bloom_images.append(image);
+        try bloom_images.appendBounded(image);
     }
 
     // Downsample
@@ -235,13 +236,13 @@ pub fn init() !Self {
         });
     errdefer upsample_pipeline.deinit();
 
-
-    var bloom_layers = try std.BoundedArray(BloomLayer, MIP_LEVELS).init(0);
-    errdefer for (bloom_layers.slice()) |*l| { l.deinit(); };
+    var bloom_layers_buffer: [MIP_LEVELS]BloomLayer = undefined;
+    var bloom_layers = std.ArrayList(BloomLayer).initBuffer(&bloom_layers_buffer);
+    errdefer for (bloom_layers.items) |*l| { l.deinit(); };
 
     for (0..MIP_LEVELS) |mip_level| {
         const bloom_layer = try BloomLayer.init(
-            bloom_images.slice(),
+            &bloom_images_buffer,
             mip_level,
             downsample_render_pass,
             upsample_render_pass,
@@ -251,7 +252,7 @@ pub fn init() !Self {
         );
         errdefer bloom_layer.deinit();
 
-        try bloom_layers.append(bloom_layer);
+        try bloom_layers.appendBounded(bloom_layer);
     }
 
     const hdr_framebuffer = try gf.FrameBuffer.init(.{
@@ -295,8 +296,8 @@ pub fn init() !Self {
         .images_descriptor_layout = images_descriptor_layout,
         .images_descriptor_pool = images_descriptor_pool,
 
-        .bloom_images = bloom_images,
-        .bloom_layers = bloom_layers,
+        .bloom_images = bloom_images_buffer,
+        .bloom_layers = bloom_layers_buffer,
 
         .hdr_framebuffer = hdr_framebuffer,
         .hdr_descriptor_set = hdr_descriptor_set,
@@ -375,12 +376,12 @@ pub fn render_bloom(
         const colour_attachment_index = mip_level % 2;
         const shader_index = (mip_level + 1) % 2;
 
-        transition_image_to_colour_attachment(cmd, self.bloom_images.get(colour_attachment_index), mip_level, 1);
-        transition_image_to_shader_read_only(cmd, self.bloom_images.get(shader_index), mip_level - 1, 1);
+        transition_image_to_colour_attachment(cmd, self.bloom_images[colour_attachment_index], mip_level, 1);
+        transition_image_to_shader_read_only(cmd, self.bloom_images[shader_index], mip_level - 1, 1);
 
         cmd.cmd_begin_render_pass(.{
             .render_pass = self.downsample_render_pass,
-            .framebuffer = self.bloom_layers.get(mip_level).downsample_framebuffers.get(colour_attachment_index),
+            .framebuffer = self.bloom_layers[mip_level].downsample_framebuffers[colour_attachment_index],
             .render_area = .full_screen_pixels_mip(mip_level),
         });
         defer cmd.cmd_end_render_pass();
@@ -393,7 +394,7 @@ pub fn render_bloom(
             .graphics_pipeline = self.downsample_pipeline,
             .descriptor_sets = &.{
                 if (mip_level == 1) self.hdr_descriptor_set
-                else self.bloom_layers.get(mip_level - 1).image_descriptor_sets.get(shader_index),
+                else self.bloom_layers[mip_level - 1].image_descriptor_sets[shader_index],
             },
         });
 
@@ -431,12 +432,12 @@ pub fn render_bloom(
         const shader_index = mip_level % 2;
         const colour_attachment_index = (mip_level + 1) % 2;
 
-        transition_image_to_shader_read_only(cmd, self.bloom_images.get(shader_index), mip_level, 1);
-        transition_image_to_colour_attachment(cmd, self.bloom_images.get(colour_attachment_index), mip_level - 1, 1);
+        transition_image_to_shader_read_only(cmd, self.bloom_images[shader_index], mip_level, 1);
+        transition_image_to_colour_attachment(cmd, self.bloom_images[colour_attachment_index], mip_level - 1, 1);
 
         cmd.cmd_begin_render_pass(.{
             .render_pass = self.upsample_render_pass,
-            .framebuffer =  self.bloom_layers.get(mip_level - 1).upsample_framebuffers.get(colour_attachment_index),
+            .framebuffer =  self.bloom_layers[mip_level - 1].upsample_framebuffers[colour_attachment_index],
             .render_area = .full_screen_pixels_mip(mip_level - 1),
         });
         defer cmd.cmd_end_render_pass();
@@ -448,7 +449,7 @@ pub fn render_bloom(
         cmd.cmd_bind_descriptor_sets(.{
             .graphics_pipeline = self.upsample_pipeline,
             .descriptor_sets = &.{
-                self.bloom_layers.get(mip_level).image_descriptor_sets.get(shader_index),
+                self.bloom_layers[mip_level].image_descriptor_sets[shader_index],
             },
         });
 
@@ -480,8 +481,8 @@ pub fn render_bloom(
         const shader_index = mip_level % 2;
         const colour_attachment_index = (mip_level + 1) % 2;
 
-        transition_image_to_shader_read_only(cmd, self.bloom_images.get(shader_index), mip_level, 1);
-        transition_image_to_colour_attachment(cmd, self.bloom_images.get(colour_attachment_index), mip_level - 1, 1);
+        transition_image_to_shader_read_only(cmd, self.bloom_images[shader_index], mip_level, 1);
+        transition_image_to_colour_attachment(cmd, self.bloom_images[colour_attachment_index], mip_level - 1, 1);
 
         cmd.cmd_begin_render_pass(.{
             .render_pass = self.upsample_render_pass,
@@ -497,7 +498,7 @@ pub fn render_bloom(
         cmd.cmd_bind_descriptor_sets(.{
             .graphics_pipeline = self.upsample_pipeline,
             .descriptor_sets = &.{
-                self.bloom_layers.get(mip_level).image_descriptor_sets.get(shader_index),
+                self.bloom_layers[mip_level].image_descriptor_sets[shader_index],
             },
             });
 
@@ -525,24 +526,24 @@ pub fn render_bloom(
 }
 
 const BloomLayer = struct {
-    views: std.BoundedArray(gf.ImageView.Ref, 2),
-    image_descriptor_sets: std.BoundedArray(gf.DescriptorSet.Ref, 2),
+    views: [2]gf.ImageView.Ref,
+    image_descriptor_sets: [2]gf.DescriptorSet.Ref,
 
-    downsample_framebuffers: std.BoundedArray(gf.FrameBuffer.Ref, 2),
-    upsample_framebuffers: std.BoundedArray(gf.FrameBuffer.Ref, 2),
+    downsample_framebuffers: [2]gf.FrameBuffer.Ref,
+    upsample_framebuffers: [2]gf.FrameBuffer.Ref,
 
     pub fn deinit(self: *const BloomLayer) void {
-        for (self.downsample_framebuffers.slice()) |*f| {
+        for (&self.downsample_framebuffers) |*f| {
             f.deinit();
         }
-        for (self.upsample_framebuffers.slice()) |*f| {
+        for (&self.upsample_framebuffers) |*f| {
             f.deinit();
         }
 
-        for (self.image_descriptor_sets.slice()) |*s| {
+        for (&self.image_descriptor_sets) |*s| {
             s.deinit();
         }
-        for (self.views.slice()) |*v| {
+        for (&self.views) |*v| {
             v.deinit();
         }
     }
@@ -558,17 +559,24 @@ const BloomLayer = struct {
     ) !BloomLayer {
         std.debug.assert(images.len >= 2);
 
-        var views = try std.BoundedArray(gf.ImageView.Ref, 2).init(0);
-        errdefer for (views.slice()) |v| { v.deinit(); };
+        var bloom_layer = BloomLayer {
+            .views = undefined,
+            .image_descriptor_sets = undefined,
+            .downsample_framebuffers = undefined,
+            .upsample_framebuffers = undefined,
+        };
 
-        var descriptor_sets = try std.BoundedArray(gf.DescriptorSet.Ref, 2).init(0);
-        errdefer for (descriptor_sets.slice()) |s| { s.deinit(); };
+        var views = std.ArrayList(gf.ImageView.Ref).initBuffer(&bloom_layer.views);
+        errdefer for (views.items) |v| { v.deinit(); };
 
-        var downsample_framebuffers = try std.BoundedArray(gf.FrameBuffer.Ref, 2).init(0);
-        errdefer for (downsample_framebuffers.slice()) |f| { f.deinit(); };
+        var descriptor_sets = std.ArrayList(gf.DescriptorSet.Ref).initBuffer(&bloom_layer.image_descriptor_sets);
+        errdefer for (descriptor_sets.items) |s| { s.deinit(); };
 
-        var upsample_framebuffers = try std.BoundedArray(gf.FrameBuffer.Ref, 2).init(0);
-        errdefer for (upsample_framebuffers.slice()) |f| { f.deinit(); };
+        var downsample_framebuffers = std.ArrayList(gf.FrameBuffer.Ref).initBuffer(&bloom_layer.downsample_framebuffers);
+        errdefer for (downsample_framebuffers.items) |f| { f.deinit(); };
+
+        var upsample_framebuffers = std.ArrayList(gf.FrameBuffer.Ref).initBuffer(&bloom_layer.upsample_framebuffers);
+        errdefer for (upsample_framebuffers.items) |f| { f.deinit(); };
 
         for (0..2) |i| {
             const view = try gf.ImageView.init(.{
@@ -615,19 +623,13 @@ const BloomLayer = struct {
                 });
             errdefer upsample_framebuffer.deinit();
 
-            try views.append(view);
-            try descriptor_sets.append(set);
-            try downsample_framebuffers.append(downsample_framebuffer);
-            try upsample_framebuffers.append(upsample_framebuffer);
+            try views.appendBounded(view);
+            try descriptor_sets.appendBounded(set);
+            try downsample_framebuffers.appendBounded(downsample_framebuffer);
+            try upsample_framebuffers.appendBounded(upsample_framebuffer);
         }
 
-        return BloomLayer {
-            .views = views,
-            .image_descriptor_sets = descriptor_sets,
-
-            .downsample_framebuffers = downsample_framebuffers,
-            .upsample_framebuffers = upsample_framebuffers,
-        };
+        return bloom_layer;
     }
 };
 

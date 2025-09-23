@@ -31,13 +31,14 @@ pub const ParticleExtraData = struct {
 
 pub const ParticleSystem = struct {
     const Self = @This();
+    
+    alloc: std.mem.Allocator,
 
     settings: ParticleSystemSettings,
     particles_extra_data: []ParticleExtraData,
     particles_render_data: []ParticleRenderData,
     next_particle_index: usize = 0,
 
-    alloc: std.mem.Allocator,
     rand: std.Random.DefaultPrng,
     noise: zn.FnlGenerator,
 
@@ -46,6 +47,7 @@ pub const ParticleSystem = struct {
     pub fn deinit(self: *Self) void {
         self.alloc.free(self.particles_extra_data);
         self.alloc.free(self.particles_render_data);
+        self.settings.deinit(self.alloc);
     }
 
     pub fn init(alloc: std.mem.Allocator, settings: ParticleSystemSettings) !Self {
@@ -59,8 +61,11 @@ pub const ParticleSystem = struct {
         errdefer alloc.free(particles_render_data);
         @memset(particles_render_data, ParticleRenderData {});
 
+        const owned_settings = try settings.clone(alloc);
+        errdefer owned_settings.deinit(alloc);
+
         return Self {
-            .settings = settings,
+            .settings = owned_settings,
             .particles_extra_data = particles_extra_data,
             .particles_render_data = particles_render_data,
             .alloc = alloc,
@@ -74,6 +79,17 @@ pub const ParticleSystem = struct {
 
         self.particles_extra_data = try self.alloc.realloc(self.particles_extra_data, self.settings.max_particles);
         self.particles_render_data = try self.alloc.realloc(self.particles_render_data, self.settings.max_particles);
+    }
+
+    pub fn set_settings(self: *Self, new_settings: *const ParticleSystemSettings) !void {
+        const owned_settings = try new_settings.clone(self.alloc);
+        errdefer owned_settings.deinit();
+
+        self.settings.deinit(self.alloc);
+        self.settings = owned_settings;
+        if (self.particles_extra_data.len < self.settings.max_particles) {
+            self.resize(self.settings.max_particles);
+        }
     }
 
     pub fn emit_particle_burst(self: *Self) void {
@@ -103,9 +119,9 @@ pub const ParticleSystem = struct {
 
         self.particles_render_data[self.next_particle_index] = ParticleRenderData {
             .position = initial_position,
-            .scale = KeyFrame(zm.F32x4).calc(self.settings.scale.slice(), 0.0),
+            .scale = KeyFrame(zm.F32x4).calc(self.settings.scale.items, 0.0),
             .velocity = self.settings.initial_velocity,
-            .colour = KeyFrame(zm.F32x4).calc(self.settings.colour.slice(), 0.0),
+            .colour = KeyFrame(zm.F32x4).calc(self.settings.colour.items, 0.0),
         };
         self.particles_extra_data[self.next_particle_index] = ParticleExtraData {
             .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
@@ -132,7 +148,7 @@ pub const ParticleSystem = struct {
 
             const t = (p_extra.alive_time / p_extra.life_duration);
 
-            for (self.settings.forces.slice()) |fo| {
+            for (self.settings.forces.items) |fo| {
                 switch (fo) {
                     .Constant => |v| { p_render.velocity += (v * delta_time); },
                     .ConstantRand => |force| { 
@@ -162,8 +178,8 @@ pub const ParticleSystem = struct {
                 }
             }
 
-            p_render.scale = KeyFrame(zm.F32x4).calc(self.settings.scale.slice(), t);
-            p_render.colour = KeyFrame(zm.F32x4).hsv_calc(self.settings.colour.slice(), t);
+            p_render.scale = KeyFrame(zm.F32x4).calc(self.settings.scale.items, t);
+            p_render.colour = KeyFrame(zm.F32x4).hsv_calc(self.settings.colour.items, t);
             p_render.position += p_render.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0) * delta_time;
         }
 
@@ -230,12 +246,9 @@ pub const ParticleSystem = struct {
 };
 
 pub const MAX_KEYFRAMES: usize = 6;
+pub const MAX_FORCES: usize = 6;
 pub const ScaleKeyFrame = KeyFrame(zm.F32x4);
 pub const ColourKeyFrame = KeyFrame(zm.F32x4);
-pub const ScaleKeyFrameArray = std.BoundedArray(ScaleKeyFrame, MAX_KEYFRAMES);
-pub const ColourKeyFrameArray = std.BoundedArray(ColourKeyFrame, MAX_KEYFRAMES);
-pub const MAX_FORCES: usize = 6;
-pub const ForceArray = std.BoundedArray(ForceEnum, MAX_FORCES);
 
 pub const ParticleSystemSettings = struct {
     max_particles: u32 = 1000,
@@ -255,9 +268,29 @@ pub const ParticleSystemSettings = struct {
 
     initial_velocity: zm.F32x4 = zm.f32x4s(0.0),
 
-    scale: ScaleKeyFrameArray = .{},
-    colour: ColourKeyFrameArray = .{},
-    forces: ForceArray = .{},
+    scale: std.ArrayList(ScaleKeyFrame) = .empty,
+    colour: std.ArrayList(ColourKeyFrame) = .empty,
+    forces: std.ArrayList(ForceEnum) = .empty,
+
+    pub fn deinit(self: *ParticleSystemSettings, alloc: std.mem.Allocator) void {
+        self.scale.deinit(alloc);
+        self.colour.deinit(alloc);
+        self.forces.deinit(alloc);
+    }
+
+    pub fn clone(self: *const ParticleSystemSettings, alloc: std.mem.Allocator) !ParticleSystemSettings {
+        var new_settings = self.*;
+        new_settings.scale = .empty;
+        new_settings.colour = .empty;
+        new_settings.forces = .empty;
+        errdefer new_settings.deinit(alloc);
+
+        try new_settings.scale.appendSlice(alloc, self.scale.items);
+        try new_settings.colour.appendSlice(alloc, self.colour.items);
+        try new_settings.forces.appendSlice(alloc, self.forces.items);
+
+        return new_settings;
+    }
 };
 
 pub const ParticleAlignment = union(enum) {

@@ -27,20 +27,22 @@ pub fn GenerationalList(comptime T: type) type {
         };
 
         allocator: std.mem.Allocator,
+
         data: std.ArrayList(ItemType),
         free_list: std.ArrayList(usize),
 
-        pub fn init(allocator: std.mem.Allocator) Self {
+        pub fn init(allocator: std.mem.Allocator) !Self {
             return Self {
                 .allocator = allocator,
-                .data = std.ArrayList(ItemType).init(allocator),
-                .free_list = std.ArrayList(usize).init(allocator),
+
+                .data = .empty,
+                .free_list = .empty,
             };
         }
 
         pub fn deinit(self: *Self) void {
-            self.data.deinit();
-            self.free_list.deinit();
+            self.data.deinit(self.allocator);
+            self.free_list.deinit(self.allocator);
         }
 
         /// Finds a free index in the list.
@@ -54,7 +56,7 @@ pub fn GenerationalList(comptime T: type) type {
             var free_idx = self.find_free();
             // if there are no free index's, then append to list
             if (free_idx == null) {
-                try self.data.append(ItemType {});
+                try self.data.append(self.allocator, ItemType {});
                 free_idx = self.data.items.len - 1;
             }
 
@@ -86,7 +88,7 @@ pub fn GenerationalList(comptime T: type) type {
             // set data to null indicating item is removed
             item.item_data = null;
             // add index to free list to be reused later
-            try self.free_list.append(idx.index);
+            try self.free_list.append(self.allocator, idx.index);
         }
 
         /// Gets an item from the list by handle.

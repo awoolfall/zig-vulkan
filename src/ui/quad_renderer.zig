@@ -102,9 +102,9 @@ const QuadRenderSet = struct {
         self.buffers_descriptor_set.deinit();
         self.buffers_descriptor_pool.deinit();
 
-        for (self.image_descriptor_sets.items) |s| { s.deinit(); }
         self.default_images_set.deinit();
-        self.image_descriptor_sets.deinit();
+        for (self.image_descriptor_sets.items) |s| { s.deinit(); }
+        self.image_descriptor_sets.deinit(engine.get().general_allocator);
         self.images_descriptor_pool.deinit();
 
         self.buffer_vertex.deinit();
@@ -114,6 +114,8 @@ const QuadRenderSet = struct {
 
 pub const QuadRenderer = struct {
     const MAX_QUADS_PER_BUFFER = 500;
+
+    alloc: std.mem.Allocator,
 
     sampler: _gfx.Sampler.Ref,
 
@@ -146,13 +148,13 @@ pub const QuadRenderer = struct {
         defer self.buffers_descriptor_layout.deinit();
         defer self.image_descriptor_layout.deinit();
 
-        defer self.frame_quads.deinit();
+        defer self.frame_quads.deinit(self.alloc);
 
-        defer self.quad_render_sets.deinit();
+        defer self.quad_render_sets.deinit(self.alloc);
         defer for (self.quad_render_sets.items) |*s| { s.deinit(); };
     }
 
-    pub fn init() !QuadRenderer {
+    pub fn init(alloc: std.mem.Allocator) !QuadRenderer {
         // create the quad shaders
         const vertex_shader = try _gfx.VertexShader.init_buffer(
             QUAD_SHADER_HLSL,
@@ -280,13 +282,15 @@ pub const QuadRenderer = struct {
         });
         errdefer framebuffer.deinit();
 
-        const frame_quads_list = try std.ArrayList(QuadProperties).initCapacity(engine.get().general_allocator, 128);
+        const frame_quads_list = try std.ArrayList(QuadProperties).initCapacity(alloc, 128);
         errdefer frame_quads_list.deinit();
 
-        const quad_render_sets = std.ArrayList(QuadRenderSet).init(engine.get().general_allocator);
+        const quad_render_sets = std.ArrayList(QuadRenderSet).empty;
         errdefer quad_render_sets.deinit();
 
         return QuadRenderer {
+            .alloc = alloc,
+
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
 
@@ -370,9 +374,6 @@ pub const QuadRenderer = struct {
                 };
             }
 
-            var images_descriptor_sets = std.ArrayList(_gfx.DescriptorSet.Ref).init(engine.get().general_allocator);
-            errdefer images_descriptor_sets.deinit();
-
             const new_image_sets = try (images_descriptor_pool.get() catch unreachable).allocate_sets(
                 engine.get().frame_allocator,
                 .{ .layout = self.image_descriptor_layout, },
@@ -397,9 +398,12 @@ pub const QuadRenderer = struct {
                 std.log.warn("Unable to update set: {}", .{err});
             };
 
-            try images_descriptor_sets.appendSlice(new_image_sets[1..]);
+            var images_descriptor_sets = std.ArrayList(_gfx.DescriptorSet.Ref).empty;
+            errdefer images_descriptor_sets.deinit(self.alloc);
 
-            try self.quad_render_sets.append(QuadRenderSet {
+            try images_descriptor_sets.appendSlice(self.alloc, new_image_sets[1..]);
+
+            try self.quad_render_sets.append(self.alloc, QuadRenderSet {
                 .buffer_vertex = buffer_vertex,
                 .buffer_pixel = buffer_pixel,
                 .buffers_descriptor_set = buffers_descriptor_set,
@@ -432,7 +436,7 @@ pub const QuadRenderer = struct {
         self: *QuadRenderer,
         props: QuadProperties,
     ) !void {
-        try self.frame_quads.append(props);
+        try self.frame_quads.append(self.alloc, props);
     }
 
     pub fn render_quads(

@@ -1,6 +1,9 @@
 const std = @import("std");
-const zwindows = @import("zwindows");
-const w32 = zwindows.windows;
+const w32 = @cImport({
+    @cDefine("WIN32_LEAN_AND_MEAN", "1");
+    @cInclude("windows.h");
+    @cInclude("combaseapi.h");
+});
 
 const __c = @import("windows_keycode.zig");
 const convert_windows_keycode = __c.convert_windows_keycode;
@@ -40,18 +43,30 @@ pub const Win32Window = struct {
         }
 
         const hInstance: w32.HINSTANCE = @ptrCast(w32.GetModuleHandleA(null));
+        if (hInstance == null) {
+            std.log.err("Unable to get windows module handle: {}", .{w32.GetLastError()});
+            return error.UnableToGetHInstance;
+        }
+
         var wc = w32.WNDCLASSEXA{
             .lpfnWndProc = Win32Window.window_proc,
             .hInstance = hInstance,
-            .lpszClassName = "Window Class",
+            .lpszClassName = "Zig Engine Window Class",
             .style = 0,
             .hIcon = null,
             .hCursor = w32.LoadCursorA(null, @as(w32.LPCSTR, @ptrFromInt(32512))), // default arrow
             .hbrBackground = null,
             .lpszMenuName = null,
             .hIconSm = null,
+            .cbClsExtra = 0,
+            .cbSize = @sizeOf(w32.WNDCLASSEXA),
+            .cbWndExtra = 0,
         };
-        _ = w32.RegisterClassExA(&wc);
+        const class_atom = w32.RegisterClassExA(&wc);
+        if (class_atom == 0) {
+            std.log.err("Unable to register windows window class: {}", .{w32.GetLastError()});
+            return error.UnableToRegisterClass;
+        }
 
         // width and height is what we want client rect to be 
         // CreateWindowExA takes in absolute height and width including title bar and border
@@ -77,7 +92,7 @@ pub const Win32Window = struct {
 
         const hwnd = w32.CreateWindowExA(
             0, 
-            "Window Class", 
+            "Zig Engine Window Class", 
             "Window Made using Zig",
             window_style + w32.WS_VISIBLE,
             w32.CW_USEDEFAULT,
@@ -85,7 +100,11 @@ pub const Win32Window = struct {
             rect.right - rect.left, rect.bottom - rect.top, 
             null, null,
             hInstance, 
-            null).?;
+            null) orelse {
+                const err = w32.GetLastError();
+                std.log.err("Unable to create windows window: {}", .{err});
+                return error.UnableToCreateWindow;
+            };
 
         if (!register_mouse_for_raw_input(hwnd)) {
             std.log.warn("Failed to get raw mouse input..", .{});
@@ -283,12 +302,27 @@ pub const Win32Window = struct {
     fn construct_cursor_move_event(w_param: w32.WPARAM, l_param: w32.LPARAM) wb.CursorMoveEvent {
         _ = w_param;
         return wb.CursorMoveEvent {
-            .x_coord = w32.GET_X_LPARAM(l_param),
-            .y_coord = w32.GET_Y_LPARAM(l_param),
+            .x_coord = @intCast(GET_X_LPARAM(l_param)),
+            .y_coord = @intCast(GET_Y_LPARAM(l_param)),
         };
     }
 
-    export fn window_proc(hwnd: w32.HWND, u_msg: w32.UINT, w_param: w32.WPARAM, l_param: w32.LPARAM) callconv(w32.WINAPI) w32.LRESULT {
+    fn GET_X_LPARAM(l_param: w32.LPARAM) c_int {
+        return @intCast(LOWORD(@as(w32.DWORD, @truncate(@as(c_ulonglong, @bitCast(l_param))))));
+    }
+
+    fn GET_Y_LPARAM(l_param: w32.LPARAM) c_int {
+        return @intCast(HIWORD(@as(w32.DWORD, @truncate(@as(c_ulonglong, @bitCast(l_param))))));
+    }
+
+    fn LOWORD(dword: w32.DWORD) w32.WORD {
+        return @truncate(dword & @as(w32.DWORD, 0xffff));
+    }
+    fn HIWORD(dword: w32.DWORD) w32.WORD {
+        return @truncate((dword >> 16) & @as(w32.DWORD, 0xffff));
+    }
+
+    export fn window_proc(hwnd: w32.HWND, u_msg: w32.UINT, w_param: w32.WPARAM, l_param: w32.LPARAM) callconv(.winapi) w32.LRESULT {
         switch (u_msg) {
             w32.WM_DESTROY => {
                 w32.PostQuitMessage(0);
@@ -296,8 +330,8 @@ pub const Win32Window = struct {
             },
             w32.WM_SIZE => { 
                 g_engine.send_window_event(wb.WindowEvent { .RESIZED = wb.WindowSize {
-                    .width = @intCast(w32.LOWORD(@intCast(l_param))),
-                    .height = @intCast(w32.HIWORD(@intCast(l_param))),
+                    .width = @intCast(LOWORD(@as(w32.DWORD, @truncate(@as(c_ulonglong, @bitCast(l_param)))))),
+                    .height = @intCast(HIWORD(@as(w32.DWORD, @truncate(@as(c_ulonglong, @bitCast(l_param)))))),
                 } });
                 return 0;
             },
@@ -428,7 +462,7 @@ const RAWINPUTDEVICE = extern struct {
 
 const PCRAWINPUTDEVICE = ?[*]const *RAWINPUTDEVICE;
 
-extern "user32" fn RegisterRawInputDevices(pRawInputDevices: PCRAWINPUTDEVICE, uiNumDevices: w32.UINT, cbSize: w32.UINT) callconv(w32.WINAPI) w32.BOOL;
+extern "user32" fn RegisterRawInputDevices(pRawInputDevices: PCRAWINPUTDEVICE, uiNumDevices: w32.UINT, cbSize: w32.UINT) callconv(.winapi) w32.BOOL;
 
 fn register_mouse_for_raw_input(hwnd: w32.HWND) bool {
     const raw_input_devices = [_]RAWINPUTDEVICE {
@@ -488,7 +522,7 @@ const RAWINPUT = extern struct {
     },
 };
 
-extern "user32" fn GetRawInputData(hRawInput: w32.LPARAM, uiCommand: w32.UINT, pData: w32.LPVOID, pcbSize: ?*w32.UINT, cbSizeHeader: w32.UINT) callconv(w32.WINAPI) w32.UINT;
+extern "user32" fn GetRawInputData(hRawInput: w32.LPARAM, uiCommand: w32.UINT, pData: w32.LPVOID, pcbSize: ?*w32.UINT, cbSizeHeader: w32.UINT) callconv(.winapi) w32.UINT;
 
 fn get_mouse_raw_data(l_param: w32.LPARAM) ?RAWMOUSE {
     var raw_input: RAWINPUT = undefined;

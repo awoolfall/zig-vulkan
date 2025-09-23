@@ -182,9 +182,9 @@ pub fn init_from_buffer(alloc: std.mem.Allocator, pack_name: []const u8, data: [
     defer arena_struct.deinit();
     const arena = arena_struct.allocator();
 
-    var zon_status = std.zon.parse.Status {};
-    const pack_data = std.zon.parse.fromSlice([]const AssetSerialized, arena, data, &zon_status, .{}) catch |err| {
-        std.log.err("Failed to load asset pack '{s}'\n{}", .{pack_name, zon_status});
+    var zon_diag = std.zon.parse.Diagnostics {};
+    const pack_data = std.zon.parse.fromSlice([]const AssetSerialized, arena, data, &zon_diag, .{}) catch |err| {
+        std.log.err("Failed to load asset pack '{s}'\n{any}", .{pack_name, zon_diag});
         return err;
     };
 

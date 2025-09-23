@@ -321,6 +321,8 @@ pub const Imui = struct {
         index: u31,
     };
 
+    alloc: std.mem.Allocator,
+
     // hot and active items for the current frame
     hot_item: ?Key = null,
     active_item: ?Key = null,
@@ -364,10 +366,10 @@ pub const Imui = struct {
         }
         self.quad_renderer.deinit();
 
-        self.palette_stack.deinit();
-        self.parent_stack.deinit();
-        self.widgets.deinit();
-        self.priority_widgets.deinit();
+        self.palette_stack.deinit(self.alloc);
+        self.parent_stack.deinit(self.alloc);
+        self.widgets.deinit(self.alloc);
+        self.priority_widgets.deinit(self.alloc);
         self.last_frame_widgets.deinit();
 
         self.scuffed_x_checkbox_image_view.deinit();
@@ -380,10 +382,10 @@ pub const Imui = struct {
     }
 
     pub fn init(
-        alloc: std.mem.Allocator, 
-        input: *const in.InputState, 
-        time: *const tm.TimeState, 
-        window: *const platform.Window, 
+        alloc: std.mem.Allocator,
+        input: *const in.InputState,
+        time: *const tm.TimeState,
+        window: *const platform.Window,
         gfx: *_gfx.GfxState
     ) !Self {
         var scuffed_x_image = try zstbi.Image.loadFromFile("res/scuffed_x.png", 4);
@@ -425,13 +427,14 @@ pub const Imui = struct {
         }
 
         var self = Self {
+            .alloc = alloc,
             .input = input,
             .time = time,
             .window = window,
-            .parent_stack = std.ArrayList(WidgetId).init(alloc),
-            .palette_stack = std.ArrayList(Palette).init(alloc),
-            .widgets = std.ArrayList(Widget).init(alloc),
-            .priority_widgets = std.ArrayList(Widget).init(alloc),
+            .parent_stack = std.ArrayList(WidgetId).empty,
+            .palette_stack = std.ArrayList(Palette).empty,
+            .widgets = std.ArrayList(Widget).empty,
+            .priority_widgets = std.ArrayList(Widget).empty,
             .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
             .scuffed_x_checkbox_image = scuffed_x_checkbox_image,
             .scuffed_x_checkbox_image_view = scuffed_x_checkbox_image_view,
@@ -441,7 +444,7 @@ pub const Imui = struct {
                 std.heap.ArenaAllocator.init(alloc),
                 std.heap.ArenaAllocator.init(alloc),
             },
-            .quad_renderer = try QuadRenderer.init(),
+            .quad_renderer = try QuadRenderer.init(alloc),
             .fonts = fonts,
         };
         self.add_root_widget(gfx);
@@ -461,6 +464,10 @@ pub const Imui = struct {
 
     fn arena(self: *Self) *std.heap.ArenaAllocator {
         return &self.arenas[(@as(usize, @intCast(self.last_frame_arena)) + 1) % 2];
+    }
+
+    pub fn widget_allocator(self: *const Self) std.mem.Allocator {
+        return @constCast(self).arena().allocator();
     }
 
     pub fn palette(self: *const Self) Palette {
@@ -565,7 +572,7 @@ pub const Imui = struct {
             };
 
             const widget_index = destination_array.items.len;
-            destination_array.append(widget_to_add) catch unreachable;
+            destination_array.append(self.alloc, widget_to_add) catch unreachable;
             break :blk WidgetId {
                 .location = destination,
                 .index = @truncate(widget_index),
@@ -701,9 +708,9 @@ pub const Imui = struct {
                 .allows_overflow_y = false,
             },
         };
-        self.widgets.append(root_widget) catch unreachable;
+        self.widgets.append(self.alloc, root_widget) catch unreachable;
 
-        self.parent_stack.append(.{ .location = .Standard, .index = 0 }) catch unreachable;
+        self.parent_stack.append(self.alloc, .{ .location = .Standard, .index = 0 }) catch unreachable;
     }
 
     fn solve_upward_dependant_sizes(self: *Self, widget: *Widget) void {
@@ -1281,7 +1288,7 @@ pub const Imui = struct {
     }
 
     pub fn push_pallete(self: *Self, p: Palette) void {
-        self.palette_stack.append(p);
+        self.palette_stack.append(self.alloc, p);
     }
 
     pub fn pop_pallete(self: *Self) void {
@@ -1290,19 +1297,19 @@ pub const Imui = struct {
 
     pub fn push_layout_widget_priority(self: *Self, widget: Widget) WidgetId {
         const widget_id = self.add_widget(widget, .{ .destination = .{ .Manual = .Priority } });
-        self.parent_stack.append(widget_id) catch unreachable;
+        self.parent_stack.append(self.alloc, widget_id) catch unreachable;
         return widget_id;
     }
 
     pub fn push_layout_widget(self: *Self, widget: Widget) WidgetId {
         const widget_id = self.add_widget(widget, .{});
-        self.parent_stack.append(widget_id) catch unreachable;
+        self.parent_stack.append(self.alloc, widget_id) catch unreachable;
         return widget_id;
     }
 
     pub fn push_layout_id(self: *Self, widget_id: WidgetId) void {
         std.debug.assert(self.get_widget(widget_id) != null);
-        self.parent_stack.append(widget_id) catch unreachable;
+        self.parent_stack.append(self.alloc, widget_id) catch unreachable;
     }
 
     pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) WidgetId {
@@ -1694,13 +1701,14 @@ pub const Imui = struct {
         mark: usize = 0,
         text: std.ArrayList(u8),
 
-        pub fn deinit(self: *TextInputState) void {
-            self.text.deinit();
+        pub fn deinit(self: *TextInputState, alloc: std.mem.Allocator) void {
+            self.text.deinit(alloc);
         }
 
-        pub fn init(allocator: std.mem.Allocator) !TextInputState {
+        pub fn init(alloc: std.mem.Allocator) !TextInputState {
+            _ = alloc;
             return TextInputState {
-                .text = std.ArrayList(u8).init(allocator),
+                .text = std.ArrayList(u8).empty,
             };
         }
 
@@ -1710,7 +1718,7 @@ pub const Imui = struct {
                 .mark = self.mark,
                 .text = try std.ArrayList(u8).initCapacity(alloc, self.text.items.len),
             };
-            try state.text.appendSlice(self.text.items);
+            try state.text.appendSlice(alloc, self.text.items);
             return state;
         }
     };
@@ -1908,11 +1916,11 @@ pub const Imui = struct {
                         32...126 => {
                             data_has_changed = true;
                             if (c.?[1] == 0) {
-                                state.text.insert(state.cursor, c.?[0]) catch {};
+                                state.text.insert(self.alloc, state.cursor, c.?[0]) catch {};
                                 state.cursor += 1;
                                 state.mark = state.cursor;
                             } else {
-                                state.text.insertSlice(state.cursor, c.?[0..2]) catch {};
+                                state.text.insertSlice(self.alloc, state.cursor, c.?[0..2]) catch {};
                                 state.cursor += 2;
                                 state.mark = state.cursor;
                             }
@@ -1977,7 +1985,7 @@ pub const Imui = struct {
                     std.log.info("sanitized string: {s}", .{sanitized});
 
                     // insert sanitized string into text input
-                    state.text.insertSlice(state.cursor, sanitized[0..sanitized_cursor]) catch {};
+                    state.text.insertSlice(self.alloc, state.cursor, sanitized[0..sanitized_cursor]) catch {};
                     data_has_changed = true;
                     state.cursor += sanitized_cursor;
                     state.mark = state.cursor;
@@ -2082,24 +2090,28 @@ pub const Imui = struct {
     }
 
     pub const ComboBoxState = struct {
-        default_text: std.ArrayList(u8),
+        default_text: []u8,
         can_be_default: bool = true,
-        options: std.ArrayList(std.ArrayList(u8)),
+        options: std.ArrayList([]u8),
         selected_index: ?usize = null,
         dropdown_is_open: bool = false,
 
-        pub fn deinit(self: *ComboBoxState) void {
-            self.default_text.deinit();
-            for (self.options.items) |o| {
-                o.deinit();
+        pub fn deinit(self: *ComboBoxState, alloc: std.mem.Allocator) void {
+            if (self.default_text.len > 0) {
+                alloc.free(self.default_text);
             }
-            self.options.deinit();
+
+            for (self.options.items) |o| {
+                alloc.free(o);
+            }
+            self.options.deinit(alloc);
         }
 
         pub fn init(alloc: std.mem.Allocator) !ComboBoxState {
+            _ = alloc;
             return ComboBoxState {
-                .default_text = std.ArrayList(u8).init(alloc),
-                .options = std.ArrayList(std.ArrayList(u8)).init(alloc),
+                .default_text = "",
+                .options = std.ArrayList([]u8).empty,
             };
         }
 
@@ -2112,23 +2124,28 @@ pub const Imui = struct {
                 .dropdown_is_open = self.dropdown_is_open,
             };
 
-            state.default_text = try std.ArrayList(u8).initCapacity(alloc, self.default_text.items.len);
-            try state.default_text.appendSlice(self.default_text.items);
+            state.default_text = if (self.default_text.len > 0) try alloc.dupe(u8, self.default_text) else "";
+            errdefer if (state.default_text.len > 0) { alloc.free(state.default_text); };
 
-            state.options = try std.ArrayList(std.ArrayList(u8)).initCapacity(alloc, self.options.items.len);
-            for (self.options.items) |*opt| {
-                var new_option = try std.ArrayList(u8).initCapacity(alloc, opt.items.len);
-                try new_option.appendSlice(opt.items);
-                try state.options.append(new_option);
+            state.options = try std.ArrayList([]u8).initCapacity(alloc, self.options.items.len);
+            errdefer state.options.deinit(alloc);
+            errdefer for (state.options.items) |opt| { alloc.free(opt); };
+
+            for (self.options.items) |opt| {
+                const new_option_text = try alloc.dupe(u8, opt);
+                errdefer alloc.free(new_option_text);
+
+                try state.options.append(alloc, new_option_text);
             }
 
             return state;
         }
 
-        pub fn append_option(self: *ComboBoxState, option: []const u8) !void {
-            var option_list = try std.ArrayList(u8).initCapacity(self.options.allocator, option.len);
-            try option_list.appendSlice(option);
-            try self.options.append(option_list);
+        pub fn append_option(self: *ComboBoxState, alloc: std.mem.Allocator, option: []const u8) !void {
+            const owned_option = try alloc.dupe(u8, option);
+            errdefer alloc.free(owned_option);
+
+            try self.options.append(alloc, owned_option);
         }
     };
 
@@ -2191,7 +2208,7 @@ pub const Imui = struct {
                 };
             }
 
-            const selected_label = if (data.selected_index) |si| data.options.items[si].items else data.default_text.items;
+            const selected_label = if (data.selected_index) |si| data.options.items[si] else data.default_text;
             _ = self.label(selected_label);
             const arrow_label = self.label("▽");
             if (self.get_widget(arrow_label.id)) |arrow_label_widget| {
@@ -2253,7 +2270,7 @@ pub const Imui = struct {
                         _ = self.label("▶ ");
                     }
                 }
-                _ = self.label(option.items);
+                _ = self.label(option);
             }
 
             self.pop_layout(); // options background layout

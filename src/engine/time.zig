@@ -44,7 +44,7 @@ pub const TimeState = struct {
             // while loop to account for "spurious wakeups"
             while (frame_diff_ns < target_frame_time_ns) {
                 // sleep remaining ns to hit desired frame rate
-                std.time.sleep(@intCast(target_frame_time_ns - frame_diff_ns));
+                std.Thread.sleep(@intCast(target_frame_time_ns - frame_diff_ns));
 
                 // recollect frame diff times
                 new_frame_start_time = std.time.Instant.now() catch unreachable;

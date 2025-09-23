@@ -111,39 +111,39 @@ pub const GfxState = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
-        var buffers = gen.GenerationalList(Buffer).init(alloc);
+        var buffers = try gen.GenerationalList(Buffer).init(alloc);
         errdefer buffers.deinit();
 
-        var images = gen.GenerationalList(Image).init(alloc);
+        var images = try gen.GenerationalList(Image).init(alloc);
         errdefer images.deinit();
 
-        var image_views = gen.GenerationalList(ImageView).init(alloc);
+        var image_views = try gen.GenerationalList(ImageView).init(alloc);
         errdefer image_views.deinit();
 
-        var samplers = gen.GenerationalList(Sampler).init(alloc);
+        var samplers = try gen.GenerationalList(Sampler).init(alloc);
         errdefer samplers.deinit();
 
 
-        var render_passes = gen.GenerationalList(RenderPass).init(alloc);
+        var render_passes = try gen.GenerationalList(RenderPass).init(alloc);
         errdefer render_passes.deinit();
 
-        var graphics_pipelines = gen.GenerationalList(GraphicsPipeline).init(alloc);
+        var graphics_pipelines = try gen.GenerationalList(GraphicsPipeline).init(alloc);
         errdefer graphics_pipelines.deinit();
 
-        var framebuffers = gen.GenerationalList(FrameBuffer).init(alloc);
+        var framebuffers = try gen.GenerationalList(FrameBuffer).init(alloc);
         errdefer framebuffers.deinit();
 
 
-        var descriptor_layouts = gen.GenerationalList(DescriptorLayout).init(alloc);
+        var descriptor_layouts = try gen.GenerationalList(DescriptorLayout).init(alloc);
         errdefer descriptor_layouts.deinit();
         
-        var descriptor_pools = gen.GenerationalList(DescriptorPool).init(alloc);
+        var descriptor_pools = try gen.GenerationalList(DescriptorPool).init(alloc);
         errdefer descriptor_pools.deinit();
 
-        var descriptor_sets = gen.GenerationalList(DescriptorSet).init(alloc);
+        var descriptor_sets = try gen.GenerationalList(DescriptorSet).init(alloc);
         errdefer descriptor_sets.deinit();
 
-        var command_pools = gen.GenerationalList(CommandPool).init(alloc);
+        var command_pools = try gen.GenerationalList(CommandPool).init(alloc);
         errdefer command_pools.deinit();
 
 
@@ -941,10 +941,8 @@ pub const Image = struct {
 
     info: ImageInfo,
     platform: GfxState.Platform.Image,
-    child_views: std.ArrayList(ImageView.Ref),
 
-    pub fn deinit(self: *const Image) void {
-        self.child_views.deinit();
+    pub fn deinit(self: *Image) void {
         self.platform.deinit();
     }
 
@@ -999,14 +997,28 @@ pub const Image = struct {
         return Image {
             .platform = platform,
             .info = modified_info,
-            .child_views = std.ArrayList(ImageView.Ref).init(eng.get().general_allocator),
         };
     }
 
-    pub fn reinit(self: *Image) !void {
-        const new_image = try Image.init_standalone(self.info, null);
-        self.deinit();
-        self.* = new_image;
+    pub fn reinit(self: *Image, image_ref: Image.Ref) !void {
+        // copy old image
+        var old_image = self.*;
+
+        // create and set new image
+        self.* = try Image.init_standalone(self.info, null);
+
+        // reinitialise all image views that refer to old image
+        for (GfxState.get().image_views.data.items) |*maybe_image_view| {
+            if (maybe_image_view.item_data) |*image_view| {
+                if (image_view.info.image.eql(image_ref)) {
+                    image_view.deinit();
+                    image_view.* = try ImageView.init_standalone(image_view.info);
+                }
+            }
+        }
+
+        // finally deinit old image
+        old_image.deinit();
     }
 
     pub const MapOptions = struct {
@@ -1064,16 +1076,12 @@ pub const ImageView = struct {
     }
 
     pub fn init(info: ImageViewInfo) !ImageView.Ref {
-        const image = try info.image.get();
-
         const view = try ImageView.init_standalone(info);
 
         const view_ref = ImageView.Ref {
             .id = try GfxState.get().image_views.insert(view),
         };
         errdefer GfxState.get().image_views.remove(view_ref.id) catch {};
-
-        try image.child_views.append(view_ref);
 
         return view_ref;
     }
@@ -1106,12 +1114,6 @@ pub const ImageView = struct {
                 .height = @divFloor(image.info.height, std.math.pow(u32, 2, adjusted_info.mip_levels.?.base_mip_level)),
             },
         };
-    }
-
-    pub fn reinit(self: *ImageView) !void {
-        const new_view = try ImageView.init_standalone(self.info);
-        self.deinit();
-        self.* = new_view;
     }
 };
 

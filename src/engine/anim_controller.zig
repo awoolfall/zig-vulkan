@@ -14,7 +14,6 @@ pub const AnimController = struct {
     const Self = @This();
     arena: std.heap.ArenaAllocator,
     variables: std.AutoHashMap(u32, f32),
-    triggered_events: std.ArrayList(u32),
     nodes: []Node,
     active_node: usize = 0,
     base_animation: ?as.AnimationAssetId = null,
@@ -30,7 +29,6 @@ pub const AnimController = struct {
 
     pub fn deinit(self: *Self) void {
         self.variables.deinit();
-        self.triggered_events.deinit();
         self.arena.deinit();
     }
     
@@ -58,7 +56,6 @@ pub const AnimController = struct {
         return AnimController{
             .arena = arena,
             .variables = variables,
-            .triggered_events = try std.ArrayList(u32).initCapacity(alloc, 4),
             .nodes = owned_nodes,
             .base_animation = desc.base_animation,
         };
@@ -158,7 +155,7 @@ pub const AnimController = struct {
     }
 
     /// Generates the bone transform matricies for the current active node and any transitioning nodes.
-    pub fn calculate_bone_transforms(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, out_transforms: []zm.Mat) void {
+    pub fn calculate_bone_transforms(self: *Self, alloc: std.mem.Allocator, asset_manager: *as.AssetManager, model: *const ms.Model, out_transforms: []zm.Mat) void {
         // calculate the transforms for the current active node
         var active_node_transforms = [_]Transform{.{}} ** ms.MAX_BONES;
         self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[self.active_node], active_node_transforms[0..]);
@@ -177,7 +174,7 @@ pub const AnimController = struct {
         
         // generate and return the final bone transforms
         @memset(out_transforms[0..], zm.identity());
-        model.generate_bone_transforms_for_pose(active_node_transforms[0..], out_transforms[0..]);
+        model.generate_bone_transforms_for_pose(alloc, active_node_transforms[0..], out_transforms[0..]);
     }
 
     /// Hashes a variable id for future use.
@@ -207,12 +204,35 @@ pub const AnimController = struct {
 
     /// Triggers an event specified by the hashed event id.
     pub fn trigger_event_by_id(self: *Self, event_id: u32) void {
-        self.triggered_events.append(event_id) catch unreachable;
+        const active_node = &self.nodes[self.active_node];
+        for (active_node.next) |*node_transition| {
+            switch (node_transition.condition) {
+                .Event => |e| {
+                    if (event_id == e.variable_id) {
+                        self.perform_transition(node_transition);
+                        break;
+                    }
+                },
+                else => {}
+            }
+        }
     }
 
     /// Triggers an event specified by the event name.
     pub fn trigger_event(self: *Self, event_name: []const u8) void {
         self.trigger_event_by_id(Self.hash_variable(event_name));
+    }
+
+    fn perform_transition(self: *Self, transition: *const NodeTransition) void {
+        self.current_transition = .{
+            .node_0 = self.active_node,
+            .node_1 = transition.node,
+            .time_since_start = 0.0,
+            .transition_duration = transition.transition_duration,
+            .transition_easing = transition.transition_easing,
+        };
+        self.active_node = transition.node;
+        self.nodes[self.active_node].time = 0.0;
     }
 
     /// Updates the animation controller state and transitions to a new node if necessary.
@@ -244,26 +264,11 @@ pub const AnimController = struct {
                         .GreaterThan => break :cblk (value > v.value),
                     }
                 },
-                .Event => |e| {
-                    for (self.triggered_events.items) |triggered_event| {
-                        if (triggered_event == e.variable_id) {
-                            break :cblk true;
-                        }
-                    }
-                    break :cblk false;
-                },
+                else => break :cblk false,
             } };
 
             if (should_transition) {
-                self.current_transition = .{
-                    .node_0 = self.active_node,
-                    .node_1 = t.node,
-                    .time_since_start = 0.0,
-                    .transition_duration = t.transition_duration,
-                    .transition_easing = t.transition_easing,
-                };
-                self.active_node = t.node;
-                self.nodes[self.active_node].time = 0.0;
+                self.perform_transition(&t);
                 break :forblk;
             }
         }
@@ -284,9 +289,6 @@ pub const AnimController = struct {
 
         // update base animation time
         self.base_animation_time += time.delta_time();
-
-        // clear triggered events
-        self.triggered_events.clearRetainingCapacity();
     }
 };
 

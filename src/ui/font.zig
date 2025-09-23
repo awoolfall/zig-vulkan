@@ -106,12 +106,12 @@ pub const Font = struct {
     frame_texts: std.ArrayList(TextRenderInfo),
 
     pub fn deinit(self: *Font) void {
-        self.frame_texts.deinit();
+        self.frame_texts.deinit(eng.get().general_allocator);
 
         for (self.text_props_buffers.items) |*b| { b.deinit(); }
-        self.text_props_buffers.deinit();
+        self.text_props_buffers.deinit(eng.get().general_allocator);
         for (self.character_vertex_buffers.items) |b| { b.deinit(); }
-        self.character_vertex_buffers.deinit();
+        self.character_vertex_buffers.deinit(eng.get().general_allocator);
 
         self.buffers_descriptor_pool.deinit();
         self.buffers_descriptor_layout.deinit();
@@ -409,14 +409,14 @@ pub const Font = struct {
         }
 
         // create arrays
-        const character_vertex_buffers = std.ArrayList(_gfx.Buffer.Ref).init(eng.get().general_allocator);
-        errdefer character_vertex_buffers.deinit();
+        var character_vertex_buffers = try std.ArrayList(_gfx.Buffer.Ref).initCapacity(eng.get().general_allocator, 4);
+        errdefer character_vertex_buffers.deinit(eng.get().general_allocator);
 
-        const text_props_buffers = std.ArrayList(FontTextBufferData).init(eng.get().general_allocator);
-        errdefer text_props_buffers.deinit();
+        var text_props_buffers = try std.ArrayList(FontTextBufferData).initCapacity(eng.get().general_allocator, 4);
+        errdefer text_props_buffers.deinit(eng.get().general_allocator);
 
-        const frame_texts = std.ArrayList(TextRenderInfo).init(eng.get().general_allocator);
-        errdefer frame_texts.deinit();
+        var frame_texts = try std.ArrayList(TextRenderInfo).initCapacity(eng.get().general_allocator, 16);
+        errdefer frame_texts.deinit(eng.get().general_allocator);
 
         return Font {
             .atlas_details = atlas_details,
@@ -475,7 +475,7 @@ pub const Font = struct {
             },
         });
 
-        try self.text_props_buffers.append(FontTextBufferData {
+        try self.text_props_buffers.append(eng.get().general_allocator, FontTextBufferData {
             .text_buffer = new_buffer,
             .descriptor_set = descriptor_set,
         });
@@ -489,7 +489,7 @@ pub const Font = struct {
         );
         errdefer new_buffer.deinit();
 
-        try self.character_vertex_buffers.append(new_buffer);
+        try self.character_vertex_buffers.append(eng.get().general_allocator, new_buffer);
     }
 
     pub const FontRenderProperties2D = struct {
@@ -510,7 +510,7 @@ pub const Font = struct {
         const owned_text = try alloc.dupe(u8, text);
         errdefer alloc.free(owned_text);
 
-        try self.frame_texts.append(TextRenderInfo {
+        try self.frame_texts.append(eng.get().general_allocator, TextRenderInfo {
             .text = owned_text,
             .position = zm.f32x4(props.position.x, props.position.y, props.z_value, 0.0),
             .fg_colour = props.colour,

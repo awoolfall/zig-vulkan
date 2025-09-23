@@ -1,5 +1,8 @@
-const zwindows = @import("zwindows");
-const w32 = zwindows.windows;
+const w32 = @cImport({
+    @cDefine("WIN32_LEAN_AND_MEAN", "1");
+    @cInclude("windows.h");
+    @cInclude("winuser.h");
+});
 const kc = @import("../input/keycode.zig");
 const KeyCode = kc.KeyCode;
 

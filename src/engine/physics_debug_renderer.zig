@@ -19,6 +19,8 @@ const SHADER_SLANG = @embedFile("physics_debug_renderer.slang");
 
 pub const D3D11DebugRenderer = extern struct {
     const MyRenderPrimitive = struct {
+        linked_list_node: std.DoublyLinkedList.Node,
+
         buffer: gfx.Buffer.Ref,
         num_vertices: u32 = 0,
         indices_offset: u32 = 0,
@@ -34,8 +36,10 @@ pub const D3D11DebugRenderer = extern struct {
     };
 
     const Data = struct {
-        primitives: std.DoublyLinkedList(MyRenderPrimitive),
         alloc: std.mem.Allocator,
+
+        primitives: std.DoublyLinkedList,
+
         vertex_shader: gfx.VertexShader,
         pixel_shader: gfx.PixelShader,
         render_pass: gfx.RenderPass.Ref,
@@ -43,11 +47,12 @@ pub const D3D11DebugRenderer = extern struct {
         framebuffer: gfx.FrameBuffer.Ref,
 
         pub fn deinit(self: *Data) void {
-            while (self.primitives.pop()) |prim| {
-                prim.data.deinit();
+            while (self.primitives.pop()) |node| {
+                const prim: *MyRenderPrimitive = @fieldParentPtr("linked_list_node", node);
+                prim.deinit();
                 self.alloc.destroy(prim);
             }
-
+            
             self.framebuffer.deinit();
             self.pipeline.deinit();
             self.render_pass.deinit();
@@ -78,7 +83,6 @@ pub const D3D11DebugRenderer = extern struct {
         }
     };
 
-    usingnamespace zphy.DebugRenderer.Methods(@This());
     __v: *const zphy.DebugRenderer.VTable(@This()) = &vtable,
 
     data: *Data,
@@ -91,6 +95,7 @@ pub const D3D11DebugRenderer = extern struct {
         .drawTriangle = drawTriangle,
         .createTriangleBatch = createTriangleBatch,
         .createTriangleBatchIndexed = createTriangleBatchIndexed,
+        .destroyTriangleBatch = destroyTriangleBatch,
         .drawGeometry = drawGeometry,
         .drawText3D = drawText3D,
     };
@@ -199,7 +204,7 @@ pub const D3D11DebugRenderer = extern struct {
 
         data.* = .{
             .alloc = eng.get().general_allocator,
-            .primitives = std.DoublyLinkedList(MyRenderPrimitive){},
+            .primitives = .{},
             .vertex_shader = vertex_shader,
             .pixel_shader = pixel_shader,
             .render_pass = render_pass,
@@ -256,7 +261,7 @@ pub const D3D11DebugRenderer = extern struct {
         from: *const [3]zphy.Real,
         to: *const [3]zphy.Real,
         color: zphy.DebugRenderer.Color,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         _ = self;
         _ = from;
         _ = to;
@@ -270,7 +275,7 @@ pub const D3D11DebugRenderer = extern struct {
         v2: *const [3]zphy.Real,
         v3: *const [3]zphy.Real,
         color: zphy.DebugRenderer.Color,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         _ = self;
         _ = v1;
         _ = v2;
@@ -283,17 +288,14 @@ pub const D3D11DebugRenderer = extern struct {
         self: *D3D11DebugRenderer,
         triangles: [*]zphy.DebugRenderer.Triangle,
         triangle_count: u32,
-    ) callconv(.C) *anyopaque {
+    ) callconv(.c) *zphy.DebugRenderer.TriangleBatch {
         const alloc = self.data.alloc;
 
-        const prim = alloc.create(std.DoublyLinkedList(MyRenderPrimitive).Node) catch |err| {
+        const prim = alloc.create(MyRenderPrimitive) catch |err| {
             std.log.err("Unable to add physics debug primitive: {}", .{err});
             unreachable;
         };
         errdefer alloc.destroy(prim);
-
-        self.data.primitives.append(prim);
-        errdefer _ = self.data.primitives.pop();
 
         var buffer_data = alloc.alloc(Vertex, triangle_count * 3) catch unreachable;
         defer alloc.free(buffer_data);
@@ -313,14 +315,18 @@ pub const D3D11DebugRenderer = extern struct {
         };
         errdefer buffer.deinit();
 
-        prim.data = MyRenderPrimitive {
+        prim.* = MyRenderPrimitive {
+            .linked_list_node = undefined,
             .buffer = buffer,
             .num_vertices = triangle_count * 3,
             .indices_offset = 0,
             .num_indices = 0,
         };
 
-        return zphy.DebugRenderer.createTriangleBatch(&prim.data);
+        self.data.primitives.append(&prim.linked_list_node);
+        errdefer self.data.primitives.remove(&prim.linked_list_node);
+
+        return zphy.DebugRenderer.createTriangleBatch(prim);
     }
 
     fn createTriangleBatchIndexed(
@@ -329,17 +335,14 @@ pub const D3D11DebugRenderer = extern struct {
         vertex_count: u32,
         indices: [*]u32,
         index_count: u32,
-    ) callconv(.C) *anyopaque {
+    ) callconv(.c) *zphy.DebugRenderer.TriangleBatch {
         const alloc = self.data.alloc;
 
-        const prim = alloc.create(std.DoublyLinkedList(MyRenderPrimitive).Node) catch |err| {
+        const prim = alloc.create(MyRenderPrimitive) catch |err| {
             std.log.err("Unable to add physics debug primitive: {}", .{err});
             unreachable;
         };
         errdefer alloc.destroy(prim);
-
-        self.data.primitives.append(prim);
-        errdefer _ = self.data.primitives.pop();
 
         const vertices_byte_length = @sizeOf(Vertex) * vertex_count;
         const indices_byte_length = @sizeOf(u32) * index_count;
@@ -364,14 +367,26 @@ pub const D3D11DebugRenderer = extern struct {
         };
         errdefer buffer.deinit();
 
-        prim.data = MyRenderPrimitive {
+        prim.* = MyRenderPrimitive {
+            .linked_list_node = undefined,
             .buffer = buffer,
             .num_vertices = vertex_count,
             .indices_offset = vertices_byte_length,
             .num_indices = index_count,
         };
 
-        return zphy.DebugRenderer.createTriangleBatch(&prim.data);
+        self.data.primitives.append(&prim.linked_list_node);
+        errdefer self.data.primitives.remove(&prim.linked_list_node);
+
+        return zphy.DebugRenderer.createTriangleBatch(prim);
+    }
+
+    fn destroyTriangleBatch(
+        self: *D3D11DebugRenderer,
+        batch: *anyopaque,
+    ) callconv(.c) void {
+        _ = self;
+        _ = batch;
     }
 
     fn drawGeometry(
@@ -384,7 +399,7 @@ pub const D3D11DebugRenderer = extern struct {
         cull_mode: zphy.DebugRenderer.CullMode,
         cast_shadow: zphy.DebugRenderer.CastShadow,
         draw_mode: zphy.DebugRenderer.DrawMode,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         _ = world_space_bound;
         _ = lod_scale_sq;
         _ = cull_mode;
@@ -447,7 +462,7 @@ pub const D3D11DebugRenderer = extern struct {
         string: [*:0]const u8,
         color: zphy.DebugRenderer.Color,
         height: f32,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         _ = self;
         _ = positions;
         _ = string;

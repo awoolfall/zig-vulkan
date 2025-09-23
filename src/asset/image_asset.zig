@@ -271,13 +271,16 @@ pub const ImageAsset = struct {
     /// Creates an array image from a directory of image files named as just the layer they take
     /// i.e an asset_dir containing 3 files: '0.png, 1.png, 2.png' produces image array with 3 layers.
     fn load_image_array(alloc: std.mem.Allocator, asset_dir: std.fs.Dir) !gf.Image.Ref {
-        var images_list = std.ArrayList(?im.Image).init(alloc);
-        defer images_list.deinit();
-        defer for (images_list.items) |*maybe_image| {
+        const MAX_IMAGES = 16;
+        var images_buffer: [MAX_IMAGES]?im.Image = [_]?im.Image{ null } ** MAX_IMAGES;
+        defer for (&images_buffer) |*maybe_image| {
             if (maybe_image.*) |*image| {
                 image.deinit();
             }
         };
+
+        var lowest_image_idx: usize = std.math.maxInt(usize);
+        var highest_image_idx: usize = std.math.minInt(usize);
 
         var dir_iter = asset_dir.iterate();
         while (try dir_iter.next()) |item| {
@@ -288,19 +291,15 @@ pub const ImageAsset = struct {
                     continue;
                 };
 
-                if (filename_int > 16) {
+                if (filename_int > MAX_IMAGES) {
                     std.log.warn("Image array filename integer was larger than the maximum, 16. '{s}'", .{item.name});
                     continue;
-                }
-
-                if (images_list.items.len <= filename_int) {
-                    try images_list.appendNTimes(null, (filename_int + 1) - images_list.items.len);
                 }
 
                 const absolute_file_path = try asset_dir.realpathAlloc(alloc, item.name);
                 defer alloc.free(absolute_file_path);
 
-                if (images_list.items[filename_int] != null) {
+                if (images_buffer[filename_int] != null) {
                     std.log.err("Failed loading image array as image already exists at index '{s}'", .{absolute_file_path});
                     return error.ImageAlreadyExistsAtIndex;
                 }
@@ -315,17 +314,21 @@ pub const ImageAsset = struct {
                 };
                 errdefer image.deinit();
 
-                images_list.items[filename_int] = image;
+                lowest_image_idx = @min(lowest_image_idx, filename_int);
+                highest_image_idx = @max(highest_image_idx, filename_int);
+
+                images_buffer[filename_int] = image;
             }
         }
 
-        const first_image: *im.Image = for (images_list.items) |*maybe_image| {
-            if (maybe_image.*) |*image| {
-                break image;
-            }
-        } else return error.NoImagesExistInDirectory;
+        const first_image: *im.Image =
+            if (lowest_image_idx < MAX_IMAGES)
+                &(images_buffer[lowest_image_idx] orelse return error.NoImageInLowestIdx)
+            else return error.NoImagesExistInDirectory;
 
-        for (images_list.items) |*maybe_image| {
+        const array_count = highest_image_idx + 1;
+
+        for (&images_buffer) |*maybe_image| {
             if (maybe_image.*) |*image| {
                 const image_dimensions_match =
                     (image.height == first_image.height) and
@@ -349,7 +352,7 @@ pub const ImageAsset = struct {
             first_image.height *
             first_image.num_components *
             first_image.bytes_per_component;
-        const staging_buffer_byte_length = staging_buffer_image_byte_length * images_list.items.len;
+        const staging_buffer_byte_length = staging_buffer_image_byte_length * array_count;
 
         const staging_buffer = try gf.Buffer.init(
             @intCast(staging_buffer_byte_length),
@@ -363,7 +366,9 @@ pub const ImageAsset = struct {
             defer mapped_staging_buffer.unmap();
 
             const data = mapped_staging_buffer.data_array(u8, staging_buffer_byte_length);
-            for (images_list.items, 0..) |*maybe_image, idx| {
+            for (0..highest_image_idx) |idx| {
+                const maybe_image = &images_buffer[idx];
+
                 const start = staging_buffer_image_byte_length * idx;
                 const end = start + staging_buffer_image_byte_length;
 
@@ -381,7 +386,7 @@ pub const ImageAsset = struct {
                 .width = first_image.width,
                 .depth = 1,
                 .format = try determine_image_format(first_image),
-                .array_length = @intCast(images_list.items.len),
+                .array_length = @intCast(array_count),
                 .mip_levels = 1,
 
                 .usage_flags = .{ .TransferDst = true, .ShaderResource = true, },
@@ -407,7 +412,7 @@ pub const ImageAsset = struct {
                 .copy_regions = &.{
                     gf.CommandBuffer.CopyRegionInfo {
                         .base_array_layer = 0,
-                        .layer_count = @intCast(images_list.items.len),
+                        .layer_count = @intCast(array_count),
                         .image_extent = .{ first_image.width, first_image.height, 1 },
                     },
                 },

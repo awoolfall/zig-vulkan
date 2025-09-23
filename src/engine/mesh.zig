@@ -75,18 +75,28 @@ pub const MaterialTemplate = struct {
 };
 
 pub const MeshPrimitive = struct {
-    num_indices: usize,
-    num_vertices: usize,
+    pub const STRIDE =  @sizeOf([3]f32)     // positions
+                    +   @sizeOf([3]f32)     // normals
+                    +   @sizeOf([3]f32)     // tangents
+                    +   @sizeOf([3]f32)     // bitangents
+                    +   @sizeOf([2]f32)     // tex_coords
+                    +   @sizeOf([4]i32)     // bone_ids
+                    +   @sizeOf([4]f32);    // bone_weights
+
+    index_count: usize,
+    vertex_count: usize,
+
     indices_offset: usize,
-    pos_offset: usize,
-    stride_bytes: usize,
+    vertices_offset: usize,
+
     topology: PrimitiveTopology,
     material_template: ?usize,
-    positions: [][3]f32,
+
+    bounding_box: BoundingBox,
 
     // Check whether the mesh primitive has indices
     pub inline fn has_indices(self: *const MeshPrimitive) bool {
-        return self.num_indices != 0;
+        return self.index_count != 0;
     }
 };
 
@@ -101,11 +111,19 @@ pub const BoundingBox = struct {
 
 pub const MAX_PRIMITIVES_PER_SET = 8;
 pub const MeshSet = struct {
-    primitives: [MAX_PRIMITIVES_PER_SET]?usize,
-    physics_shape_settings: *zphy.ShapeSettings,
+    primitives: [MAX_PRIMITIVES_PER_SET]usize,
+    num_primitives: usize,
+
+    physics_shape_settings: ?*zphy.ShapeSettings = null,
 
     pub fn deinit(self: *const MeshSet) void {
-        self.physics_shape_settings.release();
+        if (self.physics_shape_settings) |shape_settings| {
+            shape_settings.release();
+        }
+    }
+
+    pub inline fn primitives_slice(self: *const MeshSet) []const usize {
+        return self.primitives[0..self.num_primitives];
     }
 
     fn generate_physics_shape(self: *MeshSet, alloc: std.mem.Allocator, prims: []MeshPrimitive) !void {
@@ -130,15 +148,14 @@ pub const MeshSet = struct {
 pub const ModelNode = struct {
     name: ?[]u8 = null,
     transform: Transform = Transform {},
-    mesh: ?MeshSet = null,
-    children: []usize = ([_]usize{})[0..0],
+    mesh_set: ?MeshSet = null,
     parent: ?usize = null,
 
     pub fn deinit(self: *ModelNode) void {
-        if (self.mesh) |*mesh| {
+        if (self.mesh_set) |*mesh| {
             mesh.deinit();
         }
-        self.mesh = null;
+        self.mesh_set = null;
     }
 };
 
@@ -277,18 +294,22 @@ pub const Buffers = struct {
 pub const MAX_BONES: usize = 256;
 pub const Model = struct {
     const Self = @This();
-    buffers: Buffers,
-    mesh_list: []MeshPrimitive,
-    nodes_list: []ModelNode,
-    root_nodes: []usize,
+
+    arena_allocator: std.heap.ArenaAllocator,
+
+    vertices_buffer: gf.Buffer.Ref,
+    indices_buffer: gf.Buffer.Ref,
+
+    nodes: []ModelNode,
+
+    meshes: []MeshPrimitive,
     animations: []an.BoneAnimation,
     materials: []MaterialTemplate,
     textures: []gf.Image.Ref,
-    arena_allocator: *std.heap.ArenaAllocator,
 
     global_inverse_transform: zm.Mat,
-    bone_mapping: std.StringHashMap(i32),
-    bone_info: std.ArrayList(BoneInfo),
+    bones_names_map: std.StringHashMap(i32),
+    bones_info: []BoneInfo,
 
     bounding_box: BoundingBox,
 
@@ -299,26 +320,22 @@ pub const Model = struct {
         for (self.textures) |tex| {
             tex.deinit();
         }
-        for (self.nodes_list) |*node| {
+        for (self.nodes) |*node| {
             node.deinit();
         }
 
-        self.bone_mapping.deinit();
-        self.bone_info.deinit();
+        self.bones_names_map.deinit();
+        self.arena_allocator.allocator().free(self.bones_info);
+
+        self.vertices_buffer.deinit();
+        self.indices_buffer.deinit();
 
         self.arena_allocator.deinit();
-        self.arena_allocator.child_allocator.destroy(self.arena_allocator);
-
-        self.buffers.deinit();
     }
 
     fn create_gfx_texture_from_assimp_texture(tex: assimp.Texture.Ptr, format: gf.ImageFormat) !gf.Image.Ref {
-        var data: []const u8 = undefined;
-        if (tex.compressed_data()) |compressed_data| {
-            data = compressed_data;
-        } else {
-            data = tex.data_u8_bgra().?;
-        }
+        const data = if (tex.compressed_data()) |compressed_data| compressed_data
+                     else tex.data_u8_bgra().?;
 
         var image = try zstbi.Image.loadFromMemory(data, 4);
         defer image.deinit();
@@ -339,16 +356,185 @@ pub const Model = struct {
         );
     }
 
+    const BONE_SENTINEL_ID = 0;
+    const BoneInsertionNode = struct {
+        idx: usize = BONE_SENTINEL_ID,
+        weight: f32 = 0.0,
+    };
+
+    fn bone_insertion_sort(buffer: []BoneInsertionNode, new_node: BoneInsertionNode) void {
+        for (buffer[0..], 0..) |node, idx| {
+            if (node.weight < new_node.weight) {
+                if (idx < (buffer.len - 1)) {
+                    @memmove(buffer[(idx + 1)..], buffer[idx..(buffer.len - 1)]);
+                }
+                buffer[idx] = new_node;
+                break;
+            }
+        }
+    }
+
+    fn vertex_has_a_bone(bone_buffer: []BoneInsertionNode) bool {
+        for (bone_buffer) |b| {
+            if (b.idx != BONE_SENTINEL_ID) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const VertexData = extern struct {
+        position: [3]f32 = .{ 0.0, 0.0, 0.0 },
+        normal: [3]f32 = .{ 0.0, 0.0, 1.0 },
+        tangent: [3]f32 = .{ 1.0, 0.0, 0.0 },
+        bitangent: [3]f32 = .{ 0.0, 1.0, 0.0 },
+        tex_coord: [2]f32 = .{ 0.0, 0.0 },
+        bone_ids: [4]i32 = .{ 0, 0, 0, 0 },
+        bone_weights: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 },
+    };
+
+    fn assimp_write_mesh_vertex_data(writer: *std.io.Writer, assimp_mesh: assimp.Mesh.Ptr) !void {
+        if (assimp_mesh.vertices() == null) {
+            return error.MeshHasNoVertices;
+        }
+
+        var highest_number_of_bones_used_for_vertex: usize = 0;
+
+        for (assimp_mesh.vertices().?, 0..) |av, idx| {
+            var bones_found_for_vertex: usize = 0;
+            var affecting_bones_buffer: [4]BoneInsertionNode = [_]BoneInsertionNode{ .{ .idx = 0, .weight = 0.0, } } ** 4;
+
+            for (assimp_mesh.bones(), 0..) |b, bone_idx| {
+                for (b.weights()) |bw| {
+                    if (bw.mVertexId == idx) {
+                        bone_insertion_sort(affecting_bones_buffer[0..], BoneInsertionNode {
+                            .idx = bone_idx,
+                            .weight = bw.mWeight,
+                        });
+                        bones_found_for_vertex += 1;
+                    }
+                }
+            }
+
+            const afb = if (vertex_has_a_bone(&affecting_bones_buffer)) affecting_bones_buffer else null;
+
+            const vertex_data = .{
+                .position = [3]f32 { av.x, av.y, av.z },
+                .normal =   if (assimp_mesh.tangents()) |t| [3]f32 { t[idx].x, t[idx].y, t[idx].z }
+                            else [3]f32 { 0.0, 1.0, 0.0 },
+                .tangent =  if (assimp_mesh.tangents()) |t| [3]f32 { t[idx].x, t[idx].y, t[idx].z }
+                            else [3]f32 { 0.0, 1.0, 0.0 },
+                .bitangent =    if (assimp_mesh.bitangents()) |b| [3]f32 { b[idx].x, b[idx].y, b[idx].z }
+                                else [3]f32 { 1.0, 0.0, 0.0 },
+                .tex_coord =    if (assimp_mesh.texcoords(0)) |t| [2]f32 { t[idx].x, t[idx].y }
+                                else [2]f32 { 0.0, 0.0 },
+                .bone_ids =     if (afb) |b| [4]i32 { @intCast(b[0].idx), @intCast(b[1].idx), @intCast(b[2].idx), @intCast(b[3].idx) }
+                                else [4]i32{ 0, 0, 0, 0 },
+                .bone_weights = if (afb) |b| [4]f32 { b[0].weight, b[1].weight, b[2].weight, b[3].weight, }
+                                else [4]f32 { 1.0, 0.0, 0.0, 0.0 },
+            };
+
+            try writer.writeAll(std.mem.asBytes(&vertex_data));
+
+            highest_number_of_bones_used_for_vertex = @max(highest_number_of_bones_used_for_vertex, bones_found_for_vertex);
+        }
+
+        if (highest_number_of_bones_used_for_vertex > 4) {
+            std.log.warn("Bone influences have been truncated in mesh '{s}' from {} to 4", .{
+                assimp_mesh.name(),
+                highest_number_of_bones_used_for_vertex
+            });
+        }
+    }
+
+    fn assimp_write_mesh_index_data(writer: *std.io.Writer, assimp_mesh: assimp.Mesh.Ptr) !void {
+        if (assimp_mesh.faces()) |assimp_mesh_faces| {
+            for (assimp_mesh_faces) |face| {
+                if (face.indices()) |fi| {
+                    const indices = [3]u32 { fi[0], fi[1], fi[2] };
+                    try writer.writeAll(std.mem.sliceAsBytes(&indices));
+                }
+            }
+        }
+    }
+
+    fn create_material_texture_map_from_assimp(
+        textures_names_map: *const std.StringHashMap(usize),
+        textures: []gf.Image.Ref,
+        assimp_material: assimp.Material.Ptr,
+        texture_type: assimp.TextureType,
+    ) !?MaterialTextureMap {
+        const texture_props = assimp_material.get_texture_properties(texture_type, 0)
+            orelse return null;
+
+        const texture_index =   if (assimp.index_from_embedded_texture_path(texture_props.path())) |idx| idx
+                                else textures_names_map.get(texture_props.path()) orelse return null;
+
+        return MaterialTextureMap {
+            .map = try gf.ImageView.init(.{
+                .image = textures[texture_index],
+                .view_type = .ImageView2D,
+            }),
+            .uv_index = @truncate(texture_props.uvindex),
+            .sampler = try gf.Sampler.init(.{
+                .filter_min_mag = .Linear,
+            }),
+        };
+    }
+
+    fn create_material_template_from_assimp(
+        alloc: std.mem.Allocator,
+        textures_names_map: *const std.StringHashMap(usize),
+        textures: []gf.Image.Ref,
+        assimp_material: assimp.Material.Ptr
+    ) !MaterialTemplate {
+        var material = MaterialTemplate {};
+
+        var material_property_map = std.StringHashMap(assimp.MaterialProperty.Ptr).init(alloc);
+        defer material_property_map.deinit();
+
+        // fill property map
+        material_property_map.clearRetainingCapacity();
+        for (assimp_material.properties()) |prop| {
+            try material_property_map.put(prop.key(), prop);
+        }
+
+        // collect material properties
+        if (material_property_map.get("$mat.twosided")) |prop| {
+            material.double_sided = prop.data_bytes()[0] != 0;
+        }
+        if (material_property_map.get("$mat.metallicFactor")) |prop| {
+            material.metallic_factor = prop.data_f32();
+        }
+        if (material_property_map.get("$mat.roughnessFactor")) |prop| {
+            material.roughness_factor = prop.data_f32();
+        }
+        if (material_property_map.get("$mat.shininess")) |prop| {
+            material.shininess = prop.data_f32();
+        }
+        if (material_property_map.get("$mat.emissive")) |prop| {
+            material.emissiveness = prop.data_f32();
+        }
+        if (material_property_map.get("$mat.opacity")) |prop| {
+            material.opacity = prop.data_f32();
+        }
+        if (material_property_map.get("$mat.gltf.unlit")) |prop| {
+            material.unlit = prop.data_bytes()[0] != 0;
+        }
+
+        // collect material texture properties
+        material.diffuse_map = try create_material_texture_map_from_assimp(textures_names_map, textures, assimp_material, assimp.TextureType.Diffuse);
+        material.normals_map = try create_material_texture_map_from_assimp(textures_names_map, textures, assimp_material, assimp.TextureType.Normals);
+    
+        return material;
+    }
+
     pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
 
-        var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
-        errdefer alloc.destroy(model_arena_allocator);
-
-        model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
-        errdefer model_arena_allocator.deinit();
-        var model_arena = model_arena_allocator.allocator();
+        var model_arena = std.heap.ArenaAllocator.init(alloc);
+        errdefer model_arena.deinit();
 
         var local_arena = std.heap.ArenaAllocator.init(alloc);
         defer local_arena.deinit();
@@ -370,14 +556,96 @@ pub const Model = struct {
             &prop_store);
         defer assimp.aiReleaseImport(scene);
 
-        // textures
-        const textures = try model_arena.alloc(gf.Image.Ref, scene.textures().len);
-        errdefer model_arena.free(textures);
-        // TODO there is a gpu leak here... check the full file.
+        // Meshes //
+        const meshes = try model_arena.allocator().alloc(MeshPrimitive, scene.meshes().len);
+        errdefer model_arena.allocator().free(meshes);
 
-        const texture_created = try local_arena.allocator().alloc(bool, scene.textures().len);
-        @memset(texture_created[0..], false);
-        defer local_arena.allocator().free(texture_created);
+        var mesh_vertex_data_writer = std.io.Writer.Allocating.init(alloc);
+        defer mesh_vertex_data_writer.deinit();
+
+        var mesh_index_data_writer = std.io.Writer.Allocating.init(alloc);
+        defer mesh_index_data_writer.deinit();
+
+        var mesh_local_arena = std.heap.ArenaAllocator.init(alloc);
+        defer mesh_local_arena.deinit();
+
+        for (scene.meshes(), 0..) |assimp_mesh, mesh_idx| {
+            const start_vertices_offset = mesh_vertex_data_writer.written().len;
+            const mesh_vertex_count = (assimp_mesh.vertices() orelse return error.MeshHasNoVertices).len;
+
+            const start_indices_offset = mesh_index_data_writer.written().len;
+            const mesh_index_count = if (assimp_mesh.faces()) |faces| (faces.len * 3) else 0;
+
+            try assimp_write_mesh_vertex_data(&mesh_vertex_data_writer.writer, assimp_mesh);
+            try assimp_write_mesh_index_data(&mesh_index_data_writer.writer, assimp_mesh);
+
+            std.debug.assert(@divExact(mesh_vertex_data_writer.written().len - start_vertices_offset, mesh_vertex_count) == MeshPrimitive.STRIDE);
+
+            const positions = try mesh_local_arena.allocator().alloc([3]f32, assimp_mesh.vertices().?.len);
+            defer mesh_local_arena.allocator().free(positions);
+
+            var min_bounds = zm.f32x4s(std.math.floatMax(f32));
+            var max_bounds = zm.f32x4s(std.math.floatMin(f32));
+
+            for (assimp_mesh.vertices().?, 0..) |vertex, vertex_index| {
+                positions[vertex_index] = [3]f32 { vertex.x, vertex.y, vertex.z };
+
+                const position = zm.loadArr3(positions[vertex_index]);
+                min_bounds = zm.min(min_bounds, position);
+                max_bounds = zm.max(max_bounds, position);
+            }
+
+            // TODO create physics shapes for meshes using positions array
+
+            meshes[mesh_idx] = MeshPrimitive {
+                .vertex_count = mesh_vertex_count,
+                .index_count = mesh_index_count,
+
+                .vertices_offset = start_vertices_offset,
+                .indices_offset = start_indices_offset,
+
+                .topology = .Triangles, // TODO set this based on assimp mesh
+                .material_template = @intCast(assimp_mesh.material_index()),
+
+                .bounding_box = .{
+                    .min = min_bounds,
+                    .max = max_bounds,
+                },
+            };
+
+            if (!mesh_local_arena.reset(.retain_capacity)) {
+                std.log.warn("Mesh loading local arena failed to reset retaining capacity", .{});
+                _ = mesh_local_arena.reset(.free_all);
+            }
+        }
+
+        const vertices_buffer = try gf.Buffer.init_with_data(
+            mesh_vertex_data_writer.written(),
+            .{ .VertexBuffer = true, },
+            .{},
+        );
+        errdefer vertices_buffer.deinit();
+
+        const indices_buffer = try gf.Buffer.init_with_data(
+            mesh_index_data_writer.written(),
+            .{ .IndexBuffer = true, },
+            .{},
+        );
+        errdefer indices_buffer.deinit();
+
+        // Textures //
+        const textures = try model_arena.allocator().alloc(gf.Image.Ref, scene.textures().len);
+        errdefer model_arena.allocator().free(textures);
+
+        var textures_list = std.ArrayList(gf.Image.Ref).initBuffer(textures);
+        errdefer for (textures_list.items) |t| { t.deinit(); };
+
+        for (scene.textures()) |assimp_texture| {
+            const texture = try create_gfx_texture_from_assimp_texture(assimp_texture, .Rgba8_Unorm_Srgb);
+            errdefer texture.deinit();
+
+            try textures_list.appendBounded(texture);
+        }
 
         var texture_names_map = std.StringHashMap(usize).init(local_arena.allocator());
         defer texture_names_map.deinit();
@@ -386,358 +654,140 @@ pub const Model = struct {
             try texture_names_map.put(tex.filename(), tex_idx);
         }
 
-        // materials
-        const materials = try model_arena.alloc(MaterialTemplate, scene.materials().len);
-        errdefer model_arena.free(materials);
-        
+        // Materials //
+        const materials = try model_arena.allocator().alloc(MaterialTemplate, scene.materials().len);
+        errdefer model_arena.allocator().free(materials);
+
+        var materials_list = std.ArrayList(MaterialTemplate).initBuffer(materials);
+        errdefer for (materials_list.items) |*m| { m.deinit(); };
+
         {
-            var material_property_map = std.StringHashMap(assimp.MaterialProperty.Ptr).init(local_arena.allocator());
-            defer material_property_map.deinit();
+            var material_property_map_arena = std.heap.ArenaAllocator.init(local_arena.allocator());
+            defer material_property_map_arena.deinit();
 
-            for (scene.materials(), 0..) |mat, mat_idx| {
-                // fill property map
-                material_property_map.clearRetainingCapacity();
-                for (mat.properties()) |prop| {
-                    material_property_map.put(prop.key(), prop) catch unreachable;
-                }
-
-                if (false) {
-                    print_material_properties(mat, mat_idx, scene);
+            for (scene.materials()) |assimp_material| {
+                if (!material_property_map_arena.reset(.retain_capacity)) {
+                    std.log.warn("Materials loading arena failed to reset retaining capacity", .{});
+                    _ = material_property_map_arena.reset(.free_all);
                 }
 
-                var material = MaterialTemplate {};
+                var material_template = try create_material_template_from_assimp(
+                    material_property_map_arena.allocator(),
+                    &texture_names_map,
+                    textures,
+                    assimp_material
+                );
+                errdefer material_template.deinit();
 
-                if (material_property_map.get("$mat.twosided")) |prop| {
-                    material.double_sided = prop.data_bytes()[0] != 0;
-                }
-                if (material_property_map.get("$mat.metallicFactor")) |prop| {
-                    material.metallic_factor = prop.data_f32();
-                }
-                if (material_property_map.get("$mat.roughnessFactor")) |prop| {
-                    material.roughness_factor = prop.data_f32();
-                }
-                if (material_property_map.get("$mat.shininess")) |prop| {
-                    material.shininess = prop.data_f32();
-                }
-                if (material_property_map.get("$mat.emissive")) |prop| {
-                    material.emissiveness = prop.data_f32();
-                }
-                if (material_property_map.get("$mat.opacity")) |prop| {
-                    material.opacity = prop.data_f32();
-                }
-                if (material_property_map.get("$mat.gltf.unlit")) |prop| {
-                    material.unlit = prop.data_bytes()[0] != 0;
-                }
-
-                if (mat.get_texture_properties(assimp.TextureType.Diffuse, 0)) |p| {
-                    var tex_idx: ?usize = null;
-                    if (assimp.index_from_embedded_texture_path(p.path())) |idx| {
-                        tex_idx = idx;
-                    } else {
-                        tex_idx = texture_names_map.get(p.path()) orelse unreachable;
-                    }
-                    if (tex_idx) |idx| {
-                        if (texture_created[idx] == false) {
-                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm_Srgb);
-                            texture_created[idx] = true;
-                        }
-
-                        material.diffuse_map = MaterialTextureMap {
-                            .map = try gf.ImageView.init(.{
-                                .image = textures[idx],
-                                .view_type = .ImageView2D,
-                            }),
-                            .uv_index = @truncate(p.uvindex),
-                            .sampler = try gf.Sampler.init(.{
-                                .filter_min_mag = .Linear,
-                            }),
-                        };
-                    }
-                }
-
-                if (mat.get_texture_properties(assimp.TextureType.Normals, 0)) |p| {
-                    var tex_idx: ?usize = null;
-                    if (assimp.index_from_embedded_texture_path(p.path())) |idx| {
-                        tex_idx = idx;
-                    } else {
-                        tex_idx = texture_names_map.get(p.path()) orelse unreachable;
-                    }
-                    if (tex_idx) |idx| {
-                        if (texture_created[idx] == false) {
-                            textures[idx] = try create_gfx_texture_from_assimp_texture(scene.textures()[idx], .Rgba8_Unorm);
-                            texture_created[idx] = true;
-                        }
-
-                        material.normals_map = MaterialTextureMap {
-                            .map = try gf.ImageView.init(.{
-                                .image = textures[idx],
-                                .view_type = .ImageView2D,
-                            }),
-                            .uv_index = @truncate(p.uvindex),
-                            .sampler = try gf.Sampler.init(.{
-                                .filter_min_mag = .Linear,
-                            }),
-                        };
-                    }
-                }
-
-                materials[mat_idx] = material;
+                try materials_list.appendBounded(material_template);
             }
         }
 
-        // Create a number of array lists to store attribute data of various types.
-        // This will later be used to construct model-wide gfx buffers.
-        var mesh_indices = std.ArrayList(u32).init(local_arena.allocator());
-        var mesh_positions = std.ArrayList([3]f32).init(local_arena.allocator());
-        var mesh_normals = std.ArrayList([3]f32).init(local_arena.allocator());
-        var mesh_tex_coords = std.ArrayList([2]f32).init(local_arena.allocator());
-        var mesh_tangents = std.ArrayList([3]f32).init(local_arena.allocator());
-        var mesh_bitangents = std.ArrayList([3]f32).init(local_arena.allocator());
+        // Nodes //
+        var nodes_list = try std.ArrayList(ModelNode).initCapacity(alloc, 128);
+        defer nodes_list.deinit(alloc);
 
-        const positions_offset = 0;
-        const normals_offset = positions_offset + @sizeOf([3]f32);
-        const tangents_offset = normals_offset + @sizeOf([3]f32);
-        const bitangents_offset = tangents_offset + @sizeOf([3]f32);
-        const tex_coords_offset = bitangents_offset + @sizeOf([3]f32);
-        const bone_id_offset = tex_coords_offset + @sizeOf([2]f32);
-        const bone_weights_offset = bone_id_offset + @sizeOf([4]i32);
-        const buffer_stride = bone_weights_offset + @sizeOf([4]f32);
+        var nodes_index_map = std.AutoHashMap(*const assimp.Node, usize).init(alloc);
+        defer nodes_index_map.deinit();
 
-        // Create an array ready to store upcoming mesh primitives
-        const mesh_primatives = try model_arena.alloc(MeshPrimitive, scene.meshes().len);
-        errdefer model_arena.free(mesh_primatives);
+        var nodes_names_map = std.StringHashMap(usize).init(alloc);
+        defer nodes_names_map.deinit();
 
-        var mesh_bone_ids = std.ArrayList([4]i32).init(local_arena.allocator());
-        var mesh_weights = std.ArrayList([4]f32).init(local_arena.allocator());
-
-        var bone_mapping = std.StringHashMap(i32).init(model_arena);
-        errdefer bone_mapping.deinit();
-
-        var bone_info = std.ArrayList(BoneInfo).init(model_arena);
-        errdefer bone_info.deinit();
-
-        var num_bones: i32 = 0;
-
-        // Assimp meshes are equivilent to MeshPrimitive,
-        // Assimp nodes contain a list of meshes. These are equivilent to MeshSet.
-        // Iterate through all assimp meshes and create MeshPrimitive for each, store These
-        // in an array for use later.
         {
-            var was_able_to_find_a_free_vertex_place = false;
-            for (scene.meshes(), 0..) |mesh, idx| {
-                var prim = MeshPrimitive {
-                    .num_indices = undefined,
-                    .num_vertices = undefined,
-                    .positions = undefined,
-                    .indices_offset = mesh_indices.items.len,
-                    .pos_offset = mesh_positions.items.len,
-                    .stride_bytes = buffer_stride,
-                    .material_template = @intCast(mesh.material_index()),
-                    .topology = .Triangles, // @TODO
-                };
+            var nodes_queue = try std.ArrayList(assimp.Node.Ptr).initCapacity(alloc, 128);
+            defer nodes_queue.deinit(alloc);
 
-                // assert assimp sizes match what we expect
-                std.debug.assert(@sizeOf(assimp.Vector3D) == @sizeOf([3]f32));
-                std.debug.assert(@sizeOf(assimp.Vector4D) == @sizeOf([4]f32));
+            try nodes_queue.append(alloc, scene.root_node().?);
+            while (nodes_queue.pop()) |assimp_node| {
+                const node_name = try model_arena.allocator().dupe(u8, assimp_node.name());
+                errdefer model_arena.allocator().free(node_name);
 
-                // copy positions
-                const start_vertices_count = mesh_positions.items.len;
-                if (mesh.vertices()) |vertices| {
-                    for (vertices) |v| {
-                        try mesh_positions.append([3]f32{ v.x, v.y, v.z });
-                    }
-                } else {
-                    return error.MeshDoesNotHaveAnyPositions;
-                }
-                prim.num_vertices = mesh_positions.items.len - start_vertices_count;
+                const parent_index = if (assimp_node.parent()) |parent_node| blk: {
+                    break :blk nodes_index_map.get(parent_node) orelse return error.ParentNodeHasNotBeenIndexed;
+                } else null;
 
-                const start_indices_count = mesh_indices.items.len;
-                if (mesh.faces()) |faces| {
-                    for (faces) |*face| {
-                        if (face.indices()) |indices| {
-                            for (indices) |i| {
-                                try mesh_indices.append(@as(u32, @intCast(i)));
-                            }
+                const mesh_set = if (assimp_node.meshes().len > 0) blk: {
+                    var mesh_set = MeshSet {
+                        .num_primitives = 0,
+                        .primitives = [1]usize{0} ** MAX_PRIMITIVES_PER_SET,
+                        .physics_shape_settings = null, // TODO
+                    };
+
+                    for (assimp_node.meshes(), 0..) |assimp_mesh_index, primitive_index| {
+                        if (primitive_index >= MAX_PRIMITIVES_PER_SET) {
+                            std.log.warn("Model node '{s}' has more than max allowable mesh primitives {} > {}", .{
+                                node_name,
+                                assimp_node.meshes().len,
+                                MAX_PRIMITIVES_PER_SET,
+                            });
+                            break;
                         }
-                    }
-                }
-                prim.num_indices = mesh_indices.items.len - start_indices_count;
-
-                // copy normals
-                if (mesh.normals()) |normals| {
-                    for (normals) |n| {
-                        try mesh_normals.append([3]f32{ n.x, n.y, n.z });
-                    }
-                }
-                // copy texcoords, converting to vec2
-                if (mesh.texcoords(0)) |texcoords| {
-                    const texcoords_v2 = try alloc.alloc([2]f32, texcoords.len);
-                    defer alloc.free(texcoords_v2);
-
-                    for (texcoords, 0..) |t, i| {
-                        texcoords_v2[i] = [2]f32{t.x, t.y};
-                    }
-
-                    try mesh_tex_coords.appendSlice(texcoords_v2);
-                }
-                // copy tangents
-                if (mesh.tangents()) |tangents| {
-                    for (tangents) |t| {
-                        try mesh_tangents.append([3]f32{ t.x, t.y, t.z });
-                    }
-                }
-                // copy bitangents
-                if (mesh.bitangents()) |bitangents| {
-                    for (bitangents) |b| {
-                        try mesh_bitangents.append([3]f32{ b.x, b.y, b.z });
-                    }
-                }
-
-                prim.positions = try model_arena.alloc([3]f32, prim.num_vertices);
-                @memcpy(prim.positions, mesh_positions.items[start_vertices_count..]);
-
-                mesh_primatives[idx] = prim;
-
-                // Fill bones data
-                try mesh_bone_ids.appendNTimes([_]i32{MAX_BONES - 1} ** 4, prim.num_vertices);
-                try mesh_weights.appendNTimes([4]f32{0.0, 0.0, 0.0, 0.0}, prim.num_vertices);
-
-                for (mesh.bones()) |bn| {
-                    const bone_name = bn.name();
-
-                    // Find bone id
-                    var bone_id: i32 = undefined;
-                    if (bone_mapping.get(bone_name)) |id| {
-                        bone_id = id;
-                    } else {
-                        bone_id = num_bones;
-                        num_bones += 1;
-
-                        const bi = BoneInfo {
-                            .bone_name = try model_arena.dupe(u8, bone_name),
-                        };
-
-                        try bone_mapping.put(bi.bone_name, bone_id);
-                        try bone_info.append(bi);
-                    }
-
-                    bone_info.items[@intCast(bone_id)].bone_offset = bn.offset_matrix();
-
-                    for (bn.weights()) |*wg| {
-                        const vertId = start_vertices_count + wg.mVertexId;
-                        const weight = wg.mWeight;
-                        std.debug.assert(weight >= 0.0);
-
-                        for (mesh_bone_ids.items[vertId], 0..) |mesh_bone_id, i| {
-                            std.debug.assert(mesh_bone_id != bone_id);
-
-                            if (weight > mesh_weights.items[vertId][i]) {
-                                for (i..(mesh_bone_ids.items[vertId].len-1)) |j| {
-                                    mesh_bone_ids.items[vertId][j+1] = mesh_bone_ids.items[vertId][j];
-                                    mesh_weights.items[vertId][j+1] = mesh_weights.items[vertId][j];
-                                }
-                                mesh_bone_ids.items[vertId][i] = bone_id;
-                                mesh_weights.items[vertId][i] = weight;
-                                was_able_to_find_a_free_vertex_place = true;
-                                break;
-                            }
+                        if (assimp_mesh_index >= meshes.len) {
+                            std.log.warn("Model node '{s}' refers to mesh primitive index that does not exist {}", .{
+                                node_name,
+                                assimp_mesh_index,
+                            });
+                            continue;
                         }
+
+                        mesh_set.primitives[primitive_index] = @intCast(assimp_mesh_index);
+                        mesh_set.num_primitives += 1;
+                    }
+
+                    break :blk mesh_set;
+                } else null;
+
+                // push node index to maps
+                try nodes_names_map.putNoClobber(node_name, nodes_list.items.len);
+                try nodes_index_map.putNoClobber(assimp_node, nodes_list.items.len);
+
+                const transform = assimp_node.transformation_decompose();
+
+                // append node to flat nodes list
+                try nodes_list.append(alloc, ModelNode {
+                    .name = node_name,
+                    .parent = parent_index,
+                    .transform = .{
+                        .position = transform.pos,
+                        .rotation = transform.rot,
+                        .scale = transform.sca,
+                    },
+                    .mesh_set = mesh_set,
+                });
+
+                // append node children to processing queue
+                if (assimp_node.children()) |assimp_node_children| {
+                    for (assimp_node_children) |assimp_child_node| {
+                        try nodes_queue.append(alloc, assimp_child_node);
                     }
                 }
             }
-
-            if (!was_able_to_find_a_free_vertex_place) {
-                std.log.warn("wasn't able to find a free vertex place when loading model bones.", .{});
-            }
         }
 
-        // Normalise bone weights
-        for (mesh_weights.items) |*w| {
-            const sum = w[0] + w[1] + w[2] + w[3];
-            if (sum != 0.0) {
-                w[0] /= sum;
-                w[1] /= sum;
-                w[2] /= sum;
-                w[3] /= sum;
-            } else {
-                w[0] = 1.0;
-                w[1] = 0.0;
-                w[2] = 0.0;
-                w[3] = 0.0;
-            }
-        }
+        // solidify model nodes array
+        const model_nodes = try model_arena.allocator().dupe(ModelNode, nodes_list.items);
+        errdefer model_arena.allocator().free(model_nodes);
 
-        // create gfx buffers from vertex data
-        const buffers = try Buffers.init_with_data(
-            alloc,
-            mesh_indices.items,
-            mesh_positions.items,
-            mesh_normals.items,
-            mesh_tex_coords.items,
-            mesh_tangents.items,
-            mesh_bitangents.items,
-            mesh_bone_ids.items,
-            mesh_weights.items,
-        );
-        errdefer buffers.deinit();
-
-        // create a flat list to store upcoming nodes in
-        var model_nodes_list = std.ArrayList(ModelNode).init(local_arena.allocator());
-        defer model_nodes_list.deinit();
-
-        // allocate space to store the root node, assimp only has 1
-        const root_node = try model_arena.alloc(usize, 1);
-        errdefer model_arena.free(root_node);
-
-        // create a map to cache physics shape data. For performance reasons we want
-        // to generate these as few times as possible.
-        var physics_shape_map = std.AutoHashMap([MAX_PRIMITIVES_PER_SET]?usize, *zphy.ShapeSettings).init(local_arena.allocator());
-        defer physics_shape_map.deinit();
-
-        // Recursively load assimp nodes into ModelNodes.
-        root_node[0] = try assimp_recursively_load_node(
-            model_arena,
-            scene.root_node().?,
-            null,
-            mesh_primatives,
-            &model_nodes_list,
-            &physics_shape_map
-        );
-
-        // Solidify arraylist into a dynamically allocated array using model arena.
-        const model_nodes = try model_arena.alloc(ModelNode, model_nodes_list.items.len);
-        @memcpy(model_nodes, model_nodes_list.items);
-
-        // Nodes name map
-        var nodes_name_map = std.StringHashMap(usize).init(local_arena.allocator());
-        defer nodes_name_map.deinit();
-
-        for (model_nodes, 0..) |*nd, id| {
-            if (nd.name) |nm| {
-                try nodes_name_map.put(nm, id);
-            }
-        }
-
-        // Load animations
-        const animations = try model_arena.alloc(an.BoneAnimation, scene.animations().len);
-        errdefer model_arena.free(animations);
+        // Animations //
+        const animations = try model_arena.allocator().alloc(an.BoneAnimation, scene.animations().len);
+        errdefer model_arena.allocator().free(animations);
 
         for (scene.animations(), 0..) |anim, anim_id| {
             animations[anim_id] = an.BoneAnimation {
-                .name = try std.fmt.allocPrint(model_arena, "{s}", .{anim.name()}),
+                .name = try model_arena.allocator().dupe(u8, anim.name()),
                 .duration_ticks = anim.duration(),
                 .ticks_per_second = anim.ticks_per_second(),
-                .channels = try model_arena.alloc(an.BoneAnimationChannel, anim.channels().len),
+                .channels = try model_arena.allocator().alloc(an.BoneAnimationChannel, anim.channels().len),
                 .current_tick = 0.0,
             };
             for (anim.channels(), 0..) |ch, ch_id| {
-                const node_id = nodes_name_map.get(ch.node_name()).?;
+                const node_id = nodes_names_map.get(ch.node_name()).?;
 
                 animations[anim_id].channels[ch_id] = an.BoneAnimationChannel {
                     .node_name = model_nodes[node_id].name.?,
-                    .position_keys = try model_arena.alloc(an.AnimationKey, ch.position_keys().len),
-                    .rotation_keys = try model_arena.alloc(an.AnimationKey, ch.rotation_keys().len),
-                    .scale_keys = try model_arena.alloc(an.AnimationKey, ch.scale_keys().len),
+                    .position_keys = try model_arena.allocator().alloc(an.AnimationKey, ch.position_keys().len),
+                    .rotation_keys = try model_arena.allocator().alloc(an.AnimationKey, ch.rotation_keys().len),
+                    .scale_keys = try model_arena.allocator().alloc(an.AnimationKey, ch.scale_keys().len),
                 };
 
                 for (ch.position_keys(), 0..) |pk, pk_id| {
@@ -763,36 +813,67 @@ pub const Model = struct {
             }
         }
 
-        var bounding_box = BoundingBox{
-            .min = zm.f32x4s(0.0),
-            .max = zm.f32x4s(0.0),
-        };
-        for (scene.meshes(), 0..) |mesh, idx| {
-            const bb = mesh.bounding_box();
-            const zmbbmin = zm.f32x4(bb.mMin.x, bb.mMin.y, bb.mMin.z, 0.0);
-            const zmbbmax = zm.f32x4(bb.mMax.x, bb.mMax.y, bb.mMax.z, 0.0);
-            if (idx == 0) {
-                bounding_box.min = zmbbmin;
-                bounding_box.max = zmbbmax;
-            } else {
-                bounding_box.min = zm.min(bounding_box.min, zmbbmin);
-                bounding_box.max = zm.max(bounding_box.max, zmbbmax);
+        // Bones //
+        var bones_info_list = try std.ArrayList(BoneInfo).initCapacity(alloc, MAX_BONES);
+        defer bones_info_list.deinit(alloc);
+
+        var bones_names_map = std.StringHashMap(i32).init(model_arena.allocator());
+        errdefer bones_names_map.deinit();
+
+        if (scene.skeletons().len > 1) {
+            // TODO support more than one skeleton
+            std.log.warn("{} skeletons exists in scene '{s}', only using first.", .{scene.skeletons().len, scene.name()});
+        }
+
+        if (scene.skeletons().len > 0) {
+            const skeleton = scene.skeletons()[0];
+
+            for (skeleton.bones()) |bone| {
+                const bone_name = try model_arena.allocator().dupe(u8, bone.node().?.name());
+                errdefer model_arena.allocator().free(bone_name);
+
+                const bone_info = BoneInfo {
+                    .bone_name = bone_name,
+                    .bone_offset_matrix = bone.offset_matrix(),
+                };
+
+                try bones_names_map.putNoClobber(bone_name, @intCast(bones_info_list.items.len));
+                try bones_info_list.append(alloc, bone_info);
             }
         }
 
+        // solidify bones info array
+        bones_info_list.shrinkAndFree(alloc, bones_info_list.items.len);
+        const bones_info = try bones_info_list.toOwnedSlice(alloc);
+        errdefer alloc.free(bones_info);
+
+        // Bounding Box //
+        var bounding_box = BoundingBox{
+            .min = zm.f32x4s(std.math.floatMax(f32)),
+            .max = zm.f32x4s(std.math.floatMin(f32)),
+        };
+        for (meshes) |mesh| {
+            bounding_box.min = zm.min(bounding_box.min, mesh.bounding_box.min);
+            bounding_box.max = zm.max(bounding_box.max, mesh.bounding_box.max);
+        }
+
+        // Create Model //
         return Self {
-            .buffers = buffers,
-            .mesh_list = mesh_primatives,
-            .nodes_list = model_nodes,
-            .root_nodes = root_node,
+            .arena_allocator = model_arena,
+
+            .vertices_buffer = vertices_buffer,
+            .indices_buffer = indices_buffer,
+
+            .nodes = model_nodes,
+
+            .meshes = meshes,
             .animations = animations,
             .textures = textures,
             .materials = materials,
-            .arena_allocator = model_arena_allocator,
 
             .global_inverse_transform = zm.inverse(scene.root_node().?.transformation()),
-            .bone_mapping = bone_mapping,
-            .bone_info = bone_info,
+            .bones_names_map = bones_names_map,
+            .bones_info = bones_info,
 
             .bounding_box = bounding_box,
         };
@@ -1095,11 +1176,9 @@ pub const Model = struct {
     }
 
     pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Model {
-        var model_arena_allocator = try alloc.create(std.heap.ArenaAllocator);
-        errdefer alloc.destroy(model_arena_allocator);
-
-        model_arena_allocator.* = std.heap.ArenaAllocator.init(alloc);
+        var model_arena_allocator = std.heap.ArenaAllocator.init(alloc);
         errdefer model_arena_allocator.deinit();
+
         var model_arena = model_arena_allocator.allocator();
 
         shape.computeNormals();
@@ -1146,83 +1225,91 @@ pub const Model = struct {
             }
         }
 
-        const bone_ids = try alloc.alloc([4]i32, shape.positions.len);
-        defer alloc.free(bone_ids);
-        // set all bone ids to default to pointing at the last valid bone
-        @memset(bone_ids, [_]i32{MAX_BONES - 1} ** 4);
+        var bounding_box = BoundingBox {
+            .min = zm.f32x4s(std.math.floatMax(f32)),
+            .max = zm.f32x4s(std.math.floatMin(f32)),
+        };
 
-        const bone_weights = try alloc.alloc([4]f32, shape.positions.len);
-        defer alloc.free(bone_weights);
-        @memset(bone_weights, [4]f32{1.0, 0.0, 0.0, 0.0});
+        var mesh_vertex_data_writer = std.io.Writer.Allocating.init(alloc);
+        defer mesh_vertex_data_writer.deinit();
 
-        // Construct gfx buffers
-        const buffers = try Buffers.init_with_data(
-            alloc,
-            shape.indices,
-            shape.positions,
-            shape.normals,
-            shape.texcoords,
-            tangents,
-            bitangents,
-            bone_ids,
-            bone_weights,
+        for (shape.positions, 0..) |position, idx| {
+            const vertex_data = VertexData {
+                .position = position,
+                .normal = if (shape.normals) |normals| normals[idx] else [3]f32 { 0.0, 0.0, 1.0 },
+                .tangent = tangents[idx],
+                .bitangent = bitangents[idx],
+                .tex_coord = if (shape.texcoords) |texcoords| texcoords[idx] else [2]f32 { 0.0, 0.0 },
+                .bone_ids = [4]i32 { 0, 0, 0, 0 },
+                .bone_weights = [4]f32 { 0.0, 0.0, 0.0, 0.0 },
+            };
+
+            try mesh_vertex_data_writer.writer.writeAll(std.mem.asBytes(&vertex_data));
+
+            bounding_box.min = zm.min(bounding_box.min, zm.loadArr3(position));
+            bounding_box.max = zm.max(bounding_box.max, zm.loadArr3(position));
+        }
+        
+        const vertices_buffer = try gf.Buffer.init_with_data(
+            mesh_vertex_data_writer.written(),
+            .{ .VertexBuffer = true, },
+            .{},
         );
-        errdefer buffers.deinit();
+        errdefer vertices_buffer.deinit();
+
+        const indices_buffer = try gf.Buffer.init_with_data(
+            std.mem.sliceAsBytes(shape.indices),
+            .{ .IndexBuffer = true, },
+            .{},
+        );
+        errdefer indices_buffer.deinit();
 
         // Generate a Model with 1 node and 1 mesh
         const mp = try model_arena.alloc(MeshPrimitive, 1);
         errdefer model_arena.free(mp);
 
         mp[0] = MeshPrimitive {
-            .positions = shape.positions,
             .topology = .Triangles,
             .indices_offset = 0,
-            .pos_offset = 0,
-            .stride_bytes = 88,
-            .num_indices = shape.indices.len,
-            .num_vertices = shape.positions.len,
+            .vertices_offset = 0,
+            .vertex_count = shape.positions.len,
+            .index_count = shape.indices.len,
             .material_template = null,
+            .bounding_box = bounding_box,
         };
 
         const mn = try model_arena.alloc(ModelNode, 1);
         errdefer model_arena.free(mn);
 
         mn[0] = ModelNode {
-            .mesh = MeshSet {
-                .primitives = .{null} ** MAX_PRIMITIVES_PER_SET,
+            .mesh_set = MeshSet {
+                .primitives = .{0} ** MAX_PRIMITIVES_PER_SET,
+                .num_primitives = 1,
                 .physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(@ptrCast(shape.positions.ptr), @intCast(shape.positions.len), @sizeOf([3]f32))),
             },
         };
-        mn[0].mesh.?.primitives[0] = 0;
 
         const rn = try model_arena.alloc(usize, 1);
         errdefer model_arena.free(rn);
 
         rn[0] = 0;
 
-        var bounding_box = BoundingBox{
-            .min = zm.loadArr3(shape.positions[0]),
-            .max = zm.loadArr3(shape.positions[0]),
-        };
-        for (shape.positions) |pos| {
-            const zmpos = zm.loadArr3(pos);
-            bounding_box.min = zm.min(bounding_box.min, zmpos);
-            bounding_box.max = zm.max(bounding_box.max, zmpos);
-        }
-
         return Model {
-            .buffers = buffers,
-            .mesh_list = mp,
-            .nodes_list = mn,
-            .root_nodes = rn,
+            .arena_allocator = model_arena_allocator,
+
+            .vertices_buffer = vertices_buffer,
+            .indices_buffer = indices_buffer,
+
+            .nodes = mn,
+
+            .meshes = mp,
             .animations = &.{},
             .textures = &.{},
             .materials = &.{},
-            .arena_allocator = model_arena_allocator,
 
             .global_inverse_transform = zm.identity(),
-            .bone_mapping = std.StringHashMap(i32).init(model_arena),
-            .bone_info = std.ArrayList(BoneInfo).init(model_arena),
+            .bones_names_map = std.StringHashMap(i32).init(model_arena),
+            .bones_info = &.{},
 
             .bounding_box = bounding_box,
         };
@@ -1394,72 +1481,60 @@ pub const Model = struct {
     };
 
     pub fn blend_animation_bone_transforms(self: *const Self, animation: *const an.BoneAnimation, strength: f32, io_bone_transforms: []Transform) void {
-        for (self.bone_info.items) |*bone_info| {
+        for (self.bones_info) |*bone_info| {
             if (animation.find_node_anim(bone_info.bone_name)) |anim_channel| {
-                if (self.bone_mapping.get(bone_info.bone_name)) |bone_id| {
+                if (self.bones_names_map.get(bone_info.bone_name)) |bone_id| {
                     io_bone_transforms[@intCast(bone_id)] = io_bone_transforms[@intCast(bone_id)].lerp(&anim_channel.selected_transform, strength);
                 }
             }
         }
     }
 
-    pub fn generate_bone_transforms_for_pose(self: *const Self, in_bone_pose_transforms: []const Transform, out_bone_matrix_transforms: []zm.Mat) void {
+    pub fn generate_bone_transforms_for_pose(self: *const Self, alloc: std.mem.Allocator, in_bone_pose_transforms: []const Transform, out_bone_matrix_transforms: []zm.Mat) void {
         std.debug.assert(in_bone_pose_transforms.len >= MAX_BONES);
         std.debug.assert(out_bone_matrix_transforms.len >= MAX_BONES);
 
-        self.recurse_generate_bone_transforms_for_pose(
-            in_bone_pose_transforms,
-            out_bone_matrix_transforms,
-            &self.nodes_list[self.root_nodes[0]],
-            zm.identity()
-        );
-    }
+        const node_matrix_list = alloc.alloc(zm.Mat, self.nodes.len) catch |err| {
+            std.log.warn("Unable to allocate memory as part of pose generation: {}", .{err});
+            return;
+        };
+        defer alloc.free(node_matrix_list);
 
-    fn recurse_generate_bone_transforms_for_pose(
-        self: *const Self, 
-        in_bone_pose_transforms: []const Transform, 
-        out_bone_matrix_transforms: []zm.Mat, 
-        node: *const ModelNode, 
-        parent_mat: zm.Mat
-    ) void {
-        if (node.name == null) { std.log.warn("node name was null in animation", .{}); return; }
+        for (self.nodes, 0..) |*node, node_index| {
+            const parent_mat = if (node.parent) |parent_node_index| blk: {
+                std.debug.assert(parent_node_index < node_index);
+                break :blk node_matrix_list[parent_node_index];
+             } else zm.identity();
 
-        const node_name = node.name.?;
-        const maybe_bone_id = self.bone_mapping.get(node_name);
+            const node_name = node.name.?;
+            const maybe_bone_id = self.bones_names_map.get(node_name);
 
-        var anims_transform = node.transform;
-        if (maybe_bone_id) |bone_id| {
-            anims_transform = in_bone_pose_transforms[@intCast(bone_id)];
-        }
+            var anims_transform = node.transform;
+            if (maybe_bone_id) |bone_id| {
+                anims_transform = in_bone_pose_transforms[@intCast(bone_id)];
+            }
 
-        const node_transform = anims_transform.generate_model_matrix();
-        const global_transform = zm.mul(node_transform, parent_mat);
+            const node_transform = anims_transform.generate_model_matrix();
+            node_matrix_list[node_index] = zm.mul(node_transform, parent_mat);
 
-        if (maybe_bone_id) |bone_id| {
-            const bone_info = &self.bone_info.items[@intCast(bone_id)];
-            const final_transform = zm.mul(bone_info.bone_offset, zm.mul(global_transform, self.global_inverse_transform));
-            out_bone_matrix_transforms[@intCast(bone_id)] = final_transform;
-        }
-
-        for (node.children) |child_idx| {
-            self.recurse_generate_bone_transforms_for_pose(
-                in_bone_pose_transforms,
-                out_bone_matrix_transforms,
-                &self.nodes_list[child_idx],
-                global_transform
-            );
+            if (maybe_bone_id) |bone_id| {
+                const bone_info = &self.bones_info[@intCast(bone_id)];
+                const final_transform = zm.mul(bone_info.bone_offset_matrix, zm.mul(node_matrix_list[node_index], self.global_inverse_transform));
+                out_bone_matrix_transforms[@intCast(bone_id)] = final_transform;
+            }
         }
     }
 
     pub fn gen_static_compound_physics_shape(self: *const Model) !*zphy.CompoundShapeSettings {
         var shape_settings = try zphy.CompoundShapeSettings.createStatic();
-        for (self.nodes_list) |*node| {
-            if (node.mesh) |mid| {
+        for (self.nodes) |*node| {
+            if (node.mesh_set) |mid| {
+                const physics_shape_settings = mid.physics_shape_settings orelse return error.NoShapeSettings;
                 var scaled_shape_settings = try zphy.DecoratedShapeSettings.createScaled(
-                    mid.physics_shape_settings,
+                    physics_shape_settings,
                     .{node.transform.scale[0], node.transform.scale[1], node.transform.scale[2]}
                 );
-                defer scaled_shape_settings.release();
+                defer scaled_shape_settings.asShapeSettings().release();
 
                 shape_settings.addShape(
                     zm.vecToArr3(node.transform.position),
@@ -1614,6 +1689,6 @@ fn appendMeshPrimitive(
 
 const BoneInfo = struct {
     bone_name: []u8,
-    bone_offset: zm.Mat = zm.identity(),
+    bone_offset_matrix: zm.Mat = zm.identity(),
 };
 
