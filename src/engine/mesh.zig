@@ -447,8 +447,8 @@ pub const Model = struct {
 
             const vertex_data = .{
                 .position = [3]f32 { av.x, av.y, av.z },
-                .normal =   if (assimp_mesh.tangents()) |t| [3]f32 { t[idx].x, t[idx].y, t[idx].z }
-                            else [3]f32 { 0.0, 1.0, 0.0 },
+                .normal =   if (assimp_mesh.normals()) |n| [3]f32 { n[idx].x, n[idx].y, n[idx].z }
+                            else [3]f32 { 0.0, 0.0, 1.0 },
                 .tangent =  if (assimp_mesh.tangents()) |t| [3]f32 { t[idx].x, t[idx].y, t[idx].z }
                             else [3]f32 { 0.0, 1.0, 0.0 },
                 .bitangent =    if (assimp_mesh.bitangents()) |b| [3]f32 { b[idx].x, b[idx].y, b[idx].z }
