@@ -358,7 +358,7 @@ pub const Model = struct {
 
     const BONE_SENTINEL_ID = 0;
     const BoneInsertionNode = struct {
-        idx: usize = BONE_SENTINEL_ID,
+        idx: i32 = BONE_SENTINEL_ID,
         weight: f32 = 0.0,
     };
 
@@ -393,7 +393,16 @@ pub const Model = struct {
         bone_weights: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 },
     };
 
-    fn assimp_write_mesh_vertex_data(writer: *std.io.Writer, assimp_mesh: assimp.Mesh.Ptr) !void {
+    fn assimp_write_mesh_vertex_data(
+        model_alloc: std.mem.Allocator,
+        writer: *std.io.Writer, 
+        assimp_mesh: assimp.Mesh.Ptr,
+        bones_data: struct {
+            alloc: std.mem.Allocator,
+            names_map: *std.StringHashMap(i32),
+            infos: *std.ArrayList(BoneInfo),
+        },
+    ) !void {
         if (assimp_mesh.vertices() == null) {
             return error.MeshHasNoVertices;
         }
@@ -404,9 +413,27 @@ pub const Model = struct {
             var bones_found_for_vertex: usize = 0;
             var affecting_bones_buffer: [4]BoneInsertionNode = [_]BoneInsertionNode{ .{ .idx = 0, .weight = 0.0, } } ** 4;
 
-            for (assimp_mesh.bones(), 0..) |b, bone_idx| {
+            for (assimp_mesh.bones()) |b| {
+                const bone_idx = bones_data.names_map.get(b.name()) orelse blk: {
+                    const bone_idx: i32 = @intCast(bones_data.infos.items.len);
+                    const bone_info = BoneInfo {
+                        .bone_name = model_alloc.dupe(u8, b.name()) catch unreachable,
+                        .bone_offset_matrix = b.offset_matrix(),
+                    };
+
+                    bones_data.names_map.put(bone_info.bone_name, bone_idx) catch |err| {
+                        std.log.err("Unable to insert bone name in names map: {}", .{err});
+                        unreachable;
+                    };
+                    bones_data.infos.append(bones_data.alloc, bone_info) catch |err| {
+                        std.log.err("Unable to append bone info: {}", .{err});
+                        unreachable;
+                    };
+                    break :blk bone_idx;
+                };
+
                 for (b.weights()) |bw| {
-                    if (bw.mVertexId == idx) {
+                    if (bw.mVertexId == idx and bw.mWeight != 0.0) {
                         bone_insertion_sort(affecting_bones_buffer[0..], BoneInsertionNode {
                             .idx = bone_idx,
                             .weight = bw.mWeight,
@@ -556,6 +583,13 @@ pub const Model = struct {
             &prop_store);
         defer assimp.aiReleaseImport(scene);
 
+        // Bones //
+        var bones_info_list = try std.ArrayList(BoneInfo).initCapacity(alloc, MAX_BONES);
+        defer bones_info_list.deinit(alloc);
+
+        var bones_names_map = std.StringHashMap(i32).init(alloc);
+        errdefer bones_names_map.deinit();
+
         // Meshes //
         const meshes = try model_arena.allocator().alloc(MeshPrimitive, scene.meshes().len);
         errdefer model_arena.allocator().free(meshes);
@@ -576,7 +610,16 @@ pub const Model = struct {
             const start_indices_offset = mesh_index_data_writer.written().len;
             const mesh_index_count = if (assimp_mesh.faces()) |faces| (faces.len * 3) else 0;
 
-            try assimp_write_mesh_vertex_data(&mesh_vertex_data_writer.writer, assimp_mesh);
+            try assimp_write_mesh_vertex_data(
+                model_arena.allocator(), 
+                &mesh_vertex_data_writer.writer, 
+                assimp_mesh, 
+                .{
+                    .alloc = alloc,
+                    .names_map = &bones_names_map,
+                    .infos = &bones_info_list,
+                }
+            );
             try assimp_write_mesh_index_data(&mesh_index_data_writer.writer, assimp_mesh);
 
             std.debug.assert(@divExact(mesh_vertex_data_writer.written().len - start_vertices_offset, mesh_vertex_count) == MeshPrimitive.STRIDE);
@@ -632,6 +675,10 @@ pub const Model = struct {
             .{},
         );
         errdefer indices_buffer.deinit();
+        
+        // solidify bones info array
+        const bones_info = try model_arena.allocator().dupe(BoneInfo, bones_info_list.items);
+        errdefer model_arena.allocator().free(bones_info);
 
         // Textures //
         const textures = try model_arena.allocator().alloc(gf.Image.Ref, scene.textures().len);
@@ -812,40 +859,6 @@ pub const Model = struct {
                 }
             }
         }
-
-        // Bones //
-        var bones_info_list = try std.ArrayList(BoneInfo).initCapacity(alloc, MAX_BONES);
-        defer bones_info_list.deinit(alloc);
-
-        var bones_names_map = std.StringHashMap(i32).init(model_arena.allocator());
-        errdefer bones_names_map.deinit();
-
-        if (scene.skeletons().len > 1) {
-            // TODO support more than one skeleton
-            std.log.warn("{} skeletons exists in scene '{s}', only using first.", .{scene.skeletons().len, scene.name()});
-        }
-
-        if (scene.skeletons().len > 0) {
-            const skeleton = scene.skeletons()[0];
-
-            for (skeleton.bones()) |bone| {
-                const bone_name = try model_arena.allocator().dupe(u8, bone.node().?.name());
-                errdefer model_arena.allocator().free(bone_name);
-
-                const bone_info = BoneInfo {
-                    .bone_name = bone_name,
-                    .bone_offset_matrix = bone.offset_matrix(),
-                };
-
-                try bones_names_map.putNoClobber(bone_name, @intCast(bones_info_list.items.len));
-                try bones_info_list.append(alloc, bone_info);
-            }
-        }
-
-        // solidify bones info array
-        bones_info_list.shrinkAndFree(alloc, bones_info_list.items.len);
-        const bones_info = try bones_info_list.toOwnedSlice(alloc);
-        errdefer alloc.free(bones_info);
 
         // Bounding Box //
         var bounding_box = BoundingBox{
@@ -1481,11 +1494,9 @@ pub const Model = struct {
     };
 
     pub fn blend_animation_bone_transforms(self: *const Self, animation: *const an.BoneAnimation, strength: f32, io_bone_transforms: []Transform) void {
-        for (self.bones_info) |*bone_info| {
+        for (self.bones_info, 0..) |*bone_info, bone_id| {
             if (animation.find_node_anim(bone_info.bone_name)) |anim_channel| {
-                if (self.bones_names_map.get(bone_info.bone_name)) |bone_id| {
-                    io_bone_transforms[@intCast(bone_id)] = io_bone_transforms[@intCast(bone_id)].lerp(&anim_channel.selected_transform, strength);
-                }
+                io_bone_transforms[@intCast(bone_id)] = io_bone_transforms[@intCast(bone_id)].lerp(&anim_channel.selected_transform, strength);
             }
         }
     }

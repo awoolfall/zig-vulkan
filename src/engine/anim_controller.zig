@@ -205,12 +205,12 @@ pub const AnimController = struct {
     /// Triggers an event specified by the hashed event id.
     pub fn trigger_event_by_id(self: *Self, event_id: u32) void {
         const active_node = &self.nodes[self.active_node];
-        for (active_node.next) |*node_transition| {
+        outer: for (active_node.next) |*node_transition| {
             switch (node_transition.condition) {
                 .Event => |e| {
                     if (event_id == e.variable_id) {
                         self.perform_transition(node_transition);
-                        break;
+                        break :outer;
                     }
                 },
                 else => {}
