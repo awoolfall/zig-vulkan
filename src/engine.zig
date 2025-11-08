@@ -15,7 +15,7 @@ const im = @import("engine/image.zig");
 const entity = @import("engine/entity.zig");
 const gen = @import("engine/gen_list.zig");
 const Transform = @import("engine/transform.zig");
-const ui = @import("ui/ui.zig");
+const Imui = @import("ui/ui.zig");
 
 const path = @import("engine/path.zig");
 const db = @import("debug/debug.zig");
@@ -36,7 +36,7 @@ physics: ph.PhysicsSystem,
 input: in.InputState,
 time: tm.TimeState,
 debug: db.Debug,
-imui: ui.Imui,
+imui: Imui,
 asset_manager: assets.AssetManager,
 app: *App,
 entities: EntityList,
@@ -129,7 +129,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     };
     errdefer engine.asset_manager.deinit();
 
-    engine.imui = try ui.Imui.init(engine.general_allocator, &engine.input, &engine.time, &engine.window, &engine.gfx);
+    engine.imui = try Imui.init(engine.general_allocator, &engine.input, &engine.time, &engine.window, &engine.gfx);
     errdefer engine.imui.deinit();
 
     engine.debug = try db.Debug.init(engine.general_allocator);

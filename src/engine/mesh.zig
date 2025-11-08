@@ -10,20 +10,6 @@ const path = @import("../engine/path.zig");
 const an = @import("animation.zig");
 const assimp = @import("assimp");
 
-pub const AlphaMode = enum {
-    Opaque,
-    Mask,
-    Transparent,
-};
-
-fn alpha_mode_from_zcgltf(alpha_mode: zmesh.io.zcgltf.AlphaMode) AlphaMode {
-    return switch (alpha_mode) {
-        .@"opaque" => AlphaMode.Opaque,
-        .@"mask" => AlphaMode.Mask,
-        .@"blend" => AlphaMode.Transparent,
-    };
-}
-
 pub const PrimitiveTopology = enum {
     Points,
     Lines,
@@ -33,18 +19,6 @@ pub const PrimitiveTopology = enum {
     TriangleStrip,
     TriangleFan,
 };
-
-fn primitive_topology_from_zcgltf(topology: zmesh.io.zcgltf.PrimitiveType) PrimitiveTopology {
-    return switch (topology) {
-        .@"points" => PrimitiveTopology.Points,
-        .@"lines" => PrimitiveTopology.Lines,
-        .@"line_strip" => PrimitiveTopology.LineStrip,
-        .@"line_loop" => PrimitiveTopology.LineLoop,
-        .@"triangles" => PrimitiveTopology.Triangles,
-        .@"triangle_strip" => PrimitiveTopology.TriangleStrip,
-        .@"triangle_fan" => PrimitiveTopology.TriangleFan,
-    };
-}
 
 pub const MaterialTextureMap = struct {
     map: gf.ImageView.Ref,
@@ -109,8 +83,9 @@ pub const BoundingBox = struct {
     }
 };
 
-pub const MAX_PRIMITIVES_PER_SET = 8;
 pub const MeshSet = struct {
+    pub const MAX_PRIMITIVES_PER_SET = 4;
+
     primitives: [MAX_PRIMITIVES_PER_SET]usize,
     num_primitives: usize,
 
@@ -159,139 +134,49 @@ pub const ModelNode = struct {
     }
 };
 
-pub const Buffers = struct {
-    indices: gf.Buffer.Ref,
-    vertices: gf.Buffer.Ref,
-
-    offsets: struct {
-        positions: usize,
-        normals: usize,
-        bitangents: usize,
-        texcoords: usize,
-        tangents: usize,
-        bone_ids: usize,
-        bone_weights: usize,
-    },
-    strides: struct {
-        positions: usize,
-        normals: usize,
-        bitangents: usize,
-        texcoords: usize,
-        tangents: usize,
-        bone_ids: usize,
-        bone_weights: usize,
-    }, 
-
-    pub fn deinit(self: *const Buffers) void {
-        self.vertices.deinit();
-        self.indices.deinit();
-    }
-
-    inline fn interlace_data_into_buffer(
-        comptime DataType: type,
-        buffer: []u8,
-        vertex_pos: *usize,
-        data: ?[]const DataType,
-        index: usize,
-        default: DataType,
-    ) void {
-        const dat = if (data) |d| (d[index])[0..] else default[0..];
-        const size = @sizeOf(DataType);
-        @memcpy(buffer[vertex_pos.*..(vertex_pos.* + size)], std.mem.sliceAsBytes(dat));
-        vertex_pos.* += size;
-    }
-
-    fn init_with_data(
-        alloc: std.mem.Allocator,
-        mesh_indices: []const u32,
-        mesh_positions: []const ([3]f32),
-        mesh_normals: ?[]const ([3]f32),
-        mesh_tex_coords: ?[]const ([2]f32),
-        mesh_tangents: ?[]const ([3]f32),
-        mesh_bitangents: ?[]const ([3]f32),
-        mesh_bone_ids: ?[]const ([4]i32),
-        mesh_weights: ?[]const ([4]f32),
-    ) !Buffers {
-        // Vertex buffer
-        // Find offsets
-        var vertices_buffer_length = mesh_positions.len * @sizeOf([3]f32);
-
-        const normals_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([3]f32);
-
-        const tangents_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([3]f32);
-
-        const bitangents_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([3]f32);
-
-        const tex_coords_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([2]f32);
-
-        const bone_ids_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([4]i32);
-
-        const bone_weights_offset = vertices_buffer_length;
-        vertices_buffer_length += mesh_positions.len * @sizeOf([4]f32);
-
-        // create data buffer
-        const vertices_data = try alloc.alloc(u8, vertices_buffer_length);
-        defer alloc.free(vertices_data);
-
-        // interlace vertex attributes into the vertices buffer
-        var vertex_pos: usize = 0;
-        for (0..mesh_positions.len) |idx| {
-            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_positions, idx, [3]f32{0.0, 0.0, 0.0});
-            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_normals, idx, [3]f32{0.0, 0.0, 1.0});
-            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_tangents, idx, [3]f32{0.0, 0.0, 0.0});
-            interlace_data_into_buffer([3]f32, vertices_data, &vertex_pos, mesh_bitangents, idx, [3]f32{0.0, 0.0, 0.0});
-            interlace_data_into_buffer([2]f32, vertices_data, &vertex_pos, mesh_tex_coords, idx, [2]f32{0.0, 0.0});
-            interlace_data_into_buffer([4]i32, vertices_data, &vertex_pos, mesh_bone_ids, idx, [4]i32{0, 0, 0, 0});
-            interlace_data_into_buffer([4]f32, vertices_data, &vertex_pos, mesh_weights, idx, [4]f32{1.0, 0.0, 0.0, 0.0});
-        }
-
-        // create gfx buffer
-        const vertices_buffer = try gf.Buffer.init_with_data(
-            vertices_data,
-            .{ .VertexBuffer = true, },
-            .{}
-        );
-        errdefer vertices_buffer.deinit();
-
-        // Indicex buffer
-        const indices_buffer = try gf.Buffer.init_with_data(
-            std.mem.sliceAsBytes(mesh_indices[0..]),
-            .{ .IndexBuffer = true, },
-            .{}
-        );
-        errdefer indices_buffer.deinit();
-
-        return Buffers {
-            .vertices = vertices_buffer,
-            .indices = indices_buffer,
-            .offsets = .{
-                .positions = 0,
-                .normals = normals_offset,
-                .bitangents = bitangents_offset,
-                .texcoords = tex_coords_offset,
-                .tangents = tangents_offset,
-                .bone_ids = bone_ids_offset,
-                .bone_weights = bone_weights_offset,
-            },
-            .strides = .{
-                .positions = @sizeOf([3]f32),
-                .normals = @sizeOf([3]f32),
-                .bitangents = @sizeOf([3]f32),
-                .texcoords = @sizeOf([2]f32),
-                .tangents = @sizeOf([3]f32),
-                .bone_ids = @sizeOf([4]i32),
-                .bone_weights = @sizeOf([4]f32),
-            },
-        };
-    }
+const VertexData = extern struct {
+    position: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    normal: [3]f32 = .{ 0.0, 0.0, 1.0 },
+    tangent: [3]f32 = .{ 1.0, 0.0, 0.0 },
+    bitangent: [3]f32 = .{ 0.0, 1.0, 0.0 },
+    tex_coord: [2]f32 = .{ 0.0, 0.0 },
+    bone_ids: [4]i32 = .{ 0, 0, 0, 0 },
+    bone_weights: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 },
 };
 
-pub const MAX_BONES: usize = 256;
+const BoneInsertionNode = struct {
+    idx: i32 = 0,
+    weight: f32 = 0.0,
+};
+
+fn bone_insertion_sort(buffer: []BoneInsertionNode, new_node: BoneInsertionNode) void {
+    for (buffer[0..], 0..) |node, idx| {
+        if (node.weight < new_node.weight) {
+            if (idx < (buffer.len - 1)) {
+                @memmove(buffer[(idx + 1)..], buffer[idx..(buffer.len - 1)]);
+            }
+            buffer[idx] = new_node;
+            break;
+        }
+    }
+}
+
+fn vertex_has_a_bone(bone_buffer: []BoneInsertionNode) bool {
+    for (bone_buffer) |b| {
+        if (b.weight != 0.0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub const MAX_BONES = 256;
+
+const BoneInfo = struct {
+    bone_name: []u8,
+    bone_offset_matrix: zm.Mat = zm.identity(),
+};
+
 pub const Model = struct {
     const Self = @This();
 
@@ -355,43 +240,6 @@ pub const Model = struct {
             image.data,
         );
     }
-
-    const BONE_SENTINEL_ID = 0;
-    const BoneInsertionNode = struct {
-        idx: i32 = BONE_SENTINEL_ID,
-        weight: f32 = 0.0,
-    };
-
-    fn bone_insertion_sort(buffer: []BoneInsertionNode, new_node: BoneInsertionNode) void {
-        for (buffer[0..], 0..) |node, idx| {
-            if (node.weight < new_node.weight) {
-                if (idx < (buffer.len - 1)) {
-                    @memmove(buffer[(idx + 1)..], buffer[idx..(buffer.len - 1)]);
-                }
-                buffer[idx] = new_node;
-                break;
-            }
-        }
-    }
-
-    fn vertex_has_a_bone(bone_buffer: []BoneInsertionNode) bool {
-        for (bone_buffer) |b| {
-            if (b.idx != BONE_SENTINEL_ID) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    const VertexData = extern struct {
-        position: [3]f32 = .{ 0.0, 0.0, 0.0 },
-        normal: [3]f32 = .{ 0.0, 0.0, 1.0 },
-        tangent: [3]f32 = .{ 1.0, 0.0, 0.0 },
-        bitangent: [3]f32 = .{ 0.0, 1.0, 0.0 },
-        tex_coord: [2]f32 = .{ 0.0, 0.0 },
-        bone_ids: [4]i32 = .{ 0, 0, 0, 0 },
-        bone_weights: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 },
-    };
 
     fn assimp_write_mesh_vertex_data(
         model_alloc: std.mem.Allocator,
@@ -756,16 +604,16 @@ pub const Model = struct {
                 const mesh_set = if (assimp_node.meshes().len > 0) blk: {
                     var mesh_set = MeshSet {
                         .num_primitives = 0,
-                        .primitives = [1]usize{0} ** MAX_PRIMITIVES_PER_SET,
+                        .primitives = [1]usize{0} ** MeshSet.MAX_PRIMITIVES_PER_SET,
                         .physics_shape_settings = null, // TODO
                     };
 
                     for (assimp_node.meshes(), 0..) |assimp_mesh_index, primitive_index| {
-                        if (primitive_index >= MAX_PRIMITIVES_PER_SET) {
+                        if (primitive_index >= MeshSet.MAX_PRIMITIVES_PER_SET) {
                             std.log.warn("Model node '{s}' has more than max allowable mesh primitives {} > {}", .{
                                 node_name,
                                 assimp_node.meshes().len,
-                                MAX_PRIMITIVES_PER_SET,
+                                MeshSet.MAX_PRIMITIVES_PER_SET,
                             });
                             break;
                         }
@@ -923,91 +771,6 @@ pub const Model = struct {
                 std.log.info("texture is not embedded...", .{});
             }
         }
-    }
-
-    // Recusively loads an assimp node and all it's children into model_nodes_list,
-    // returns the node's index in the model_nodes_list arraylist.
-    fn assimp_recursively_load_node(
-        alloc: std.mem.Allocator, 
-        node: assimp.Node.Ptr, 
-        parent: ?usize, 
-        prims: []MeshPrimitive, 
-        model_nodes_list: *std.ArrayList(ModelNode),
-        physics_shape_map: *std.AutoHashMap([MAX_PRIMITIVES_PER_SET]?usize, *zphy.ShapeSettings),
-    ) !usize {
-        // Append new ModelNode to list and acquire its index
-        try model_nodes_list.append(ModelNode{});
-        const this_idx = model_nodes_list.items.len - 1;
-        
-        // allocate space for nodes name if it exists
-        if (node.name().len > 0) {
-            model_nodes_list.items[this_idx].name = try alloc.alloc(u8, node.name().len);
-            @memcpy(model_nodes_list.items[this_idx].name.?[0..], node.name()[0..]);
-        }
-        // link node meshes
-        if (node.meshes().len > 0) {
-            // for now we only support MAX_PRIMITIVES_PER_SET meshes. extend if necessary
-            std.debug.assert(node.meshes().len < MAX_PRIMITIVES_PER_SET);
-
-            model_nodes_list.items[this_idx].mesh = MeshSet{
-                .primitives = [_]?usize{null} ** MAX_PRIMITIVES_PER_SET,
-                .physics_shape_settings = undefined,
-            };
-
-            // link mesh ids into meshset
-            for (node.meshes(), 0..) |mesh_idx, idx| {
-                model_nodes_list.items[this_idx].mesh.?.primitives[idx] = mesh_idx;
-            }
-            // check if we have seen this series of primitives before
-            if (physics_shape_map.contains(model_nodes_list.items[this_idx].mesh.?.primitives)) {
-                // if so, grab already generated physics shape
-                const shape_settings = physics_shape_map.get(model_nodes_list.items[this_idx].mesh.?.primitives).?;
-                shape_settings.addRef();
-                model_nodes_list.items[this_idx].mesh.?.physics_shape_settings = shape_settings;
-            } else {
-                // otherwise we need to generate a new shape to use
-                try model_nodes_list.items[this_idx].mesh.?.generate_physics_shape(alloc, prims);
-                // and store this shape in the hashmap
-                try physics_shape_map.put(
-                    model_nodes_list.items[this_idx].mesh.?.primitives, 
-                    model_nodes_list.items[this_idx].mesh.?.physics_shape_settings
-                );
-            }
-        }
-
-        // create transform struct for this node
-        const dec = node.transformation_decompose();
-        model_nodes_list.items[this_idx].transform = Transform {
-            .position = dec.pos,
-            .rotation = dec.rot,
-            .scale = dec.sca,
-        };
-
-        // link node to its parent
-        model_nodes_list.items[this_idx].parent = parent;
-
-        // recursively generate and link the node's children
-        if (node.children() != null) {
-            const children_array = try alloc.alloc(usize, node.children().?.len);
-            for (node.children().?, 0..) |child, idx| {
-                children_array[idx] = try assimp_recursively_load_node(alloc, child, this_idx, prims, model_nodes_list, physics_shape_map);
-            }
-            model_nodes_list.items[this_idx].children = children_array;
-        }
-
-        return this_idx;
-    }
-
-    pub fn recursive_get_node_model_matrix(self: *const Self, node_idx: usize, resolved_transforms: []?zm.Mat) zm.Mat {
-        if (resolved_transforms[node_idx] == null) {
-            var parent_matrix = zm.identity();
-            if (self.nodes_list[node_idx].parent) |parent_idx| {
-                parent_matrix = self.recursive_get_node_model_matrix(parent_idx, resolved_transforms);
-            }
-
-            resolved_transforms[node_idx] = zm.mul(self.nodes_list[node_idx].transform.generate_model_matrix(), parent_matrix);
-        }
-        return resolved_transforms[node_idx].?;
     }
 
     // generated by claude so if there are issues thats probably why
@@ -1296,7 +1059,7 @@ pub const Model = struct {
 
         mn[0] = ModelNode {
             .mesh_set = MeshSet {
-                .primitives = .{0} ** MAX_PRIMITIVES_PER_SET,
+                .primitives = .{0} ** MeshSet.MAX_PRIMITIVES_PER_SET,
                 .num_primitives = 1,
                 .physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(@ptrCast(shape.positions.ptr), @intCast(shape.positions.len), @sizeOf([3]f32))),
             },
@@ -1557,149 +1320,4 @@ pub const Model = struct {
         }
         return shape_settings;
     }
-
-    fn recurse_resolve_bones_with_offsets(self: *const Model, node: *const ModelNode, parent_mat_pose: zm.Mat, bone_map: *std.AutoHashMap(i32, zm.Mat), bone_offsets: *[MAX_BONES]zm.Mat) void {
-        var pose_global_mat = zm.mul(node.transform.generate_model_matrix(), parent_mat_pose);
-
-        if (node.bone_data) |bone_data| {
-            if (bone_map.get(@intCast(bone_data.id))) |mat| {
-                pose_global_mat = zm.mul(mat, parent_mat_pose);
-            }
-            bone_offsets[bone_data.id] = zm.mul(pose_global_mat, zm.mul(bone_data.bone_offset, self.global_inverse_transform));
-        }
-
-        for (node.children) |child_idx| {
-            self.recurse_resolve_bones_with_offsets(&(self.nodes_list[child_idx]), pose_global_mat, bone_map, bone_offsets);
-        }
-    }
-
-    fn resolve_bones_with_offsets(self: *const Model, bone_map: *std.AutoHashMap(i32, zm.Mat), bone_offsets: *[MAX_BONES]zm.Mat) void {
-        self.recurse_resolve_bones_with_offsets(&(self.nodes_list[self.root_nodes[0]]), zm.identity(), bone_map, bone_offsets);
-    }
 };
-
-fn appendMeshPrimitive(
-    data: *zmesh.io.zcgltf.Data,
-    mesh_index: u32,
-    prim_index: u32,
-    indices: *std.ArrayList(u32),
-    positions: *std.ArrayList([3]f32),
-    normals: ?*std.ArrayList([3]f32),
-    texcoords: [4]?*std.ArrayList([2]f32),
-    tangents: ?*std.ArrayList([4]f32),
-) !void {
-    assert(mesh_index < data.meshes_count);
-    assert(prim_index < data.meshes.?[mesh_index].primitives_count);
-
-    const mesh = &data.meshes.?[mesh_index];
-    const prim = &mesh.primitives[prim_index];
-
-    const num_vertices: u32 = @as(u32, @intCast(prim.attributes[0].data.count));
-    const num_indices: u32 = @as(u32, @intCast(prim.indices.?.count));
-
-    // Indices.
-    {
-        try indices.ensureTotalCapacity(indices.items.len + num_indices);
-
-        const accessor = prim.indices.?;
-        const buffer_view = accessor.buffer_view.?;
-
-        assert(accessor.stride == buffer_view.stride or buffer_view.stride == 0);
-        assert(accessor.stride * accessor.count == buffer_view.size);
-        assert(buffer_view.buffer.data != null);
-
-        const data_addr = @as([*]const u8, @ptrCast(buffer_view.buffer.data)) +
-            accessor.offset + buffer_view.offset;
-
-        if (accessor.stride == 1) {
-            assert(accessor.component_type == .r_8u);
-            const src = @as([*]const u8, @ptrCast(data_addr));
-            var i: u32 = 0;
-            while (i < num_indices) : (i += 1) {
-                indices.appendAssumeCapacity(src[i]);
-            }
-        } else if (accessor.stride == 2) {
-            assert(accessor.component_type == .r_16u);
-            const src = @as([*]const u16, @ptrCast(@alignCast(data_addr)));
-            var i: u32 = 0;
-            while (i < num_indices) : (i += 1) {
-                indices.appendAssumeCapacity(src[i]);
-            }
-        } else if (accessor.stride == 4) {
-            assert(accessor.component_type == .r_32u);
-            const src = @as([*]const u32, @ptrCast(@alignCast(data_addr)));
-            var i: u32 = 0;
-            while (i < num_indices) : (i += 1) {
-                indices.appendAssumeCapacity(src[i]);
-            }
-        } else {
-            unreachable;
-        }
-    }
-
-    // Attributes.
-    {
-        const attributes = prim.attributes[0..prim.attributes_count];
-        for (attributes) |attrib| {
-            const accessor = attrib.data;
-
-            const buffer_view = accessor.buffer_view.?;
-            assert(buffer_view.buffer.data != null);
-
-            assert(accessor.stride == buffer_view.stride or buffer_view.stride == 0);
-            assert(accessor.stride * accessor.count == buffer_view.size);
-
-            const data_addr = @as([*]const u8, @ptrCast(buffer_view.buffer.data)) +
-                accessor.offset + buffer_view.offset;
-
-            switch (attrib.type) {
-                .position => {
-                    assert(accessor.type == .vec3);
-                    const slice = @as([*]const [3]f32, @ptrCast(@alignCast(data_addr)))[0..num_vertices];
-                    try positions.appendSlice(slice);
-                },
-                .normal => {
-                    if (normals) |n| {
-                        assert(accessor.type == .vec3);
-                        const slice = @as([*]const [3]f32, @ptrCast(@alignCast(data_addr)))[0..num_vertices];
-                        try n.appendSlice(slice);
-                    }
-                },
-                .texcoord => {
-                    if (attrib.index < 4) {
-                        if (texcoords[@intCast(attrib.index)]) |tc| {
-                            assert(accessor.type == .vec2);
-                            const slice = @as([*]const [2]f32, @ptrCast(@alignCast(data_addr)))[0..num_vertices];
-                            try tc.appendSlice(slice);
-                        }
-                    } else {
-                        std.log.warn("Model has tex coord index larger than max. Idx: {}", .{attrib.index});
-                    }
-                },
-                .tangent => {
-                    if (tangents) |tan| {
-                        assert(accessor.type == .vec4);
-                        const slice = @as([*]const [4]f32, @ptrCast(@alignCast(data_addr)))[0..num_vertices];
-                        try tan.appendSlice(slice);
-                    }
-                },
-                .color => {
-
-                },
-                .joints => {
-
-                },
-                .weights => {
-
-                },
-                else => {},
-            }
-        }
-    }
-}
-
-const BoneInfo = struct {
-    bone_name: []u8,
-    bone_offset_matrix: zm.Mat = zm.identity(),
-};
-
