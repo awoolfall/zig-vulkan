@@ -13,4 +13,3 @@ pub const ImageAsset = @import("image_asset.zig").ImageAsset;
 pub const ModelAssetId = AssetId(ModelAsset);
 pub const AnimationAssetId = AssetId(AnimationAsset);
 pub const ImageAssetId = AssetId(ImageAsset);
-

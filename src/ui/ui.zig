@@ -94,7 +94,9 @@ pub const WidgetFlags = packed struct(u32) {
 
     clickable: bool = false,
 
-    __unused: u24 = 0,
+    is_form_layout_item: bool = false,
+
+    __unused: u23 = 0,
 
     pub inline fn get_allow_overflow_flag(flags: *const WidgetFlags, axis: Axis) bool {
         switch (axis) {
@@ -177,6 +179,8 @@ pub const Widget = struct {
     last_child: ?WidgetId = null,
     num_children: usize = 0,
     children_gap: f32 = 0.0,
+
+    form_labels_width: f32 = 0.0,
 
     computed: WidgetComputedValues = .{},
 
@@ -1384,6 +1388,52 @@ pub fn set_floating_layout_position(self: *Self, widget_id: WidgetId, floating_x
     widget.computed.relative_position = [2]f32 { floating_x, floating_y };
 }
 
+pub fn push_form_layout_item(self: *Self, key: anytype) void {
+    const form_item_layout = self.push_layout(.X, key ++ .{@src()});
+    const form_item_widget = self.get_widget(form_item_layout) orelse unreachable;
+    form_item_widget.flags.is_form_layout_item = true;
+}
+
 pub fn pop_layout(self: *Self) void {
+    // correct sizing for form layouts
+    const parent_layout = self.parent_stack.getLast();
+    const parent_widget = self.get_widget(parent_layout) orelse unreachable;
+
+    var child = parent_widget.first_child;
+    var max_layout_label_width: f32 = -1.0;
+    while (child != null) {
+        const child_widget = self.get_widget(child.?) orelse unreachable;
+        defer child = child_widget.next_sibling;
+
+        if (!child_widget.flags.is_form_layout_item) {
+            continue;
+        }
+        if (child_widget.first_child == null) {
+            continue;
+        }
+        const child_child_widget = self.get_widget(child_widget.first_child.?) orelse unreachable;
+        self.compute_standalone_widget_size(child_child_widget);
+        max_layout_label_width = @max(max_layout_label_width, child_child_widget.computed.rect().width());
+    }
+
+    if (max_layout_label_width > 0.0) {
+        child = parent_widget.first_child;
+        while (child != null) {
+            const child_widget = self.get_widget(child.?) orelse unreachable;
+            defer child = child_widget.next_sibling;
+
+            if (!child_widget.flags.is_form_layout_item) {
+                continue;
+            }
+            if (child_widget.first_child == null) {
+                continue;
+            }
+            const child_child_widget = self.get_widget(child_widget.first_child.?) orelse unreachable;
+            child_child_widget.semantic_size[0].kind = .Pixels;
+            child_child_widget.semantic_size[0].value = max_layout_label_width;
+            child_child_widget.semantic_size[0].shrinkable_percent = 0.0;
+        }
+    }
+
     _ = self.parent_stack.pop();
 }

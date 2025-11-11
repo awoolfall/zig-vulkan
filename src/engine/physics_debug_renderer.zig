@@ -40,8 +40,6 @@ pub const D3D11DebugRenderer = extern struct {
 
         primitives: std.DoublyLinkedList,
 
-        vertex_shader: gfx.VertexShader,
-        pixel_shader: gfx.PixelShader,
         render_pass: gfx.RenderPass.Ref,
         pipeline: gfx.GraphicsPipeline.Ref,
         framebuffer: gfx.FrameBuffer.Ref,
@@ -56,9 +54,6 @@ pub const D3D11DebugRenderer = extern struct {
             self.framebuffer.deinit();
             self.pipeline.deinit();
             self.render_pass.deinit();
-
-            self.vertex_shader.deinit();
-            self.pixel_shader.deinit();
         }
     };
 
@@ -107,32 +102,36 @@ pub const D3D11DebugRenderer = extern struct {
     }
 
     pub fn init() !D3D11DebugRenderer {
-        const vertex_shader = try gfx.VertexShader.init_buffer(
-            SHADER_SLANG,
-            "vs_main",
-            gfx.VertexInputLayoutInfo {
-                .bindings = &.{
-                    gfx.VertexInputBinding {
-                        .binding = 0, .input_rate = .Vertex, .stride = 12 + 12 + 8 + 16,
-                    },
-                },
-                .attributes = &.{
-                    .{ .location = 0, .binding = 0, .name = "POS", .format = .F32x3, .offset = 0 },
-                    .{ .location = 1, .binding = 0, .name = "NORMAL", .format = .F32x3, .offset = 12 },
-                    .{ .location = 2, .binding = 0, .name = "TEXCOORD0", .format = .F32x2, .offset = 24 },
-                    .{ .location = 3, .binding = 0, .name = "COLOR", .format = .F32x4, .offset = 32 },
+        const alloc = eng.get().general_allocator;
+
+        const spirv = try gfx.GfxState.get().shader_manager.generate_spirv(alloc, .{
+            .shader_data = SHADER_SLANG,
+            .shader_entry_points = &.{
+                "vs_main",
+                "ps_main",
+            }
+        });
+        defer alloc.free(spirv);
+
+        const shader_module = try gfx.ShaderModule.init(.{
+            .spirv_data = spirv,
+        });
+        defer shader_module.deinit();
+
+        const vertex_input = try gfx.VertexInput.init(.{
+            .bindings = &.{
+                gfx.VertexInputBinding {
+                    .binding = 0, .input_rate = .Vertex, .stride = 12 + 12 + 8 + 16,
                 },
             },
-            .{}
-        );
-        errdefer vertex_shader.deinit();
-
-        const pixel_shader = try gfx.PixelShader.init_buffer(
-            SHADER_SLANG,
-            "ps_main",
-            .{}
-        );
-        errdefer pixel_shader.deinit();
+            .attributes = &.{
+                .{ .location = 0, .binding = 0, .name = "POS", .format = .F32x3, .offset = 0 },
+                .{ .location = 1, .binding = 0, .name = "NORMAL", .format = .F32x3, .offset = 12 },
+                .{ .location = 2, .binding = 0, .name = "TEXCOORD0", .format = .F32x2, .offset = 24 },
+                .{ .location = 3, .binding = 0, .name = "COLOR", .format = .F32x4, .offset = 32 },
+            },
+        });
+        defer vertex_input.deinit();
 
         const attachments = &[_]gfx.AttachmentInfo {
             gfx.AttachmentInfo {
@@ -174,9 +173,15 @@ pub const D3D11DebugRenderer = extern struct {
         const pipeline = try gfx.GraphicsPipeline.init(.{
             .render_pass = render_pass,
             .subpass_index = 0,
-            .attachments = attachments,
-            .vertex_shader = &vertex_shader,
-            .pixel_shader = &pixel_shader,
+            .vertex_shader = .{
+                .module = &shader_module,
+                .entry_point = "vs_main",
+            },
+            .vertex_input = &vertex_input,
+            .pixel_shader = .{
+                .module = &shader_module,
+                .entry_point = "ps_main",
+            },
             .rasterization_fill_mode = .Line,
             .cull_mode = .CullNone,
             .push_constants = &.{
@@ -205,8 +210,6 @@ pub const D3D11DebugRenderer = extern struct {
         data.* = .{
             .alloc = eng.get().general_allocator,
             .primitives = .{},
-            .vertex_shader = vertex_shader,
-            .pixel_shader = pixel_shader,
             .render_pass = render_pass,
             .pipeline = pipeline,
             .framebuffer = framebuffer,

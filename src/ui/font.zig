@@ -71,8 +71,6 @@ const FontTextBufferData = struct {
     }
 };
 
-const MSDF_FONT_SHADER_HLSL = @embedFile("font_shader.slang");
-
 pub const Font = struct {
     const TEXT_PROPS_PER_BUFFER = 1024;
     const CHARACTERS_PER_VERTEX_BUFFER = 4096;
@@ -84,10 +82,6 @@ pub const Font = struct {
     msdf_image: _gfx.Image.Ref,
     msdf_image_view: _gfx.ImageView.Ref,
     sampler: _gfx.Sampler.Ref,
-
-    // TODO move to common font renderer struct
-    vertex_shader: _gfx.VertexShader,
-    pixel_shader: _gfx.PixelShader,
 
     render_pass: _gfx.RenderPass.Ref,
     pipeline: _gfx.GraphicsPipeline.Ref,
@@ -123,9 +117,6 @@ pub const Font = struct {
         self.framebuffer.deinit();
         self.pipeline.deinit();
         self.render_pass.deinit();
-
-        self.vertex_shader.deinit();
-        self.pixel_shader.deinit();
 
         self.msdf_image_view.deinit();
         self.msdf_image.deinit();
@@ -240,28 +231,29 @@ pub const Font = struct {
 
         // create the font shaders
         // @TODO move font shader to a common location, not in each font file
-        const vertex_shader = try _gfx.VertexShader.init_buffer(
-            MSDF_FONT_SHADER_HLSL,
-            "vs_main",
-            .{
-                .bindings = &.{
-                    .{ .binding = 0, .stride = 2 * @sizeOf([4]f32), .input_rate = .Instance, },
-                },
-                .attributes = &.{
-                    .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
-                },
-            },
-            .{},
-        );
-        errdefer vertex_shader.deinit();
 
-        const pixel_shader = try _gfx.PixelShader.init_buffer(
-            MSDF_FONT_SHADER_HLSL,
-            "ps_main",
-            .{},
-        );
-        errdefer pixel_shader.deinit();
+        const spirv_shader = try _gfx.GfxState.get().shader_manager.generate_spirv(alloc, .{
+            .shader_data = @embedFile("font_shader.slang"),
+            .shader_entry_points = &.{
+                "vs_main",
+                "ps_main",
+            },
+        });
+        defer alloc.free(spirv_shader);
+
+        const shader_module = try _gfx.ShaderModule.init(.{ .spirv_data = spirv_shader });
+        defer shader_module.deinit();
+
+        const vertex_input = try _gfx.VertexInput.init(.{
+            .bindings = &.{
+                .{ .binding = 0, .stride = 2 * @sizeOf([4]f32), .input_rate = .Instance, },
+            },
+            .attributes = &.{
+                .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
+                .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
+            },
+        });
+        defer vertex_input.deinit();
 
         const attachments = &[_]_gfx.AttachmentInfo {
             _gfx.AttachmentInfo {
@@ -357,9 +349,15 @@ pub const Font = struct {
         });
 
         const graphics_pipeline = try _gfx.GraphicsPipeline.init(.{
-            .vertex_shader = &vertex_shader,
-            .pixel_shader = &pixel_shader,
-            .attachments = attachments,
+            .vertex_shader = .{
+                .module = &shader_module,
+                .entry_point = "vs_main",
+            },
+            .vertex_input = &vertex_input,
+            .pixel_shader = .{
+                .module = &shader_module,
+                .entry_point = "ps_main",
+            },
             .cull_mode = .CullNone, // TODO
             .descriptor_set_layouts = &.{
                 buffers_descriptor_layout,
@@ -426,9 +424,6 @@ pub const Font = struct {
             .msdf_image = msdf_image,
             .msdf_image_view = msdf_image_view,
             .sampler = sampler,
-
-            .vertex_shader = vertex_shader,
-            .pixel_shader = pixel_shader,
 
             .render_pass = render_pass,
             .pipeline = graphics_pipeline,
@@ -713,130 +708,6 @@ pub const Font = struct {
         }
     }
 
-    // pub fn render_text_2d(
-    //     self: *const Font,
-    //     text: []const u8,
-    //     props: FontRenderProperties2D,
-    //     rtv: _gfx.ImageView.Ref, 
-    // ) void {
-    //     const gfx = _gfx.GfxState.get();
-    //
-    //     if (text.len == 0) { return; }
-    //     
-    //     const view = rtv.get() catch unreachable;
-    //     const aspect = (@as(f32, @floatFromInt(view.size.width)) / @as(f32, @floatFromInt(view.size.height)));
-    //     const xy_screen_space = ui.position_pixels_to_screen_space(
-    //         props.position.x,
-    //         props.position.y,
-    //         @floatFromInt(view.size.width),
-    //         @floatFromInt(view.size.height)
-    //     );
-    //     var y_loc = xy_screen_space[1];
-    //     var x_loc = xy_screen_space[0];
-    //     const x_start_loc = x_loc;
-    //
-    //     const percpx = props.pixel_height / @as(f32, @floatFromInt(view.size.height));
-    //     const screen_size = (percpx * 2.0);
-    //
-    //     const viewport = _gfx.Viewport {
-    //         .width = @floatFromInt(view.size.width),
-    //         .height = @floatFromInt(view.size.height),
-    //         .min_depth = 0.0,
-    //         .max_depth = 1.0,
-    //         .top_left_x = 0,
-    //         .top_left_y = 0,
-    //     };
-    //     gfx.cmd_set_viewport(viewport);
-    //
-    //     gfx.cmd_set_pixel_shader(&self.font_pso);
-    //     gfx.cmd_set_shader_resources(.Pixel, 0, &.{self.msdf_texture_view});
-    //
-    //     gfx.cmd_set_render_target(&.{rtv}, null);
-    //
-    //     gfx.cmd_set_vertex_shader(&self.font_vso);
-    //
-    //     gfx.cmd_set_topology(.TriangleList);
-    //     gfx.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
-    //
-    //     gfx.cmd_set_constant_buffers(.Pixel, 0, &.{&self.font_text_buffer});
-    //     gfx.cmd_set_samplers(.Pixel, 0, &.{self.sampler});
-    //
-    //     gfx.cmd_set_vertex_buffers(0, &.{
-    //         .{ .buffer = &self.character_buffer, .stride = @sizeOf(CharacterInfoConstantBuffer), .offset = 0, },
-    //     });
-    //
-    //     { // Setup font text info buffer
-    //         const mapped_buffer = self.font_text_buffer.map(.{ .write = true, }) catch unreachable;
-    //         defer mapped_buffer.unmap();
-    //
-    //         mapped_buffer.data(FontConstantBuffer).* = FontConstantBuffer {
-    //             .msdf_unit_range = zm.f32x4s(self.atlas_details.distance_range) 
-    //                 / zm.f32x4(@floatFromInt(self.atlas_details.width), @floatFromInt(self.atlas_details.height), 0.0, 0.0),
-    //             .fg_colour = props.colour,
-    //             .bg_colour = props.colour * zm.f32x4(1.0, 1.0, 1.0, 0.0),
-    //         };
-    //     }
-    //
-    //     const text_utf8 = std.unicode.Utf8View.init(text) catch unreachable; // TODO handle error
-    //     var text_utf8_iter = text_utf8.iterator();
-    //
-    //     var instance_id: usize = 0;
-    //     while (text_utf8_iter.nextCodepoint()) |c| {
-    //         if (instance_id >= RENDER_INSTANCE_COUNT) {
-    //             {
-    //                 const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
-    //                 defer mapped_buffer.unmap();
-    //
-    //                 @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
-    //             }
-    //
-    //             gfx.cmd_draw_instanced(6, RENDER_INSTANCE_COUNT, 0, 0);
-    //
-    //             instance_id = 0;
-    //         }
-    //
-    //         // handle newline
-    //         switch (c) {
-    //             '\n' => {
-    //                 x_loc = x_start_loc;
-    //                 y_loc -= self.font_metrics.line_height * screen_size;
-    //                 self.constant_buffer_data[instance_id] = .{};
-    //             },
-    //             else => {
-    //                 const char_info = self.character_map.get(c) orelse continue; // TODO handle error
-    //
-    //                 const quad_bounds = Bounds {
-    //                     .left = x_loc + (char_info.plane_bounds.left / aspect) * screen_size,
-    //                     .right = x_loc + (char_info.plane_bounds.right / aspect) * screen_size,
-    //                     .top = y_loc + char_info.plane_bounds.top * screen_size,
-    //                     .bottom = y_loc + char_info.plane_bounds.bottom * screen_size,
-    //                 };
-    //
-    //                 // Setup character info buffer
-    //                 self.constant_buffer_data[instance_id] = .{
-    //                     .quad_bounds = quad_bounds,
-    //                     .atlas_bounds = char_info.atlas_bounds,
-    //                 };
-    //
-    //                 x_loc += (char_info.advance / aspect) * screen_size;
-    //             }
-    //         }
-    //
-    //         instance_id += 1;
-    //     }
-    //     // render the remaining characters
-    //     if (instance_id > 0) {
-    //         {
-    //             const mapped_buffer = self.character_buffer.map(.{ .write = true, }) catch unreachable;
-    //             defer mapped_buffer.unmap();
-    //
-    //             @memcpy(mapped_buffer.data_array(CharacterInfoConstantBuffer, RENDER_INSTANCE_COUNT)[0..], self.constant_buffer_data[0..]);
-    //         }
-    //
-    //         gfx.cmd_draw_instanced(6, @truncate(instance_id), 0, 0);
-    //     }
-    // }
-
     const CharacterLayoutInfo = struct {
         x_location: f32 = 0.0,
         y_location: f32 = 0.0,
@@ -934,4 +805,3 @@ pub const Font = struct {
         };
     }
 };
-

@@ -8,6 +8,7 @@ const pl = @import("../platform/platform.zig");
 const gen = @import("self").gen;
 const ToneMappingFilter = @import("tonemapping_filter.zig");
 const BloomFilter = @import("bloom.zig");
+const ShaderManager = @import("shader_manager.zig");
 
 const eng = @import("../root.zig");
 const Rect = eng.Rect;
@@ -19,6 +20,8 @@ pub const GfxState = struct {
     pub const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.slang");
 
     platform: Platform,
+
+    shader_manager: ShaderManager,
 
     buffers: gen.GenerationalList(Buffer),
     images: gen.GenerationalList(Image),
@@ -61,9 +64,6 @@ pub const GfxState = struct {
 
         emission: Image.Ref,
         emission_view: ImageView.Ref,
-
-        vertex_shader: *const VertexShader = undefined,
-        pixel_shader: *const PixelShader = undefined,
     },
 
     pub const hdr_format = ImageFormat.Rgba16_Float;
@@ -93,6 +93,7 @@ pub const GfxState = struct {
         self.default.emission.deinit();
 
         self.platform.deinit();
+        self.shader_manager.deinit();
 
         self.buffers.deinit();
         self.images.deinit();
@@ -111,6 +112,9 @@ pub const GfxState = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
+        var shader_manager = try ShaderManager.init();
+        errdefer shader_manager.deinit();
+
         var buffers = try gen.GenerationalList(Buffer).init(alloc);
         errdefer buffers.deinit();
 
@@ -152,6 +156,8 @@ pub const GfxState = struct {
 
         return Self {
             .platform = platform,
+            .shader_manager = shader_manager,
+            
             .buffers = buffers,
             .images = images,
             .image_views = image_views,
@@ -402,8 +408,6 @@ pub const Viewport = struct {
     }
 };
 
-pub const ShaderDefineTuple = std.meta.Tuple(&[_]type{ []const u8, []const u8 });
-
 pub const VertexInputLayoutFormat = enum {
     F32x1,
     F32x2,
@@ -432,344 +436,51 @@ pub const VertexInputAttribute = struct {
     format: VertexInputLayoutFormat,
 };
 
-pub const VertexInputLayoutInfo = struct {
+pub const ShaderModuleInfo = struct {
+    spirv_data: []const u8,
+};
+
+pub const ShaderModule = struct {
+    platform: pl.GfxPlatform.ShaderModule,
+
+    pub fn deinit(self: *const ShaderModule) void {
+        self.platform.deinit();
+    }
+
+    pub fn init(info: ShaderModuleInfo) !ShaderModule {
+        const platform = pl.GfxPlatform.ShaderModule.init(info) catch |err| {
+            std.log.err("Failed to initialise shader module: {}", .{err});
+            return err;
+        };
+        return ShaderModule {
+            .platform = platform,
+        };
+    }
+};
+
+pub const Shader = struct {
+    module: *const ShaderModule,
+    entry_point: [:0]const u8,
+};
+
+pub const VertexInputInfo = struct {
     bindings: []const VertexInputBinding,
     attributes: []const VertexInputAttribute,
 };
 
-pub const VertexShaderOptions = struct {
-    filepath: ?[]const u8 = null,
-    defines: []const ShaderDefineTuple = &.{},
-};
+pub const VertexInput = struct {
+    platform: pl.GfxPlatform.VertexInput,
 
-pub const VertexShader = struct {
-    platform: pl.GfxPlatform.VertexShader,
-    
-    pub fn deinit(self: *const VertexShader) void {
+    pub fn deinit(self: *const VertexInput) void {
         self.platform.deinit();
     }
 
-    pub fn init_file(
-        alloc: std.mem.Allocator,
-        vs_path: path.Path, 
-        vs_func: []const u8,
-        vs_layout: VertexInputLayoutInfo,
-        options: VertexShaderOptions,
-    ) !VertexShader {
-        const vs_res_path = try vs_path.resolve_path(alloc);
-        defer alloc.free(vs_res_path);
-
-        var modified_options = options;
-        modified_options.filepath = vs_res_path;
-
-        var vs_file = try std.fs.cwd().openFile(vs_res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
-        defer vs_file.close();
-
-        const vs_file_len = try vs_file.getEndPos();
-
-        const vs_buf: []u8 = try alloc.alloc(u8, @intCast(vs_file_len));
-        defer alloc.free(vs_buf);
-
-        if (try vs_file.readAll(vs_buf) != vs_file_len) {
-            return error.FailedToReadShader;
-        }
-
-        return init_buffer(vs_buf, vs_func, vs_layout, modified_options);
-    }
-
-    pub fn init_buffer(
-        vs_data: []const u8, 
-        vs_func: []const u8, 
-        vs_layout: VertexInputLayoutInfo,
-        options: VertexShaderOptions,
-    ) !VertexShader {
-        const platform = pl.GfxPlatform.VertexShader.init_buffer(vs_data, vs_func, vs_layout, options) catch |err| {
-            std.log.err("Vertex shader init failed: {s}", .{@errorName(err)});
+    pub fn init(info: VertexInputInfo) !VertexInput {
+        const platform = pl.GfxPlatform.VertexInput.init(info) catch |err| {
+            std.log.err("Failed to initialise vertex input: {}", .{err});
             return err;
         };
-        return VertexShader {
-            .platform = platform,
-        };
-    }
-};
-
-pub const PixelShaderOptions = struct {
-    filepath: ?[]const u8 = null,
-    defines: []const ShaderDefineTuple = &.{},
-};
-
-pub const PixelShader = struct {
-    platform: pl.GfxPlatform.PixelShader,
-    
-    pub fn deinit(self: *const PixelShader) void {
-        self.platform.deinit();
-    }
-    
-    pub fn init_file(
-        alloc: std.mem.Allocator,
-        ps_path: path.Path, 
-        ps_func: []const u8,
-        options: PixelShaderOptions,
-    ) !PixelShader {
-        const ps_res_path = try ps_path.resolve_path(alloc);
-        defer alloc.free(ps_res_path);
-
-        var modified_options = options;
-        modified_options.filepath = ps_res_path;
-
-        var ps_file = try std.fs.cwd().openFile(ps_res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
-        defer ps_file.close();
-
-        const ps_file_len = try ps_file.getEndPos();
-
-        const ps_buf: []u8 = try alloc.alloc(u8, @intCast(ps_file_len));
-        defer alloc.free(ps_buf);
-
-        if (try ps_file.readAll(ps_buf) != ps_file_len) {
-            return error.FailedToReadShader;
-        }
-
-        return init_buffer(ps_buf, ps_func, modified_options);
-    }
-
-    pub fn init_buffer(
-        ps_data: []const u8, 
-        ps_func: []const u8,
-        options: PixelShaderOptions,
-    ) !PixelShader {
-        const platform = pl.GfxPlatform.PixelShader.init_buffer(ps_data, ps_func, options) catch |err| {
-            std.log.err("Pixel shader init failed: {s}\n\t- {s}", .{
-                @errorName(err),
-                options.filepath orelse "no filepath provided",
-            });
-            return err;
-        };
-        return PixelShader {
-            .platform = platform,
-        };
-    }
-};
-
-pub const HullShaderOptions = struct {
-    filepath: ?[]const u8 = null,
-    defines: []const ShaderDefineTuple = &.{},
-};
-
-pub const HullShader = struct {
-    platform: pl.GfxPlatform.HullShader,
-    
-    pub fn deinit(self: *const HullShader) void {
-        self.platform.deinit();
-    }
-    
-    pub fn init_file(
-        alloc: std.mem.Allocator,
-        hs_path: path.Path, 
-        hs_func: []const u8,
-        options: HullShaderOptions,
-    ) !HullShader {
-        const res_path = try hs_path.resolve_path(alloc);
-        defer alloc.free(res_path);
-
-        var modified_options = options;
-        modified_options.filepath = res_path;
-
-        var file = try std.fs.cwd().openFile(res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
-        defer file.close();
-
-        const file_len = try file.getEndPos();
-
-        const buf: []u8 = try alloc.alloc(u8, @intCast(file_len));
-        defer alloc.free(buf);
-
-        if (try file.readAll(buf) != file_len) {
-            return error.FailedToReadShader;
-        }
-
-        return init_buffer(buf, hs_func, modified_options);
-    }
-
-    pub fn init_buffer(
-        hs_data: []const u8, 
-        hs_func: []const u8,
-        options: HullShaderOptions,
-    ) !HullShader {
-        const platform = pl.GfxPlatform.HullShader.init_buffer(hs_data, hs_func, options) catch |err| {
-            std.log.err("Hull shader init failed: {s}\n\t- {s}", .{
-                @errorName(err),
-                options.filepath orelse "no filepath provided",
-            });
-            return err;
-        };
-        return HullShader {
-            .platform = platform,
-        };
-    }
-};
-
-pub const DomainShaderOptions = struct {
-    filepath: ?[]const u8 = null,
-    defines: []const ShaderDefineTuple = &.{},
-};
-
-pub const DomainShader = struct {
-    platform: pl.GfxPlatform.DomainShader,
-    
-    pub fn deinit(self: *const DomainShader) void {
-        self.platform.deinit();
-    }
-    
-    pub fn init_file(
-        alloc: std.mem.Allocator,
-        ds_path: path.Path, 
-        ds_func: []const u8,
-        options: DomainShaderOptions,
-    ) !DomainShader {
-        const res_path = try ds_path.resolve_path(alloc);
-        defer alloc.free(res_path);
-
-        var modified_options = options;
-        modified_options.filepath = res_path;
-
-        var file = try std.fs.cwd().openFile(res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
-        defer file.close();
-
-        const file_len = try file.getEndPos();
-
-        const buf: []u8 = try alloc.alloc(u8, @intCast(file_len));
-        defer alloc.free(buf);
-
-        if (try file.readAll(buf) != file_len) {
-            return error.FailedToReadShader;
-        }
-
-        return init_buffer(buf, ds_func, modified_options);
-    }
-
-    pub fn init_buffer(
-        ds_data: []const u8, 
-        ds_func: []const u8,
-        options: DomainShaderOptions,
-    ) !DomainShader {
-        const platform = pl.GfxPlatform.DomainShader.init_buffer(ds_data, ds_func, options) catch |err| {
-            std.log.err("Domain shader init failed: {s}\n\t- {s}", .{
-                @errorName(err),
-                options.filepath orelse "no filepath provided",
-            });
-            return err;
-        };
-        return DomainShader {
-            .platform = platform,
-        };
-    }
-};
-
-pub const GeometryShaderOptions = struct {
-    filepath: ?[]const u8 = null,
-    defines: []const ShaderDefineTuple = &.{},
-};
-
-pub const GeometryShader = struct {
-    platform: pl.GfxPlatform.GeometryShader,
-    
-    pub fn deinit(self: *const GeometryShader) void {
-        self.platform.deinit();
-    }
-    
-    pub fn init_file(
-        alloc: std.mem.Allocator,
-        gs_path: path.Path, 
-        gs_func: []const u8,
-        options: GeometryShaderOptions,
-    ) !GeometryShader {
-        const res_path = try gs_path.resolve_path(alloc);
-        defer alloc.free(res_path);
-
-        var modified_options = options;
-        modified_options.filepath = res_path;
-
-        var file = try std.fs.cwd().openFile(res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
-        defer file.close();
-
-        const file_len = try file.getEndPos();
-
-        const buf: []u8 = try alloc.alloc(u8, @intCast(file_len));
-        defer alloc.free(buf);
-
-        if (try file.readAll(buf) != file_len) {
-            return error.FailedToReadShader;
-        }
-
-        return init_buffer(buf, gs_func, modified_options);
-    }
-
-    pub fn init_buffer(
-        gs_data: []const u8, 
-        gs_func: []const u8,
-        options: GeometryShaderOptions,
-    ) !GeometryShader {
-        const platform = pl.GfxPlatform.GeometryShader.init_buffer(gs_data, gs_func, options) catch |err| {
-            std.log.err("Geometry shader init failed: {s}\n\t- {s}", .{
-                @errorName(err),
-                options.filepath orelse "no filepath provided",
-            });
-            return err;
-        };
-        return GeometryShader {
-            .platform = platform,
-        };
-    }
-};
-
-pub const ComputeShaderOptions = struct {
-    filepath: ?[]const u8 = null,
-    defines: []const ShaderDefineTuple = &.{},
-};
-
-pub const ComputeShader = struct {
-    platform: pl.GfxPlatform.ComputeShader,
-    
-    pub fn deinit(self: *const ComputeShader) void {
-        self.platform.deinit();
-    }
-    
-    pub fn init_file(
-        alloc: std.mem.Allocator,
-        cs_path: path.Path, 
-        cs_func: []const u8,
-        options: ComputeShaderOptions,
-    ) !ComputeShader {
-        const cs_res_path = try cs_path.resolve_path(alloc);
-        defer alloc.free(cs_res_path);
-
-        var modified_options = options;
-        modified_options.filepath = cs_res_path;
-
-        var cs_file = try std.fs.cwd().openFile(cs_res_path, std.fs.File.OpenFlags { .mode = std.fs.File.OpenMode.read_only });
-        defer cs_file.close();
-
-        const cs_file_len = try cs_file.getEndPos();
-
-        const cs_buf: []u8 = try alloc.alloc(u8, @intCast(cs_file_len));
-        defer alloc.free(cs_buf);
-
-        if (try cs_file.readAll(cs_buf) != cs_file_len) {
-            return error.FailedToReadShader;
-        }
-
-        return init_buffer(cs_buf, cs_func, modified_options);
-    }
-
-    pub fn init_buffer(
-        cs_data: []const u8, 
-        cs_func: []const u8, 
-        options: ComputeShaderOptions,
-    ) !ComputeShader {
-        const platform = pl.GfxPlatform.ComputeShader.init_buffer(cs_data, cs_func, options) catch |err| {
-            std.log.err("Compute shader init failed: {s}", .{@errorName(err)});
-            return err;
-        };
-        return ComputeShader {
+        return VertexInput {
             .platform = platform,
         };
     }
@@ -1365,17 +1076,23 @@ pub const RenderPass = struct {
     pub const Ref = Reference(Self);
 
     platform: GfxState.Platform.RenderPass,
+    attachments_info: []AttachmentInfo,
 
     pub fn deinit(self: *const Self) void {
         self.platform.deinit();
+        eng.get().general_allocator.free(self.attachments_info);
     }
 
     pub fn init(info: RenderPassInfo) !RenderPass.Ref {
         const platform = try pl.GfxPlatform.RenderPass.init(info);
         errdefer platform.deinit();
 
+        const owned_attachments = try eng.get().general_allocator.dupe(AttachmentInfo, info.attachments);
+        errdefer eng.get().general_allocator.free(owned_attachments);
+
         const render_pass = RenderPass {
             .platform = platform,
+            .attachments_info = owned_attachments,
         };
 
         return Self.Ref {
@@ -1391,8 +1108,10 @@ pub const PushConstantLayoutInfo = struct {
 };
 
 pub const GraphicsPipelineInfo = struct {
-    vertex_shader: *const VertexShader,
-    pixel_shader: *const PixelShader,
+    vertex_shader: Shader,
+    pixel_shader: Shader,
+
+    vertex_input: *const VertexInput,
 
     topology: Topology = Topology.TriangleList,
 
@@ -1418,7 +1137,6 @@ pub const GraphicsPipelineInfo = struct {
         slope_factor: f32,
     } = null,
 
-    attachments: []const AttachmentInfo,
     render_pass: RenderPass.Ref,
     subpass_index: u32 = 0,
 

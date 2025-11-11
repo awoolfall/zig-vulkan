@@ -17,10 +17,6 @@ const PushConstantData = extern struct {
     blur_amount: f32,
 };
 
-full_screen_quad_vertex_shader: gf.VertexShader,
-downsample_pixel_shader: gf.PixelShader,
-upsample_pixel_shader: gf.PixelShader,
-
 sampler: gf.Sampler.Ref,
 
 downsample_render_pass: gf.RenderPass.Ref,
@@ -57,34 +53,30 @@ pub fn deinit(self: *Self) void {
     self.images_descriptor_layout.deinit();
 
     self.sampler.deinit();
-
-    self.full_screen_quad_vertex_shader.deinit();
-    self.downsample_pixel_shader.deinit();
-    self.upsample_pixel_shader.deinit();
 }
 
 pub fn init() !Self {
-    var full_screen_quad_vertex_shader = try gf.VertexShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS,
-        "vs_main",
-        .{ .bindings = &.{}, .attributes = &.{}, },
-        .{},
-    );
-    errdefer full_screen_quad_vertex_shader.deinit();
+    const alloc = eng.get().general_allocator;
 
-    var downsample_pixel_shader = try gf.PixelShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS ++ BloomShaderSource,
-        "ps_downsample",
-        .{},
-    );
-    errdefer downsample_pixel_shader.deinit();
+    const slang_shader = gf.GfxState.FULL_SCREEN_QUAD_VS ++ BloomShaderSource;
 
-    var upsample_pixel_shader = try gf.PixelShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS ++ BloomShaderSource,
-        "ps_upsample",
-        .{},
-    );
-    errdefer upsample_pixel_shader.deinit();
+    const spirv_shader = try gf.GfxState.get().shader_manager.generate_spirv(alloc, .{
+        .shader_data = slang_shader,
+        .shader_entry_points = &.{
+            "vs_main",
+            "ps_downsample",
+            "ps_upsample",
+        },
+    });
+    defer alloc.free(spirv_shader);
+
+    const shader_module = try gf.ShaderModule.init(.{
+        .spirv_data = spirv_shader,
+    });
+    defer shader_module.deinit();
+
+    const vertex_input = try gf.VertexInput.init(.{ .bindings = &.{}, .attributes = &.{}, });
+    defer vertex_input.deinit();
 
     var sampler = try gf.Sampler.init(.{
         .filter_min_mag = .Linear,
@@ -167,9 +159,15 @@ pub fn init() !Self {
     const downsample_pipeline = try gf.GraphicsPipeline.init(.{
         .render_pass = downsample_render_pass,
         .subpass_index = 0,
-        .attachments = downsample_attachments,
-        .vertex_shader = &full_screen_quad_vertex_shader,
-        .pixel_shader = &downsample_pixel_shader,
+        .vertex_shader = .{
+            .module = &shader_module,
+            .entry_point = "vs_main",
+        },
+        .vertex_input = &vertex_input,
+        .pixel_shader = .{
+            .module = &shader_module,
+            .entry_point = "ps_downsample"
+        },
         .front_face = .Clockwise,
         .descriptor_set_layouts = &.{
             images_descriptor_layout,
@@ -219,9 +217,15 @@ pub fn init() !Self {
     const upsample_pipeline = try gf.GraphicsPipeline.init(.{
         .render_pass = upsample_render_pass,
         .subpass_index = 0,
-        .attachments = upsample_attachments,
-        .vertex_shader = &full_screen_quad_vertex_shader,
-        .pixel_shader = &upsample_pixel_shader,
+        .vertex_shader = .{
+            .module = &shader_module,
+            .entry_point = "vs_main",
+        },
+        .vertex_input = &vertex_input,
+        .pixel_shader = .{
+            .module = &shader_module,
+            .entry_point = "ps_upsample"
+        },
         .front_face = .Clockwise,
         .descriptor_set_layouts = &.{
             images_descriptor_layout,
@@ -282,10 +286,6 @@ pub fn init() !Self {
     });
 
     return Self {
-        .full_screen_quad_vertex_shader = full_screen_quad_vertex_shader,
-        .downsample_pixel_shader = downsample_pixel_shader,
-        .upsample_pixel_shader = upsample_pixel_shader,
-
         .sampler = sampler,
 
         .downsample_render_pass = downsample_render_pass,

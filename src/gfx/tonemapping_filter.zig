@@ -12,9 +12,6 @@ pub const ToneMappingOptions = packed struct(u32) {
 
 const ToneMappingShaderSource = @embedFile("tonemapping.slang");
 
-vertex_shader: gf.VertexShader,
-pixel_shader: gf.PixelShader,
-black_and_white_pixel_shader: gf.PixelShader,
 sampler: gf.Sampler.Ref,
 
 images_descriptor_layout: gf.DescriptorLayout.Ref,
@@ -26,9 +23,6 @@ pipeline: gf.GraphicsPipeline.Ref,
 framebuffer: gf.FrameBuffer.Ref,
 
 pub fn deinit(self: *Self) void {
-    self.vertex_shader.deinit();
-    self.pixel_shader.deinit();
-    self.black_and_white_pixel_shader.deinit();
     self.sampler.deinit();
 
     self.framebuffer.deinit();
@@ -41,31 +35,42 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn init() !Self {
-    var vertex_shader = try gf.VertexShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS ++ ToneMappingShaderSource,
-        "vs_main",
-        .{ .bindings = &.{}, .attributes = &.{} },
-        .{},
-    );
-    errdefer vertex_shader.deinit();
+    const alloc = eng.get().general_allocator;
 
-    var pixel_shader = try gf.PixelShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS ++ ToneMappingShaderSource,
-        "ps_main",
-        .{},
-    );
-    errdefer pixel_shader.deinit();
+    const slang_shader = gf.GfxState.FULL_SCREEN_QUAD_VS ++ ToneMappingShaderSource;
 
-    var black_and_white_pixel_shader = try gf.PixelShader.init_buffer(
-        gf.GfxState.FULL_SCREEN_QUAD_VS ++ ToneMappingShaderSource,
-        "ps_main",
-        .{
-            .defines = &.{
-                .{ "BLACK_AND_WHITE", "1" },
-            },
+    const colour_spirv_shader = try gf.GfxState.get().shader_manager.generate_spirv(alloc, .{
+        .shader_data = slang_shader,
+        .shader_entry_points = &.{
+            "vs_main",
+            "ps_main",
         },
-    );
-    errdefer black_and_white_pixel_shader.deinit();
+    });
+    defer alloc.free(colour_spirv_shader);
+
+    const colour_shader_module = try gf.ShaderModule.init(.{ .spirv_data = colour_spirv_shader });
+    defer colour_shader_module.deinit();
+
+    const black_and_white_spirv_shader = try gf.GfxState.get().shader_manager.generate_spirv(alloc, .{
+        .shader_data = slang_shader,
+        .shader_entry_points = &.{
+            "vs_main",
+            "ps_main",
+        },
+        .preprocessor_macros = &.{
+            .{ "BLACK_AND_WHITE", "1" },
+        },
+    });
+    defer alloc.free(black_and_white_spirv_shader);
+
+    const black_and_white_shader_module = try gf.ShaderModule.init(.{ .spirv_data = black_and_white_spirv_shader });
+    defer black_and_white_shader_module.deinit();
+
+    const vertex_input = try gf.VertexInput.init(.{
+        .attributes = &.{},
+        .bindings = &.{},
+    });
+    defer vertex_input.deinit();
 
     var sampler = try gf.Sampler.init(.{});
     errdefer sampler.deinit();
@@ -145,9 +150,15 @@ pub fn init() !Self {
     const pipeline = try gf.GraphicsPipeline.init(.{
         .render_pass = render_pass,
         .subpass_index = 0,
-        .attachments = attachments,
-        .vertex_shader = &vertex_shader,
-        .pixel_shader = &pixel_shader,
+        .vertex_shader = .{
+            .module = &colour_shader_module,
+            .entry_point = "vs_main",
+        },
+        .vertex_input = &vertex_input,
+        .pixel_shader = .{
+            .module = &colour_shader_module,
+            .entry_point = "ps_main",
+        },
         .cull_mode = .CullNone,
         .descriptor_set_layouts = &.{
             images_descriptor_layout,
@@ -164,9 +175,6 @@ pub fn init() !Self {
     errdefer framebuffer.deinit();
 
     return Self {
-        .vertex_shader = vertex_shader,
-        .pixel_shader = pixel_shader,
-        .black_and_white_pixel_shader = black_and_white_pixel_shader,
         .sampler = sampler,
 
         .images_descriptor_layout = images_descriptor_layout,

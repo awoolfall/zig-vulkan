@@ -36,8 +36,6 @@ pub const ParticleRenderer = struct {
         num_instances: usize,
     };
 
-    vertex_shader: gf.VertexShader,
-    pixel_shader: gf.PixelShader,
     shader_watcher: eng.assets.FileWatcher,
 
     instaces_data_buffers: std.ArrayList(gf.Buffer.Ref),
@@ -62,8 +60,6 @@ pub const ParticleRenderer = struct {
         self.pipeline.deinit();
         self.render_pass.deinit();
 
-        self.vertex_shader.deinit();
-        self.pixel_shader.deinit();
         self.shader_watcher.deinit();
 
         self.camera_descriptor_set.deinit();
@@ -82,15 +78,44 @@ pub const ParticleRenderer = struct {
         const particle_path = try std.fs.path.join(alloc, &[_][]const u8{ @import("build_options").engine_src_path, "particles/particles.slang" });
         defer alloc.free(particle_path);
 
-        const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
-            std.log.err("failed to open file: {}", .{err});
-            return error.FileNotFound;
-        };
+        const shader_file = try std.fs.openFileAbsolute(particle_path, .{ .mode = .read_only });
         defer shader_file.close();
 
-        const shaders = try init_shaders();
-        const vertex_shader = shaders[0];
-        const pixel_shader = shaders[1];
+        const slang_shader = try alloc.alloc(u8, try shader_file.getEndPos());
+        defer alloc.free(slang_shader);
+
+        _ = try shader_file.readAll(slang_shader);
+
+        const spirv_shader = try gf.GfxState.get().shader_manager.generate_spirv(alloc, .{
+            .shader_data = slang_shader,
+            .shader_entry_points = &.{
+                "vs_main",
+                "ps_main",
+            }
+        });
+        defer alloc.free(spirv_shader);
+
+        const shader_module = try gf.ShaderModule.init(.{ .spirv_data = spirv_shader });
+        defer shader_module.deinit();
+
+        const stride: u32 = 
+            @sizeOf([4]f32) +   // position
+            @sizeOf([4]f32) +   // colour
+            @sizeOf([4]f32) +   // velocity
+            @sizeOf([4]f32);    // scale
+
+        const vertex_input = try gf.VertexInput.init(.{
+            .bindings = &.{
+                .{ .binding = 0, .stride = stride, .input_rate = .Instance },
+            },
+            .attributes = &.{
+                .{ .name = "Position",  .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
+                .{ .name = "Colour",    .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
+                .{ .name = "Velocity",  .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
+                .{ .name = "Scale",     .location = 3, .binding = 0, .offset = 3 * @sizeOf([4]f32), .format = .F32x4, },
+            },
+        });
+        defer vertex_input.deinit();
 
         var shader_watcher = try eng.assets.FileWatcher.init(alloc, particle_path, 500);
         errdefer shader_watcher.deinit();
@@ -175,10 +200,16 @@ pub const ParticleRenderer = struct {
         errdefer render_pass.deinit();
 
         var graphics_pipeline = try gf.GraphicsPipeline.init(.{
-            .vertex_shader = &vertex_shader,
-            .pixel_shader = &pixel_shader,
+            .vertex_shader = .{
+                .module = &shader_module,
+                .entry_point = "vs_main",
+            },
+            .vertex_input = &vertex_input,
+            .pixel_shader = .{
+                .module = &shader_module,
+                .entry_point = "ps_main",
+            },
             .depth_test = .{ .write = false, },
-            .attachments = attachments[0..],
             .render_pass = render_pass,
             .descriptor_set_layouts = &.{
                 camera_descriptor_layout,
@@ -205,8 +236,6 @@ pub const ParticleRenderer = struct {
         return Self {
             .staged_particle_sets = try std.ArrayList(StagedParticleSet).initCapacity(eng.get().general_allocator, 32),
 
-            .vertex_shader = vertex_shader,
-            .pixel_shader = pixel_shader,
             .shader_watcher = shader_watcher,
 
             .render_pass = render_pass,
@@ -219,64 +248,6 @@ pub const ParticleRenderer = struct {
             .camera_descriptor_layout = camera_descriptor_layout,
             .camera_descriptor_pool = camera_descriptor_pool,
             .camera_descriptor_set = camera_descriptor_set,
-        };
-    }
-
-    pub fn init_shaders() !struct {gf.VertexShader, gf.PixelShader} {
-        const particle_path = std.fs.path.join(
-            eng.get().general_allocator,
-            &[_][]const u8{ @import("build_options").engine_src_path, "particles/particles.slang" }
-        ) catch |err| {
-            std.log.err("failed to join paths: {}", .{err});
-            return err;
-        };
-        defer eng.get().general_allocator.free(particle_path);
-
-        const shader_file = std.fs.openFileAbsolute(particle_path, .{}) catch |err| {
-            std.log.err("failed to open file: {}", .{err});
-            return err;
-        };
-        defer shader_file.close();
-
-        const shader_source = shader_file.readToEndAlloc(eng.get().general_allocator, 1024 * 1024) catch |err| {
-            std.log.err("failed to read file: {}", .{err});
-            return err;
-        };
-        defer eng.get().general_allocator.free(shader_source);
-
-        const stride: u32 = 
-            @sizeOf([4]f32) +   // position
-            @sizeOf([4]f32) +   // colour
-            @sizeOf([4]f32) +   // velocity
-            @sizeOf([4]f32);    // scale
-        const vertex_shader = try gf.VertexShader.init_buffer(
-            shader_source,
-            "vs_main",
-            .{
-                .bindings = &.{
-                    .{ .binding = 0, .stride = stride, .input_rate = .Instance },
-                },
-                .attributes = &.{
-                    .{ .name = "Position",  .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "Colour",    .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "Velocity",  .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "Scale",     .location = 3, .binding = 0, .offset = 3 * @sizeOf([4]f32), .format = .F32x4, },
-                },
-            },
-            .{},
-        );
-        errdefer vertex_shader.deinit();
-        
-        const pixel_shader = try gf.PixelShader.init_buffer(
-            shader_source,
-            "ps_main",
-            .{},
-        );
-        errdefer pixel_shader.deinit();
-
-        return .{
-            vertex_shader,
-            pixel_shader,
         };
     }
 
@@ -352,19 +323,9 @@ pub const ParticleRenderer = struct {
         cmd: *gf.CommandBuffer,
         camera: *const Camera,
     ) !void {
-        if (self.shader_watcher.was_modified_since_last_check()) {
-            blk: {
-                const new_shaders = init_shaders() catch |err| {
-                    std.log.err("failed to reload shaders: {}", .{err});
-                    break :blk;
-                };
-                
-                self.vertex_shader.deinit();
-                self.pixel_shader.deinit();
-                self.vertex_shader = new_shaders[0];
-                self.pixel_shader = new_shaders[1];
-            }
-        }
+        // if (self.shader_watcher.was_modified_since_last_check()) blk: {
+        // TODO
+        // }
 
         // update camera constant buffer
         blk: {

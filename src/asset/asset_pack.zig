@@ -10,6 +10,14 @@ pub const AssetType = union(enum) {
     Animation: as.AnimationAsset,
     Image: as.ImageAsset,
 
+    pub fn deinit(self: *AssetType) void {
+        switch (self.*) {
+            .Model => |*a| a.deinit(),
+            .Animation => |*a| a.deinit(),
+            .Image => |*a| a.deinit(),
+        }
+    }
+
     pub fn get(self: *AssetType, comptime A: type) !*A {
         switch (A) {
             as.ModelAsset => switch (self.*) {
@@ -33,6 +41,22 @@ pub const AssetType = union(enum) {
         Animation: struct { model_name: []const u8, animation_id: u64, },
         Image: as.ImageAsset.Path,
     };
+
+    pub fn load(self: *AssetType, alloc: std.mem.Allocator) !void {
+        try switch (self.*) {
+            .Model => |*a| a.load(alloc),
+            .Animation => |*a| a.load(alloc),
+            .Image => |*a| a.load(alloc),
+        };
+    }
+    
+    pub fn unload(self: *AssetType) void {
+        switch (self.*) {
+            .Model => |*a| a.unload(),
+            .Animation => |*a| a.unload(),
+            .Image => |*a| a.unload(),
+        }
+    }
 };
 
 pub const Asset = struct {
@@ -41,27 +65,15 @@ pub const Asset = struct {
 
     pub fn deinit(self: *Asset, alloc: std.mem.Allocator) void {
         alloc.free(self.unique_name);
-        switch (self.asset) {
-            .Model => |*a| a.deinit(),
-            .Animation => |*a| a.deinit(),
-            .Image => |*a| a.deinit(),
-        }
+        self.asset.deinit();
     }
 
     pub fn load(self: *Asset, alloc: std.mem.Allocator) !void {
-        try switch (self.asset) {
-            .Model => |*a| a.load(alloc),
-            .Animation => |*a| a.load(alloc),
-            .Image => |*a| a.load(alloc),
-        };
+        try self.asset.load(alloc);
     }
 
     pub fn unload(self: *Asset) void {
-        switch (self.asset) {
-            .Model => |*a| a.unload(),
-            .Animation => |*a| a.unload(),
-            .Image => |*a| a.unload(),
-        }
+        self.asset.unload();
     }
 };
 
@@ -125,11 +137,17 @@ pub fn add_model(self: *Self, name: []const u8, path: as.ModelAsset.Path) !void 
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
+    var model_asset = AssetType { .Model = try as.ModelAsset.init(self.alloc, path), };
+    if (self.is_loaded) {
+        try model_asset.load(self.alloc);
+    }
+    errdefer model_asset.unload();
+
     try self.assets.put(
         std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = .{ .Model = try as.ModelAsset.init(self.alloc, path), },
+            .asset = model_asset,
         },
     );
 }
@@ -147,14 +165,20 @@ pub fn define_animation(self: *Self, name: []const u8, base_model: []const u8, a
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
+    var animation_asset = AssetType { .Animation = try as.AnimationAsset.init(self.alloc, .{
+        .model_id = model_asset_id,
+        .animation_id = animation_id,
+    }), };
+    if (self.is_loaded) {
+        try animation_asset.load(self.alloc);
+    }
+    errdefer animation_asset.unload();
+
     try self.assets.put(
         std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = .{ .Animation = try as.AnimationAsset.init(self.alloc, .{
-                .model_id = model_asset_id,
-                .animation_id = animation_id,
-            }), },
+            .asset = animation_asset,
         },
     );
 }
@@ -163,11 +187,17 @@ pub fn add_image(self: *Self, name: []const u8, path: as.ImageAsset.Path) !void 
     const owned_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(owned_name);
 
+    var image_asset = AssetType { .Image = try as.ImageAsset.init(self.alloc, path), };
+    if (self.is_loaded) {
+        try image_asset.load(self.alloc);
+    }
+    errdefer image_asset.unload();
+
     try self.assets.put(
         std.hash_map.hashString(owned_name), 
         .{
             .unique_name = owned_name,
-            .asset = .{ .Image = try as.ImageAsset.init(self.alloc, path), },
+            .asset = image_asset,
         },
     );
 }

@@ -27,8 +27,6 @@ pub const Debug = struct {
 
     lines: std.ArrayList(DebugLine),
 
-    lines_vertex_shader: gfx.VertexShader,
-    lines_pixel_shader: gfx.PixelShader,
     lines_instance_buffer: gfx.Buffer.Ref,
 
     camera_buffer: gfx.Buffer.Ref,
@@ -41,8 +39,6 @@ pub const Debug = struct {
         self.lines_pipeline.deinit();
         self.render_pass.deinit();
 
-        self.lines_vertex_shader.deinit();
-        self.lines_pixel_shader.deinit();
         self.lines_instance_buffer.deinit();
 
         self.camera_descriptor_set.deinit();
@@ -54,29 +50,31 @@ pub const Debug = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator) !Self {
-        const lines_vertex_shader = try gfx.VertexShader.init_buffer(
-            LINES_HLSL,
-            "vs_main",
-            .{
-                .bindings = &.{
-                    .{ .binding = 0, .stride = 3 * @sizeOf([4]f32), .input_rate = .Instance, },
-                },
-                .attributes = &.{
-                    .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
-                    .{ .name = "COLOR",     .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
-                },
+        const lines_vertex_input = try gfx.VertexInput.init(.{
+            .bindings = &.{
+                .{ .binding = 0, .stride = 3 * @sizeOf([4]f32), .input_rate = .Instance, },
             },
-            .{},
-        );
-        errdefer lines_vertex_shader.deinit();
+            .attributes = &.{
+                .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
+                .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
+                .{ .name = "COLOR",     .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
+            }, 
+        });
+        defer lines_vertex_input.deinit();
 
-        const lines_pixel_shader = try gfx.PixelShader.init_buffer(
-            LINES_HLSL,
-            "ps_main",
-            .{},
-        );
-        errdefer lines_pixel_shader.deinit();
+        const lines_spirv = try gfx.GfxState.get().shader_manager.generate_spirv(alloc, .{
+            .shader_data = LINES_SHADER,
+            .shader_entry_points = &.{
+                "vs_main",
+                "ps_main",
+            },
+        });
+        defer alloc.free(lines_spirv);
+
+        const shader_module = try gfx.ShaderModule.init(.{
+            .spirv_data = lines_spirv,
+        });
+        defer shader_module.deinit();
 
         const lines_instance_buffer = try gfx.Buffer.init(
             @sizeOf(LineDetails) * MAX_LINES,
@@ -165,9 +163,15 @@ pub const Debug = struct {
 
         const lines_pipeline = try gfx.GraphicsPipeline.init(.{
             .render_pass = render_pass,
-            .attachments = attachments,
-            .vertex_shader = &lines_vertex_shader,
-            .pixel_shader = &lines_pixel_shader,
+            .vertex_shader = .{
+                .module = &shader_module,
+                .entry_point = "vs_main",
+            },
+            .vertex_input = &lines_vertex_input,
+            .pixel_shader = .{
+                .module = &shader_module,
+                .entry_point = "ps_main",
+            },
             .cull_mode = .CullNone,
             .depth_test = .{ .write = true, },
             .descriptor_set_layouts = &.{
@@ -188,8 +192,6 @@ pub const Debug = struct {
         return Self{
             .alloc = alloc,
             .lines = try std.ArrayList(DebugLine).initCapacity(alloc, MAX_LINES),
-            .lines_vertex_shader = lines_vertex_shader,
-            .lines_pixel_shader = lines_pixel_shader,
             .lines_instance_buffer = lines_instance_buffer,
             
             .render_pass = render_pass,
@@ -338,5 +340,5 @@ pub const DebugPoint = struct {
     size: f32 = 1.0,
 };
 
-const LINES_HLSL = @embedFile("lines.slang");
+const LINES_SHADER = @embedFile("lines.slang");
 

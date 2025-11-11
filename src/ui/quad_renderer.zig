@@ -119,9 +119,6 @@ pub const QuadRenderer = struct {
 
     sampler: _gfx.Sampler.Ref,
 
-    vertex_shader: _gfx.VertexShader,
-    pixel_shader: _gfx.PixelShader,
-
     render_pass: _gfx.RenderPass.Ref,
     pipeline: _gfx.GraphicsPipeline.Ref,
     framebuffer: _gfx.FrameBuffer.Ref,
@@ -133,13 +130,8 @@ pub const QuadRenderer = struct {
 
     quad_render_sets: std.ArrayList(QuadRenderSet),
 
-    const QUAD_SHADER_HLSL = @embedFile("quad_shader.slang");
-
     pub fn deinit(self: *QuadRenderer) void {
         defer self.sampler.deinit();
-
-        defer self.vertex_shader.deinit();
-        defer self.pixel_shader.deinit();
 
         defer self.render_pass.deinit();
         defer self.pipeline.deinit();
@@ -156,20 +148,23 @@ pub const QuadRenderer = struct {
 
     pub fn init(alloc: std.mem.Allocator) !QuadRenderer {
         // create the quad shaders
-        const vertex_shader = try _gfx.VertexShader.init_buffer(
-            QUAD_SHADER_HLSL,
-            "vs_main",
-            .{ .bindings = &.{}, .attributes = &.{}, },
-            .{},
-        );
-        errdefer vertex_shader.deinit();
+        const spirv_shader = try _gfx.GfxState.get().shader_manager.generate_spirv(alloc, .{
+            .shader_data = @embedFile("quad_shader.slang"),
+            .shader_entry_points = &.{
+                "vs_main",
+                "ps_main",
+            }
+        });
+        defer alloc.free(spirv_shader);
 
-        const pixel_shader = try _gfx.PixelShader.init_buffer(
-            QUAD_SHADER_HLSL,
-            "ps_main",
-            .{},
-        );
-        errdefer pixel_shader.deinit();
+        const shader_module = try _gfx.ShaderModule.init(.{ .spirv_data = spirv_shader, });
+        defer shader_module.deinit();
+
+        const vertex_input = try _gfx.VertexInput.init(.{
+            .bindings = &.{},
+            .attributes = &.{},
+        });
+        defer vertex_input.deinit();
 
         // create sampler
         const sampler = try _gfx.Sampler.init(
@@ -252,9 +247,15 @@ pub const QuadRenderer = struct {
         });
 
         const graphics_pipeline = try _gfx.GraphicsPipeline.init(.{
-            .vertex_shader = &vertex_shader,
-            .pixel_shader = &pixel_shader,
-            .attachments = attachments,
+            .vertex_shader = .{
+                .module = &shader_module,
+                .entry_point = "vs_main",
+            },
+            .vertex_input = &vertex_input,
+            .pixel_shader = .{
+                .module = &shader_module,
+                .entry_point = "ps_main",
+            },
             .cull_mode = .CullNone, // TODO
             .descriptor_set_layouts = &.{
                 buffers_descriptor_layout,
@@ -290,9 +291,6 @@ pub const QuadRenderer = struct {
 
         return QuadRenderer {
             .alloc = alloc,
-
-            .vertex_shader = vertex_shader,
-            .pixel_shader = pixel_shader,
 
             .sampler = sampler,
 

@@ -4,7 +4,6 @@ const vkt = @import("vulkan_error.zig").vulkan_result_to_zig_error;
 const std = @import("std");
 const zm = @import("zmath");
 const eng = @import("self");
-const slang = @import("slang");
 const gf = eng.gfx;
 const pl = eng.platform;
 const Rect = eng.Rect;
@@ -14,12 +13,8 @@ pub const GfxStateVulkan = struct {
     const Self = @This();
     const ENABLE_VALIDATION_LAYERS: bool = true;
 
-    pub const VertexShader = VertexShaderVulkan;
-    pub const PixelShader = PixelShaderVulkan;
-    pub const HullShader = HullShaderVulkan;
-    pub const DomainShader = DomainShaderVulkan;
-    pub const GeometryShader = GeometryShaderVulkan;
-    pub const ComputeShader = ComputeShaderVulkan;
+    pub const ShaderModule = ShaderModuleVulkan;
+    pub const VertexInput = VertexInputVulkan;
     
     pub const Buffer = BufferVulkan;
     pub const Image = ImageVulkan;
@@ -95,9 +90,6 @@ pub const GfxStateVulkan = struct {
 
     alloc: std.mem.Allocator,
 
-    // @TODO move this to assets?
-    slang_global: ?*slang.c.SlangGlobal,
-
     vk_version: u32,
     instance: c.VkInstance,
     surface: c.VkSurfaceKHR,
@@ -144,16 +136,9 @@ pub const GfxStateVulkan = struct {
             vkDestroyDebugUtilsMessengerEXT(self.instance, m, null);
         }
         c.vkDestroyInstance(self.instance, null);
-
-        slang.c.deinitialise(self.slang_global);
     }
 
     pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
-        // @TODO move this to assets?
-        const slang_global = slang.c.initialise();
-        if (slang_global == null) { return error.UnableToCreateGlobalSlang; }
-        errdefer slang.c.deinitialise(slang_global);
-
         // Request vulkan version
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));
@@ -648,7 +633,6 @@ pub const GfxStateVulkan = struct {
 
         return Self {
             .alloc = alloc,
-            .slang_global = slang_global,
 
             .vk_version = vk_version,
             .instance = vk_instance,
@@ -1218,135 +1202,22 @@ fn imagelayout_to_vulkan(p: gf.ImageLayout) c.VkImageLayout {
     };
 }
 
-const ShaderModule = struct {
+const ShaderModuleVulkan = struct {
     const Self = @This();
 
     vk_shader_module: c.VkShaderModule,
-    vk_shader_stage_create_info: c.VkPipelineShaderStageCreateInfo,
-    entry_point: [:0]const u8,
 
     pub fn deinit(self: *const Self) void {
-        const alloc = eng.get().gfx.platform.alloc;
-
         c.vkDestroyShaderModule(eng.get().gfx.platform.device, self.vk_shader_module, null);
-        alloc.free(self.entry_point);
     }
 
-    pub const InitInfo = struct {
-        shader_data: []const u8,
-        shader_entry_point: []const u8,
-        shader_stage: gf.ShaderStage,
-        preprocessor_macros: []const gf.ShaderDefineTuple = &.{},
-    };
-
-    pub fn init(info: InitInfo) !Self {
+    pub fn init(info: gf.ShaderModuleInfo) !Self {
         const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
 
-        var preproc_macro_arena = std.heap.ArenaAllocator.init(alloc);
-        defer preproc_macro_arena.deinit();
-        const macro_alloc = preproc_macro_arena.allocator();
-
-        const preprocessor_macros = try macro_alloc.alloc(slang.c.PreprocessorMacro, info.preprocessor_macros.len);
-        defer macro_alloc.free(preprocessor_macros);
-
-        for (info.preprocessor_macros, 0..) |m, idx| {
-            preprocessor_macros[idx].name = try macro_alloc.dupeZ(u8, m[0]);
-            preprocessor_macros[idx].value = try macro_alloc.dupeZ(u8, m[1]);
-        }
-
-        const session_create_info = slang.SessionCreateInfo {
-            .compile_target = slang.c.TARGET_SPIRV,
-            .profile = "spirv_1_3",
-            .preprocessor_macros = preprocessor_macros,
-            .compile_options = &.{
-                .{ .name = slang.c.VulkanUseEntryPointName, .value = .{ .kind = slang.c.Int, .intValue0 = 1, }, },
-            },
-            .search_paths = &.{
-                "libs/engine/src/" // TODO integrate with asset manager, cant use relative throguh app /libs/engine/...
-            },
-        };
-
-        const slang_session = try slang.check(slang.c.create_session(gfx.platform.slang_global, session_create_info.to_slang()));
-        defer slang.c.destroy_session(slang_session);
-
-        const diagnostics_blob = try slang.check(slang.c.create_blob());
-        defer slang.c.destroy_blob(diagnostics_blob);
-
-        const shader_data_z = try gfx.platform.alloc.dupeZ(u8, info.shader_data);
-        defer gfx.platform.alloc.free(shader_data_z);
-
-        const module_create_info = slang.c.ModuleCreateInfo {
-            .module_name = "shader",
-            .module_path = "",
-            .shader_source = @ptrCast(shader_data_z.ptr),
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        const slang_module = slang.check(slang.c.create_and_load_module(slang_session, module_create_info)) catch {
-            std.log.info("slang error creating module: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToCreateSlangModule;
-        };
-        defer slang.c.destroy_module(slang_module);
-
-        const entry_point_z = try gfx.platform.alloc.dupeZ(u8, info.shader_entry_point);
-        defer gfx.platform.alloc.free(entry_point_z);
-
-        const entry_point_create_info = slang.c.EntryPointCreateInfo {
-            .entry_point_name = @ptrCast(entry_point_z.ptr),
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        const slang_entry_point = slang.check(slang.c.find_and_create_entry_point(slang_module, entry_point_create_info)) catch {
-            std.log.info("slang error creating entrypoint: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToCreateSlangEntryPoint;
-        };
-        defer slang.c.destroy_entry_point(slang_entry_point);
-
-        const composed_create_info = slang.ComposedProgramCreateInfo {
-            .diagnostics_blob = diagnostics_blob,
-            .modules = &.{
-                slang_module,
-            },
-            .entry_points = &.{
-                slang_entry_point,
-            },
-        };
-
-        const composed_program = try slang.check(slang.c.create_composed_program(slang_session, composed_create_info.to_slang()));
-        defer slang.c.destroy_composed_program(composed_program);
-
-        const link_program_create_info = slang.c.LinkedProgramCreateInfo {
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        const linked_program = slang.check(slang.c.create_linked_program(composed_program, link_program_create_info)) catch {
-            std.log.info("slang error linking program: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToLinkSlangProgram;
-        };
-        defer slang.c.destroy_linked_program(linked_program);
-
-        const output_blob = slang.c.create_blob();
-        defer slang.c.destroy_blob(output_blob);
-
-        const get_target_create_info = slang.c.GetTargetCodeCreateInfo {
-            .output_blob = output_blob,
-            .diagnostics_blob = diagnostics_blob,
-        };
-
-        if (!slang.c.get_target_code(linked_program, get_target_create_info)) {
-            std.log.info("slang error target code: {s}", .{slang.blob_str(diagnostics_blob)});
-            return error.UnableToGetSlangTargetCode;
-        }
-
-        const spirv_shader_code = slang.blob_slice(output_blob);
-
-        const entry_point = try alloc.dupeZ(u8, info.shader_entry_point);
-        errdefer alloc.free(entry_point);
-
-        const aligned_data = try alloc.alignedAlloc(u8, std.mem.Alignment.@"4", spirv_shader_code.len);
+        const aligned_data = try alloc.alignedAlloc(u8, std.mem.Alignment.@"4", info.spirv_data.len);
         defer alloc.free(aligned_data);
-        @memcpy(aligned_data, spirv_shader_code);
+        @memcpy(aligned_data, info.spirv_data);
 
         const shader_create_info = c.VkShaderModuleCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -1358,66 +1229,36 @@ const ShaderModule = struct {
         try vkt(c.vkCreateShaderModule(gfx.platform.device, &shader_create_info, null, &shader_module));
         errdefer c.vkDestroyShaderModule(gfx.platform.device, shader_module, null);
 
-        const shader_stage_create_info = c.VkPipelineShaderStageCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = switch (info.shader_stage) {
-                .Vertex => c.VK_SHADER_STAGE_VERTEX_BIT,
-                .Pixel => c.VK_SHADER_STAGE_FRAGMENT_BIT,
-                .Compute => c.VK_SHADER_STAGE_COMPUTE_BIT,
-                .Geometry => c.VK_SHADER_STAGE_GEOMETRY_BIT,
-                else => unreachable,
-            },
-            .module = shader_module,
-            .pName = entry_point.ptr,
-        };
-
         return .{
             .vk_shader_module = shader_module,
-            .vk_shader_stage_create_info = shader_stage_create_info,
-            .entry_point = entry_point,
         };
     }
 };
 
-pub const VertexShaderVulkan = struct {
+pub const VertexInputVulkan = struct {
     const Self = @This();
 
-    shader_module: ShaderModule,
     vk_vertex_input_binding_description: []c.VkVertexInputBindingDescription,
     vk_vertex_input_attrib_description: []c.VkVertexInputAttributeDescription,
-    
+
     pub fn deinit(self: *const Self) void {
         const alloc = eng.get().gfx.platform.alloc;
         
-        self.shader_module.deinit();
         alloc.free(self.vk_vertex_input_attrib_description);
         alloc.free(self.vk_vertex_input_binding_description);
     }
 
-    pub fn init_buffer(
-        vs_data: []const u8,
-        vs_func: []const u8,
-        vs_layout: gf.VertexInputLayoutInfo,
-        options: gf.VertexShaderOptions,
-    ) !Self {
+    pub fn init(info: gf.VertexInputInfo) !Self {
         const gfx = gf.GfxState.get();
         const alloc = gfx.platform.alloc;
 
-        const shader_module = try ShaderModule.init(.{
-            .shader_data = vs_data,
-            .shader_entry_point = vs_func,
-            .shader_stage = gf.ShaderStage.Vertex,
-            .preprocessor_macros = options.defines,
-        });
-        errdefer shader_module.deinit();
-
-        const vertex_input_bindings = try alloc.alloc(c.VkVertexInputBindingDescription, vs_layout.bindings.len);
+        const vertex_input_bindings = try alloc.alloc(c.VkVertexInputBindingDescription, info.bindings.len);
         errdefer alloc.free(vertex_input_bindings);
 
-        const vertex_input_attrib_descriptions = try alloc.alloc(c.VkVertexInputAttributeDescription, vs_layout.attributes.len);
+        const vertex_input_attrib_descriptions = try alloc.alloc(c.VkVertexInputAttributeDescription, info.attributes.len);
         errdefer alloc.free(vertex_input_attrib_descriptions);
 
-        for (vs_layout.bindings, 0..) |binding, idx| {
+        for (info.bindings, 0..) |binding, idx| {
             vertex_input_bindings[idx] = c.VkVertexInputBindingDescription {
                 .binding = binding.binding,
                 .stride = binding.stride,
@@ -1428,7 +1269,7 @@ pub const VertexShaderVulkan = struct {
             };
         }
 
-        for (vs_layout.attributes, 0..) |attrib, idx| {
+        for (info.attributes, 0..) |attrib, idx| {
             vertex_input_attrib_descriptions[idx] = c.VkVertexInputAttributeDescription {
                 .binding = attrib.binding,
                 .location = attrib.location,
@@ -1445,114 +1286,9 @@ pub const VertexShaderVulkan = struct {
         }
 
         return .{
-            .shader_module = shader_module,
             .vk_vertex_input_binding_description = vertex_input_bindings,
             .vk_vertex_input_attrib_description = vertex_input_attrib_descriptions,
         };
-    }
-};
-
-pub const PixelShaderVulkan = struct {
-    const Self = @This();
-
-    shader_module: ShaderModule,
-    
-    pub fn deinit(self: *const Self) void {
-        self.shader_module.deinit();
-    }
-    
-    pub fn init_buffer(
-        ps_data: []const u8, 
-        ps_func: []const u8, 
-        options: gf.PixelShaderOptions,
-    ) !Self {
-        const shader_module = try ShaderModule.init(.{
-            .shader_data = ps_data,
-            .shader_entry_point = ps_func,
-            .shader_stage = gf.ShaderStage.Pixel,
-            .preprocessor_macros = options.defines,
-        });
-        errdefer shader_module.deinit();
-
-        return .{
-            .shader_module = shader_module,
-        };
-    }
-};
-
-pub const HullShaderVulkan = struct {
-    const Self = @This();
-    
-    pub fn deinit(self: *const Self) void {
-        _ = self;
-    }
-    
-    pub fn init_buffer(
-        hs_data: []const u8, 
-        hs_func: []const u8, 
-        options: gf.HullShaderOptions,
-    ) !Self {
-        _ = hs_data;
-        _ = hs_func;
-        _ = options;
-        return .{};
-    }
-};
-
-pub const DomainShaderVulkan = struct {
-    const Self = @This();
-    
-    pub fn deinit(self: *const Self) void {
-        _ = self;
-    }
-    
-    pub fn init_buffer(
-        ds_data: []const u8, 
-        ds_func: []const u8, 
-        options: gf.DomainShaderOptions,
-    ) !Self {
-        _ = ds_data;
-        _ = ds_func;
-        _ = options;
-        return .{};
-    }
-};
-
-pub const GeometryShaderVulkan = struct {
-    const Self = @This();
-    
-    pub fn deinit(self: *const Self) void {
-        _ = self;
-    }
-    
-    pub fn init_buffer(
-        gs_data: []const u8, 
-        gs_func: []const u8, 
-        options: gf.GeometryShaderOptions,
-    ) !Self {
-        _ = gs_data;
-        _ = gs_func;
-        _ = options;
-        return .{};
-    }
-};
-
-pub const ComputeShaderVulkan = struct {
-    const Self = @This();
-    
-    pub fn deinit(self: *const Self) void {
-        _ = self;
-    }
-    
-    pub fn init_buffer(
-        cs_data: []const u8, 
-        cs_func: []const u8,
-        options: gf.ComputeShaderOptions,
-    ) !Self {
-        _ = cs_data;
-        _ = cs_func;
-        _ = options;
-        return .{};
     }
 };
 
@@ -2746,15 +2482,15 @@ pub const GraphicsPipelineVulkan = struct {
             .dynamicStateCount = @intCast(dynamic_states.len),
         };
 
-        const vertex_shader: *const VertexShaderVulkan = &info.vertex_shader.platform;
+        const vertex_input = &info.vertex_input.platform;
         const vertex_input_info = c.VkPipelineVertexInputStateCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 
-            .pVertexBindingDescriptions = @ptrCast(vertex_shader.vk_vertex_input_binding_description.ptr),
-            .vertexBindingDescriptionCount = @intCast(vertex_shader.vk_vertex_input_binding_description.len),
+            .pVertexBindingDescriptions = @ptrCast(vertex_input.vk_vertex_input_binding_description.ptr),
+            .vertexBindingDescriptionCount = @intCast(vertex_input.vk_vertex_input_binding_description.len),
 
-            .pVertexAttributeDescriptions = @ptrCast(vertex_shader.vk_vertex_input_attrib_description.ptr),
-            .vertexAttributeDescriptionCount = @intCast(vertex_shader.vk_vertex_input_attrib_description.len),
+            .pVertexAttributeDescriptions = @ptrCast(vertex_input.vk_vertex_input_attrib_description.ptr),
+            .vertexAttributeDescriptionCount = @intCast(vertex_input.vk_vertex_input_attrib_description.len),
         };
 
         const input_assembly_info = c.VkPipelineInputAssemblyStateCreateInfo {
@@ -2810,8 +2546,8 @@ pub const GraphicsPipelineVulkan = struct {
 
         var color_blend_attachments_len: u32 = 0;
         for (subpass_attachment_refs.attachment_refs) |aidx| {
-            std.debug.assert(aidx < info.attachments.len);
-            const attachment = info.attachments[aidx];
+            std.debug.assert(aidx < render_pass.attachments_info.len);
+            const attachment = render_pass.attachments_info[aidx];
 
             if (!attachment.format.is_depth()) {
                 color_blend_attachments[color_blend_attachments_len] = blendtype_to_vulkan(attachment.blend_type); 
@@ -2868,15 +2604,15 @@ pub const GraphicsPipelineVulkan = struct {
         vk_shader_stages[0] = c.VkPipelineShaderStageCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
-            .module = info.vertex_shader.platform.shader_module.vk_shader_module,
-            .pName = info.vertex_shader.platform.shader_module.entry_point,
+            .module = info.vertex_shader.module.platform.vk_shader_module,
+            .pName = @ptrCast(info.vertex_shader.entry_point.ptr),
             .pSpecializationInfo = null,
         };
         vk_shader_stages[1] = c.VkPipelineShaderStageCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
-            .module = info.pixel_shader.platform.shader_module.vk_shader_module,
-            .pName = info.pixel_shader.platform.shader_module.entry_point,
+            .module = info.pixel_shader.module.platform.vk_shader_module,
+            .pName = @ptrCast(info.pixel_shader.entry_point.ptr),
             .pSpecializationInfo = null,
         };
 
