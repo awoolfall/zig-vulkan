@@ -247,3 +247,56 @@ pub fn init_from_file(alloc: std.mem.Allocator, pack_name: []const u8, file_path
 
     return try Self.init_from_buffer(alloc, pack_name, file_slice_0);
 }
+
+pub fn save_to_file(self: *const Self, alloc: std.mem.Allocator, cwd_path: []const u8) !void {
+    const file_name = try std.fmt.allocPrint(alloc, "{s}.zon", .{ self.unique_name });
+    defer alloc.free(file_name);
+
+    const file_path = try std.fs.path.join(alloc, &.{ cwd_path, file_name });
+    defer alloc.free(file_path);
+
+    const file = try std.fs.cwd().createFile(file_path, .{ .truncate = true, });
+    defer file.close();
+
+    var writer_buffer: [1028]u8 = [_]u8{0} ** 1028;
+
+    var writer = file.writer(writer_buffer[0..]);
+    defer writer.end() catch |err| { std.log.err("Unable to flush writer: {}", .{ err }); };
+
+    const assets_serialized = try alloc.alloc(AssetSerialized, self.assets.count());
+    defer alloc.free(assets_serialized);
+
+    var assets_serialized_list = std.ArrayList(AssetSerialized).initBuffer(assets_serialized);
+
+    var serialize_arena = std.heap.ArenaAllocator.init(alloc);
+    defer serialize_arena.deinit();
+
+    const arena = serialize_arena.allocator();
+
+    var asset_iterator = self.assets.iterator();
+    while (asset_iterator.next()) |entry| {
+        const asset = entry.value_ptr;
+
+        const asset_path = switch (asset.asset) {
+            .Model => |*a| AssetType.Paths { .Model = a.path },
+            .Animation => |*a| blk: {
+                const model_name = try a.animation.model_id.serialize(arena);
+                    
+                break :blk AssetType.Paths { .Animation = .{
+                    .model_name = model_name,
+                    .animation_id = a.animation.animation_id,
+                } };
+            },
+            .Image => |*a| AssetType.Paths { .Image = a.path },
+        };
+
+        const asset_serialized = AssetSerialized {
+            .name = asset.unique_name,
+            .path = asset_path,
+        };
+
+        try assets_serialized_list.appendBounded(asset_serialized);
+    }
+
+    try std.zon.stringify.serialize(assets_serialized_list.items, .{}, &writer.interface);
+}

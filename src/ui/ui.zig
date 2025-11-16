@@ -194,7 +194,7 @@ pub const Widget = struct {
     text_content: ?struct {
         font: FontEnum = FontEnum.GeistMono,
         text: []const u8,
-        size: f32 = 13.0,
+        size: f32 = 15.0,
         colour: ?zm.F32x4 = null,
     } = null,
 
@@ -240,7 +240,7 @@ pub fn WidgetSignal(comptime T: type) type {
 }
 
 pub const Palette = struct {
-    pub const default_palette = slate();
+    pub const default_palette = dark_primary(hsl("262.1 83.3% 57.8%") catch unreachable); // dark violet
 
     background: zm.F32x4,
     foreground: zm.F32x4,
@@ -259,7 +259,7 @@ pub const Palette = struct {
         const hue = (try std.fmt.parseFloat(f32, hue_str)) / 360.0;
 
         var sat_str = tokens.next() orelse return error.InvalidString;
-        var sat_scale = 1.0;
+        var sat_scale: f32 = 1.0;
         if (sat_str[sat_str.len - 1] == '%') {
             sat_str = sat_str[0..(sat_str.len-1)];
             sat_scale = 100.0;
@@ -267,7 +267,7 @@ pub const Palette = struct {
         const saturation = (try std.fmt.parseFloat(f32, sat_str)) / sat_scale;
 
         var val_str = tokens.next() orelse return error.InvalidString;
-        var val_scale = 1.0;
+        var val_scale: f32 = 1.0;
         if (val_str[val_str.len - 1] == '%') {
             val_str = val_str[0..(val_str.len-1)];
             val_scale = 100.0;
@@ -290,28 +290,106 @@ pub const Palette = struct {
             .secondary = hsl("210 40% 96.1%") catch unreachable,
             .accent = hsl("210 40% 96.1%") catch unreachable,
         };
-        // .theme-slate {
-        //     --background:0 0% 100%;
-        //     --foreground:222.2 84% 4.9%;
-        //     --muted:210 40% 96.1%;
-        //     --muted-foreground:215.4 16.3% 46.9%;
-        //     --popover:0 0% 100%;
-        //     --popover-foreground:222.2 84% 4.9%;
-        //     --card:0 0% 100%;
-        //     --card-foreground:222.2 84% 4.9%;
-        //     --border:214.3 31.8% 91.4%;
-        //     --input:214.3 31.8% 91.4%;
-        //     --primary:222.2 47.4% 11.2%;
-        //     --primary-foreground:210 40% 98%;
-        //     --secondary:210 40% 96.1%;
-        //     --secondary-foreground:222.2 47.4% 11.2%;
-        //     --accent:210 40% 96.1%;
-        //     --accent-foreground:222.2 47.4% 11.2%;
-        //     --destructive:0 84.2% 60.2%;
-        //     --destructive-foreground:210 40% 98%;
-        //     --ring:222.2 84% 4.9%;
-        //     --radius:0.5rem
-        // }
+    }
+
+    pub fn dark() Palette {
+        @setEvalBranchQuota(10000);
+        return Palette {
+            .background = hsl("222 20% 12%") catch unreachable,
+            .foreground = hsl("222 14% 18%") catch unreachable,
+            .primary = hsl("214 90% 62%") catch unreachable,
+            .secondary = hsl("215 18% 24%") catch unreachable,
+            .accent = hsl("200 90% 55%") catch unreachable,
+            .text_dark = zm.srgbToRgb(zm.f32x4(220.0/255.0, 225.0/255.0, 230.0/255.0, 1.0)),
+            .text_light = zm.srgbToRgb(zm.f32x4(250.0/255.0, 251.0/255.0, 252.0/255.0, 1.0)),
+            .border = hsl("215 10% 28%") catch unreachable,
+            .muted = hsl("220 10% 20%") catch unreachable,
+        };
+    }
+
+
+//      :root {
+//    --radius: 0.65rem;
+//    --background:  hsl(0 0% 100%);
+//    --foreground:  hsl(224 71.4% 4.1%);
+//    --card:  hsl(0 0% 100%);
+//    --card-foreground:  hsl(224 71.4% 4.1%);
+//    --popover:  hsl(0 0% 100%);
+//    --popover-foreground:  hsl(224 71.4% 4.1%);
+//    --primary:  hsl(262.1 83.3% 57.8%);
+//    --primary-foreground:  hsl(210 20% 98%);
+//    --secondary:  hsl(220 14.3% 95.9%);
+//    --secondary-foreground:  hsl(220.9 39.3% 11%);
+//    --muted:  hsl(220 14.3% 95.9%);
+//    --muted-foreground:  hsl(220 8.9% 46.1%);
+//    --accent:  hsl(220 14.3% 95.9%);
+//    --accent-foreground:  hsl(220.9 39.3% 11%);
+//    --destructive:  hsl(0 84.2% 60.2%);
+//    --destructive-foreground:  hsl(210 20% 98%);
+//    --border:  hsl(220 13% 91%);
+//    --input:  hsl(220 13% 91%);
+//    --ring:  hsl(262.1 83.3% 57.8%);
+//    --chart-1:  hsl(12 76% 61%);
+//    --chart-2:  hsl(173 58% 39%);
+//    --chart-3:  hsl(197 37% 24%);
+//    --chart-4:  hsl(43 74% 66%);
+//    --chart-5:  hsl(27 87% 67%);
+//  }
+//  .dark {
+//    --background:  hsl(224 71.4% 4.1%);
+//    --foreground:  hsl(210 20% 98%);
+//    --card:  hsl(224 71.4% 4.1%);
+//    --card-foreground:  hsl(210 20% 98%);
+//    --popover:  hsl(224 71.4% 4.1%);
+//    --popover-foreground:  hsl(210 20% 98%);
+//    --primary:  hsl(263.4 70% 50.4%);
+//    --primary-foreground:  hsl(210 20% 98%);
+//    --secondary:  hsl(215 27.9% 16.9%);
+//    --secondary-foreground:  hsl(210 20% 98%);
+//    --muted:  hsl(215 27.9% 16.9%);
+//    --muted-foreground:  hsl(217.9 10.6% 64.9%);
+//    --accent:  hsl(215 27.9% 16.9%);
+//    --accent-foreground:  hsl(210 20% 98%);
+//    --destructive:  hsl(0 62.8% 30.6%);
+//    --destructive-foreground:  hsl(210 20% 98%);
+//    --border:  hsl(215 27.9% 16.9%);
+//    --input:  hsl(215 27.9% 16.9%);
+//    --ring:  hsl(263.4 70% 50.4%);
+//    --chart-1:  hsl(220 70% 50%);
+//    --chart-2:  hsl(160 60% 45%);
+//    --chart-3:  hsl(30 80% 55%);
+//    --chart-4:  hsl(280 65% 60%);
+//    --chart-5:  hsl(340 75% 55%);
+//  }
+
+    pub fn light_primary(primary_colour: zm.F32x4) Palette {
+        @setEvalBranchQuota(10000);
+        return Palette {
+            .background = hsl("0 0% 100%") catch unreachable,
+            .foreground = hsl("224 71.4% 4.1%") catch unreachable,
+            .primary = primary_colour,
+            .secondary = hsl("220 14.3% 95.9%") catch unreachable,
+            .accent = hsl("220 14.3% 95.9%") catch unreachable,
+            .text_dark = hsl("224 71.4% 4.1%") catch unreachable,
+            .text_light = hsl("210 20% 98%") catch unreachable,
+            .border = hsl("220 13% 91%") catch unreachable,
+            .muted = hsl("220 14.3% 95.9%") catch unreachable,
+        };
+    }
+
+    pub fn dark_primary(primary_colour: zm.F32x4) Palette {
+        @setEvalBranchQuota(10000);
+        return Palette {
+            .background = hsl("224 71.4% 4.1%") catch unreachable,
+            .foreground = hsl("210 20% 98%") catch unreachable,
+            .primary = primary_colour,
+            .secondary = hsl("215 27.9% 16.9%") catch unreachable,
+            .accent = hsl("215 27.9% 16.9%") catch unreachable, // TODO: add destructive, input, ring colors
+            .text_dark = hsl("224 71.4% 4.1%") catch unreachable,
+            .text_light = hsl("210 20% 98%") catch unreachable,
+            .border = hsl("215 27.9% 16.9%") catch unreachable,
+            .muted = hsl("215 27.9% 16.9%") catch unreachable,
+        };
     }
 };
 
@@ -373,10 +451,6 @@ last_frame_widgets: std.AutoHashMap(Key, Widget),
 last_frame_arena: u8,
 arenas: [2]std.heap.ArenaAllocator,
 
-scuffed_x_checkbox_image: _gfx.Image.Ref,
-scuffed_x_checkbox_image_view: _gfx.ImageView.Ref,
-image_sampler: _gfx.Sampler.Ref,
-
 pub fn deinit(self: *Self) void {
     for (&self.fonts) |*f| {
         f.deinit();
@@ -388,10 +462,6 @@ pub fn deinit(self: *Self) void {
     self.standard_widgets.deinit(self.alloc);
     self.priority_widgets.deinit(self.alloc);
     self.last_frame_widgets.deinit();
-
-    self.scuffed_x_checkbox_image_view.deinit();
-    self.scuffed_x_checkbox_image.deinit();
-    self.image_sampler.deinit();
 
     for (self.arenas) |a| {
         a.deinit();
@@ -405,29 +475,6 @@ pub fn init(
     window: *const platform.Window,
     gfx: *_gfx.GfxState
 ) !Self {
-    var scuffed_x_image = try zstbi.Image.loadFromFile("res/scuffed_x.png", 4);
-    defer scuffed_x_image.deinit();
-
-    var scuffed_x_checkbox_image = try _gfx.Image.init(
-        .{
-            .width = scuffed_x_image.width,
-            .height = scuffed_x_image.height,
-            .format = _gfx.ImageFormat.Rgba8_Unorm_Srgb,
-
-            .usage_flags = .{ .ShaderResource = true, },
-            .access_flags = .{},
-            .dst_layout = .ShaderReadOnlyOptimal,
-        },
-        scuffed_x_image.data,
-    );
-    errdefer scuffed_x_checkbox_image.deinit();
-    
-    var scuffed_x_checkbox_image_view = try _gfx.ImageView.init(.{
-        .image = scuffed_x_checkbox_image,
-        .view_type = .ImageView2D,
-    });
-    errdefer scuffed_x_checkbox_image_view.deinit();
-
     // Initialize fonts
     var fonts: [@intFromEnum(FontEnum.Count)]font.Font = [_]font.Font{undefined} ** @intFromEnum(FontEnum.Count);
     for (0..@intFromEnum(FontEnum.Count)) |idx| {
@@ -453,9 +500,6 @@ pub fn init(
         .standard_widgets = std.ArrayList(Widget).empty,
         .priority_widgets = std.ArrayList(Widget).empty,
         .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
-        .scuffed_x_checkbox_image = scuffed_x_checkbox_image,
-        .scuffed_x_checkbox_image_view = scuffed_x_checkbox_image_view,
-        .image_sampler = try _gfx.Sampler.init(.{}),
         .last_frame_arena = 0,
         .arenas = [_]std.heap.ArenaAllocator{
             std.heap.ArenaAllocator.init(alloc),
@@ -1052,7 +1096,8 @@ fn render_imui_widget(
             .position = .{ .x = x, .y = y, },
             .z_value = z_value + 0.00005,
             .colour = 
-                if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
+                if (text.colour) |colour| colour
+                else if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
                 else render_palette.text_dark,
             .pixel_height = text.size,
             .scissor = scissor_rect,
@@ -1305,7 +1350,9 @@ pub fn combine_signals(signals: anytype, id: anytype) WidgetSignal(@TypeOf(id)) 
 }
 
 pub fn push_pallete(self: *Self, p: Palette) void {
-    self.palette_stack.append(self.alloc, p);
+    self.palette_stack.append(self.alloc, p) catch |err| {
+        std.log.warn("Unable to push palette: {}", .{err});
+    };
 }
 
 pub fn pop_pallete(self: *Self) void {
@@ -1334,6 +1381,7 @@ pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) WidgetId {
         .key = gen_key(key),
         .layout_axis = layout_axis,
         .semantic_size = [2]SemanticSize {
+            // TODO should these be .ParentPercentage .value = 1.0?
             SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
             SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
         },
@@ -1388,10 +1436,13 @@ pub fn set_floating_layout_position(self: *Self, widget_id: WidgetId, floating_x
     widget.computed.relative_position = [2]f32 { floating_x, floating_y };
 }
 
-pub fn push_form_layout_item(self: *Self, key: anytype) void {
+pub fn push_form_layout_item(self: *Self, key: anytype) WidgetId {
     const form_item_layout = self.push_layout(.X, key ++ .{@src()});
     const form_item_widget = self.get_widget(form_item_layout) orelse unreachable;
+    form_item_widget.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0, };
+    form_item_widget.children_gap = 5;
     form_item_widget.flags.is_form_layout_item = true;
+    return form_item_layout;
 }
 
 pub fn pop_layout(self: *Self) void {

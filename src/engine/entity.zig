@@ -3,7 +3,7 @@ const zm = @import("zmath");
 const gen = @import("gen_list.zig");
 const Transform = @import("transform.zig");
 const as = @import("../asset/asset.zig");
-const physics = @import("physics.zig");
+const physics = @import("../physics/physics.zig");
 const zphy = physics.zphy;
 const eng = @import("../root.zig");
 const Engine = @import("../engine.zig");
@@ -359,4 +359,3 @@ pub const PhysicsOptionsDescriptor = union(PhysicsOptionsEnum) {
         extended_update_settings: ?zphy.CharacterVirtual.ExtendedUpdateSettings = null,
     },
 };
-

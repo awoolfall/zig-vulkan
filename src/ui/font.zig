@@ -74,6 +74,7 @@ const FontTextBufferData = struct {
 pub const Font = struct {
     const TEXT_PROPS_PER_BUFFER = 1024;
     const CHARACTERS_PER_VERTEX_BUFFER = 4096;
+    const UNKNOWN_CHARACTER = 0x3F; // question mark character
 
     atlas_details: AtlasDetails,
     font_metrics: FontMetrics,
@@ -655,7 +656,11 @@ pub const Font = struct {
                     catch Bounds{};
                 self.layout_another_character(&layout_info, c);
 
-                const character_info = self.character_map.get(c) orelse {
+                if (c == '\n') {
+                    continue;
+                }
+
+                const character_info = self.character_map.get(c) orelse self.character_map.get(UNKNOWN_CHARACTER) orelse {
                     continue;
                 };
 
@@ -742,7 +747,7 @@ pub const Font = struct {
         text_start_location: zm.F32x4,
         pixel_height: f32,
     ) !Bounds {
-        const char_info = self.character_map.get(character_codepoint) orelse return error.CharacterInfoDoesNotExist;
+        const char_info = self.character_map.get(character_codepoint) orelse self.character_map.get(UNKNOWN_CHARACTER) orelse return error.CharacterInfoDoesNotExist;
 
         const screen_size = eng.get().gfx.swapchain_size();
         const size_f32 = [2]f32{ @floatFromInt(screen_size[0]), @floatFromInt(screen_size[1]) };
@@ -788,7 +793,7 @@ pub const Font = struct {
                     line_count += 1.0;
                 },
                 else => {
-                    const char_info = self.character_map.get(c) orelse continue; // TODO handle error
+                    const char_info = self.character_map.get(c) orelse self.character_map.get(UNKNOWN_CHARACTER) orelse continue; // TODO handle error
 
                     x_loc += char_info.advance;
                     max_x = @max(max_x, x_loc);

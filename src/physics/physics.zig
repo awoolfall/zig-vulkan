@@ -8,6 +8,7 @@ const as = @import("../asset/asset.zig");
 const tm = @import("../engine/time.zig");
 const Transform = @import("../engine/transform.zig");
 const _gfx = @import("../gfx/gfx.zig");
+pub const util = @import("util.zig");
 
 inline fn debug_renderer_enabled() bool {
     return true;
