@@ -1,11 +1,11 @@
 const std = @import("std");
 const zstbi = @import("zstbi");
 const eng = @import("self");
-const _gfx = @import("../gfx/gfx.zig");
-const zm = @import("zmath");
-const ui = @import("ui.zig");
-const path = @import("../engine/path.zig");
-const RectPixels = @import("../root.zig").Rect;
+const _gfx = eng.gfx;
+const zm = eng.zmath;
+const ui = eng.ui;
+const path = eng.path;
+const RectPixels = eng.Rect;
 
 pub const AtlasDetails = struct {
     distance_range: f32,

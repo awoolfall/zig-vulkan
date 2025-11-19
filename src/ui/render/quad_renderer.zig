@@ -1,9 +1,9 @@
 const std = @import("std");
-const zm = @import("zmath");
-const engine = @import("../root.zig");
-const _gfx = engine.gfx;
-const ui = @import("ui.zig");
-const RectPixels = @import("../root.zig").Rect;
+const eng = @import("self");
+const zm = eng.zmath;
+const _gfx = eng.gfx;
+const ui = eng.ui;
+const RectPixels = eng.Rect;
 
 pub const RectEdges = packed struct {
     left: f32 = 0.0,
@@ -104,7 +104,7 @@ const QuadRenderSet = struct {
 
         self.default_images_set.deinit();
         for (self.image_descriptor_sets.items) |s| { s.deinit(); }
-        self.image_descriptor_sets.deinit(engine.get().general_allocator);
+        self.image_descriptor_sets.deinit(eng.get().general_allocator);
         self.images_descriptor_pool.deinit();
 
         self.buffer_vertex.deinit();
@@ -341,11 +341,11 @@ pub const QuadRenderer = struct {
             errdefer images_descriptor_pool.deinit();
 
             const buffers_descriptor_sets = try (buffers_descriptor_pool.get() catch unreachable).allocate_sets(
-                engine.get().frame_allocator,
+                eng.get().frame_allocator,
                 .{ .layout = self.buffers_descriptor_layout, },
                 1,
             );
-            defer engine.get().frame_allocator.free(buffers_descriptor_sets);
+            defer eng.get().frame_allocator.free(buffers_descriptor_sets);
 
             const buffers_descriptor_set = buffers_descriptor_sets[0];
             errdefer buffers_descriptor_set.deinit();
@@ -373,11 +373,11 @@ pub const QuadRenderer = struct {
             }
 
             const new_image_sets = try (images_descriptor_pool.get() catch unreachable).allocate_sets(
-                engine.get().frame_allocator,
+                eng.get().frame_allocator,
                 .{ .layout = self.image_descriptor_layout, },
                 QuadRenderer.MAX_QUADS_PER_BUFFER + 1
             );
-            defer engine.get().frame_allocator.free(new_image_sets);
+            defer eng.get().frame_allocator.free(new_image_sets);
             errdefer for (new_image_sets) |s| { s.deinit(); };
 
             const default_images_set = new_image_sets[0];

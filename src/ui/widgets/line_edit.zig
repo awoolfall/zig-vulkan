@@ -54,6 +54,8 @@ pub const LineEditOptions = struct {
 };
 
 pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSignal(TextInputId) {
+    const input = &eng.get().input;
+
     const font_to_use = Imui.FontEnum.GeistMono;
 
     // Background box, stack children
@@ -64,7 +66,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
         lw.flags.hover_effect = false;
         lw.semantic_size[0].kind = .ParentPercentage;
         lw.semantic_size[0].value = 1.0;
-        lw.semantic_size[0].shrinkable_percent = 1.0;
+        lw.semantic_size[0].shrinkable = true;
         lw.semantic_size[1].kind = .Pixels;
         lw.semantic_size[1].value = 16.0;
         lw.background_colour = imui.palette().secondary;
@@ -92,8 +94,8 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
     const text_input_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src()}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .TextContent, .value = 1.0, .shrinkable_percent = 0.0, },
-            Imui.SemanticSize{ .kind = .TextContent, .value = 1.0, .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .TextContent, .value = 1.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .TextContent, .value = 1.0, .shrinkable = false, },
         },
         .text_content = .{
             .font = font_to_use,
@@ -140,10 +142,10 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
     const cursor = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src()}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .Pixels, .value = selection_bounds.width() + cursor_min_width, .shrinkable_percent = 0.0, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = selection_bounds.height(), .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = selection_bounds.width() + cursor_min_width, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = selection_bounds.height(), .shrinkable = false, },
         },
-        .pixel_offset = .{ -(cursor_min_width / 2.0), 0.0 },
+        .margin_px = .{ .left = -(cursor_min_width / 2.0), },
         .background_colour = imui.palette().primary * zm.f32x4(1.0, 1.0, 1.0, 0.4 + 0.4 * 
             (std.math.sin(2.0 * std.math.pi * @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / @as(f32, @floatFromInt(std.time.ms_per_s))) + 1.0) * 0.5),
         .flags = .{
@@ -161,10 +163,10 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
     // Handle mouse input, click and drag
     if (box_signals.dragged or text_signals.dragged or box_signals.clicked or text_signals.clicked) {
         const cursor_pos = [2]f32{
-            @floatFromInt(imui.input.cursor_position[0]), 
-            @floatFromInt(imui.input.cursor_position[1])
+            @floatFromInt(input.cursor_position[0]), 
+            @floatFromInt(input.cursor_position[1])
         };
-        const text_rel_pos = imui.get_widget_from_last_frame(text_input_widget_id).?.computed.relative_position;
+        const text_rel_pos = imui.get_widget_from_last_frame(text_input_widget_id).?.computed_relative_position;
         const cursor_in_box_pos = [2]f32 {
             cursor_pos[0] - text_rel_pos[0],
             cursor_pos[1] - text_rel_pos[1]
@@ -198,7 +200,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
 
     // Handle keyboard input if focused
     if (line_edit_is_focus_widget) {
-        for (imui.input.char_events) |c| {
+        for (input.char_events) |c| {
             if (c != null) {
                 switch (c.?[0]) {
                     // Backspace (word or character)
@@ -266,41 +268,41 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
         }
 
         // Remove selection and clear focus if escape pressed
-        if (imui.input.get_key_down(KeyCode.Escape)) {
+        if (input.get_key_down(KeyCode.Escape)) {
             state.mark = state.cursor;
             imui.clear_focus_item();
         }
 
         // Handle arrow keys
-        if (imui.input.get_key_down_repeat(KeyCode.ArrowLeft)) {
+        if (input.get_key_down_repeat(KeyCode.ArrowLeft)) {
             if (state.cursor > 0) {
                 state.cursor = state.cursor - 1;
             }
-            if (!imui.input.get_key(KeyCode.Shift)) {
+            if (!input.get_key(KeyCode.Shift)) {
                 state.cursor = @min(state.cursor, state.mark);
                 state.mark = state.cursor;
             }
         }
-        if (imui.input.get_key_down_repeat(KeyCode.ArrowRight)) {
+        if (input.get_key_down_repeat(KeyCode.ArrowRight)) {
             if (state.cursor < state.text.items.len) {
                 state.cursor = state.cursor + 1;
             }
-            if (!imui.input.get_key(KeyCode.Shift)) {
+            if (!input.get_key(KeyCode.Shift)) {
                 state.cursor = @max(state.cursor, state.mark);
                 state.mark = state.cursor;
             }
         }
 
         // Handle copy
-        if (imui.input.get_key_down(KeyCode.C) and imui.input.get_key(KeyCode.Control)) {
+        if (input.get_key_down(KeyCode.C) and input.get_key(KeyCode.Control)) {
             if (state.cursor != state.mark) {
-                imui.window.copy_string_to_clipboard(state.text.items[@min(state.mark, state.cursor)..@max(state.mark, state.cursor)])
+                eng.get().window.copy_string_to_clipboard(state.text.items[@min(state.mark, state.cursor)..@max(state.mark, state.cursor)])
                     catch |err| std.log.err("Failed to copy string to clipboard: {}", .{err});
             }
         }
         // Handle paste
-        if (imui.input.get_key_down(KeyCode.V) and imui.input.get_key(KeyCode.Control)) {
-            if (imui.window.get_string_from_clipboard(std.heap.page_allocator)) |clipboard_str| {
+        if (input.get_key_down(KeyCode.V) and input.get_key(KeyCode.Control)) {
+            if (eng.get().window.get_string_from_clipboard(std.heap.page_allocator)) |clipboard_str| {
                 defer std.heap.page_allocator.free(clipboard_str);
 
                 // sanitize incoming clipboard string
@@ -339,7 +341,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
 
         // apply same pixel offset as last frame
         if (imui.get_widget_from_last_frame(content_box)) |lfw| {
-            content_box_widget.pixel_offset = lfw.pixel_offset;
+            content_box_widget.margin_px = .{ .left = lfw.margin_px.left, };
         }
 
         // find the cursor position in pixels
@@ -347,7 +349,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
         const cursor_pixel_position = f.text_bounds_2d_pixels(
                     state.text.items[0..state.cursor],
                     text_input_widget.text_content.?.size
-        ).width() + text_widget.computed.rect().left + cursor_min_width;
+        ).width() + text_widget.rect().left + cursor_min_width;
 
         const background_content = background_widget.content_rect();
         const background_left = background_content.left;
@@ -356,18 +358,18 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
         const cursor_right: f32 = cursor_pixel_position;
         // shift content box to the left if the cursor is to the left of the background
         if (cursor_right < background_left) {
-            content_box_widget.pixel_offset[0] -= cursor_right - background_left;
+            content_box_widget.margin_px.left -= cursor_right - background_left;
         }
         // shift content box to the right if the cursor is to the right of the background
         if (cursor_right > background_right) {
-            content_box_widget.pixel_offset[0] -= (cursor_right - background_right);
+            content_box_widget.margin_px.left -= (cursor_right - background_right);
         }
 
         // clamp so that the last character is always at the right edge of the background 
         // if text is long enough to exceed the background
-        const text_width = text_widget.computed.rect().width() + cursor_min_width;
+        const text_width = text_widget.rect().width() + cursor_min_width;
         const offset_min = @min(-(text_width - background_content.width()), 0.0);
-        content_box_widget.pixel_offset[0] = std.math.clamp(content_box_widget.pixel_offset[0], offset_min, 0.0);
+        content_box_widget.margin_px.left = std.math.clamp(content_box_widget.margin_px.left, offset_min, 0.0);
     }
 
     var signals = Imui.combine_signals(

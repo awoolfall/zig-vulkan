@@ -129,7 +129,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     };
     errdefer engine.asset_manager.deinit();
 
-    engine.imui = try Imui.init(engine.general_allocator, &engine.input, &engine.time, &engine.window, &engine.gfx);
+    engine.imui = try Imui.init(engine.general_allocator);
     errdefer engine.imui.deinit();
 
     engine.debug = try db.Debug.init(engine.general_allocator);
@@ -187,7 +187,7 @@ fn pre_app_update(self: *Self) !void {
     }
 
     // reset imui for next frame
-    self.imui.end_frame(&self.gfx);
+    self.imui.end_frame();
 
     // Update physics
     self.physics.update();

@@ -15,16 +15,16 @@ pub fn create(imui: *Imui, checked: *bool, text: []const u8, key: anytype) Imui.
 
     const box_stack_layout = imui.push_layout(.X, key ++ .{@src().line});
     if (imui.get_widget(box_stack_layout)) |lw| {
-        lw.semantic_size[0] = Imui.SemanticSize{ .kind = .Pixels, .value = 16, .shrinkable_percent = 0.0, };
-        lw.semantic_size[1] = Imui.SemanticSize{ .kind = .Pixels, .value = 16, .shrinkable_percent = 0.0, };
+        lw.semantic_size[0] = Imui.SemanticSize{ .kind = .Pixels, .value = 16, .shrinkable = false, };
+        lw.semantic_size[1] = Imui.SemanticSize{ .kind = .Pixels, .value = 16, .shrinkable = false, };
         lw.layout_axis = null;
     }
 
     const box_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage , .value = 1.0, .shrinkable_percent = 0.0, },
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .ParentPercentage , .value = 1.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false, },
         },
         .background_colour = if (checked.*) imui.palette().primary else zm.f32x4s(0.0),
         .border_colour = if (checked.*) imui.palette().primary else imui.palette().foreground,
@@ -50,8 +50,8 @@ pub fn create(imui: *Imui, checked: *bool, text: []const u8, key: anytype) Imui.
     const text_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
-            Imui.SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable_percent = 1.0, },
+            Imui.SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable = true, },
+            Imui.SemanticSize{ .kind = .TextContent, .value = 0.0, .shrinkable = true, },
         },
         .text_content = .{
             .font = .Geist,

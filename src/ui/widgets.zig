@@ -8,3 +8,5 @@ pub const label = @import("widgets/label.zig");
 pub const line_edit = @import("widgets/line_edit.zig");
 pub const number_slider = @import("widgets/number_slider.zig");
 pub const slider = @import("widgets/slider.zig");
+pub const colour_indicator = @import("widgets/colour_indicator.zig");
+pub const colour_picker = @import("widgets/colour_picker.zig");

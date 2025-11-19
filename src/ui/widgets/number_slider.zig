@@ -12,8 +12,8 @@ pub fn create(imui: *Imui, value: *f32, settings: NumberSliderSettings, key: any
     defer imui.pop_layout();
     if (imui.get_widget(background)) |background_widget| {
         background_widget.semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false, },
         };
         background_widget.flags.render = true;
         background_widget.flags.hover_effect = false;

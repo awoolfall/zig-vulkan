@@ -9,11 +9,12 @@ const es = engine.easings;
 const platform = engine.platform;
 const path = engine.path;
 
-pub const font = @import("font.zig");
-pub const qr = @import("quad_renderer.zig");
+pub const font = @import("render/font.zig");
+pub const qr = @import("render/quad_renderer.zig");
 const QuadRenderer = qr.QuadRenderer;
 const RectPixels = engine.Rect;
 
+pub const Palette = @import("palette.zig");
 pub const widgets = @import("widgets.zig");
 
 const Self = @This();
@@ -60,7 +61,7 @@ pub const SizeKind = enum {
 pub const SemanticSize = struct {
     kind: SizeKind,
     value: f32,
-    shrinkable_percent: f32 = 1.0,
+    shrinkable: bool = false,
     minimum_pixel_size: f32 = 0.0,
 };
 
@@ -68,7 +69,7 @@ pub const Axis = enum(usize) {
     X = 0,
     Y = 1,
 };
-pub const AxisCount = 2;
+pub const AxisCount = std.meta.fields(Axis).len;
 
 pub const Key = u64;
 
@@ -125,43 +126,13 @@ pub const HorizontalAlign = enum {
     Right,
 };
 
-pub const WidgetComputedValues = struct {
-    relative_position: [2]f32 = .{0.0, 0.0},
-    pixel_offset: [2]f32 = .{0.0, 0.0},
-    left_top_margin: [2]f32 = .{0.0, 0.0},
-    right_bottom_margin: [2]f32 = .{0.0, 0.0},
-    size: [2]f32 = .{0.0, 0.0},
-    children_size: [2]f32 = .{0.0, 0.0},
-
-    pub inline fn total_size(self: *const @This()) [2]f32 {
-        return .{
-            self.size[0] + self.left_top_margin[0] + self.right_bottom_margin[0],
-            self.size[1] + self.left_top_margin[1] + self.right_bottom_margin[1],
-        };
-    }
-
-    pub fn rect(self: *const @This()) RectPixels {
-        const left = self.relative_position[0] + self.left_top_margin[0] + self.pixel_offset[0];
-        const top = self.relative_position[1] + self.left_top_margin[1] + self.pixel_offset[1];
-        return RectPixels {
-            .left = left,
-            .top = top,
-            .right = left + self.size[0],
-            .bottom = top + self.size[1]
-        };
-    }
-
-    pub fn total_rect(self: *const @This()) RectPixels {
-        const left = self.relative_position[0] + self.pixel_offset[0];
-        const top = self.relative_position[1] + self.pixel_offset[1];
-        return RectPixels {
-            .left = left,
-            .top = top,
-            .right = left + self.size[0] + self.left_top_margin[0] + self.right_bottom_margin[0],
-            .bottom = top + self.size[1] + self.left_top_margin[1] + self.right_bottom_margin[1]
-        };
-    }
-};
+inline fn rect_size(rect: RectPixels, axis: usize) f32 {
+    return switch (axis) {
+        0 => rect.width(),
+        1 => rect.height(),
+        else => unreachable,
+    };
+}
 
 pub const Widget = struct {
     semantic_size: [AxisCount]SemanticSize,
@@ -182,7 +153,9 @@ pub const Widget = struct {
 
     form_labels_width: f32 = 0.0,
 
-    computed: WidgetComputedValues = .{},
+    computed_size: [2]f32 = .{ 0.0, 0.0 },
+    computed_relative_position: [2]f32 = .{ 0.0, 0.0 },
+    computed_pixel_offset: [2]f32 = .{ 0.0, 0.0 },
 
     active_t: f32 = 0.0,
     active_t_timescale: f32 = 0.1,
@@ -209,22 +182,60 @@ pub const Widget = struct {
 
     margin_px: RectPixels = .{},
     padding_px: RectPixels = .{},
+
     // anchor determines the position within the potential space allowed by the layout
     anchor: [2]f32 = .{0.0, 0.0},
     // pivot determines the coordinate on the widget's box that sticks to the anchor
     pivot: [2]f32 = .{0.0, 0.0},
-    pixel_offset: [2]f32 = .{0.0, 0.0},
 
     widget_data: ?*anyopaque = null,
 
-    pub fn content_rect(self: *const Widget) RectPixels {
-        const rect = self.computed.rect();
-        return RectPixels {
-            .left = rect.left + self.padding_px.left + self.border_width_px.left,
-            .top = rect.top + self.padding_px.top + self.border_width_px.top,
-            .right = rect.right - self.padding_px.right - self.border_width_px.right,
-            .bottom = rect.bottom - self.padding_px.bottom - self.border_width_px.bottom,
+    pub fn rect(self: *const Widget) RectPixels {
+        const position: [2]f32 = .{
+            self.computed_relative_position[0] + self.computed_pixel_offset[0],
+            self.computed_relative_position[1] + self.computed_pixel_offset[1],
         };
+        return RectPixels {
+            .left = position[0],
+            .top = position[1],
+            .right = position[0] + self.border_width_px.left + self.padding_px.left + self.computed_size[0] + self.padding_px.right + self.border_width_px.right,
+            .bottom = position[1] + self.border_width_px.top + self.padding_px.top + self.computed_size[1] + self.padding_px.bottom + self.border_width_px.bottom,
+        };
+    }
+
+    pub fn content_rect(self: *const Widget) RectPixels {
+        const r = self.rect();
+        return RectPixels {
+            .left = r.left + self.border_width_px.left + self.padding_px.left,
+            .right = r.right - self.border_width_px.right - self.padding_px.right,
+            .top = r.top + self.border_width_px.top + self.padding_px.top,
+            .bottom = r.bottom - self.border_width_px.bottom - self.padding_px.bottom,
+        };
+    }
+
+    pub fn outer_rect(self: *const Widget) RectPixels {
+        const r = self.rect();
+        return RectPixels {
+            .left = r.left - self.margin_px.left,
+            .right = r.right + self.margin_px.right,
+            .top = r.top - self.margin_px.top,
+            .bottom = r.bottom + self.margin_px.bottom,
+        };
+    }
+
+    pub fn size(self: *const Widget) [2]f32 {
+        const r = self.rect();
+        return .{ r.width(), r.height() };
+    }
+
+    pub fn content_size(self: *const Widget) [2]f32 {
+        const r = self.content_rect();
+        return .{ r.width(), r.height() };
+    }
+
+    pub fn outer_size(self: *const Widget) [2]f32 {
+        const r = self.outer_rect();
+        return .{ r.width(), r.height() };
     }
 };
 
@@ -238,160 +249,6 @@ pub fn WidgetSignal(comptime T: type) type {
         id: T,
     };
 }
-
-pub const Palette = struct {
-    pub const default_palette = dark_primary(hsl("262.1 83.3% 57.8%") catch unreachable); // dark violet
-
-    background: zm.F32x4,
-    foreground: zm.F32x4,
-    primary: zm.F32x4,
-    secondary: zm.F32x4,
-    accent: zm.F32x4,
-    text_dark: zm.F32x4,
-    text_light: zm.F32x4,
-    border: zm.F32x4,
-    muted: zm.F32x4,
-
-    fn hsl(str: []const u8) !zm.F32x4 {
-        var tokens = std.mem.tokenizeScalar(u8, str, ' ');
-
-        const hue_str = tokens.next() orelse return error.InvalidString;
-        const hue = (try std.fmt.parseFloat(f32, hue_str)) / 360.0;
-
-        var sat_str = tokens.next() orelse return error.InvalidString;
-        var sat_scale: f32 = 1.0;
-        if (sat_str[sat_str.len - 1] == '%') {
-            sat_str = sat_str[0..(sat_str.len-1)];
-            sat_scale = 100.0;
-        }
-        const saturation = (try std.fmt.parseFloat(f32, sat_str)) / sat_scale;
-
-        var val_str = tokens.next() orelse return error.InvalidString;
-        var val_scale: f32 = 1.0;
-        if (val_str[val_str.len - 1] == '%') {
-            val_str = val_str[0..(val_str.len-1)];
-            val_scale = 100.0;
-        }
-        const value = (try std.fmt.parseFloat(f32, val_str)) / val_scale;
-
-        return zm.srgbToRgb(zm.hslToRgb(zm.f32x4(hue, saturation, value, 1.0)));
-    }
-
-    pub fn slate() Palette {
-        @setEvalBranchQuota(10000);
-        return Palette {
-            .text_light = zm.srgbToRgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)), 
-            .text_dark = zm.srgbToRgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
-            .primary = hsl("222.2 47.4% 11.2%") catch unreachable,
-            .border = hsl("214.3 31.8% 91.4%") catch unreachable,
-            .background = hsl("0 0% 100%") catch unreachable,
-            .foreground = hsl("222.2 84% 4.9%") catch unreachable,
-            .muted = hsl("210 40% 96.1%") catch unreachable,
-            .secondary = hsl("210 40% 96.1%") catch unreachable,
-            .accent = hsl("210 40% 96.1%") catch unreachable,
-        };
-    }
-
-    pub fn dark() Palette {
-        @setEvalBranchQuota(10000);
-        return Palette {
-            .background = hsl("222 20% 12%") catch unreachable,
-            .foreground = hsl("222 14% 18%") catch unreachable,
-            .primary = hsl("214 90% 62%") catch unreachable,
-            .secondary = hsl("215 18% 24%") catch unreachable,
-            .accent = hsl("200 90% 55%") catch unreachable,
-            .text_dark = zm.srgbToRgb(zm.f32x4(220.0/255.0, 225.0/255.0, 230.0/255.0, 1.0)),
-            .text_light = zm.srgbToRgb(zm.f32x4(250.0/255.0, 251.0/255.0, 252.0/255.0, 1.0)),
-            .border = hsl("215 10% 28%") catch unreachable,
-            .muted = hsl("220 10% 20%") catch unreachable,
-        };
-    }
-
-
-//      :root {
-//    --radius: 0.65rem;
-//    --background:  hsl(0 0% 100%);
-//    --foreground:  hsl(224 71.4% 4.1%);
-//    --card:  hsl(0 0% 100%);
-//    --card-foreground:  hsl(224 71.4% 4.1%);
-//    --popover:  hsl(0 0% 100%);
-//    --popover-foreground:  hsl(224 71.4% 4.1%);
-//    --primary:  hsl(262.1 83.3% 57.8%);
-//    --primary-foreground:  hsl(210 20% 98%);
-//    --secondary:  hsl(220 14.3% 95.9%);
-//    --secondary-foreground:  hsl(220.9 39.3% 11%);
-//    --muted:  hsl(220 14.3% 95.9%);
-//    --muted-foreground:  hsl(220 8.9% 46.1%);
-//    --accent:  hsl(220 14.3% 95.9%);
-//    --accent-foreground:  hsl(220.9 39.3% 11%);
-//    --destructive:  hsl(0 84.2% 60.2%);
-//    --destructive-foreground:  hsl(210 20% 98%);
-//    --border:  hsl(220 13% 91%);
-//    --input:  hsl(220 13% 91%);
-//    --ring:  hsl(262.1 83.3% 57.8%);
-//    --chart-1:  hsl(12 76% 61%);
-//    --chart-2:  hsl(173 58% 39%);
-//    --chart-3:  hsl(197 37% 24%);
-//    --chart-4:  hsl(43 74% 66%);
-//    --chart-5:  hsl(27 87% 67%);
-//  }
-//  .dark {
-//    --background:  hsl(224 71.4% 4.1%);
-//    --foreground:  hsl(210 20% 98%);
-//    --card:  hsl(224 71.4% 4.1%);
-//    --card-foreground:  hsl(210 20% 98%);
-//    --popover:  hsl(224 71.4% 4.1%);
-//    --popover-foreground:  hsl(210 20% 98%);
-//    --primary:  hsl(263.4 70% 50.4%);
-//    --primary-foreground:  hsl(210 20% 98%);
-//    --secondary:  hsl(215 27.9% 16.9%);
-//    --secondary-foreground:  hsl(210 20% 98%);
-//    --muted:  hsl(215 27.9% 16.9%);
-//    --muted-foreground:  hsl(217.9 10.6% 64.9%);
-//    --accent:  hsl(215 27.9% 16.9%);
-//    --accent-foreground:  hsl(210 20% 98%);
-//    --destructive:  hsl(0 62.8% 30.6%);
-//    --destructive-foreground:  hsl(210 20% 98%);
-//    --border:  hsl(215 27.9% 16.9%);
-//    --input:  hsl(215 27.9% 16.9%);
-//    --ring:  hsl(263.4 70% 50.4%);
-//    --chart-1:  hsl(220 70% 50%);
-//    --chart-2:  hsl(160 60% 45%);
-//    --chart-3:  hsl(30 80% 55%);
-//    --chart-4:  hsl(280 65% 60%);
-//    --chart-5:  hsl(340 75% 55%);
-//  }
-
-    pub fn light_primary(primary_colour: zm.F32x4) Palette {
-        @setEvalBranchQuota(10000);
-        return Palette {
-            .background = hsl("0 0% 100%") catch unreachable,
-            .foreground = hsl("224 71.4% 4.1%") catch unreachable,
-            .primary = primary_colour,
-            .secondary = hsl("220 14.3% 95.9%") catch unreachable,
-            .accent = hsl("220 14.3% 95.9%") catch unreachable,
-            .text_dark = hsl("224 71.4% 4.1%") catch unreachable,
-            .text_light = hsl("210 20% 98%") catch unreachable,
-            .border = hsl("220 13% 91%") catch unreachable,
-            .muted = hsl("220 14.3% 95.9%") catch unreachable,
-        };
-    }
-
-    pub fn dark_primary(primary_colour: zm.F32x4) Palette {
-        @setEvalBranchQuota(10000);
-        return Palette {
-            .background = hsl("224 71.4% 4.1%") catch unreachable,
-            .foreground = hsl("210 20% 98%") catch unreachable,
-            .primary = primary_colour,
-            .secondary = hsl("215 27.9% 16.9%") catch unreachable,
-            .accent = hsl("215 27.9% 16.9%") catch unreachable, // TODO: add destructive, input, ring colors
-            .text_dark = hsl("224 71.4% 4.1%") catch unreachable,
-            .text_light = hsl("210 20% 98%") catch unreachable,
-            .border = hsl("215 27.9% 16.9%") catch unreachable,
-            .muted = hsl("215 27.9% 16.9%") catch unreachable,
-        };
-    }
-};
 
 pub const LabelKey: Key = std.hash.XxHash64.hash(0, "Imuilabel");
 
@@ -431,11 +288,8 @@ next_active_item: ?WidgetId = null,
 focus_item: ?Key = null,
 should_clear_focus_next_frame: bool = false,
 
-input: *const in.InputState,
-time: *const tm.TimeState,
-window: *const platform.Window,
-
 primary_interact_key: in.KeyCode = in.KeyCode.MouseLeft,
+
 quad_renderer: QuadRenderer,
 fonts: [@intFromEnum(FontEnum.Count)]font.Font,
 
@@ -446,6 +300,7 @@ standard_widgets: std.ArrayList(Widget),
 // widgets within the priority array will always be rendered on top of standard widgets and will
 // demand interactions over standard widgets. This is useful for things like dropdown or context menus.
 priority_widgets: std.ArrayList(Widget),
+
 last_frame_widgets: std.AutoHashMap(Key, Widget),
 
 last_frame_arena: u8,
@@ -468,13 +323,7 @@ pub fn deinit(self: *Self) void {
     }
 }
 
-pub fn init(
-    alloc: std.mem.Allocator,
-    input: *const in.InputState,
-    time: *const tm.TimeState,
-    window: *const platform.Window,
-    gfx: *_gfx.GfxState
-) !Self {
+pub fn init(alloc: std.mem.Allocator) !Self {
     // Initialize fonts
     var fonts: [@intFromEnum(FontEnum.Count)]font.Font = [_]font.Font{undefined} ** @intFromEnum(FontEnum.Count);
     for (0..@intFromEnum(FontEnum.Count)) |idx| {
@@ -492,9 +341,6 @@ pub fn init(
 
     var self = Self {
         .alloc = alloc,
-        .input = input,
-        .time = time,
-        .window = window,
         .parent_stack = std.ArrayList(WidgetId).empty,
         .palette_stack = std.ArrayList(Palette).empty,
         .standard_widgets = std.ArrayList(Widget).empty,
@@ -508,7 +354,8 @@ pub fn init(
         .quad_renderer = try QuadRenderer.init(alloc),
         .fonts = fonts,
     };
-    self.add_root_widget(gfx);
+
+    self.add_root_widget();
     return self;
 }
 
@@ -543,19 +390,21 @@ fn add_heirarchy_links(self: *Self, parent_id: WidgetId, widget_id: WidgetId) !v
 
     widget.parent = parent_id;
 
-    if (parent.first_child == null) {
-        parent.first_child = widget_id;
-        parent.last_child = widget_id;
-    } else {
-        std.debug.assert(parent.last_child != null);
-        const sibling_id = parent.last_child.?;
-        const sibling = self.get_widget(sibling_id) orelse return error.SiblingDoesNotExist;
-        sibling.next_sibling = widget_id;
-        parent.last_child = widget_id;
-        widget.prev_sibling = sibling_id;
-    }
+    if (widget_id.location == parent_id.location) {
+        if (parent.first_child == null) {
+            parent.first_child = widget_id;
+            parent.last_child = widget_id;
+        } else {
+            std.debug.assert(parent.last_child != null);
+            const sibling_id = parent.last_child.?;
+            const sibling = self.get_widget(sibling_id) orelse return error.SiblingDoesNotExist;
+            sibling.next_sibling = widget_id;
+            parent.last_child = widget_id;
+            widget.prev_sibling = sibling_id;
+        }
 
-    parent.num_children += 1;
+        parent.num_children += 1;
+    }
 }
 
 inline fn apply_padding(widget: *Widget, axis: usize) void {
@@ -578,28 +427,24 @@ fn compute_standalone_widget_size(self: *Self, widget: *Widget) void {
     for (widget.semantic_size, 0..) |s, axis| {
         switch (s.kind) {
             .Pixels => {
-                widget.computed.size[axis] = s.value;
-                apply_padding(widget, axis);
-                apply_border_padding(widget, axis);
-                widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
+                widget.computed_size[axis] = @max(s.value, s.minimum_pixel_size);
             },
             .TextContent => {
-                if (widget.text_content) |*text| {
+                const size = if (widget.text_content) |*text| blk: {
                     const text_bounds = self.get_font(text.font).text_bounds_2d_pixels(
                         text.text,
                         text.size
                     );
                     switch (axis) {
-                        0 => widget.computed.size[0] = text_bounds.width(),
-                        1 => widget.computed.size[1] = text_bounds.height() - self.get_font(text.font).font_metrics.descender,
+                        0 => break :blk text_bounds.width(),
+                        1 => break :blk text_bounds.height() - self.get_font(text.font).font_metrics.descender,
                         else => {unreachable;}
                     }
-                } else {
+                } else blk: {
                     std.log.warn("widget with size kind \"Text Content\" does not have any text content.", .{});
-                }
-                apply_padding(widget, axis);
-                apply_border_padding(widget, axis);
-                widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
+                    break :blk 0.0;
+                };
+                widget.computed_size[axis] = @max(size, s.minimum_pixel_size);
             },
             else => {},
         }
@@ -750,19 +595,15 @@ pub fn get_widget_from_last_frame(self: *Self, widget_id: WidgetId) ?*const Widg
     return self.last_frame_widgets.getPtr(widget.key);
 }
 
-fn add_root_widget(self: *Self, gfx: *const _gfx.GfxState) void {
+fn add_root_widget(self: *Self) void {
     std.debug.assert(self.standard_widgets.items.len == 0);
+    const swapchain_size = engine.get().gfx.swapchain_size();
 
     const root_widget = Widget {
         .semantic_size = [_]SemanticSize{.{.kind = .None, .value = 0.0, }} ** 2,
         .key = gen_key(.{@src()}),
-        .computed = .{
-            .relative_position = .{0.0, 0.0},
-            .size = .{
-                @floatFromInt(gfx.swapchain_size()[0]), 
-                @floatFromInt(gfx.swapchain_size()[1])
-            },
-        },
+        .computed_size = .{ @floatFromInt(swapchain_size[0]), @floatFromInt(swapchain_size[1]) },
+        .computed_relative_position = .{ 0.0, 0.0 },
         .flags = .{
             .render = false,
             .allows_overflow_x = false,
@@ -779,11 +620,7 @@ fn solve_upward_dependant_sizes(self: *Self, widget: *Widget) void {
     for (widget.semantic_size, 0..) |s, axis| {
         switch (s.kind) {
             .ParentPercentage => {
-                switch (axis) {
-                    @intFromEnum(Axis.X) => widget.computed.size[axis] = parent.content_rect().width() * s.value,
-                    @intFromEnum(Axis.Y) => widget.computed.size[axis] = parent.content_rect().height() * s.value,
-                    else => {unreachable;},
-                }
+                widget.computed.size[axis] = rect_size(parent.content_rect(), axis) * s.value;
                 widget.computed.size[axis] = @max(widget.computed.size[axis], s.minimum_pixel_size);
             },
             else => {},
@@ -842,9 +679,7 @@ fn solve_size_violations_in_children(self: *Self, parent_id: WidgetId) bool {
         var children_in_split: usize = parent.num_children;
         // violation in this axis
         const last_child = self.get_widget(parent.last_child.?).?;
-        const parent_content_rect = parent.content_rect();
-        const parent_content_size = [2]f32{parent_content_rect.width(), parent_content_rect.height()};
-        var overrun = last_child.computed.relative_position[axis] + last_child.computed.size[axis] - (parent.computed.relative_position[axis] + parent_content_size[axis]);
+        var overrun = last_child.computed.relative_position[axis] + last_child.computed.size[axis] - (parent.computed.relative_position[axis] + rect_size(parent.content_rect(), axis));
         var last_overrun: f32 = overrun + 2.0;
         while (overrun >= 1.0 and children_in_split > 0) {
             iteration += 1;
@@ -911,7 +746,7 @@ fn widget_potential_space(self: *Self, widget_id: WidgetId) [2]f32 {
     return parent_content_sizes;
 }
 
-fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId) void {
+fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId, axis: usize) void {
     const widget = self.get_widget(widget_id) orelse unreachable;
     if (widget.parent == widget_id) { return; }
 
@@ -922,60 +757,54 @@ fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId) void {
         parent_content_rect.top
     };
 
-    // calculate relative position of widget on each axis
-    for (0..AxisCount) |axis| {
-        // if floating on this axis then the relative position has been manually applied, skip
-        if (!widget.flags.get_floating_flag(@enumFromInt(axis))) {
+    // if floating on this axis then the relative position has been manually applied, skip
+    if (!widget.flags.get_floating_flag(@enumFromInt(axis))) {
 
-            // look at previous siblings to determine relative position
-            if (widget.prev_sibling) |sib_id| {
-                var prev = self.get_widget(sib_id) orelse unreachable;
+        // look at previous siblings to determine relative position
+        if (widget.prev_sibling) |sib_id| {
+            var prev = self.get_widget(sib_id) orelse unreachable;
 
-                // skip all previous siblings who are floating on this axis
-                while (prev.flags.get_floating_flag(@enumFromInt(axis)) and prev.prev_sibling != null) {
-                    prev = self.get_widget(prev.prev_sibling.?) orelse unreachable;
-                }
-
-                if (parent.layout_axis) |layout_axis| {
-                    if (@intFromEnum(layout_axis) == axis) {
-                        widget.computed.relative_position[axis] = prev.computed.relative_position[axis] + prev.computed.total_size()[axis] + parent.children_gap;
-                    } else {
-                        widget.computed.relative_position[axis] = prev.computed.relative_position[axis];
-                    }
-                } else {
-                    widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
-                }
-            } else {
-                // if no previous siblings then set to parent's relative position
-                widget.computed.relative_position[axis] = parent_content_anchor_pos[axis];
+            // skip all previous siblings who are floating on this axis
+            while (prev.flags.get_floating_flag(@enumFromInt(axis)) and prev.prev_sibling != null) {
+                prev = self.get_widget(prev.prev_sibling.?) orelse unreachable;
             }
-        }
 
-        // adjust relative position to account for anchor and pivot
-        const parent_content_size = [2]f32{
-            parent_content_rect.width(),
-            parent_content_rect.height()
-        };
-        // find the potential space that the widget can take up according to the layout .
-        // This contains a compromise which allows a widget to wiggle a bit inside its allowed space 
-        // but overall positioning is still ultimately controlled by the layout.
-        const potential_space_size = blk: {
-            var p = parent_content_size[axis];
             if (parent.layout_axis) |layout_axis| {
                 if (@intFromEnum(layout_axis) == axis) {
-                    p = widget.computed.size[axis];
+                    widget.computed_relative_position[axis] = prev.computed_relative_position[axis] + prev.outer_size()[axis] + parent.children_gap;
+                } else {
+                    widget.computed_relative_position[axis] = prev.computed_relative_position[axis];
                 }
+            } else {
+                widget.computed_relative_position[axis] = parent_content_anchor_pos[axis];
             }
-            break :blk p;
-        };
-        // apply anchor and pivot.
-        // anchor determines the position within the potential space allowed by the layout
-        // pivot determines the coordinate on the widget's box that sticks to the anchor
-        widget.computed.pixel_offset[axis] =
-            - (widget.pivot[axis] * widget.computed.size[axis]) 
-            + (widget.anchor[axis] * potential_space_size)
-            + widget.pixel_offset[axis];
+        } else {
+            // if no previous siblings then set to parent's relative position
+            widget.computed_relative_position[axis] = parent_content_anchor_pos[axis];
+        }
     }
+
+    const widget_margin_offset: [2]f32 = .{ widget.margin_px.left, widget.margin_px.top };
+    //widget.computed_relative_position[axis] += widget_margin_offset[axis];
+
+    // adjust relative position to account for anchor and pivot
+    // find the potential space that the widget can take up according to the layout .
+    // This contains a compromise which allows a widget to wiggle a bit inside its allowed space 
+    // but overall positioning is still ultimately controlled by the layout.
+    const potential_space_size = blk: {
+        var p = parent.content_size()[axis];
+        if (parent.layout_axis) |layout_axis| {
+            if (@intFromEnum(layout_axis) == axis) {
+                p = widget.size()[axis];
+            }
+        }
+        break :blk p;
+    };
+    // apply anchor and pivot.
+    // anchor determines the position within the potential space allowed by the layout
+    // pivot determines the coordinate on the widget's box that sticks to the anchor
+    widget.computed_pixel_offset[axis] = widget_margin_offset[axis]
+        - (widget.pivot[axis] * widget.size()[axis]) + (widget.anchor[axis] * potential_space_size);
 }
 
 fn recurse_resolve_violations(self: *Self, widget_id: WidgetId) void {
@@ -999,50 +828,195 @@ fn recurse_resolve_violations(self: *Self, widget_id: WidgetId) void {
     }
 }
 
+const SizeResolutionErrors = error {
+    UnableToGetWidget,
+    ChildrenSizeWidgetHasNoChildren,
+    ParentPercentageUnderChildSize,
+};
+
+fn resolve_widget_size_violations(self: *Self, widget_id: WidgetId, axis: usize) SizeResolutionErrors!void {
+    const widget = self.get_widget(widget_id) orelse return error.UnableToGetWidget;
+
+    var overrun: f32 = 1.0;
+
+    while (overrun > 0.0) {
+        var siblings_total_length: f32 = 0.0;
+
+        var child: ?WidgetId = widget.first_child;
+        var resizable_children: f32 = 0.0;
+        while (child != null) {
+            const child_widget = self.get_widget(child.?) orelse return error.UnableToGetWidget;
+            defer child = child_widget.next_sibling;
+
+            if (child_widget.semantic_size[axis].shrinkable and (child_widget.computed_size[axis] > child_widget.semantic_size[axis].minimum_pixel_size)) {
+                resizable_children += 1.0;
+            } else {
+                child_widget.semantic_size[axis].shrinkable = false;
+            }
+
+            if (child_widget.flags.get_allow_overflow_flag(@enumFromInt(axis))) {
+                continue;
+            }
+
+            if (widget.layout_axis) |layout_axis| {
+                if (@intFromEnum(layout_axis) == axis) {
+                    if (siblings_total_length != 0.0) {
+                        siblings_total_length += widget.children_gap;
+                    }
+                    siblings_total_length += child_widget.outer_size()[axis];
+                } else {
+                    siblings_total_length = @max(siblings_total_length, child_widget.outer_size()[axis]);
+                }
+            }
+        }
+
+        overrun = siblings_total_length - widget.content_size()[axis];
+
+        if (resizable_children <= 0.0 or overrun <= 0.1) {
+            break;
+        }
+
+        const split = overrun / resizable_children;
+
+        child = widget.first_child;
+        while (child != null) {
+            const child_widget = self.get_widget(child.?) orelse return error.UnableToGetWidget;
+            defer child = child_widget.next_sibling;
+
+            if (child_widget.semantic_size[axis].shrinkable) {
+                const largest_resize = @max(child_widget.computed_size[axis] - child_widget.semantic_size[axis].minimum_pixel_size, 0.0);
+                child_widget.computed_size[axis] -= @min(largest_resize, split);
+            }
+        }
+    }
+}
+
+fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId) SizeResolutionErrors!void {
+    const widget = self.get_widget(widget_id) orelse return error.UnableToGetWidget;
+
+    for (widget.semantic_size, 0..) |s, axis| {
+        // skip if we already have calculated this widget's size on this axis
+        if (widget.computed_size[axis] != 0) { continue; }
+
+        switch (s.kind) {
+            .ChildrenSize => {
+                var total_size: f32 = -widget.children_gap;
+                var top_size: f32 = 0.0;
+                var total_minimum_size: f32 = -widget.children_gap;
+                var top_minimum_size: f32 = 0.0;
+
+                var child: ?WidgetId = widget.first_child orelse return error.ChildrenSizeWidgetHasNoChildren;
+                while (child != null) {
+                    const child_widget = self.get_widget(child.?) orelse return error.UnableToGetWidget;
+                    defer child = child_widget.next_sibling;
+
+                    // if child is floating then it does not contribute to the size of the parent
+                    if (child_widget.flags.get_floating_flag(@enumFromInt(axis))) {
+                        continue;
+                    }
+
+                    try self.recurse_compute_widget_rect(child.?);
+
+                    top_size = @max(child_widget.outer_size()[axis], top_size);
+                    total_size += child_widget.outer_size()[axis] + widget.children_gap;
+                    const child_padding: [2]f32 = .{
+                        child_widget.padding_px.left + child_widget.padding_px.right + child_widget.border_width_px.left + child_widget.border_width_px.right + child_widget.margin_px.left + child_widget.margin_px.right,
+                        child_widget.padding_px.top + child_widget.padding_px.bottom + child_widget.border_width_px.top + child_widget.border_width_px.bottom + child_widget.margin_px.top + child_widget.margin_px.bottom,
+                    };
+                    const child_minimum_size_and_padding = child_widget.semantic_size[axis].minimum_pixel_size + child_padding[axis];
+                    total_minimum_size += child_minimum_size_and_padding + widget.children_gap;
+                    top_minimum_size = @max(top_minimum_size, child_minimum_size_and_padding);
+                }
+
+                var children_size = top_size;
+                var children_minimum_size = top_minimum_size;
+                if (widget.layout_axis) |layout_axis| {
+                    if (@intFromEnum(layout_axis) == axis) {
+                        children_size = @max(total_size, 0.0);
+                        children_minimum_size = @max(total_minimum_size, 0.0);
+                    }
+                }
+
+                widget.computed_size[axis] = @max(children_size, s.minimum_pixel_size);
+                widget.semantic_size[axis].minimum_pixel_size = @max(children_minimum_size, 0.0);
+            },
+            .ParentPercentage => {
+                const parent = self.get_widget(widget.parent) orelse return error.UnableToGetWidget;
+
+                const widget_padding: [2]f32 = .{
+                    widget.padding_px.left + widget.padding_px.right + widget.border_width_px.left + widget.border_width_px.right + widget.margin_px.left + widget.margin_px.right,
+                    widget.padding_px.top + widget.padding_px.bottom + widget.border_width_px.top + widget.border_width_px.bottom + widget.margin_px.top + widget.margin_px.bottom,
+                };
+                widget.computed_size[axis] = @max((parent.content_size()[axis] * s.value) - widget_padding[axis], s.minimum_pixel_size);
+            },
+            else => {},
+        }
+    }
+
+    var child: ?WidgetId = widget.first_child;
+    while (child != null) {
+        const child_widget = self.get_widget(child.?) orelse return error.UnableToGetWidget;
+        defer child = child_widget.next_sibling;
+
+        try self.recurse_compute_widget_rect(child.?);
+    }
+}
+
 fn compute_widget_rects(self: *Self) void {
-    // downward solve
-    for (0..self.standard_widgets.items.len) |inv_id| {
-        const id = self.standard_widgets.items.len - inv_id - 1;
+    // standalone
+    for (0..self.standard_widgets.items.len) |id| {
         const widget = &self.standard_widgets.items[id];
-
-        widget.computed.left_top_margin[0] += widget.margin_px.left;
-        widget.computed.left_top_margin[1] += widget.margin_px.top;
-        widget.computed.right_bottom_margin[0] = widget.margin_px.right;
-        widget.computed.right_bottom_margin[1] = widget.margin_px.bottom;
-
         self.compute_standalone_widget_size(widget);
-        self.solve_downward_dependant_sizes(widget);
     }
-    for (0..self.priority_widgets.items.len) |inv_id| {
-        const id = self.priority_widgets.items.len - inv_id - 1;
+    if (self.standard_widgets.items.len > 0) {
+        self.recurse_compute_widget_rect(.{ .location = .Standard, .index = 0 }) catch unreachable;
+    }
+    for (0..self.standard_widgets.items.len) |id| {
+        const widget_id = WidgetId{ .location = .Standard, .index = @intCast(id) };
+        self.resolve_widget_size_violations(widget_id, 0) catch unreachable;
+        self.resolve_widget_size_violations(widget_id, 1) catch unreachable;
+        self.compute_widget_relative_positions(widget_id, 0);
+        self.compute_widget_relative_positions(widget_id, 1);
+    }
+
+    for (0..self.priority_widgets.items.len) |id| {
         const widget = &self.priority_widgets.items[id];
         self.compute_standalone_widget_size(widget);
-        self.solve_downward_dependant_sizes(widget);
+    }
+    if (self.priority_widgets.items.len > 0) {
+        self.recurse_compute_widget_rect(.{ .location = .Priority, .index = 0 }) catch unreachable;
+    }
+    for (0..self.priority_widgets.items.len) |id| {
+        const widget_id = WidgetId{ .location = .Priority, .index = @intCast(id) };
+        self.resolve_widget_size_violations(widget_id, 0) catch unreachable;
+        self.resolve_widget_size_violations(widget_id, 1) catch unreachable;
+        self.compute_widget_relative_positions(widget_id, 0);
+        self.compute_widget_relative_positions(widget_id, 1);
     }
 
-    // upward solve
-    for (self.standard_widgets.items, 0..) |*widget, widget_id| {
-        std.debug.assert(widget.parent.index <= widget_id);
-        self.solve_upward_dependant_sizes(widget);
-    }
-    for (self.priority_widgets.items, 0..) |*widget, widget_id| {
-        std.debug.assert(widget.parent.location == .Standard or widget.parent.index <= widget_id);
-        self.solve_upward_dependant_sizes(widget);
-    }
+    // // upward solve
+    // for (self.standard_widgets.items, 0..) |*widget, widget_id| {
+    //     std.debug.assert(widget.parent.index <= widget_id);
+    //     self.solve_upward_dependant_sizes(widget);
+    // }
+    // for (self.priority_widgets.items, 0..) |*widget, widget_id| {
+    //     std.debug.assert(widget.parent.location == .Standard or widget.parent.index <= widget_id);
+    //     self.solve_upward_dependant_sizes(widget);
+    // }
 
-    // downward solve again to resolve any ParentPercentage under ChildrenSize
-    for (0..self.standard_widgets.items.len) |inv_id| {
-        const id = self.standard_widgets.items.len - inv_id - 1;
-        const widget = &self.standard_widgets.items[id];
-        self.solve_downward_dependant_sizes(widget);
-    }
-    for (0..self.priority_widgets.items.len) |inv_id| {
-        const id = self.priority_widgets.items.len - inv_id - 1;
-        const widget = &self.priority_widgets.items[id];
-        self.solve_downward_dependant_sizes(widget);
-    }
+    // // downward solve again to resolve any ParentPercentage under ChildrenSize
+    // for (0..self.standard_widgets.items.len) |inv_id| {
+    //     const id = self.standard_widgets.items.len - inv_id - 1;
+    //     const widget = &self.standard_widgets.items[id];
+    //     self.solve_downward_dependant_sizes(widget);
+    // }
+    // for (0..self.priority_widgets.items.len) |inv_id| {
+    //     const id = self.priority_widgets.items.len - inv_id - 1;
+    //     const widget = &self.priority_widgets.items[id];
+    //     self.solve_downward_dependant_sizes(widget);
+    // }
 
-    self.recurse_resolve_violations(.{ .location = .Standard, .index = 0 });
+    // self.recurse_resolve_violations(.{ .location = .Standard, .index = 0 });
 }
 
 fn render_imui_widget(
@@ -1068,7 +1042,7 @@ fn render_imui_widget(
         };
 
         self.quad_renderer.submit_quad(.{
-            .rect = widget.computed.rect(),
+            .rect = widget.rect(),
             .z_value = z_value,
             .scissor = scissor_rect,
             .colour = render_palette.background,
@@ -1088,7 +1062,7 @@ fn render_imui_widget(
     // render text
     if (widget.text_content) |*text| {
         const font_metrics = self.get_font(text.font).font_metrics;
-        const rect = widget.computed.rect();
+        const rect = widget.rect();
         const x = rect.left;
         const y = rect.top + (font_metrics.ascender * text.size);
 
@@ -1219,7 +1193,7 @@ pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
     }
 }
 
-pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {
+pub fn end_frame(self: *Self) void {
     std.debug.assert(self.parent_stack.items.len == 1); // more than just the root widget exists in the parent stack, maybe forgot pop_layout?
     self.parent_stack.clearRetainingCapacity();
 
@@ -1265,7 +1239,7 @@ pub fn end_frame(self: *Self, gfx: *const _gfx.GfxState) void {
     }
 
     // add the root widget for the next frame
-    self.add_root_widget(gfx);
+    self.add_root_widget();
 }
 
 pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(WidgetId) {
@@ -1277,9 +1251,11 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
     widget_signal.init = (last_frame_widget == null);
 
     if (last_frame_widget) |lfw| {
-        const lfw_contains_cursor = lfw.computed.total_rect().contains([2]f32{
-            @floatFromInt(self.input.cursor_position[0]),
-            @floatFromInt(self.input.cursor_position[1]),
+        const input = &engine.get().input;
+
+        const lfw_contains_cursor = lfw.rect().contains([2]f32{
+            @floatFromInt(input.cursor_position[0]),
+            @floatFromInt(input.cursor_position[1]),
         });
 
         // hover detection
@@ -1300,16 +1276,16 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
         // click or dragged detection
         if (widget.flags.clickable) {
             if (self.active_item == widget.key) {
-                if (self.input.get_key(self.primary_interact_key)) {
+                if (input.get_key(self.primary_interact_key)) {
                     // dragged
                     widget_signal.dragged = true;
                     self.next_active_item = widget_id;
                 }
-                if (self.input.get_key_up(self.primary_interact_key)) {
+                if (input.get_key_up(self.primary_interact_key)) {
                     // on up
                 }
             } else if (self.hot_item == widget.key) {
-                if (self.input.get_key_down(self.primary_interact_key)) {
+                if (input.get_key_down(self.primary_interact_key)) {
                     widget_signal.clicked = true;
                     self.next_active_item = widget_id;
                 }
@@ -1317,16 +1293,18 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
         }
     }
 
+    const time = &engine.get().time;
+
     if (self.last_frame_widgets.getPtr(widget.key)) |lw| {
         if (self.hot_item == widget.key) {
-            widget.hot_t = @min(lw.hot_t + self.time.delta_time_unscaled_f32() / widget.hot_t_timescale, 1.0);
+            widget.hot_t = @min(lw.hot_t + time.delta_time_unscaled_f32() / widget.hot_t_timescale, 1.0);
         } else {
-            widget.hot_t = @max(lw.hot_t - self.time.delta_time_unscaled_f32() / widget.hot_t_timescale, 0.0);
+            widget.hot_t = @max(lw.hot_t - time.delta_time_unscaled_f32() / widget.hot_t_timescale, 0.0);
         }
         if (self.active_item == widget.key) {
-            widget.active_t = @min(lw.active_t + self.time.delta_time_unscaled_f32() / widget.active_t_timescale, 1.0);
+            widget.active_t = @min(lw.active_t + time.delta_time_unscaled_f32() / widget.active_t_timescale, 1.0);
         } else {
-            widget.active_t = @max(lw.active_t - self.time.delta_time_unscaled_f32() / widget.active_t_timescale, 0.0);
+            widget.active_t = @max(lw.active_t - time.delta_time_unscaled_f32() / widget.active_t_timescale, 0.0);
         }
     }
 
@@ -1382,8 +1360,8 @@ pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) WidgetId {
         .layout_axis = layout_axis,
         .semantic_size = [2]SemanticSize {
             // TODO should these be .ParentPercentage .value = 1.0?
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
         },
         .flags = .{
             .render = false,
@@ -1396,14 +1374,12 @@ fn floating_layout_widget(layout_axis: Axis, floating_x: f32, floating_y: f32, k
         .key = gen_key(key),
         .layout_axis = layout_axis,
         .semantic_size = [2]SemanticSize {
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable_percent = 0.0, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
         },
-        .computed = .{
-            .relative_position = .{
-                floating_x,
-                floating_y
-            },
+        .computed_relative_position = .{
+            floating_x,
+            floating_y
         },
         .flags = .{
             .render = false,
@@ -1433,13 +1409,13 @@ pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, flo
 
 pub fn set_floating_layout_position(self: *Self, widget_id: WidgetId, floating_x: f32, floating_y: f32) void {
     const widget = self.get_widget(widget_id) orelse return;
-    widget.computed.relative_position = [2]f32 { floating_x, floating_y };
+    widget.computed_relative_position = .{ floating_x, floating_y };
 }
 
 pub fn push_form_layout_item(self: *Self, key: anytype) WidgetId {
     const form_item_layout = self.push_layout(.X, key ++ .{@src()});
     const form_item_widget = self.get_widget(form_item_layout) orelse unreachable;
-    form_item_widget.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0, };
+    form_item_widget.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, };
     form_item_widget.children_gap = 5;
     form_item_widget.flags.is_form_layout_item = true;
     return form_item_layout;
@@ -1464,7 +1440,7 @@ pub fn pop_layout(self: *Self) void {
         }
         const child_child_widget = self.get_widget(child_widget.first_child.?) orelse unreachable;
         self.compute_standalone_widget_size(child_child_widget);
-        max_layout_label_width = @max(max_layout_label_width, child_child_widget.computed.rect().width());
+        max_layout_label_width = @max(max_layout_label_width, child_child_widget.outer_rect().width());
     }
 
     if (max_layout_label_width > 0.0) {
@@ -1482,7 +1458,7 @@ pub fn pop_layout(self: *Self) void {
             const child_child_widget = self.get_widget(child_widget.first_child.?) orelse unreachable;
             child_child_widget.semantic_size[0].kind = .Pixels;
             child_child_widget.semantic_size[0].value = max_layout_label_width;
-            child_child_widget.semantic_size[0].shrinkable_percent = 0.0;
+            child_child_widget.semantic_size[0].shrinkable = false;
         }
     }
 

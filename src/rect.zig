@@ -51,6 +51,15 @@ pub inline fn resize(self: *const Self, x: i32, y: i32) Self {
     };
 }
 
+pub inline fn adjust(self: *const Self, adjustment_rect: Self) Self {
+    return Self {
+        .left = self.left + adjustment_rect.left,
+        .right = self.right + adjustment_rect.right,
+        .top = self.top + adjustment_rect.top,
+        .bottom = self.bottom + adjustment_rect.bottom,
+    };
+}
+
 pub fn contains(self: *const Self, coord: [2]f32) bool {
     return  coord[0] >= self.left and
         coord[0] <= self.right and

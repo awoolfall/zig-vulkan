@@ -3,7 +3,7 @@ const eng = @import("self");
 const Imui = eng.ui;
 const gfx = eng.gfx;
 
-pub fn create(imui: *Imui, texture_view: gfx.TextureView2D, sampler: gfx.Sampler, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
+pub fn create(imui: *Imui, texture_view: gfx.ImageView.Ref, sampler: gfx.Sampler.Ref, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
     var image_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src()}),
         .semantic_size = [2]Imui.SemanticSize{
@@ -21,13 +21,16 @@ pub fn create(imui: *Imui, texture_view: gfx.TextureView2D, sampler: gfx.Sampler
 
     // set size based on parent layout. Fill parent layout axis and keep image aspect ratio.
     if (imui.get_widget_from_last_frame(imui.parent_stack.getLast())) |parent| {
-        if (texture_view.desc.width != 0 and texture_view.desc.height != 0) {
-            const aspect_ratio = @as(f32, @floatFromInt(texture_view.desc.width)) / @as(f32, @floatFromInt(texture_view.desc.height));
+        const view = texture_view.get() catch unreachable;
+        const image = view.info.image.get() catch unreachable;
+
+        if (image.info.width != 0 and image.info.height != 0) {
+            const aspect_ratio = @as(f32, @floatFromInt(image.info.width)) / @as(f32, @floatFromInt(image.info.height));
             if (parent.layout_axis) |layout_axis| {
                 switch (layout_axis) {
                     .X => {
                         image_widget.semantic_size[0].kind = .Pixels;
-                        image_widget.semantic_size[0].value = @as(f32, @floatFromInt(parent.content_rect().height)) * aspect_ratio;
+                        image_widget.semantic_size[0].value = parent.content_rect().height() * aspect_ratio;
                         image_widget.semantic_size[1].kind = .ParentPercentage;
                         image_widget.semantic_size[1].value = 1.0;
                     },
@@ -35,7 +38,7 @@ pub fn create(imui: *Imui, texture_view: gfx.TextureView2D, sampler: gfx.Sampler
                         image_widget.semantic_size[0].kind = .ParentPercentage;
                         image_widget.semantic_size[0].value = 1.0;
                         image_widget.semantic_size[1].kind = .Pixels;
-                        image_widget.semantic_size[1].value = @as(f32, @floatFromInt(parent.content_rect().width)) / aspect_ratio;
+                        image_widget.semantic_size[1].value = parent.content_rect().width() / aspect_ratio;
                     },
                 }
             }

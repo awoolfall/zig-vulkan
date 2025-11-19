@@ -21,8 +21,8 @@ pub fn create(imui: *Imui, text: []const u8, is_open_param: ?*bool, key: anytype
     const line_widget = Imui.Widget {
         .key = Imui.LabelKey,
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 1.0, .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 1.0, .shrinkable = false, },
         },
         .background_colour = imui.palette().border,
         .flags = .{

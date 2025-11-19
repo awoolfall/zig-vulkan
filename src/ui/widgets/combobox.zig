@@ -66,7 +66,7 @@ pub const ComboBoxState = struct {
 
 fn set_combobox_background_layout(widget: *Imui.Widget) void {
     widget.semantic_size[0] = .{
-        .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+        .kind = .ParentPercentage, .value = 1.0, .shrinkable = true,
     };
     widget.flags.render = true;
     widget.border_width_px = .all(1);
@@ -81,7 +81,7 @@ pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
     const container_signals = imui.generate_widget_signals(container_layout);
     if (imui.get_widget(container_layout)) |container_widget| {
         container_widget.semantic_size[0] = .{
-            .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 1.0,
+            .kind = .ParentPercentage, .value = 1.0, .shrinkable = true,
         };
     }
 
@@ -118,7 +118,7 @@ pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
         if (imui.get_widget(label_layout)) |label_widget| {
             label_widget.layout_axis = null;
             label_widget.semantic_size[0] = .{
-                .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+                .kind = .ParentPercentage, .value = 1.0, .shrinkable = true,
             };
         }
 
@@ -138,7 +138,7 @@ pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
     dropdown_is_open: { if (data.dropdown_is_open) {
         // determine the position of the dropdown options based on the primary combobox rect
         const dropdown_pos = if (imui.get_widget_from_last_frame(background)) |b| 
-            .{ b.computed.rect().left, b.computed.rect().bottom + 4 }
+            .{ b.rect().left, b.rect().bottom + 4 }
             else break :dropdown_is_open;
 
         // push the options background layout
@@ -146,7 +146,10 @@ pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
         if (imui.get_widget(options_background)) |options_background_widget| {
             set_combobox_background_layout(options_background_widget);
             options_background_widget.semantic_size[0] = .{
-                .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+                .kind = .ParentPercentage, .value = 1.0, .shrinkable = true,
+            };
+            options_background_widget.semantic_size[1] = .{
+                .kind = .ChildrenSize, .value = 1.0, .shrinkable = true,
             };
         }
 
@@ -158,7 +161,7 @@ pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
             // give the option a hover effect
             if (imui.get_widget(option_background)) |option_background_widget| {
                 option_background_widget.semantic_size[0] = .{
-                    .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0,
+                    .kind = .ParentPercentage, .value = 1.0, .shrinkable = true,
                 };
                 option_background_widget.flags.clickable = true;
                 option_background_widget.flags.render = true;
