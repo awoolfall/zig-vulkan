@@ -13,6 +13,10 @@ struct PixelBuffer
     uint flags;
 };
 
+enum Flags
+{
+    HasTexture = 0x1,
+};
 
 struct PushConstants
 {
@@ -105,7 +109,7 @@ float4 ps_main(vs_out input) : SV_TARGET
     float4 colour = data.background_colour;
 
     // add texture colour before borders
-    bool has_texture = ((data.flags >> 0) & 1) != 0;
+    bool has_texture = (data.flags & Flags.HasTexture) != 0;
     if (has_texture) {
         float4 texture_colour = quad_texture.Sample(quad_sampler, input.tex_coord.xy);
         colour = float4(colour.rgb * (1 - texture_colour.a) + texture_colour.rgb * texture_colour.a, colour.a);

@@ -497,7 +497,7 @@ pub const QuadRenderer = struct {
                             },
                             .{
                                 .binding = 1,
-                                .data = .{ .Sampler = _gfx.GfxState.get().default.sampler, },
+                                .data = .{ .Sampler = image.sampler, },
                             }
                         },
                     }) catch |err| {

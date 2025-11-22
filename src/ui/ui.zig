@@ -306,7 +306,14 @@ last_frame_widgets: std.AutoHashMap(Key, Widget),
 last_frame_arena: u8,
 arenas: [2]std.heap.ArenaAllocator,
 
+deinit_functions: std.ArrayList(*const fn (alloc: std.mem.Allocator) void) = .empty,
+
 pub fn deinit(self: *Self) void {
+    for (self.deinit_functions.items) |func| {
+        func(self.alloc);
+    }
+    self.deinit_functions.deinit(self.alloc);
+
     for (&self.fonts) |*f| {
         f.deinit();
     }
@@ -666,72 +673,6 @@ fn solve_downward_dependant_sizes(self: *Self, widget: *Widget) void {
     }
 }
 
-fn solve_size_violations_in_children(self: *Self, parent_id: WidgetId) bool {
-    const parent = self.get_widget(parent_id) orelse return false;
-    if (parent.num_children == 0) { return false; }
-    var violation_found = false;
-
-    for (0..parent.semantic_size.len) |axis| {
-        if (parent.flags.get_allow_overflow_flag(@enumFromInt(axis))) { continue; }
-
-        var iteration: u64 = 0;
-
-        var children_in_split: usize = parent.num_children;
-        // violation in this axis
-        const last_child = self.get_widget(parent.last_child.?).?;
-        var overrun = last_child.computed.relative_position[axis] + last_child.computed.size[axis] - (parent.computed.relative_position[axis] + rect_size(parent.content_rect(), axis));
-        var last_overrun: f32 = overrun + 2.0;
-        while (overrun >= 1.0 and children_in_split > 0) {
-            iteration += 1;
-            violation_found = true;
-            // break if we find ourselves in infinite loop
-            if (@abs(overrun - last_overrun) <= 1.0) {
-                std.log.warn("widgets ran out of shrinkable space!", .{});
-                violation_found = false;
-                break;
-            }
-            last_overrun = overrun;
-
-            // find the split between remaining children
-            const split = overrun / @as(f32, @floatFromInt(children_in_split));
-            // reset children in split count, this is rediscovered each loop
-            children_in_split = parent.num_children;
-
-            // iterate through all children attempting to shrink by the split amount
-            var child_id = parent.first_child;
-            while (child_id != null) {
-                const child = self.get_widget(child_id.?).?;
-
-                // determine how much this child may shink
-                const amount_can_shrink = child.semantic_size[axis].shrinkable_percent * child.computed.size[axis];
-                const minimum_size = child.computed.size[axis] - amount_can_shrink;
-                if (amount_can_shrink >= split) {
-                    // if it can shrink the full amount, do so.
-                    overrun -= split;
-                    child.computed.size[axis] -= split;
-                    child.semantic_size[axis].shrinkable_percent = (1.0 - (minimum_size / child.computed.size[axis]));
-                } else { 
-                    // if it cannot shrink the full amount, then shink as much as possible 
-                    // and remove this child from the split count
-                    overrun -= amount_can_shrink;
-                    // disable further shinking on this child
-                    child.computed.size[axis] -= amount_can_shrink;
-                    child.semantic_size[axis].shrinkable_percent = 0.0;
-                    children_in_split -= 1;
-                }
-
-                // recompute the relative positions of the children
-                self.compute_widget_relative_positions(child_id.?);
-
-                // go to next child
-                child_id = child.next_sibling;
-            }
-        }
-    }
-
-    return violation_found;
-}
-
 fn widget_potential_space(self: *Self, widget_id: WidgetId) [2]f32 {
     const widget = self.get_widget(widget_id) orelse unreachable;
     const parent = self.get_widget(widget.parent) orelse unreachable;
@@ -805,27 +746,6 @@ fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId, axis: usi
     // pivot determines the coordinate on the widget's box that sticks to the anchor
     widget.computed_pixel_offset[axis] = widget_margin_offset[axis]
         - (widget.pivot[axis] * widget.size()[axis]) + (widget.anchor[axis] * potential_space_size);
-}
-
-fn recurse_resolve_violations(self: *Self, widget_id: WidgetId) void {
-    var c = self.get_widget(widget_id).?.first_child;
-    while (c != null) {
-        self.solve_upward_dependant_sizes(self.get_widget(c.?).?);
-        c = self.get_widget(c.?).?.next_sibling;
-    }
-    c = self.get_widget(widget_id).?.first_child;
-    while (c != null) {
-        self.compute_widget_relative_positions(c.?);
-        c = self.get_widget(c.?).?.next_sibling;
-    }
-    _ = self.solve_size_violations_in_children(widget_id);
-
-    if (self.get_widget(widget_id).?.next_sibling) |ns| {
-        self.recurse_resolve_violations(ns);
-    }
-    if (self.get_widget(widget_id).?.first_child) |fc| {
-        self.recurse_resolve_violations(fc);
-    }
 }
 
 const SizeResolutionErrors = error {
@@ -963,7 +883,7 @@ fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId) SizeResolutionE
 }
 
 fn compute_widget_rects(self: *Self) void {
-    // standalone
+    // standard widgets
     for (0..self.standard_widgets.items.len) |id| {
         const widget = &self.standard_widgets.items[id];
         self.compute_standalone_widget_size(widget);
@@ -979,6 +899,7 @@ fn compute_widget_rects(self: *Self) void {
         self.compute_widget_relative_positions(widget_id, 1);
     }
 
+    // priority widgets
     for (0..self.priority_widgets.items.len) |id| {
         const widget = &self.priority_widgets.items[id];
         self.compute_standalone_widget_size(widget);
@@ -993,30 +914,6 @@ fn compute_widget_rects(self: *Self) void {
         self.compute_widget_relative_positions(widget_id, 0);
         self.compute_widget_relative_positions(widget_id, 1);
     }
-
-    // // upward solve
-    // for (self.standard_widgets.items, 0..) |*widget, widget_id| {
-    //     std.debug.assert(widget.parent.index <= widget_id);
-    //     self.solve_upward_dependant_sizes(widget);
-    // }
-    // for (self.priority_widgets.items, 0..) |*widget, widget_id| {
-    //     std.debug.assert(widget.parent.location == .Standard or widget.parent.index <= widget_id);
-    //     self.solve_upward_dependant_sizes(widget);
-    // }
-
-    // // downward solve again to resolve any ParentPercentage under ChildrenSize
-    // for (0..self.standard_widgets.items.len) |inv_id| {
-    //     const id = self.standard_widgets.items.len - inv_id - 1;
-    //     const widget = &self.standard_widgets.items[id];
-    //     self.solve_downward_dependant_sizes(widget);
-    // }
-    // for (0..self.priority_widgets.items.len) |inv_id| {
-    //     const id = self.priority_widgets.items.len - inv_id - 1;
-    //     const widget = &self.priority_widgets.items[id];
-    //     self.solve_downward_dependant_sizes(widget);
-    // }
-
-    // self.recurse_resolve_violations(.{ .location = .Standard, .index = 0 });
 }
 
 fn render_imui_widget(
