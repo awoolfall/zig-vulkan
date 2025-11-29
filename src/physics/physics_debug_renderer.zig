@@ -243,7 +243,6 @@ pub const D3D11DebugRenderer = extern struct {
         };
 
         cmd.cmd_push_constants(.{
-            .graphics_pipeline = self.data.pipeline,
             .shader_stages = .{ .Vertex = true, },
             .offset = 0,
             .data = std.mem.asBytes(&camera_push_constants),
@@ -435,7 +434,6 @@ pub const D3D11DebugRenderer = extern struct {
         };
 
         cmd.cmd_push_constants(.{
-            .graphics_pipeline = self.data.pipeline,
             .shader_stages = .{ .Vertex = true },
             .offset = @sizeOf(PushConstantCamera),
             .data = std.mem.asBytes(&object_push_constants),

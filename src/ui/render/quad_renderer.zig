@@ -528,7 +528,6 @@ pub const QuadRenderer = struct {
 
             // TODO update quad image if required
             cmd.cmd_bind_descriptor_sets(_gfx.CommandBuffer.BindDescriptorSetInfo {
-                .graphics_pipeline = self.pipeline,
                 .descriptor_sets = &.{
                     self.quad_render_sets.items[render_set].buffers_descriptor_set,
                     if (q.texture) |_| self.quad_render_sets.items[render_set].image_descriptor_sets.items[q_idx]
@@ -543,7 +542,6 @@ pub const QuadRenderer = struct {
 
             // push constant the index
             cmd.cmd_push_constants(_gfx.CommandBuffer.PushConstantsInfo {
-                .graphics_pipeline = self.pipeline,
                 .shader_stages = .{ .Vertex = true, .Pixel = true, },
                 .offset = 0,
                 .data = std.mem.asBytes(&push_constants),

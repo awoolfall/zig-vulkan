@@ -542,7 +542,6 @@ pub const Font = struct {
         cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels(), }, } );
 
         cmd.cmd_bind_descriptor_sets(_gfx.CommandBuffer.BindDescriptorSetInfo {
-            .graphics_pipeline = self.pipeline,
             .first_binding = 1,
             .descriptor_sets = &.{
                 self.image_descriptor_set,
@@ -601,7 +600,6 @@ pub const Font = struct {
                 };
 
                 cmd.cmd_bind_descriptor_sets(_gfx.CommandBuffer.BindDescriptorSetInfo {
-                    .graphics_pipeline = self.pipeline,
                     .first_binding = 0,
                     .descriptor_sets = &.{ self.text_props_buffers.items[@intCast(text_props_buffer_idx)].descriptor_set },
                 });
@@ -695,7 +693,6 @@ pub const Font = struct {
 
             // set push constant to text props index
             cmd.cmd_push_constants(_gfx.CommandBuffer.PushConstantsInfo {
-                .graphics_pipeline = self.pipeline,
                 .shader_stages = .{ .Vertex = true, .Pixel = true, },
                 .offset = 0,
                 .data = std.mem.asBytes(&push_constants),

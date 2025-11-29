@@ -23,6 +23,7 @@ pub const GfxStateVulkan = struct {
 
     pub const RenderPass = RenderPassVulkan;
     pub const GraphicsPipeline = GraphicsPipelineVulkan;
+    pub const ComputePipeline = ComputePipelineVulkan;
     pub const FrameBuffer = FrameBufferVulkan;
 
     pub const DescriptorLayout = DescriptorLayoutVulkan;
@@ -477,9 +478,9 @@ pub const GfxStateVulkan = struct {
         var present_queue_idx: u32 = std.math.maxInt(u32);
         var transfer_queue_idx: u32 = std.math.maxInt(u32);
         for (queue_family_properties_storage, 0..) |queue_family_props, idx| {
-            const is_graphics = queue_family_props.queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0;
-            const is_compute = queue_family_props.queueFlags & c.VK_QUEUE_COMPUTE_BIT != 0;
-            const is_transfer = queue_family_props.queueFlags & c.VK_QUEUE_TRANSFER_BIT != 0;
+            const is_graphics = (queue_family_props.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0;
+            const is_compute = (queue_family_props.queueFlags & c.VK_QUEUE_COMPUTE_BIT) != 0;
+            const is_transfer = (queue_family_props.queueFlags & c.VK_QUEUE_TRANSFER_BIT) != 0;
 
             var supports_present: c.VkBool32 = 0;
             vkt(c.vkGetPhysicalDeviceSurfaceSupportKHR(vk_physical_device, @intCast(idx), vk_surface, &supports_present)) catch {
@@ -1324,30 +1325,33 @@ fn convert_buffer_usage_flags_to_vulkan(usage: gf.BufferUsageFlags) c.VkBufferUs
     if (usage.ConstantBuffer) {
         flags |= c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     }
+    if (usage.StorageBuffer) {
+        flags |= c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    }
     if (usage.TransferSrc) {
         flags |= c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     }
     if (usage.TransferDst) {
         flags |= c.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     }
-    if (usage.ShaderResource) {
-        unreachable;
-    }
 
     return flags;
 }
 
-fn convert_texture_usage_flags_to_vulkan(usage: gf.TextureUsageFlags) c.VkImageUsageFlags {
+fn convert_texture_usage_flags_to_vulkan(usage: gf.ImageUsageFlags) c.VkImageUsageFlags {
     var flags: c.VkImageUsageFlags = 0;
 
-    if (usage.ShaderResource) {
-        flags |= c.VK_IMAGE_USAGE_SAMPLED_BIT;
-    }
     if (usage.RenderTarget) {
         flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     }
     if (usage.DepthStencil) {
         flags |= c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
+    if (usage.ShaderResource) {
+        flags |= c.VK_IMAGE_USAGE_SAMPLED_BIT;
+    }
+    if (usage.StorageResource) {
+        flags |= c.VK_IMAGE_USAGE_STORAGE_BIT;
     }
     if (usage.TransferSrc) {
         flags |= c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -2246,7 +2250,7 @@ pub const RenderPassVulkan = struct {
             } else null;
 
             subpass_descriptions[idx] = c.VkSubpassDescription{
-                .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS, // @TODO: compute? other?
+                .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS, // @TODO: other?
                 .pColorAttachments = @ptrCast(attachment_refs.ptr),
                 .colorAttachmentCount = @intCast(attachment_refs.len),
                 .pDepthStencilAttachment = if (depth_attachment_ref) |*d| d else null,
@@ -2615,7 +2619,7 @@ pub const GraphicsPipelineVulkan = struct {
             .pName = @ptrCast(info.pixel_shader.entry_point.ptr),
             .pSpecializationInfo = null,
         };
-
+        
         const graphics_pipeline_info = c.VkGraphicsPipelineCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 
@@ -2647,6 +2651,83 @@ pub const GraphicsPipelineVulkan = struct {
         return Self {
             .vk_pipeline_layout = vk_pipeline_layout,
             .vk_graphics_pipeline = vk_graphics_pipeline,
+        };
+    }
+};
+
+pub const ComputePipelineVulkan = struct {
+    const Self = @This();
+
+    vk_pipeline_layout: c.VkPipelineLayout,
+    vk_compute_pipeline: c.VkPipeline,
+
+    pub fn deinit(self: *const Self) void {
+        const device = eng.get().gfx.platform.device;
+        c.vkDestroyPipeline(device, self.vk_compute_pipeline, null);
+        c.vkDestroyPipelineLayout(device, self.vk_pipeline_layout, null);
+    }
+    
+    pub fn init(info: gf.ComputePipelineInfo) !Self {
+        const alloc = eng.get().frame_allocator;
+        var arena_struct = std.heap.ArenaAllocator.init(alloc);
+        defer arena_struct.deinit();
+        const arena = arena_struct.allocator();
+
+        const pipeline_shader_stage_info = c.VkPipelineShaderStageCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = c.VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = info.compute_shader.module.platform.vk_shader_module,
+            .pName = @ptrCast(info.compute_shader.entry_point.ptr),
+            .pSpecializationInfo = null,
+        };
+
+        const vk_set_layouts = try arena.alloc(c.VkDescriptorSetLayout, info.descriptor_set_layouts.len);
+        defer arena.free(vk_set_layouts);
+
+        for (info.descriptor_set_layouts, 0..) |l, idx| {
+            const layout = try l.get();
+            vk_set_layouts[idx] = layout.platform.vk_layout;
+        }
+
+        const vk_push_constant_ranges = try arena.alloc(c.VkPushConstantRange, info.push_constants.len);
+        defer arena.free(vk_push_constant_ranges);
+
+        for (info.push_constants, 0..) |p, idx| {
+            std.debug.assert((p.offset % 4) == 0);
+            std.debug.assert((p.size % 4) == 0);
+
+            vk_push_constant_ranges[idx] = c.VkPushConstantRange {
+                .stageFlags = shaderstageflags_to_vulkan(p.shader_stages),
+                .offset = p.offset,
+                .size = p.size,
+            };
+        }
+
+        const pipeline_layout_info = c.VkPipelineLayoutCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .pSetLayouts = @ptrCast(vk_set_layouts.ptr),
+            .setLayoutCount = @intCast(vk_set_layouts.len),
+            .pPushConstantRanges = @ptrCast(vk_push_constant_ranges.ptr),
+            .pushConstantRangeCount = @intCast(vk_push_constant_ranges.len),
+        };
+
+        var vk_pipeline_layout: c.VkPipelineLayout = undefined;
+        try vkt(c.vkCreatePipelineLayout(eng.get().gfx.platform.device, &pipeline_layout_info, null, &vk_pipeline_layout));
+        errdefer c.vkDestroyPipelineLayout(eng.get().gfx.platform.device, vk_pipeline_layout, null);
+
+        const compute_pipeline_info = c.VkComputePipelineCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .layout = vk_pipeline_layout,
+            .stage = pipeline_shader_stage_info,
+        };
+
+        var vk_compute_pipeline: c.VkPipeline = undefined;
+        try vkt(c.vkCreateComputePipelines(eng.get().gfx.platform.device, @ptrCast(c.VK_NULL_HANDLE), 1, &compute_pipeline_info, null, &vk_compute_pipeline));
+        errdefer c.vkDestroyPipeline(eng.get().gfx.platform.device, vk_compute_pipeline, null);
+       
+        return Self {
+            .vk_pipeline_layout = vk_pipeline_layout,
+            .vk_compute_pipeline = vk_compute_pipeline,
         };
     }
 };
@@ -2703,7 +2784,7 @@ pub const FrameBufferVulkan = struct {
             var swapchain_index: ?usize = null;
             for (info.attachments, 0..) |a, i| {
                 switch (a) {
-                    .SwapchainLDR, .SwapchainHDR, .SwapchainDepth, .View => { // TODO is this correct?
+                    .SwapchainLDR, .SwapchainHDR, .SwapchainDepth, .View => {
                         swapchain_index = i;
                         break;
                     },
@@ -2803,6 +2884,9 @@ fn shaderstageflags_to_vulkan(shaderstageflags: gf.ShaderStageFlags) c.VkShaderS
     }
     if (shaderstageflags.Pixel) {
         flags |= c.VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    if (shaderstageflags.Compute) {
+        flags |= c.VK_SHADER_STAGE_COMPUTE_BIT;
     }
 
     return flags;
@@ -3380,6 +3464,12 @@ pub const CommandBufferVulkan = struct {
     vk_pool: c.VkCommandPool,
     vk_command_buffer: c.VkCommandBuffer,
 
+    bound_pipeline: union(enum) {
+        None: void,
+        Graphics: gf.GraphicsPipeline.Ref,
+        Compute: gf.ComputePipeline.Ref,
+    } = .None,
+
     pub fn deinit(self: *const Self) void {
         c.vkFreeCommandBuffers(GfxStateVulkan.get().device, self.vk_pool, 1, &self.vk_command_buffer);
     }
@@ -3434,7 +3524,16 @@ pub const CommandBufferVulkan = struct {
 
     pub fn cmd_bind_graphics_pipeline(self: *Self, pipeline: gf.GraphicsPipeline.Ref) void {
         const p = pipeline.get() catch return;
+
+        self.bound_pipeline = .{ .Graphics = pipeline };
         c.vkCmdBindPipeline(self.vk_command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, p.platform.vk_graphics_pipeline);
+    }
+
+    pub fn cmd_bind_compute_pipeline(self: *Self, pipeline: gf.ComputePipeline.Ref) void {
+        const p = pipeline.get() catch return;
+
+        self.bound_pipeline = .{ .Compute = pipeline, };
+        c.vkCmdBindPipeline(self.vk_command_buffer, c.VK_PIPELINE_BIND_POINT_COMPUTE, p.platform.vk_compute_pipeline);
     }
 
     const max_vk_viewports = 6;
@@ -3520,11 +3619,19 @@ pub const CommandBufferVulkan = struct {
             vk_descriptor_sets[idx] = set.platform.get_frame_set();
         }
 
-        const pipeline = info.graphics_pipeline.get() catch unreachable;
+        const vk_bind_point: c.VkPipelineBindPoint, const vk_pipeline_layout = switch (self.bound_pipeline) {
+            .Graphics => |p| .{ c.VK_PIPELINE_BIND_POINT_GRAPHICS, (p.get() catch unreachable).platform.vk_pipeline_layout },
+            .Compute => |p| .{ c.VK_PIPELINE_BIND_POINT_COMPUTE, (p.get() catch unreachable).platform.vk_pipeline_layout },
+            .None => {
+                std.log.warn("Attempted to bind descriptor sets when no pipeline was bound.", .{});
+                return;
+            },
+        };
+
         c.vkCmdBindDescriptorSets(
             self.vk_command_buffer,
-            c.VK_PIPELINE_BIND_POINT_GRAPHICS, // TODO compute
-            pipeline.platform.vk_pipeline_layout,
+            vk_bind_point,
+            vk_pipeline_layout,
             info.first_binding,
             @intCast(info.descriptor_sets.len),
             @ptrCast(vk_descriptor_sets[0..].ptr),
@@ -3534,10 +3641,18 @@ pub const CommandBufferVulkan = struct {
     }
 
     pub fn cmd_push_constants(self: *Self, info: gf.CommandBuffer.PushConstantsInfo) void {
-        const pipeline = info.graphics_pipeline.get() catch unreachable;
+        const vk_pipeline_layout = switch (self.bound_pipeline) {
+            .Graphics => |p| (p.get() catch unreachable).platform.vk_pipeline_layout,
+            .Compute => |p| (p.get() catch unreachable).platform.vk_pipeline_layout,
+            .None => {
+                std.log.warn("Attempted to push constants when no pipeline was bound.", .{});
+                return;
+            },
+        };
+
         c.vkCmdPushConstants(
             self.vk_command_buffer,
-            pipeline.platform.vk_pipeline_layout,
+            vk_pipeline_layout,
             shaderstageflags_to_vulkan(info.shader_stages),
             info.offset,
             @intCast(info.data.len),
@@ -3723,6 +3838,15 @@ pub const CommandBufferVulkan = struct {
             c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             @intCast(vk_copy_regions.items.len),
             @ptrCast(vk_copy_regions.items.ptr)
+        );
+    }
+
+    pub fn cmd_dispatch(self: *Self, info: gf.CommandBuffer.DispatchInfo) void {
+        c.vkCmdDispatch(
+            self.vk_command_buffer, 
+            info.group_count_x, 
+            info.group_count_y, 
+            info.group_count_z
         );
     }
 };

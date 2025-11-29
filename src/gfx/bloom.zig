@@ -391,7 +391,6 @@ pub fn render_bloom(
         cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels_mip(mip_level), }, });
 
         cmd.cmd_bind_descriptor_sets(.{
-            .graphics_pipeline = self.downsample_pipeline,
             .descriptor_sets = &.{
                 if (mip_level == 1) self.hdr_descriptor_set
                 else self.bloom_layers[mip_level - 1].image_descriptor_sets[shader_index],
@@ -411,7 +410,6 @@ pub fn render_bloom(
         };
 
         cmd.cmd_push_constants(.{
-            .graphics_pipeline = self.downsample_pipeline,
             .shader_stages = .{ .Pixel = true, },
             .offset = 0,
             .data = std.mem.asBytes(&push_constants),
@@ -447,7 +445,6 @@ pub fn render_bloom(
         cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels_mip(mip_level - 1), }, });
 
         cmd.cmd_bind_descriptor_sets(.{
-            .graphics_pipeline = self.upsample_pipeline,
             .descriptor_sets = &.{
                 self.bloom_layers[mip_level].image_descriptor_sets[shader_index],
             },
@@ -466,7 +463,6 @@ pub fn render_bloom(
         };
 
         cmd.cmd_push_constants(.{
-            .graphics_pipeline = self.upsample_pipeline,
             .shader_stages = .{ .Pixel = true, },
             .offset = 0,
             .data = std.mem.asBytes(&push_constants),
@@ -496,7 +492,6 @@ pub fn render_bloom(
         cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels_mip(0), }, });
 
         cmd.cmd_bind_descriptor_sets(.{
-            .graphics_pipeline = self.upsample_pipeline,
             .descriptor_sets = &.{
                 self.bloom_layers[mip_level].image_descriptor_sets[shader_index],
             },
@@ -515,7 +510,6 @@ pub fn render_bloom(
         };
 
         cmd.cmd_push_constants(.{
-            .graphics_pipeline = self.upsample_pipeline,
             .shader_stages = .{ .Pixel = true, },
             .offset = 0,
             .data = std.mem.asBytes(&push_constants),

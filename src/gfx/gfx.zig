@@ -30,6 +30,7 @@ pub const GfxState = struct {
 
     render_passes: gen.GenerationalList(RenderPass),
     graphics_pipelines: gen.GenerationalList(GraphicsPipeline),
+    compute_pipelines: gen.GenerationalList(ComputePipeline),
     framebuffers: gen.GenerationalList(FrameBuffer),
 
     descriptor_layouts: gen.GenerationalList(DescriptorLayout),
@@ -102,6 +103,7 @@ pub const GfxState = struct {
 
         self.framebuffers.deinit();
         self.graphics_pipelines.deinit();
+        self.compute_pipelines.deinit();
         self.render_passes.deinit();
 
         self.descriptor_sets.deinit();
@@ -133,6 +135,9 @@ pub const GfxState = struct {
 
         var graphics_pipelines = try gen.GenerationalList(GraphicsPipeline).init(alloc);
         errdefer graphics_pipelines.deinit();
+        
+        var compute_pipelines = try gen.GenerationalList(ComputePipeline).init(alloc);
+        errdefer compute_pipelines.deinit();
 
         var framebuffers = try gen.GenerationalList(FrameBuffer).init(alloc);
         errdefer framebuffers.deinit();
@@ -164,6 +169,7 @@ pub const GfxState = struct {
             .samplers = samplers,
             .render_passes = render_passes,
             .graphics_pipelines = graphics_pipelines,
+            .compute_pipelines = compute_pipelines,
             .framebuffers = framebuffers,
             .descriptor_layouts = descriptor_layouts,
             .descriptor_pools = descriptor_pools,
@@ -374,9 +380,10 @@ pub const ShaderStage = enum {
     Compute,
 };
 
-pub const ShaderStageFlags = packed struct(u2) {
+pub const ShaderStageFlags = packed struct {
     Vertex: bool = false,
     Pixel: bool = false,
+    Compute: bool = false,
 };
 
 pub const Topology = enum {
@@ -532,6 +539,7 @@ pub fn Reference(comptime T: type) type {
                 Sampler => &GfxState.get().samplers,
                 RenderPass => &GfxState.get().render_passes,
                 GraphicsPipeline => &GfxState.get().graphics_pipelines,
+                ComputePipeline => &GfxState.get().compute_pipelines,
                 FrameBuffer => &GfxState.get().framebuffers,
                 DescriptorLayout => &GfxState.get().descriptor_layouts,
                 DescriptorPool => &GfxState.get().descriptor_pools,
@@ -643,7 +651,7 @@ pub const ImageInfo = struct {
     array_length: u32 = 1,
     dst_layout: ImageLayout,
 
-    usage_flags: TextureUsageFlags,
+    usage_flags: ImageUsageFlags,
     access_flags: AccessFlags,
 };
 
@@ -873,27 +881,27 @@ pub const BufferUsageFlags = packed struct {
     VertexBuffer: bool = false,
     IndexBuffer: bool = false,
     ConstantBuffer: bool = false,
-    ShaderResource: bool = false,
+    StorageBuffer: bool = false,
     TransferSrc: bool = false,
     TransferDst: bool = false,
 };
 
-pub const TextureUsageFlags = packed struct {
-    ShaderResource: bool = false,
+pub const ImageUsageFlags = packed struct {
     RenderTarget: bool = false,
     DepthStencil: bool = false,
+    ShaderResource: bool = false,
+    StorageResource: bool = false,
     TransferSrc: bool = false,
     TransferDst: bool = false,
 };
 
-pub const AccessFlags = packed struct(u32) {
+pub const AccessFlags = packed struct {
     GpuWrite: bool = false,
     CpuRead: bool = false,
     CpuWrite: bool = false,
-    __unused: u29 = 0,
 };
 
-pub const RasterizationStateDesc = packed struct(u3) {
+pub const RasterizationStateDesc = packed struct {
     FillBack: bool = true,
     FillFront: bool = true,
     FrontCounterClockwise: bool = false,
@@ -1165,6 +1173,38 @@ pub const GraphicsPipeline = struct {
 
         return GraphicsPipeline.Ref {
             .id = try GfxState.get().graphics_pipelines.insert(graphics_pipeline),
+        };
+    }
+};
+
+pub const ComputePipelineInfo = struct {
+    compute_shader: Shader,
+
+    descriptor_set_layouts: []const DescriptorLayout.Ref = &.{},
+    push_constants: []const PushConstantLayoutInfo = &.{},
+};
+
+pub const ComputePipeline = struct {
+    pub const Ref = Reference(ComputePipeline);
+
+    platform: GfxState.Platform.ComputePipeline,
+    info: ComputePipelineInfo,
+
+    pub fn deinit(self: *const ComputePipeline) void {
+        self.platform.deinit();
+    }
+    
+    pub fn init(info: ComputePipelineInfo) !ComputePipeline.Ref {
+        const platform = try pl.GfxPlatform.ComputePipeline.init(info);
+        errdefer platform.deinit();
+
+        const compute_pipeline = ComputePipeline {
+            .platform = platform,
+            .info = info,
+        };
+
+        return ComputePipeline.Ref {
+            .id = try GfxState.get().compute_pipelines.insert(compute_pipeline),
         };
     }
 };
@@ -1501,6 +1541,10 @@ pub const CommandBuffer = struct {
         self.platform.cmd_bind_graphics_pipeline(pipeline);
     }
 
+    pub fn cmd_bind_compute_pipeline(self: *Self, pipeline: ComputePipeline.Ref) void {
+        self.platform.cmd_bind_compute_pipeline(pipeline);
+    }
+
     pub const SetViewportsInfo = struct {
         viewports: []const Viewport,
         first_viewport: u32 = 0,
@@ -1539,7 +1583,6 @@ pub const CommandBuffer = struct {
     }
 
     pub const BindDescriptorSetInfo = struct {
-        graphics_pipeline: GraphicsPipeline.Ref,
         first_binding: u32 = 0,
         descriptor_sets: []const DescriptorSet.Ref,
         dynamic_offsets: []const u32 = &.{},
@@ -1550,7 +1593,6 @@ pub const CommandBuffer = struct {
     }
 
     pub const PushConstantsInfo = struct {
-        graphics_pipeline: GraphicsPipeline.Ref,
         shader_stages: ShaderStageFlags,
         offset: u32,
         data: []const u8,
@@ -1658,6 +1700,16 @@ pub const CommandBuffer = struct {
 
     pub fn cmd_copy_buffer_to_image(self: *Self, info: CopyBufferToImageInfo) void {
         self.platform.cmd_copy_buffer_to_image(info);
+    }
+
+    pub const DispatchInfo = struct {
+        group_count_x: u32 = 1,
+        group_count_y: u32 = 1,
+        group_count_z: u32 = 1,
+    };
+
+    pub fn cmd_dispatch(self: *Self, info: DispatchInfo) void {
+        self.platform.cmd_dispatch(info);
     }
 };
 

@@ -268,7 +268,6 @@ pub const Debug = struct {
         }
 
         cmd.cmd_bind_descriptor_sets(gfx.CommandBuffer.BindDescriptorSetInfo {
-            .graphics_pipeline = self.lines_pipeline,
             .descriptor_sets = &.{ self.camera_descriptor_set, },
         });
 

@@ -208,7 +208,6 @@ pub fn apply_filter(
     });
 
     cmd.cmd_bind_descriptor_sets(.{
-        .graphics_pipeline = self.pipeline,
         .descriptor_sets = &.{
             self.images_descriptor_set
         },

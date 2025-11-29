@@ -363,7 +363,6 @@ pub const ParticleRenderer = struct {
         cmd.cmd_bind_graphics_pipeline(self.pipeline);
 
         cmd.cmd_bind_descriptor_sets(.{
-            .graphics_pipeline = self.pipeline,
             .descriptor_sets = &.{
                 self.camera_descriptor_set,
             },
@@ -380,7 +379,6 @@ pub const ParticleRenderer = struct {
             });
 
             cmd.cmd_push_constants(gf.CommandBuffer.PushConstantsInfo {
-                .graphics_pipeline = self.pipeline,
                 .shader_stages = .{ .Vertex = true, .Pixel = true, },
                 .offset = 0,
                 .data = std.mem.asBytes(&s.push_constant_data),
