@@ -251,6 +251,10 @@ pub const ImageAsset = struct {
         var image = try Self.load_single_image_cpu(alloc, asset_path);
         defer image.deinit();
 
+        // @TODO make mip generation optional
+        // generate mips down to 32 by 32
+        const mip_levels: u32 = @max(std.math.log2(@min(image.width, image.height)), 5) - 4;
+
         return gf.Image.init(
             .{
                 .height = image.height,
@@ -258,7 +262,7 @@ pub const ImageAsset = struct {
                 .depth = 1,
                 .format = try determine_image_format(&image),
                 .array_length = 1,
-                .mip_levels = 1,
+                .mip_levels = mip_levels,
 
                 .usage_flags = .{ .ShaderResource = true, },
                 .access_flags = .{},
@@ -387,7 +391,7 @@ pub const ImageAsset = struct {
                 .depth = 1,
                 .format = try determine_image_format(first_image),
                 .array_length = @intCast(array_count),
-                .mip_levels = 1,
+                .mip_levels = 5,
 
                 .usage_flags = .{ .TransferDst = true, .ShaderResource = true, },
                 .access_flags = .{},

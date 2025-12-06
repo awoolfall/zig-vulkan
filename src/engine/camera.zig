@@ -57,7 +57,10 @@ pub const Camera = struct {
         self.local_transform = self.transform;
 
         { // Camera Movement
-            const move_amount = self.move_speed * time.delta_time_unscaled_f32();
+            var move_amount = self.move_speed * time.delta_time_unscaled_f32();
+            if (input.get_key(kc.KeyCode.Shift)) {
+                move_amount *= 0.01;
+            }
             const cam_x = 
                 float_from_bool(input.get_key(kc.KeyCode.A)) * -move_amount + 
                 float_from_bool(input.get_key(kc.KeyCode.D)) * move_amount;

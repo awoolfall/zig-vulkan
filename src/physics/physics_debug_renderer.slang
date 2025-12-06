@@ -2,8 +2,7 @@
 struct PushConstants
 {
     float4x4 vp;
-    float4x4 model_matrix;
-    float4 colour;
+    float4x4 model_colour_pack_matrix;
 };
 
 [[vk::push_constant]]
@@ -28,10 +27,17 @@ struct vs_out
 [shader("vertex")]
 vs_out vs_main(vs_in input)
 {
-    vs_out output = (vs_out) 0;
-    float4x4 mvp = mul(push_constants.model_matrix, push_constants.vp);
+    vs_out output = (vs_out)0;
+
+    float4x4 model = push_constants.model_colour_pack_matrix;
+    float4 colour = float4(model._14, model._24, model._34, 1.0);
+    model._14 = 0.0;
+    model._24 = 0.0;
+    model._34 = 0.0;
+
+    float4x4 mvp = mul(model, push_constants.vp);
     output.position = mul(float4(input.pos, 1.0), mvp);
-    output.colour = float4(input.color * push_constants.colour.rgb, 1.0);
+    output.colour = float4(input.color.rgb * colour.rgb, 1.0);
     output.normals = input.normals;
     output.tex_coord = input.tex_coord;
     return output;

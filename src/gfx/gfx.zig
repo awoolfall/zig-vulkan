@@ -69,7 +69,7 @@ pub const GfxState = struct {
 
     pub const hdr_format = ImageFormat.Rgba16_Float;
     pub const ldr_format = ImageFormat.Bgra8_Srgb;// ImageFormat.Rgba8_Unorm;
-    pub const depth_format = ImageFormat.D24S8_Unorm_Uint;
+    pub const depth_format = ImageFormat.D32S8_Sfloat_Uint;
 
     pub fn deinit(self: *Self) void {
         std.log.debug("gfx deinit", .{});
@@ -848,8 +848,12 @@ pub const ImageFormat = enum {
     Rgba16_Float,
     Rgba32_Float,
     Rg11b10_Float,
+
     R24X8_Unorm_Uint,
+
+    D16S8_Unorm_Uint,
     D24S8_Unorm_Uint,
+    D32S8_Sfloat_Uint,
 
     pub fn byte_width(self: ImageFormat) usize {
         switch (self) {
@@ -866,11 +870,15 @@ pub const ImageFormat = enum {
             .Rg11b10_Float => return 3,
             .R24X8_Unorm_Uint => return 4,
             .D24S8_Unorm_Uint => return 4,
+            .D16S8_Unorm_Uint => return 3,
+            .D32S8_Sfloat_Uint => return 5,
         }
     }
 
     pub fn is_depth(self: ImageFormat) bool {
         switch (self) {
+            .D16S8_Unorm_Uint,
+            .D32S8_Sfloat_Uint,
             .D24S8_Unorm_Uint => return true,
             else => return false,
         }

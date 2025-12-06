@@ -1752,6 +1752,9 @@ pub const ImageVulkan = struct {
         if (data != null) {
             usage_flags_plus.TransferDst = true;
         }
+        if (data != null and info.mip_levels > 1) {
+            usage_flags_plus.TransferSrc = true;
+        }
         const vk_usage_flags = convert_texture_usage_flags_to_vulkan(usage_flags_plus);
 
         const vk_format = textureformat_to_vulkan(info.format);
@@ -1870,6 +1873,98 @@ pub const ImageVulkan = struct {
                         1,
                         &region
                     );
+
+                    // generate mipmaps
+                    var mip_width: i32 = @intCast(info.width);
+                    var mip_height: i32 = @intCast(info.height);
+
+                    for (1..info.mip_levels) |mip_level| {
+                        const barrier0_info = c.VkImageMemoryBarrier {
+                            .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                            .image = images[image_idx].vk_image,
+                            .oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            .newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            .srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT,
+                            .dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT,
+                            .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+                            .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+                            .subresourceRange = .{
+                                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                                .baseArrayLayer = 0,
+                                .layerCount = 1,
+                                .baseMipLevel = @intCast(mip_level - 1),
+                                .levelCount = 1,
+                            }
+                        };
+
+                        c.vkCmdPipelineBarrier(
+                            command_buffer.platform.vk_command_buffer,
+                            c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                            0, null,
+                            0, null,
+                            1, @ptrCast(&barrier0_info)
+                        );
+
+                        const blit = c.VkImageBlit {
+                            .srcOffsets = .{
+                                .{ .x = 0, .y = 0, .z = 0, },
+                                .{ .x = mip_width, .y = mip_height, .z = 1 },
+                            },
+                            .dstOffsets = .{
+                                .{ .x = 0, .y = 0, .z = 0 },
+                                .{ .x = if (mip_width > 1) @divTrunc(mip_width, 2) else 1, .y = if (mip_height > 1) @divTrunc(mip_height, 2) else 1, .z = 1 },
+                            },
+                            .srcSubresource = .{
+                                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                                .baseArrayLayer = 0,
+                                .layerCount = 1,
+                                .mipLevel = @intCast(mip_level - 1),
+                            },
+                            .dstSubresource = .{
+                                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                                .baseArrayLayer = 0,
+                                .layerCount = 1,
+                                .mipLevel = @intCast(mip_level),
+                            }
+                        };
+
+                        c.vkCmdBlitImage(
+                            command_buffer.platform.vk_command_buffer,
+                            images[image_idx].vk_image, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            images[image_idx].vk_image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            1, &blit,
+                            c.VK_FILTER_LINEAR
+                        );
+
+                        const barrier1_info = c.VkImageMemoryBarrier {
+                            .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                            .image = images[image_idx].vk_image,
+                            .oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            .newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            .srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT,
+                            .dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT,
+                            .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+                            .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+                            .subresourceRange = .{
+                                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                                .baseArrayLayer = 0,
+                                .layerCount = 1,
+                                .baseMipLevel = @intCast(mip_level - 1),
+                                .levelCount = 1,
+                            }
+                        };
+
+                        c.vkCmdPipelineBarrier(
+                            command_buffer.platform.vk_command_buffer,
+                            c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0,
+                            0, null,
+                            0, null,
+                            1, @ptrCast(&barrier1_info)
+                        );
+
+                        if (mip_width > 1) { mip_width = @divTrunc(mip_width, 2); }
+                        if (mip_height > 1) { mip_height = @divTrunc(mip_height, 2); }
+                    }
                 }
             }
         }
@@ -2029,10 +2124,9 @@ pub const ImageViewVulkan = struct {
                 .viewType = view_type,
                 .format = img.platform.vk_format,
                 .subresourceRange = .{
-                    .aspectMask = switch (img.info.format) {
-                        .D24S8_Unorm_Uint => c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
-                        else => c.VK_IMAGE_ASPECT_COLOR_BIT,
-                    },
+                    .aspectMask =   if (img.info.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT
+                                    else c.VK_IMAGE_ASPECT_COLOR_BIT
+                    ,
                     .baseMipLevel = info.mip_levels.?.base_mip_level,
                     .levelCount = info.mip_levels.?.mip_level_count,
                     .baseArrayLayer = info.array_layers.?.base_array_layer,
@@ -2067,6 +2161,13 @@ inline fn samplerfilter_to_vulkan(filter: gf.SamplerFilter) c.VkFilter {
     };
 }
 
+inline fn samplermipmapmode_to_vulkan(mipmapmode: gf.SamplerFilter) c.VkSamplerMipmapMode {
+    return switch (mipmapmode) {
+        .Linear => c.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .Point => c.VK_SAMPLER_MIPMAP_MODE_NEAREST,
+    };
+}
+
 inline fn samplerbordermode_to_vulkan(bordermode: gf.SamplerBorderMode) c.VkSamplerAddressMode {
     return switch (bordermode) {
         .BorderColour => c.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
@@ -2092,7 +2193,7 @@ pub const SamplerVulkan = struct {
             .magFilter = samplerfilter_to_vulkan(info.filter_min_mag),
             .minFilter = samplerfilter_to_vulkan(info.filter_min_mag),
 
-            .mipmapMode = samplerfilter_to_vulkan(info.filter_mip),
+            .mipmapMode = samplermipmapmode_to_vulkan(info.filter_mip),
             .mipLodBias = 0.0,
 
             .addressModeU = samplerbordermode_to_vulkan(info.border_mode),
@@ -2138,6 +2239,7 @@ fn formatclearvalue_to_vulkan(format: gf.ImageFormat, clear_value: zm.F32x4) c.V
             .Bgra8_Unorm,
             .R24X8_Unorm_Uint,
             .D24S8_Unorm_Uint,
+            .D16S8_Unorm_Uint,
             .R32_Uint => c.VkClearValue {
                 .color = .{ .uint32 = .{
                     @intFromFloat(clear_value[0] * 255.0),
@@ -2152,6 +2254,7 @@ fn formatclearvalue_to_vulkan(format: gf.ImageFormat, clear_value: zm.F32x4) c.V
             .Rgba16_Float,
             .Rgba32_Float,
             .Bgra8_Srgb,
+            .D32S8_Sfloat_Uint,
             .Rg11b10_Float =>  c.VkClearValue {
                 .color = .{ .float32 = .{
                     clear_value[0],
@@ -2336,6 +2439,8 @@ inline fn textureformat_to_vulkan(format: gf.ImageFormat) c.VkFormat {
         .Bgra8_Unorm => c.VK_FORMAT_B8G8R8A8_UNORM,
         .Bgra8_Srgb => c.VK_FORMAT_B8G8R8A8_SRGB,
         .D24S8_Unorm_Uint => c.VK_FORMAT_D24_UNORM_S8_UINT,
+        .D16S8_Unorm_Uint => c.VK_FORMAT_D16_UNORM_S8_UINT,
+        .D32S8_Sfloat_Uint => c.VK_FORMAT_D32_SFLOAT_S8_UINT,
         .R24X8_Unorm_Uint => c.VK_FORMAT_D24_UNORM_S8_UINT,
         .Rg11b10_Float => c.VK_FORMAT_B10G11R11_UFLOAT_PACK32,
         .Rgba8_Unorm => c.VK_FORMAT_R8G8B8A8_UNORM,
@@ -2582,6 +2687,7 @@ pub const GraphicsPipelineVulkan = struct {
         for (info.push_constants, 0..) |p, idx| {
             std.debug.assert((p.offset % 4) == 0);
             std.debug.assert((p.size % 4) == 0);
+            std.debug.assert((p.offset + p.size) <= 128);
 
             vk_push_constant_ranges[idx] = c.VkPushConstantRange {
                 .stageFlags = shaderstageflags_to_vulkan(p.shader_stages),

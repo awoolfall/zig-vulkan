@@ -11,8 +11,7 @@ const PushConstantCamera = extern struct {
     vp: zm.Mat,
 };
 const PushConstantsBody = extern struct {
-    model: zm.Mat,
-    colour: zm.F32x4,
+    model_colour_pack: zm.Mat,
 };
 
 const SHADER_SLANG = @embedFile("physics_debug_renderer.slang");
@@ -418,19 +417,18 @@ pub const D3D11DebugRenderer = extern struct {
             return; 
         }
 
+        var packed_model = zm.Mat {
+            zm.loadArr4(model_matrix.column_0),
+            zm.loadArr4(model_matrix.column_1),
+            zm.loadArr4(model_matrix.column_2),
+            zm.loadArr4(model_matrix.column_3),
+        };
+        packed_model[0][3] = @as(f32, @floatFromInt(color.comp.r)) / 255.0;
+        packed_model[1][3] = @as(f32, @floatFromInt(color.comp.g)) / 255.0;
+        packed_model[2][3] = @as(f32, @floatFromInt(color.comp.b)) / 255.0;
+
         const object_push_constants = PushConstantsBody {
-            .model = zm.Mat {
-                zm.loadArr4(model_matrix.column_0),
-                zm.loadArr4(model_matrix.column_1),
-                zm.loadArr4(model_matrix.column_2),
-                zm.loadArr4(model_matrix.column_3),
-            },
-            .colour = zm.f32x4(
-                @as(f32, @floatFromInt(color.comp.r)) / 255.0,
-                @as(f32, @floatFromInt(color.comp.g)) / 255.0,
-                @as(f32, @floatFromInt(color.comp.b)) / 255.0,
-                @as(f32, @floatFromInt(color.comp.a)) / 255.0
-            ),
+            .model_colour_pack = packed_model,
         };
 
         cmd.cmd_push_constants(.{
