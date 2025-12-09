@@ -2251,6 +2251,7 @@ fn formatclearvalue_to_vulkan(format: gf.ImageFormat, clear_value: zm.F32x4) c.V
             .Unknown,
             .R32_Float,
             .Rg32_Float,
+            .Rgb32_Float,
             .Rgba16_Float,
             .Rgba32_Float,
             .Bgra8_Srgb,
@@ -2433,6 +2434,7 @@ inline fn textureformat_to_vulkan(format: gf.ImageFormat) c.VkFormat {
     return switch (format) {
         .R32_Float => c.VK_FORMAT_R32_SFLOAT,
         .Rg32_Float => c.VK_FORMAT_R32G32_SFLOAT,
+        .Rgb32_Float => c.VK_FORMAT_R32G32B32_SFLOAT,
         .Rgba32_Float => c.VK_FORMAT_R32G32B32A32_SFLOAT,
         .Rgba16_Float => c.VK_FORMAT_R16G16B16A16_SFLOAT,
         .R32_Uint => c.VK_FORMAT_R32_UINT,
@@ -2979,6 +2981,7 @@ fn bindingtype_to_vulkan(bindingtype: gf.BindingType) c.VkDescriptorType {
         .Sampler => c.VK_DESCRIPTOR_TYPE_SAMPLER,
         .UniformBuffer => c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .StorageBuffer => c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .StorageImage => c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
     };
 }
 
@@ -3345,6 +3348,7 @@ pub const DescriptorSetVulkan = struct {
                     .ImageView, .ImageViewArray => .ImageView,
                     .Sampler, .SamplerArray => .Sampler,
                     .ImageViewAndSampler, .ImageViewAndSamplerArray => .ImageViewAndSampler,
+                    .StorageImage, .StorageImageArray => .StorageImage,
                 }),
                 .pBufferInfo = null,
                 .pImageInfo = null,
@@ -3365,14 +3369,18 @@ pub const DescriptorSetVulkan = struct {
                     vk_write_info.descriptorCount = 1;
                     vk_write_info.pBufferInfo = buffer_data;
                 },
-                .ImageView => |iw| {
+                .ImageView, .StorageImage => |iw| {
                     const view = try iw.get();
 
                     const view_data = try arena.create(c.VkDescriptorImageInfo);
                     view_data.* = c.VkDescriptorImageInfo {
                         .sampler = null,
                         .imageView = view.platform.get_frame_view(),
-                        .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        .imageLayout = switch (write.data) {
+                            .ImageView => c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                            .StorageImage => c.VK_IMAGE_LAYOUT_GENERAL,
+                            else => unreachable,
+                        },
                     };
                     
                     vk_write_info.descriptorCount = 1;
@@ -3421,7 +3429,7 @@ pub const DescriptorSetVulkan = struct {
                     vk_write_info.descriptorCount = @intCast(buffer_data_array.len);
                     vk_write_info.pBufferInfo = buffer_data_array.ptr;
                 },
-                .ImageViewArray => |image_writes| {
+                .ImageViewArray, .StorageImageArray => |image_writes| {
                     const data_array = try arena.alloc(c.VkDescriptorImageInfo, image_writes.len);
 
                     for (image_writes, 0..) |iw, iw_idx| {
@@ -3430,7 +3438,11 @@ pub const DescriptorSetVulkan = struct {
                         data_array[iw_idx] = c.VkDescriptorImageInfo {
                             .sampler = null,
                             .imageView = view.platform.get_frame_view(),
-                            .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                            .imageLayout = switch (write.data) {
+                                .ImageViewArray => c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                .StorageImageArray => c.VK_IMAGE_LAYOUT_GENERAL,
+                                else => unreachable,
+                            },
                         };
                     }
 

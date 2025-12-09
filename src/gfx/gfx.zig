@@ -845,6 +845,7 @@ pub const ImageFormat = enum {
     R32_Float,
     R32_Uint,
     Rg32_Float,
+    Rgb32_Float,
     Rgba16_Float,
     Rgba32_Float,
     Rg11b10_Float,
@@ -865,6 +866,7 @@ pub const ImageFormat = enum {
             .Rgba8_Unorm => return 4,
             .Bgra8_Unorm => return 4,
             .Bgra8_Srgb => return 4,
+            .Rgb32_Float => return 12,
             .Rgba16_Float => return 8,
             .Rgba32_Float => return 16,
             .Rg11b10_Float => return 3,
@@ -1275,6 +1277,7 @@ pub const BindingType = enum {
     ImageView,
     Sampler,
     ImageViewAndSampler,
+    StorageImage,
 };
 
 pub const DescriptorBindingInfo = struct {
@@ -1408,12 +1411,14 @@ pub const DescriptorSetUpdateWriteInfo = struct {
         ImageView: ImageView.Ref,
         Sampler: Sampler.Ref,
         ImageViewAndSampler: struct{ view: ImageView.Ref, sampler: Sampler.Ref, },
+        StorageImage: ImageView.Ref,
 
         UniformBufferArray: []const DescriptorSetWriteBufferInfo,
         StorageBufferArray: []const DescriptorSetWriteBufferInfo,
         ImageViewArray: []const ImageView.Ref,
         SamplerArray: []const Sampler.Ref,
         ImageViewAndSamplerArray: []const ImageViewAndSampler,
+        StorageImageArray: []const ImageView.Ref,
     },
 };
 
