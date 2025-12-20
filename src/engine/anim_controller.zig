@@ -1,4 +1,5 @@
 const std = @import("std");
+const eng = @import("self");
 const zm = @import("zmath");
 const ms = @import("mesh.zig");
 const tm = @import("time.zig");
@@ -12,9 +13,9 @@ const sr = @import("../serialize/serialize.zig");
 /// It provides functionality to blend between animations based on variable values and node transitions.
 pub const AnimController = struct {
     const Self = @This();
-    arena: std.heap.ArenaAllocator,
+
     variables: std.AutoHashMap(u32, f32),
-    nodes: []Node,
+    nodes: std.ArrayList(Node),
     active_node: usize = 0,
     base_animation: ?as.AnimationAssetId = null,
     base_animation_time: f64 = 0.0,
@@ -29,46 +30,49 @@ pub const AnimController = struct {
 
     pub fn deinit(self: *Self) void {
         self.variables.deinit();
-        self.arena.deinit();
+        self.nodes.deinit(eng.get().general_allocator);
     }
-    
-    pub const Descriptor = struct {
-        nodes: []Node,
-        base_animation: ?as.AnimationAssetId = null,
-    };
 
-    pub fn init(alloc: std.mem.Allocator, desc: Descriptor) !AnimController {
-        var arena = std.heap.ArenaAllocator.init(alloc);
-        errdefer arena.deinit();
-
-        var arena_alloc = arena.allocator();
-
-        const owned_nodes = try arena_alloc.dupe(Node, desc.nodes);
-        errdefer arena_alloc.free(owned_nodes);
-
-        for (owned_nodes) |*node| {
-            node.next = try arena_alloc.dupe(NodeTransition, node.next);
-        }
+    pub fn init(alloc: std.mem.Allocator) !AnimController {
+        var nodes_list = try std.ArrayList(Node).initCapacity(eng.get().general_allocator, 8);
+        errdefer nodes_list.deinit(eng.get().general_allocator);
 
         var variables = std.AutoHashMap(u32, f32).init(alloc);
         errdefer variables.deinit();
 
         return AnimController{
-            .arena = arena,
             .variables = variables,
-            .nodes = owned_nodes,
-            .base_animation = desc.base_animation,
+            .nodes = nodes_list,
         };
     }
 
-    pub fn descriptor(self: *const Self, alloc: std.mem.Allocator) !Descriptor {
-        const owned_nodes = try alloc.dupe(Node, self.nodes);
-        errdefer alloc.free(owned_nodes);
+    pub fn serialize(alloc: std.mem.Allocator, value: AnimController) !std.json.Value {
+        var object = std.json.ObjectMap.init(alloc);
+        errdefer object.deinit();
 
-        return Descriptor {
-            .nodes = owned_nodes,
-            .base_animation = self.base_animation,
-        };
+        try object.put("nodes", try sr.serialize_value([]const Node, alloc, value.nodes.items));
+        try object.put("base_animation", try sr.serialize_value(?as.AnimationAssetId, alloc, value.base_animation));
+
+        return std.json.Value { .object = object };
+    }
+
+    pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !AnimController {
+        var anim_controller = try AnimController.init(alloc);
+        errdefer anim_controller.deinit();
+
+        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType };
+
+        anim_controller.nodes.clearRetainingCapacity();
+        if (object.get("nodes")) |v| blk: {
+            const nodes = sr.deserialize_value([]Node, alloc, v) catch break :blk;
+            defer alloc.free(nodes);
+
+            try anim_controller.nodes.appendSlice(eng.get().general_allocator, nodes);
+        }
+
+        if (object.get("base_animation")) |v| blk: { anim_controller.base_animation = sr.deserialize_value(?as.AnimationAssetId, alloc, v) catch break :blk; }
+
+        return anim_controller;
     }
 
     /// Calculates the bone transforms for a given node.
@@ -158,12 +162,12 @@ pub const AnimController = struct {
     pub fn calculate_bone_transforms(self: *Self, alloc: std.mem.Allocator, asset_manager: *as.AssetManager, model: *const ms.Model, out_transforms: []zm.Mat) void {
         // calculate the transforms for the current active node
         var active_node_transforms = [_]Transform{.{}} ** ms.MAX_BONES;
-        self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[self.active_node], active_node_transforms[0..]);
+        self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes.items[self.active_node], active_node_transforms[0..]);
 
         // calculate and blend the transforms for any transitioning nodes based on the transition timings and easing
         if (self.current_transition) |transition| {
             var transition_node_transforms = [_]Transform{.{}} ** ms.MAX_BONES;
-            self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes[transition.node_0], transition_node_transforms[0..]);
+            self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes.items[transition.node_0], transition_node_transforms[0..]);
 
             for (0..active_node_transforms.len) |i| {
                 const t: f32 = @floatCast(transition.time_since_start / transition.transition_duration);
@@ -204,7 +208,7 @@ pub const AnimController = struct {
 
     /// Triggers an event specified by the hashed event id.
     pub fn trigger_event_by_id(self: *Self, event_id: u32) void {
-        const active_node = &self.nodes[self.active_node];
+        const active_node = &self.nodes.items[self.active_node];
         outer: for (active_node.next) |*node_transition| {
             switch (node_transition.condition) {
                 .Event => |e| {
@@ -232,16 +236,16 @@ pub const AnimController = struct {
             .transition_easing = transition.transition_easing,
         };
         self.active_node = transition.node;
-        self.nodes[self.active_node].time = 0.0;
+        self.nodes.items[self.active_node].time = 0.0;
     }
 
     /// Updates the animation controller state and transitions to a new node if necessary.
     pub fn update(self: *Self, asset_manager: *const as.AssetManager, time: *const tm.TimeState) void {
         // check if we should transition to a new node
-        forblk: for (self.nodes[self.active_node].next) |t| {
+        forblk: for (self.nodes.items[self.active_node].next) |t| {
             const should_transition = cblk: { switch (t.condition) {
                 .Always => {
-                    const animation_id = switch (self.nodes[self.active_node].node) {
+                    const animation_id = switch (self.nodes.items[self.active_node].node) {
                         .Basic => |basic| basic.animation,
                         .Blend1D => |blend| blend.left_animation,
                     };
@@ -250,7 +254,7 @@ pub const AnimController = struct {
                     const animation = animation_asset.get_animation()
                         catch break :cblk false;
 
-                    const current_ticks = animation.time_to_ticks(self.nodes[self.active_node].time);
+                    const current_ticks = animation.time_to_ticks(self.nodes.items[self.active_node].time);
                     const transition_start_ticks = animation.time_to_ticks(t.transition_duration);
                     break :cblk (current_ticks >= animation.duration_ticks - transition_start_ticks);
                 },
@@ -274,12 +278,12 @@ pub const AnimController = struct {
         }
         
         // update active animation time
-        self.nodes[self.active_node].time += time.delta_time();
+        self.nodes.items[self.active_node].time += time.delta_time();
 
         // update transition timings
         if (self.current_transition) |*transition| {
             transition.time_since_start += time.delta_time();
-            self.nodes[transition.node_0].time += time.delta_time();
+            self.nodes.items[transition.node_0].time += time.delta_time();
 
             // conclude transition if finished
             if (transition.time_since_start >= transition.transition_duration) {
@@ -300,29 +304,8 @@ pub const NodeType = union(enum) {
 /// A node in the animation controller state machine.
 pub const Node = struct {
     node: NodeType,
-    next: []const NodeTransition,
-    time: f64 = 0.0,
-
-    pub const Serde = struct {
-        pub const T = struct {
-            node: NodeType,
-            next: []const NodeTransition,
-        };
-
-        pub fn serialize(alloc: std.mem.Allocator, value: Node) !T {
-            return T {
-                .node = value.node,
-                .next = try alloc.dupe(NodeTransition, value.next),
-            };
-        }
-
-        pub fn deserialize(alloc: std.mem.Allocator, value: T) !Node {
-            return Node {
-                .node = value.node,
-                .next = try alloc.dupe(NodeTransition, value.next),
-            };
-        }
-    };
+    next: []const NodeTransition, // TODO FIX crash here. memory issues related to this allocation in a tree structure
+    time: f64 = 0.0, // TODO maybe dont serialize this
 };
 
 /// A transition specification between two nodes in the animation controller state machine.

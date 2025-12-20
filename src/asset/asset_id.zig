@@ -11,7 +11,7 @@ pub fn AssetId(comptime AssetType: type) type {
             return self.pack_id == other.pack_id and self.asset_id == other.asset_id;
         }
 
-        pub fn serialize(self: *const AssetId(AssetType), alloc: std.mem.Allocator) ![]u8 {
+        pub fn to_string_identifier(self: *const AssetId(AssetType), alloc: std.mem.Allocator) ![]const u8 {
             const asset_manager = &eng.get().asset_manager;
 
             const pack = asset_manager.asset_packs.getPtr(self.pack_id) orelse return error.AssetPackNotLoaded;
@@ -21,10 +21,13 @@ pub fn AssetId(comptime AssetType: type) type {
             // check type matches
             _ = asset.asset.get(AssetType) catch |err| return err;
 
-            return try std.mem.join(alloc, &[_]u8{ SerializeSplitChar }, &[_][]const u8{ pack.unique_name, asset.unique_name });
+            const serialized_string = try std.mem.join(alloc, &[_]u8{ SerializeSplitChar }, &[_][]const u8{ pack.unique_name, asset.unique_name });
+            errdefer alloc.free(serialized_string);
+
+            return serialized_string;
         }
 
-        pub fn deserialize(serialized_string: []const u8) !AssetId(AssetType) {
+        pub fn from_string_identifier(serialized_string: []const u8) !AssetId(AssetType) {
             var split_iter = std.mem.splitScalar(u8, serialized_string, SerializeSplitChar);
             const pack_name = split_iter.next() orelse return error.MalformedAssetString;
             const asset_name = split_iter.next() orelse return error.MalformedAssetString;
@@ -35,18 +38,19 @@ pub fn AssetId(comptime AssetType: type) type {
             };
         }
 
-        pub const Serde = struct {
-            pub const T = []const u8;
+        pub fn serialize(alloc: std.mem.Allocator, value: AssetId(AssetType)) !std.json.Value {
+            const serialized_string = try value.to_string_identifier(alloc);
+            errdefer alloc.free(serialized_string);
 
-            pub fn serialize(alloc: std.mem.Allocator, asset_id: AssetId(AssetType)) !T {
-                return asset_id.serialize(alloc);
-            }
+            return std.json.Value { .string = serialized_string };
+        }
 
-            pub fn deserialize(alloc: std.mem.Allocator, serialized: T) !AssetId(AssetType) {
-                _ = alloc;
-                return AssetId(AssetType).deserialize(serialized);
-            }
-        };
+        pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !AssetId(AssetType) {
+            const serialized_string = try eng.serialize.deserialize_value([]const u8, alloc, value);
+            defer alloc.free(serialized_string);
+            
+            return AssetId(AssetType).from_string_identifier(serialized_string) catch error.MalformedData;
+        }
     };
 }
 

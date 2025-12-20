@@ -280,7 +280,7 @@ pub fn save_to_file(self: *const Self, alloc: std.mem.Allocator, cwd_path: []con
         const asset_path = switch (asset.asset) {
             .Model => |*a| AssetType.Paths { .Model = a.path },
             .Animation => |*a| blk: {
-                const model_name = try a.animation.model_id.serialize(arena);
+                const model_name = try a.animation.model_id.to_string_identifier(arena);
                     
                 break :blk AssetType.Paths { .Animation = .{
                     .model_name = model_name,

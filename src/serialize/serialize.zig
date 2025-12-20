@@ -1,394 +1,213 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const zm = @import("self").zmath;
 
-pub fn Serializable(comptime T: type) type {
-    @setEvalBranchQuota(10000);
-    switch (@typeInfo(T)) {
-        .@"struct" => |s| {
-            if (@hasDecl(T, "Serde")) {
-                return Serializable(T.Serde.T);
-            } else {
-                var fields: [std.meta.fields(T).len]std.builtin.Type.StructField = undefined;
-                for (std.meta.fields(T), 0..) |field, i| {
-                    const SerializableType = Serializable(field.type);
-                    fields[i] = .{
-                        .name = field.name,
-                        .type = SerializableType,
-                        // TODO: convert the default value to SerializableType at compile time.
-                        // for types that are not optionals
-                        .default_value_ptr = blk: {
-                            if (field.default_value_ptr) |_| {
-                                switch (@typeInfo(field.type)) {
-                                    .@"optional" => { break :blk &@as(SerializableType, null); },
-                                    else => break :blk null,
-                                }
-                            } else {
-                                break :blk null;
-                            }
-                        },
-                        .is_comptime = false,
-                        .alignment = field.alignment,
-                    };
-                }
-                var new_s = s;
-                new_s.fields = &fields;
-                new_s.decls = &.{};
-                return @Type(.{
-                    .@"struct" = new_s,
-                });
+pub fn serialize_value(comptime Type: type, alloc: std.mem.Allocator, value: Type) !std.json.Value {
+    switch (Type) {
+        void => return std.json.Value { .object = std.json.ObjectMap.init(alloc), },
+        bool => return std.json.Value { .bool = value, },
+        i16 => return std.json.Value { .integer = @intCast(value), },
+        i32 => return std.json.Value { .integer = @intCast(value), },
+        i64 => return std.json.Value { .integer = value, },
+        u16 => return std.json.Value { .integer = @intCast(value), },
+        u32 => return std.json.Value { .integer = @intCast(value), },
+        usize => return std.json.Value { .integer = @intCast(value), },
+        f64 => return std.json.Value { .float = value, },
+        f32 => return std.json.Value { .float = @floatCast(value), },
+        ([]const u8) => return std.json.Value { .string = try alloc.dupe(u8, value), },
+        zm.F32x4 => {
+            var array = try std.array_list.Managed(std.json.Value).initCapacity(alloc, 4);
+            errdefer array.deinit();
+            for (0..4) |idx| {
+                try array.append(std.json.Value { .float = value[idx] });
+            }
+            return std.json.Value { .array = array };
+        },
+        else => {
+            switch (@typeInfo(Type)) {
+                .optional => |opt| return if (value == null) std.json.Value { .null = {} } else try serialize_value(opt.child, alloc, value.?),
+                .@"enum" => return std.json.Value { .string = try alloc.dupe(u8, @tagName(value)), },
+                .@"struct" => |struct_type| return try serialize_struct(Type, alloc, value, struct_type),
+                .@"union" => |union_type| return try serialize_union(Type, alloc, value, union_type),
+                .pointer => |pointer_type| return try serialize_pointer(Type, alloc, value, pointer_type),
+                .array => |array_type| return try serialize_array(Type, alloc, value, array_type),
+                else => @compileError(std.fmt.comptimePrint("Unsupported type: {}", .{Type})),
             }
         },
-        .@"union" => |u| {
-            if (@hasDecl(T, "Serde")) {
-                return Serializable(T.Serde.T);
-            } else {
-                var fields: [std.meta.fields(T).len]std.builtin.Type.UnionField = undefined;
-                for (std.meta.fields(T), 0..) |field, i| {
-                    fields[i] = .{
-                        .name = field.name,
-                        .type = Serializable(field.type),
-                        .alignment = field.alignment,
-                    };
-                }
-                var new_u = u;
-                new_u.fields = &fields;
-                return @Type(.{
-                    .@"union" = new_u,
-                });
-            }
-        },
-        .@"array" => |a| {
-            var new_a = a;
-            new_a.child = Serializable(a.child);
-            return @Type(.{
-                .@"array" = new_a,
-            });
-        },
-        .pointer => |p| {
-            if (p.size != .slice) {
-                @compileError("pointers and arbitrary length arrays cannot be serialized");
-            }
-            var new_p = p;
-            new_p.child = Serializable(p.child);
-            return @Type(.{
-                .pointer = new_p,
-            });
-        },
-        .optional => |o| {
-            var new_o = o;
-            new_o.child = Serializable(o.child);
-            return @Type(.{
-                .optional = new_o,
-            });
-        },
-        .@"enum" => |_| {
-            if (@hasDecl(T, "Serde")) {
-                return Serializable(T.Serde.T);
-            } else {
-                return T;
-            }
-        },
-        .vector => |v| {
-            switch (@typeInfo(v.child)) {
-                .pointer => @compileError("vectors of pointers are not serializable"),
-                else => return T,
-            }
-        },
-        .bool, .int, .float, .comptime_int, .comptime_float, .null, .void => return T,
-        else => { @compileLog(@typeInfo(T)); unreachable; },
     }
 }
 
-/// Convert a structure recursively into its serializable form.
-pub fn serialize(comptime T: type, allocator: std.mem.Allocator, value: T) !Serializable(T) {
-    switch (@typeInfo(T)) {
-        .@"struct" => |_| {
-            if (@hasDecl(T, "Serde")) {
-                const s = try T.Serde.serialize(allocator, value);
-                return try serialize(T.Serde.T, allocator, s);
-            } else {
-                var s: Serializable(T) = undefined;
-                const field_names = comptime std.meta.fieldNames(T);
-                inline for (field_names) |field_name| {
-                    const v = try serialize(@FieldType(T, field_name), allocator, @field(value, field_name));
-                    @field(s, field_name) = v;
+fn serialize_struct(comptime Type: type, alloc: std.mem.Allocator, value: Type, struct_type: std.builtin.Type.Struct) !std.json.Value {
+    if (@hasDecl(Type, "serialize")) {
+        return try Type.serialize(alloc, value);
+    } else {
+        var object = std.json.ObjectMap.init(alloc);
+        errdefer object.deinit();
+
+        inline for (struct_type.fields) |field| {
+            try object.put(field.name, try serialize_value(field.type, alloc, @field(value, field.name)));
+        }
+
+        return std.json.Value { .object = object };
+    }
+}
+
+fn serialize_union(comptime Type: type, alloc: std.mem.Allocator, value: Type, union_type: std.builtin.Type.Union) !std.json.Value {
+    if (@hasDecl(Type, "serialize")) {
+        return try Type.serialize(alloc, value);
+    } else {
+        if (union_type.tag_type) |_| {
+            var object = std.json.ObjectMap.init(alloc);
+            errdefer object.deinit();
+
+            inline for (union_type.fields) |field| {
+                if (std.mem.eql(u8, @tagName(value), field.name)) {
+                    try object.put(field.name, try serialize_value(field.type, alloc, @field(value, field.name)));
                 }
-                return s;
+            }
+
+            return std.json.Value { .object = object };
+        } else {
+            @compileError("Serializing unions without a tag type are not supported");
+        }
+    }
+}
+
+fn serialize_pointer(comptime Type: type, alloc: std.mem.Allocator, value: Type, pointer_type: std.builtin.Type.Pointer) !std.json.Value {
+    switch (pointer_type.size) {
+        .slice => {},
+        else => @compileError(std.fmt.comptimePrint("Serializing pointer type is not supported: {}", .{Type})),
+    }
+
+    var list = std.json.Array.init(alloc);
+    errdefer list.deinit();
+
+    for (value) |v| {
+        try list.append(try serialize_value(pointer_type.child, alloc, v));
+    }
+
+    return std.json.Value { .array = list };
+}
+
+fn serialize_array(comptime Type: type, alloc: std.mem.Allocator, value: Type, array_type: std.builtin.Type.Array) !std.json.Value {
+    var array = try std.array_list.Managed(std.json.Value).initCapacity(alloc, 4);
+    errdefer array.deinit();
+    inline for (0..array_type.len) |idx| {
+        try array.append(try serialize_value(array_type.child, alloc, value[idx]));
+    }
+    return std.json.Value { .array = array };
+}
+
+pub fn deserialize_value(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value) !Type {
+    switch (Type) {
+        void => switch (value) { .object => {}, else => return error.InvalidType, },
+        bool => switch (value) { .bool => |b| return b, else => return error.InvalidType, },
+        i16 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
+        i32 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
+        i64 => switch (value) { .integer => |i| return i, else => return error.InvalidType, },
+        u16 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
+        u32 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
+        usize => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
+        f64 => switch (value) { .float => |f| return f, .integer => |i| return @floatFromInt(i), else => return error.InvalidType, },
+        f32 => switch (value) { .float => |f| return @floatCast(f), .integer => |i| return @floatFromInt(i), else => return error.InvalidType, },
+        ([]const u8) => switch (value) { .string => |s| return try alloc.dupe(u8, s), else => return error.InvalidType, },
+        zm.F32x4 => {
+            const arr = switch (value) { .array => |arr| arr, else => return error.InvalidType, };
+            if (arr.items.len != 4) { return error.InvalidNumberOfArrayElements; }
+            var f32x4 = zm.f32x4s(0.0);
+            inline for (0..4) |idx| {
+                f32x4[idx] = try deserialize_value(f32, alloc, arr.items[idx]);
+            }
+            return f32x4;
+        },
+        else => {
+            switch (@typeInfo(Type)) {
+                .optional => |opt| switch (value) { .null => return null, else => return try deserialize_value(opt.child, alloc, value), },
+                .@"enum" => switch (value) { .string => |s| return std.meta.stringToEnum(Type, s) orelse return error.InvalidEnum, else => return error.InvalidType, },
+                .@"struct" => |struct_type| return try deserialize_struct(Type, alloc, value, struct_type),
+                .@"union" => |union_type| return try deserialize_union(Type, alloc, value, union_type),
+                .pointer => |pointer_type| return try deserialize_pointer(Type, alloc, value, pointer_type),
+                .array => |array_type| return try deserialize_array(Type, alloc, value, array_type),
+                else => @compileError(std.fmt.comptimePrint("Unsupported type: {}", .{Type})),
             }
         },
-        .@"union" => |_| {
-            if (@hasDecl(T, "Serde")) {
-                const s = try T.Serde.serialize(allocator, value);
-                return try serialize(T.Serde.T, allocator, s);
-            } else {
-                var s: Serializable(T) = undefined;
-                const tag_name = @tagName(value);
-                const field_names = comptime std.meta.fieldNames(T);
-                inline for (field_names) |field_name| {
-                    if (std.mem.eql(u8, field_name, tag_name)) {
-                        const v = try serialize(@FieldType(T, field_name), allocator, @field(value, field_name));
-                        s = @unionInit(Serializable(T), field_name, v);
+    }
+}
+
+fn deserialize_struct(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value, struct_type: std.builtin.Type.Struct) !Type {
+    if (@hasDecl(Type, "deserialize")) {
+        return try Type.deserialize(alloc, value);
+    } else {
+        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType };
+
+        // default values arena
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+
+        var ret: Type = undefined;
+        inline for (struct_type.fields) |field| {
+            const field_value: ?std.json.Value = object.get(field.name) orelse blk: {
+                if (field.defaultValue()) |default_value| {
+                    break :blk serialize_value(field.type, arena.allocator(), default_value) catch null;
+                } else {
+                    return error.IncompleteStruct;
+                }
+            };
+            if (field_value) |fv| {
+                @field(ret, field.name) = try deserialize_value(field.type, alloc, fv);
+            }
+        }
+        return ret;
+    }
+}
+
+fn deserialize_union(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value, union_type: std.builtin.Type.Union) !Type {
+    if (@hasDecl(Type, "deserialize")) {
+        return try Type.deserialize(alloc, value);
+    } else {
+        if (union_type.tag_type) |_| {
+            const object = switch (value) { .object => |obj| obj, else => return error.InvalidType };
+
+            var iterator = object.iterator();
+            if (iterator.next()) |pair| {
+                inline for (union_type.fields) |field| {
+                    if (std.mem.eql(u8, field.name, pair.key_ptr.*)) {
+                        return @unionInit(Type, field.name, try deserialize_value(@FieldType(Type, field.name), alloc, pair.value_ptr.*));
                     }
                 }
-                return s;
             }
-        },
-        .@"array" => |a| {
-            var ar: Serializable(T) = undefined;
-            for (0..a.len) |i| {
-                const v = try serialize(a.child, allocator, value[i]);
-                ar[i] = v;
-            }
-            return ar;
-        },
-        .pointer => |p| {
-            std.debug.assert(p.size == .many or p.size == .slice);
-            const ar = try allocator.alloc(Serializable(p.child), value.len);
-            for (0..value.len) |i| {
-                ar[i] = try serialize(p.child, allocator, value[i]);
-            }
-            return ar;
-        },
-        .optional => |o| {
-            return if (value) |v| try serialize(o.child, allocator, v) else null;
-        },
-        else => return value,
+        } else {
+            @compileError("Deserializing unions without a tag type are not supported");
+        }
+        return error.IncompleteStruct;
     }
 }
 
-/// Convert a structure recursively out from its serializable form.
-pub fn deserialize(comptime T: type, allocator: std.mem.Allocator, value: Serializable(T)) !T {
-    switch (@typeInfo(T)) {
-        .@"struct" => |_| {
-            if (@hasDecl(T, "Serde")) {
-                const d = try deserialize(T.Serde.T, allocator, value);
-                return try T.Serde.deserialize(allocator, d);
-            } else {
-                var d: T = undefined;
-                const field_names = comptime std.meta.fieldNames(T);
-                inline for (field_names) |field_name| {
-                    const v = try deserialize(@FieldType(T, field_name), allocator, @field(value, field_name));
-                    @field(d, field_name) = v;
-                }
-                return d;
-            }
-        },
-        .@"union" => |_| {
-            if (@hasDecl(T, "Serde")) {
-                const d = try deserialize(T.Serde.T, allocator, value);
-                return try T.Serde.deserialize(allocator, d);
-            } else {
-                var d: T = undefined;
-                const tag_name = @tagName(value);
-                const field_names = comptime std.meta.fieldNames(T);
-                inline for (field_names) |field_name| {
-                    if (std.mem.eql(u8, field_name, tag_name)) {
-                        const v = try deserialize(@FieldType(T, field_name), allocator, @field(value, field_name));
-                        d = @unionInit(T, field_name, v);
-                    }
-                }
-                return d;
-            }
-        },
-        .@"array" => |a| {
-            var ar: T = undefined;
-            for (0..a.len) |i| {
-                const v = try deserialize(a.child, allocator, value[i]);
-                ar[i] = v;
-            }
-            return ar;
-        },
-        .pointer => |p| {
-            std.debug.assert(p.size == .many or p.size == .slice);
-            const ar = try allocator.alloc(p.child, value.len);
-            for (0..value.len) |i| {
-                ar[i] = try deserialize(p.child, allocator, value[i]);
-            }
-            return ar;
-        },
-        .optional => |o| {
-            return if (value) |v| try deserialize(o.child, allocator, v) else null;
-        },
-        else => return value,
+fn deserialize_pointer(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value, pointer_type: std.builtin.Type.Pointer) !Type {
+    switch (pointer_type.size) {
+        .slice => {},
+        else => @compileError(std.fmt.comptimePrint("Deerializing pointer type is not supported: {}", .{Type})),
     }
+
+    const array = switch (value) { .array => |arr| arr, else => return error.InvalidType };
+    
+    const slice = try alloc.alloc(pointer_type.child, array.items.len);
+    errdefer alloc.free(slice);
+
+    var slice_list = std.ArrayList(pointer_type.child).initBuffer(slice);
+
+    for (array.items) |item| {
+        try slice_list.appendBounded(try deserialize_value(pointer_type.child, alloc, item));
+    }
+
+    return slice;
 }
 
-
-
-
-
-// Testing Structs //
-
-const S0 = struct {
-    a: u32,
-    b: u32,
-
-    pub const Serde = struct {
-        pub const T = struct {
-            a: u32,
-            b: u32,
-        };
-
-        pub fn serialize(allocator: std.mem.Allocator, value: S0) !T {
-            _ = allocator;
-            return T {
-                .a = value.a,
-                .b = value.b,
-            };
-        }
-
-        pub fn deserialize(allocator: std.mem.Allocator, value: T) !S0 {
-            _ = allocator;
-            return S0 {
-                .a = value.a,
-                .b = value.b,
-            };
-        }
-    };
-};
-
-const S2 = struct {
-    c: u32,
-
-    pub const Serde = struct {
-        pub const T = struct {
-            d: u32,
-        };
-
-        pub fn serialize(allocator: std.mem.Allocator, value: S2) !T {
-            _ = allocator;
-            return T {
-                .d = value.c + 10,
-            };
-        }
-
-        pub fn deserialize(allocator: std.mem.Allocator, value: T) !S2 {
-            _ = allocator;
-            return S2 {
-                .c = value.d - 10,
-            };
-        }
-    };
-};
-
-test "serialize/deserialize" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    {
-        // simple
-        const s = S0 {
-            .a = 1,
-            .b = 2,
-        };
-        const ser = serialize(S0, std.testing.allocator, s) catch unreachable;
-        try std.testing.expectEqual(Serializable(S0.Serde.T) { .a = 1, .b = 2 }, ser);
-        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
-        try std.testing.expectEqualStrings("{\"a\":1,\"b\":2}", json);
-        const des = deserialize(S0, std.testing.allocator, ser) catch unreachable;
-        try std.testing.expectEqual(s, des);
+fn deserialize_array(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value, array_type: std.builtin.Type.Array) !Type {
+    const arr = switch (value) { .array => |arr| arr, else => return error.InvalidType, };
+    var ret_array: Type = undefined;
+    inline for (0..array_type.len) |idx| {
+        ret_array[idx] = try deserialize_value(array_type.child, alloc, arr.items[idx]);
     }
-
-    _ = arena.reset(.retain_capacity);
-    {
-        // nested serde in a standard struct
-        const s = S0 {
-            .a = 1,
-            .b = 2,
-        };
-        const S1 = struct {
-            a: u32,
-            s0: S0,
-        };
-        const s1 = S1 {
-            .a = 1,
-            .s0 = s,
-        };
-        const ser = serialize(S1, std.testing.allocator, s1) catch unreachable;
-        try std.testing.expectEqual(Serializable(S1) { 
-            .a = 1, 
-            .s0 = Serializable(S0.Serde.T) { .a = 1, .b = 2 },
-        }, ser);
-        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
-        try std.testing.expectEqualStrings("{\"a\":1,\"s0\":{\"a\":1,\"b\":2}}", json);
-        const des = deserialize(S1, std.testing.allocator, ser) catch unreachable;
-        try std.testing.expectEqual(s1, des);
-    }
-
-    _ = arena.reset(.retain_capacity);
-    {
-        // non trivial serde conversion
-        const s2 = S2 {
-            .c = 10,
-        };
-        const ser = serialize(S2, std.testing.allocator, s2) catch unreachable;
-        try std.testing.expectEqual(Serializable(S2.Serde.T) { 
-            .d = 10 + 10,
-        }, ser);
-        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
-        try std.testing.expectEqualStrings("{\"d\":20}", json);
-        const des = deserialize(S2, std.testing.allocator, ser) catch unreachable;
-        try std.testing.expectEqual(s2, des);
-    }
-
-    _ = arena.reset(.retain_capacity);
-    {
-        // array with serde elements
-        const AS = struct {
-            ar: [4]S0,
-        };
-        const s = AS {
-            .ar = [_]S0{
-                S0 { .a = 1, .b = 2 },
-                S0 { .a = 3, .b = 4 },
-                S0 { .a = 5, .b = 6 },
-                S0 { .a = 7, .b = 8 },
-            },
-        };
-        const ser = serialize(AS, std.testing.allocator, s) catch unreachable;
-        try std.testing.expectEqual(Serializable(AS) { 
-            .ar = [_]Serializable(S0.Serde.T){
-                .{ .a = 1, .b = 2 },
-                .{ .a = 3, .b = 4 },
-                .{ .a = 5, .b = 6 },
-                .{ .a = 7, .b = 8 },
-            }
-        }, ser);
-        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
-        try std.testing.expectEqualStrings("{\"ar\":[{\"a\":1,\"b\":2},{\"a\":3,\"b\":4},{\"a\":5,\"b\":6},{\"a\":7,\"b\":8}]}", json);
-        const des = deserialize(AS, std.testing.allocator, ser) catch unreachable;
-        try std.testing.expectEqual(s, des);
-    }
-
-    _ = arena.reset(.retain_capacity);
-    {
-        // slices with serde elements
-        // TODO WARNING this only works with arena allocators since the internal slices are duplicated
-        // using any other allocator may result in leaks
-        const AS = struct {
-            ar: []const S2,
-        };
-        const a = [_]S2 {
-            S2 { .c = 1 },
-            S2 { .c = 2 },
-            S2 { .c = 3 },
-            S2 { .c = 4 },
-        };
-        const s = AS {
-            .ar = a[0..],
-        };
-        const ser = serialize(AS, arena.allocator(), s) catch unreachable;
-        try std.testing.expectEqualDeep(Serializable(AS) {
-            .ar = &[_]Serializable(S2.Serde.T){
-                .{ .d = 1 + 10 },
-                .{ .d = 2 + 10 },
-                .{ .d = 3 + 10 },
-                .{ .d = 4 + 10 },
-            }
-        }, ser);
-        const json = try std.json.stringifyAlloc(arena.allocator(), ser, .{});
-        try std.testing.expectEqualStrings("{\"ar\":[{\"d\":11},{\"d\":12},{\"d\":13},{\"d\":14}]}", json);
-        const des = deserialize(AS, arena.allocator(), ser) catch unreachable;
-        try std.testing.expectEqualDeep(s, des);
-    }
+    return ret_array;
 }

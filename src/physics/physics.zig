@@ -121,21 +121,20 @@ pub const PhysicsSystem = struct {
             var entity_iter = entity_list.list.iterator();
             const body_interface = self.zphy.getBodyInterfaceMut();
             while (entity_iter.next()) |entity| {
-                if (entity.physics) |physics| {
-                    switch (physics) {
-                        .Body => |body| {
-                            body_interface.setPosition(body.id, zm.vecToArr3(entity.transform.position), .dont_activate);
-                            body_interface.setRotation(body.id, entity.transform.rotation, .activate);
-                        },
-                        .Character => |character| {
-                            character.character.setPosition(zm.vecToArr3(entity.transform.position));
-                            //character.character.setRotation(entity.transform.rotation);
-                        },
-                        .CharacterVirtual => |character| {
-                            character.virtual.setPosition(zm.vecToArr3(entity.transform.position));
-                            //character.virtual.setRotation(entity.transform.rotation);
-                        },
-                    }
+                switch (entity.physics.runtime_data) {
+                    .None => {},
+                    .Body => |body| {
+                        body_interface.setPosition(body.id, zm.vecToArr3(entity.transform.position), .dont_activate);
+                        body_interface.setRotation(body.id, entity.transform.rotation, .activate);
+                    },
+                    .Character => |character| {
+                        character.character.setPosition(zm.vecToArr3(entity.transform.position));
+                        //character.character.setRotation(entity.transform.rotation);
+                    },
+                    .CharacterVirtual => |character| {
+                        character.virtual.setPosition(zm.vecToArr3(entity.transform.position));
+                        //character.virtual.setRotation(entity.transform.rotation);
+                    },
                 }
             }
         }
@@ -152,51 +151,55 @@ pub const PhysicsSystem = struct {
             const body_interface = self.zphy.getBodyInterface();
             for (entity_list.list.data.items) |*it| {
                 if (it.item_data) |*e| {
-                    if (e.physics) |phys| {
-                        switch (phys) {
-                            .Body => |body| {
-                                const pos = body_interface.getPosition(body.id);
-                                e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-                                e.transform.rotation = body_interface.getRotation(body.id);
-                            },
-                            .Character => |character| {
-                                character.character.postSimulation(0.1, true);
+                    switch (e.physics.runtime_data) {
+                        .None => {},
+                        .Body => |body| {
+                            const pos = body_interface.getPosition(body.id);
+                            e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
+                            e.transform.rotation = body_interface.getRotation(body.id);
+                        },
+                        .Character => |character| {
+                            character.character.postSimulation(0.1, true);
 
-                                const pos = character.character.getPosition();
-                                e.transform.position = zm.loadArr3(pos);
-                                //e.transform.rotation = character.getRotation();
-                            },
-                            .CharacterVirtual => |character| {
-                                // Run update for virtual character
-                                if (character.extended_update_settings) |ext| {
-                                    character.virtual.extendedUpdate(
-                                        delta_time,
-                                        self.zphy.getGravity(),
-                                        &ext,
-                                        .{
-                                            .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
-                                        }
-                                    );
-                                } else {
-                                    character.virtual.update(
-                                        delta_time,
-                                        self.zphy.getGravity(),
-                                        .{
-                                            .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
-                                        }
-                                    );
-                                }
+                            const pos = character.character.getPosition();
+                            e.transform.position = zm.loadArr3(pos);
+                            //e.transform.rotation = character.getRotation();
+                        },
+                        .CharacterVirtual => |character| {
+                            const extended_update_settings = switch (e.physics.settings) {
+                                .CharacterVirtual => |v| v.extended_update_settings,
+                                else => null
+                            };
 
-                                const pos = character.virtual.getPosition();
-                                if (character.character) |c| {
-                                    c.setPosition(pos);
-                                    c.postSimulation(0.05, true);
-                                }
+                            // Run update for virtual character
+                            if (extended_update_settings) |ext| {
+                                character.virtual.extendedUpdate(
+                                    delta_time,
+                                    self.zphy.getGravity(),
+                                    &ext,
+                                    .{
+                                        .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
+                                    }
+                                );
+                            } else {
+                                character.virtual.update(
+                                    delta_time,
+                                    self.zphy.getGravity(),
+                                    .{
+                                        .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
+                                    }
+                                );
+                            }
 
-                                e.transform.position = zm.loadArr3(pos);
-                                e.transform.rotation = character.virtual.getRotation();
-                            },
-                        }
+                            const pos = character.virtual.getPosition();
+                            if (character.character) |c| {
+                                c.setPosition(pos);
+                                c.postSimulation(0.05, true);
+                            }
+
+                            e.transform.position = zm.loadArr3(pos);
+                            e.transform.rotation = character.virtual.getRotation();
+                        },
                     }
                 }
             }

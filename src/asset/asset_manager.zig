@@ -61,9 +61,8 @@ pub fn resolve_asset_path(self: *const Self, alloc: std.mem.Allocator, path: []c
 }
 
 pub fn find_asset_id(self: *const Self, AssetType: type, asset_name: []const u8) !AssetId(AssetType) {
-    _ = self;
-    const asset_id = try AssetId(AssetType).deserialize(asset_name);
-    //_ = try self.get_asset(AssetType, asset_id);
+    const asset_id = try AssetId(AssetType).from_string_identifier(asset_name);
+    _ = try self.get_asset(AssetType, asset_id);
     return asset_id;
 }
 

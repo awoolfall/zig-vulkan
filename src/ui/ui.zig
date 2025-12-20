@@ -825,7 +825,7 @@ fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId) SizeResolutionE
                 var total_minimum_size: f32 = -widget.children_gap;
                 var top_minimum_size: f32 = 0.0;
 
-                var child: ?WidgetId = widget.first_child orelse return error.ChildrenSizeWidgetHasNoChildren;
+                var child: ?WidgetId = widget.first_child;
                 while (child != null) {
                     const child_widget = self.get_widget(child.?) orelse return error.UnableToGetWidget;
                     defer child = child_widget.next_sibling;
@@ -848,8 +848,8 @@ fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId) SizeResolutionE
                     top_minimum_size = @max(top_minimum_size, child_minimum_size_and_padding);
                 }
 
-                var children_size = top_size;
-                var children_minimum_size = top_minimum_size;
+                var children_size = @max(top_size, 0.0);
+                var children_minimum_size = @max(top_minimum_size, 0.0);
                 if (widget.layout_axis) |layout_axis| {
                     if (@intFromEnum(layout_axis) == axis) {
                         children_size = @max(total_size, 0.0);
@@ -1257,8 +1257,8 @@ pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) WidgetId {
         .layout_axis = layout_axis,
         .semantic_size = [2]SemanticSize {
             // TODO should these be .ParentPercentage .value = 1.0?
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
         },
         .flags = .{
             .render = false,
@@ -1271,8 +1271,8 @@ fn floating_layout_widget(layout_axis: Axis, floating_x: f32, floating_y: f32, k
         .key = gen_key(key),
         .layout_axis = layout_axis,
         .semantic_size = [2]SemanticSize {
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
-            SemanticSize{ .kind = .ChildrenSize, .value = 0.0, .shrinkable = true, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
         },
         .computed_relative_position = .{
             floating_x,

@@ -7,6 +7,7 @@ const tm = eng.time;
 const gf = eng.gfx;
 const es = eng.easings;
 const ms = eng.mesh;
+const sr = eng.serialize;
 const Camera = eng.camera.Camera;
 
 pub const ParticleRenderData = extern struct {
@@ -72,6 +73,15 @@ pub const ParticleSystem = struct {
             .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
             .noise = zn.FnlGenerator{},
         };
+    }
+
+    pub fn serialize(alloc: std.mem.Allocator, value: ParticleSystem) !std.json.Value {
+        return try sr.serialize_value(ParticleSystemSettings, alloc, value.settings);
+    }
+
+    pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !ParticleSystem {
+        const settings = try sr.deserialize_value(ParticleSystemSettings, alloc, value);
+        return try ParticleSystem.init(alloc, settings);
     }
 
     pub fn resize(self: *Self, new_particle_count: usize) !void {
@@ -245,8 +255,6 @@ pub const ParticleSystem = struct {
     }
 };
 
-pub const MAX_KEYFRAMES: usize = 6;
-pub const MAX_FORCES: usize = 6;
 pub const ScaleKeyFrame = KeyFrame(zm.F32x4);
 pub const ColourKeyFrame = KeyFrame(zm.F32x4);
 
@@ -290,6 +298,80 @@ pub const ParticleSystemSettings = struct {
         try new_settings.forces.appendSlice(alloc, self.forces.items);
 
         return new_settings;
+    }
+
+    pub fn serialize(alloc: std.mem.Allocator, value: ParticleSystemSettings) !std.json.Value {
+        var object = std.json.ObjectMap.init(alloc);
+        errdefer object.deinit();
+
+        try object.put("max_particles", try sr.serialize_value(u32, alloc, value.max_particles));
+
+        try object.put("alignment", try sr.serialize_value(ParticleAlignment, alloc, value.alignment));
+        try object.put("shape", try sr.serialize_value(ParticleShape, alloc, value.shape));
+
+        try object.put("spawn_origin", try sr.serialize_value(zm.F32x4, alloc, value.spawn_origin));
+        try object.put("spawn_offset", try sr.serialize_value(zm.F32x4, alloc, value.spawn_offset));
+        try object.put("spawn_radius", try sr.serialize_value(f32, alloc, value.spawn_radius));
+        try object.put("spawn_rate", try sr.serialize_value(f32, alloc, value.spawn_rate));
+        try object.put("spawn_rate_variance", try sr.serialize_value(f32, alloc, value.spawn_rate_variance));
+        try object.put("burst_count", try sr.serialize_value(u32, alloc, value.burst_count));
+
+        try object.put("particle_lifetime", try sr.serialize_value(f32, alloc, value.particle_lifetime));
+        try object.put("particle_lifetime_variance", try sr.serialize_value(f32, alloc, value.particle_lifetime_variance));
+
+        try object.put("initial_velocity", try sr.serialize_value(zm.F32x4, alloc, value.initial_velocity));
+
+        try object.put("scale_keys", try sr.serialize_value([]ScaleKeyFrame, alloc, value.scale.items));
+        try object.put("colour_keys", try sr.serialize_value([]ColourKeyFrame, alloc, value.colour.items));
+        try object.put("forces", try sr.serialize_value([]ForceEnum, alloc, value.forces.items));
+
+        return std.json.Value { .object = object };
+    }
+
+    pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !ParticleSystemSettings {
+        var settings = ParticleSystemSettings{};
+        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
+
+        if (object.get("max_particles")) |v| blk: { settings.max_particles = sr.deserialize_value(u32, alloc, v) catch break :blk; }
+
+        if (object.get("alignment")) |v| blk: { settings.alignment = sr.deserialize_value(ParticleAlignment, alloc, v) catch break :blk; }
+        if (object.get("shape")) |v| blk: { settings.shape = sr.deserialize_value(ParticleShape, alloc, v) catch break :blk; }
+
+        if (object.get("spawn_origin")) |v| blk: { settings.spawn_origin = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk; }
+        if (object.get("spawn_offset")) |v| blk: { settings.spawn_offset = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk; }
+        if (object.get("spawn_radius")) |v| blk: { settings.spawn_radius = sr.deserialize_value(f32, alloc, v) catch break :blk; }
+        if (object.get("spawn_rate")) |v| blk: { settings.spawn_rate = sr.deserialize_value(f32, alloc, v) catch break :blk; }
+        if (object.get("spawn_rate_variance")) |v| blk: { settings.spawn_rate_variance = sr.deserialize_value(f32, alloc, v) catch break :blk; }
+        if (object.get("burst_count")) |v| blk: { settings.burst_count = sr.deserialize_value(u32, alloc, v) catch break :blk; }
+
+        if (object.get("particle_lifetime")) |v| blk: { settings.particle_lifetime = sr.deserialize_value(f32, alloc, v) catch break :blk; }
+        if (object.get("particle_lifetime_variance")) |v| blk: { settings.particle_lifetime_variance = sr.deserialize_value(f32, alloc, v) catch break :blk; }
+
+        if (object.get("initial_velocity")) |v| blk: { settings.initial_velocity = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk; }
+
+        if (object.get("scale_keys")) |v| blk: {
+            const scale_slice = sr.deserialize_value([]ScaleKeyFrame, alloc, v) catch break :blk;
+            defer alloc.free(scale_slice);
+
+            settings.scale.clearRetainingCapacity();
+            settings.scale.appendSlice(alloc, scale_slice) catch break :blk;
+        }
+        if (object.get("colour_keys")) |v| blk: {
+            const colour_slice = sr.deserialize_value([]ColourKeyFrame, alloc, v) catch break :blk;
+            defer alloc.free(colour_slice);
+
+            settings.colour.clearRetainingCapacity();
+            settings.colour.appendSlice(alloc, colour_slice) catch break :blk;
+        }
+        if (object.get("forces")) |v| blk: {
+            const forces_slice = sr.deserialize_value([]ForceEnum, alloc, v) catch break :blk;
+            defer alloc.free(forces_slice);
+
+            settings.forces.clearRetainingCapacity();
+            settings.forces.appendSlice(alloc, forces_slice) catch break :blk;
+        }
+
+        return settings;
     }
 };
 
