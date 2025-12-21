@@ -30,7 +30,15 @@ pub const AnimController = struct {
 
     pub fn deinit(self: *Self) void {
         self.variables.deinit();
+        self.clear_nodes();
         self.nodes.deinit(eng.get().general_allocator);
+    }
+
+    pub fn clear_nodes(self: *Self) void {
+        for (self.nodes.items) |node| {
+            node.deinit();
+        }
+        self.nodes.clearRetainingCapacity();
     }
 
     pub fn init(alloc: std.mem.Allocator) !AnimController {
@@ -304,8 +312,12 @@ pub const NodeType = union(enum) {
 /// A node in the animation controller state machine.
 pub const Node = struct {
     node: NodeType,
-    next: []const NodeTransition, // TODO FIX crash here. memory issues related to this allocation in a tree structure
+    next: []const NodeTransition,
     time: f64 = 0.0, // TODO maybe dont serialize this
+
+    pub fn deinit(self: *const Node) void {
+        eng.get().general_allocator.free(self.next);
+    }
 };
 
 /// A transition specification between two nodes in the animation controller state machine.

@@ -75,15 +75,6 @@ pub const ParticleSystem = struct {
         };
     }
 
-    pub fn serialize(alloc: std.mem.Allocator, value: ParticleSystem) !std.json.Value {
-        return try sr.serialize_value(ParticleSystemSettings, alloc, value.settings);
-    }
-
-    pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !ParticleSystem {
-        const settings = try sr.deserialize_value(ParticleSystemSettings, alloc, value);
-        return try ParticleSystem.init(alloc, settings);
-    }
-
     pub fn resize(self: *Self, new_particle_count: usize) !void {
         self.settings.max_particles = @truncate(new_particle_count);
 
