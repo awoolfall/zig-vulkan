@@ -1,4 +1,9 @@
 
+float4 full_screen_quad_vert(uint vertId) {
+    float x = float(((uint(vertId) + 2u) / 3u) % 2u) * 2.0 - 1.0;
+    float y = float(((uint(vertId) + 1u) / 3u) % 2u) * 2.0 - 1.0;
+    return float4(x, y, 0.0, 1.0);
+}
 
 struct LightData
 {

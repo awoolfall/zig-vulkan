@@ -2054,6 +2054,10 @@ pub const ImageVulkan = struct {
                 dst_access = c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
                 dst_stage = c.VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
             },
+            .General => {
+                dst_access = c.VK_ACCESS_SHADER_WRITE_BIT;
+                dst_stage = c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            },
             .Undefined => unreachable,
             else => unreachable,
         }
