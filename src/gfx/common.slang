@@ -89,27 +89,26 @@ float3 calculate_blinn_phong_specular(float3 light_dir, float3 view_vector, floa
     return float3(s, s, s);
 }
 
-float3 calculate_light_contribution(LightData light, float3 fragment_albedo, float3 view_vector, float3 fragment_world_pos, float3 normal_vector, float reflectivity, float roughness)
+bool calculate_light(LightData light, float3 fragment_world_pos, out float3 light_dir, out float3 light_colour)
 {
-    if (light.intensity < 0.05) { return float3(0.0, 0.0, 0.0); }
-
-    float3 light_dir;
-    float3 light_colour;
-
-    // TODO: distance max, smoothstep to zero, cull lights
-    if (light.type == LIGHT_TYPE_DIRECTIONAL) {
+    switch (light.type) {
+    case LIGHT_TYPE_DIRECTIONAL: {
         light_colour = light.colour.rgb * light.intensity;
         light_dir = light.direction.xyz;
-    }
-    else if (light.type == LIGHT_TYPE_POINT) {
+        return true;
+    } break;
+
+    case LIGHT_TYPE_POINT: {
         light_dir = normalize(light.position.xyz - fragment_world_pos);
 
         float dist = length(light.position.xyz - fragment_world_pos);
         dist = max(dist, 0.01);
         float attenuation = (light.intensity * light.intensity) / (dist * dist);
         light_colour = light.colour.rgb * attenuation;
-    }
-    else if (light.type == LIGHT_TYPE_SPOT) {
+        return true;
+    } break;
+
+    case LIGHT_TYPE_SPOT: {
         light_dir = normalize(light.position.xyz - fragment_world_pos);
 
         float dist = length(light.position.xyz - fragment_world_pos);
@@ -121,7 +120,24 @@ float3 calculate_light_contribution(LightData light, float3 fragment_albedo, flo
         float fdir = t * t;
 
         light_colour = light.colour.rgb * fdir * attenuation;
-    } else {
+        return true;
+    } break;
+
+    default: break;
+    }
+
+    return false;
+}
+
+float3 calculate_light_contribution(LightData light, float3 fragment_albedo, float3 view_vector, float3 fragment_world_pos, float3 normal_vector, float reflectivity, float roughness)
+{
+    if (light.intensity < 0.05) { return float3(0.0, 0.0, 0.0); }
+
+    float3 light_dir;
+    float3 light_colour;
+
+    // TODO: distance max, smoothstep to zero, cull lights
+    if (!calculate_light(light, fragment_world_pos, light_dir, light_colour)) {
         return float3(0.0, 0.0, 0.0);
     }
 

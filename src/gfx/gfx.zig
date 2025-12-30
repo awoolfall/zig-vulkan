@@ -205,7 +205,7 @@ pub const GfxState = struct {
             .format = Self.depth_format,
             .match_swapchain_extent = true,
 
-            .usage_flags = .{ .DepthStencil = true, },
+            .usage_flags = .{ .DepthStencil = true, .TransferSrc = true, .ShaderResource = true, },
             .access_flags = .{ .GpuWrite = true, },
             .dst_layout = .DepthStencilAttachmentOptimal,
         }, null);
@@ -214,6 +214,7 @@ pub const GfxState = struct {
         self.default.depth_view = try ImageView.init(.{
             .image = self.default.depth_image,
             .view_type = .ImageView2D,
+            .aspect_mask = .{ .depth = true, },
         });
         errdefer self.default.depth_view.deinit();
 
@@ -770,8 +771,15 @@ pub const ImageViewType = enum {
     ImageView2DArray,
 };
 
+pub const ImageAspect = packed struct {
+    colour: bool = false,
+    depth: bool = false,
+    stencil: bool = false,
+};
+
 pub const ImageViewInfo = struct {
     image: Image.Ref,
+    aspect_mask: ?ImageAspect = null,
     view_type: ImageViewType,
     mip_levels: ?struct {
         base_mip_level: u32 = 0,
@@ -820,6 +828,17 @@ pub const ImageView = struct {
                 .base_mip_level = 0,
                 .mip_level_count = image.info.mip_levels,
             };
+        }
+        if (adjusted_info.aspect_mask == null) {
+            adjusted_info.aspect_mask = .{};
+            if (image.info.format.is_depth()) {
+                adjusted_info.aspect_mask.?.depth = true;
+            } else {
+                adjusted_info.aspect_mask.?.colour = true;
+            }
+            if (image.info.format.has_stencil()) {
+                adjusted_info.aspect_mask.?.stencil = true;
+            }
         }
 
         const platform = try GfxState.Platform.ImageView.init(adjusted_info);
@@ -878,6 +897,15 @@ pub const ImageFormat = enum {
     }
 
     pub fn is_depth(self: ImageFormat) bool {
+        switch (self) {
+            .D16S8_Unorm_Uint,
+            .D32S8_Sfloat_Uint,
+            .D24S8_Unorm_Uint => return true,
+            else => return false,
+        }
+    }
+
+    pub fn has_stencil(self: ImageFormat) bool {
         switch (self) {
             .D16S8_Unorm_Uint,
             .D32S8_Sfloat_Uint,
@@ -1656,7 +1684,7 @@ pub const CommandBuffer = struct {
     pub const ImageMemoryBarrierInfo = struct {
         image: Image.Ref,
         subresource_range: struct {
-            //aspect_mask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            //aspect_mask: enum { Colour, Depth, Stencil } = .Colour,
             base_mip_level: u32 = 0,
             mip_level_count: u32 = std.math.maxInt(u32),
             base_array_layer: u32 = 0,

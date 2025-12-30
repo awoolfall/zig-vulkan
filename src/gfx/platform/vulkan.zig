@@ -2093,6 +2093,14 @@ pub const ImageVulkan = struct {
     }
 };
 
+inline fn imageaspect_to_vulkan(aspect: gf.ImageAspect) c.VkImageAspectFlags {
+    var vk_aspect: c.VkImageAspectFlags = 0;
+    if (aspect.colour) { vk_aspect |= c.VK_IMAGE_ASPECT_COLOR_BIT; }
+    if (aspect.depth) { vk_aspect |= c.VK_IMAGE_ASPECT_DEPTH_BIT; }
+    if (aspect.stencil) { vk_aspect |= c.VK_IMAGE_ASPECT_STENCIL_BIT; }
+    return vk_aspect;
+}
+
 pub const ImageViewVulkan = struct {
     const Self = @This();
 
@@ -2121,6 +2129,8 @@ pub const ImageViewVulkan = struct {
         var image_views_list = std.ArrayList(c.VkImageView).initBuffer(image_views);
         errdefer for (image_views_list.items) |v| { c.vkDestroyImageView(GfxStateVulkan.get().device, v, null); };
 
+        const aspect_mask = if (info.aspect_mask) |am| imageaspect_to_vulkan(am) else unreachable;
+
         for (img.platform.images) |i| {
             const image_view_info = c.VkImageViewCreateInfo {
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -2128,9 +2138,7 @@ pub const ImageViewVulkan = struct {
                 .viewType = view_type,
                 .format = img.platform.vk_format,
                 .subresourceRange = .{
-                    .aspectMask =   if (img.info.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT
-                                    else c.VK_IMAGE_ASPECT_COLOR_BIT
-                    ,
+                    .aspectMask = aspect_mask,
                     .baseMipLevel = info.mip_levels.?.base_mip_level,
                     .levelCount = info.mip_levels.?.mip_level_count,
                     .baseArrayLayer = info.array_layers.?.base_array_layer,
@@ -3847,7 +3855,8 @@ pub const CommandBufferVulkan = struct {
                 .srcQueueFamilyIndex = if (b.src_queue) |q| GfxStateVulkan.get().get_queue_family_index(q) else c.VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = if (b.dst_queue) |q| GfxStateVulkan.get().get_queue_family_index(q) else c.VK_QUEUE_FAMILY_IGNORED,
                 .subresourceRange = .{
-                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                    .aspectMask =   if (!image.info.format.is_depth()) c.VK_IMAGE_ASPECT_COLOR_BIT
+                                    else c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
                     .baseMipLevel = b.subresource_range.base_mip_level,
                     .levelCount = 
                         if (b.subresource_range.mip_level_count >= image.info.mip_levels - b.subresource_range.base_mip_level) c.VK_REMAINING_MIP_LEVELS
