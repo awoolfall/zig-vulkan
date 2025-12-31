@@ -94,7 +94,7 @@ bool calculate_light(LightData light, float3 fragment_world_pos, out float3 ligh
     switch (light.type) {
     case LIGHT_TYPE_DIRECTIONAL: {
         light_colour = light.colour.rgb * light.intensity;
-        light_dir = light.direction.xyz;
+        light_dir = normalize(light.direction.xyz);
         return true;
     } break;
 
@@ -168,4 +168,9 @@ float3 calculate_light_contribution(LightData light, float3 fragment_albedo, flo
     }
     
     return colour;
+}
+
+float3 calculate_depth_frag_in_world_pos(float depth, float2 ndc, float4x4 inv_view_projection_matrix) {
+    const float4 depth_world = mul(float4(ndc, depth, 1.0), inv_view_projection_matrix);
+    return depth_world.xyz / depth_world.z;
 }

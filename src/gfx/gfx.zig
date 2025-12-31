@@ -1743,6 +1743,33 @@ pub const CommandBuffer = struct {
         self.platform.cmd_copy_buffer_to_image(info);
     }
 
+    pub const ImageSubResource = struct {
+        aspect_mask: ImageAspect,
+        mip_level: u32 = 0,
+        base_array_layer: u32 = 0,
+        array_layer_count: u32 = 1,
+    };
+
+    pub const ImageCopyRegionInfo = struct {
+        src_subresource: ImageSubResource,
+        src_offset: [3]i32 = .{ 0, 0, 0 },
+        dst_subresource: ImageSubResource,
+        dst_offset: [3]i32 = .{ 0, 0, 0 },
+        extent: [3]u32,
+    };
+
+    pub const CopyImageToImageInfo = struct {
+        src_image: Image.Ref,
+        src_image_layout: ImageLayout = .TransferSrcOptimal,
+        dst_image: Image.Ref,
+        dst_image_layout: ImageLayout = .TransferDstOptimal,
+        copy_regions: []const ImageCopyRegionInfo,
+    };
+
+    pub fn cmd_copy_image_to_image(self: *Self, info: CopyImageToImageInfo) void {
+        self.platform.cmd_copy_image_to_image(info);
+    }
+
     pub const DispatchInfo = struct {
         group_count_x: u32 = 1,
         group_count_y: u32 = 1,

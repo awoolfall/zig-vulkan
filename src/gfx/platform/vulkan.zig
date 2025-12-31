@@ -3972,6 +3972,48 @@ pub const CommandBufferVulkan = struct {
         );
     }
 
+    pub fn cmd_copy_image_to_image(self: *Self, info: gf.CommandBuffer.CopyImageToImageInfo) void {
+        const alloc = eng.get().frame_allocator;
+
+        var vk_copy_regions = std.ArrayList(c.VkImageCopy).initCapacity(alloc, 16) catch unreachable;
+        defer vk_copy_regions.deinit(alloc);
+
+        for (info.copy_regions) |copy_region| {
+            vk_copy_regions.append(alloc, c.VkImageCopy {
+                .srcSubresource = .{
+                    .aspectMask = imageaspect_to_vulkan(copy_region.src_subresource.aspect_mask),
+                    .baseArrayLayer = copy_region.src_subresource.base_array_layer,
+                    .layerCount = copy_region.src_subresource.array_layer_count,
+                    .mipLevel = copy_region.src_subresource.mip_level,
+                },
+                .srcOffset = .{ .x = copy_region.src_offset[0], .y = copy_region.src_offset[1], .z = copy_region.src_offset[2], },
+                .dstSubresource = .{
+                    .aspectMask = imageaspect_to_vulkan(copy_region.dst_subresource.aspect_mask),
+                    .baseArrayLayer = copy_region.dst_subresource.base_array_layer,
+                    .layerCount = copy_region.dst_subresource.array_layer_count,
+                    .mipLevel = copy_region.dst_subresource.mip_level,
+                },
+                .dstOffset = .{ .x = copy_region.dst_offset[0], .y = copy_region.dst_offset[1], .z = copy_region.dst_offset[2], },
+                .extent = .{ .width = copy_region.extent[0], .height = copy_region.extent[1], .depth = copy_region.extent[2], },
+            }) catch |err| {
+                std.debug.panic("Unable to append copy region: {}", .{err});
+            };
+        }
+
+        const src_image = info.src_image.get() catch return;
+        const dst_image = info.dst_image.get() catch return;
+
+        c.vkCmdCopyImage(
+            self.vk_command_buffer,
+            src_image.platform.get_frame_image().vk_image,
+            imagelayout_to_vulkan(info.src_image_layout),
+            dst_image.platform.get_frame_image().vk_image,
+            imagelayout_to_vulkan(info.dst_image_layout),
+            @intCast(vk_copy_regions.items.len),
+            @ptrCast(vk_copy_regions.items.ptr)
+        );
+    }
+
     pub fn cmd_dispatch(self: *Self, info: gf.CommandBuffer.DispatchInfo) void {
         c.vkCmdDispatch(
             self.vk_command_buffer, 
