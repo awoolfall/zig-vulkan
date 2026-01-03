@@ -1772,15 +1772,17 @@ pub const ImageVulkan = struct {
             c.vkDestroyImage(GfxStateVulkan.get().device, i.vk_image, null);
         };
 
+        const vk_image_type: c.VkImageType = if (info.depth <= 1) c.VK_IMAGE_TYPE_2D else c.VK_IMAGE_TYPE_3D; 
+
         for (0..image_count) |_| {
             const image_info = c.VkImageCreateInfo {
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                 .format = vk_format,
-                .imageType = c.VK_IMAGE_TYPE_2D,
+                .imageType = vk_image_type,
                 .extent = c.VkExtent3D {
                     .width = info.width,
                     .height = info.height,
-                    .depth = 1,
+                    .depth = @max(info.depth, 1),
                 },
                 .mipLevels = info.mip_levels,
                 .arrayLayers = info.array_length,
@@ -2121,6 +2123,7 @@ pub const ImageViewVulkan = struct {
             .ImageView1D => c.VK_IMAGE_VIEW_TYPE_1D,
             .ImageView2D => c.VK_IMAGE_VIEW_TYPE_2D,
             .ImageView2DArray => c.VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+            .ImageView3D => c.VK_IMAGE_VIEW_TYPE_3D,
         };
 
         const image_views = try alloc.alloc(c.VkImageView, img.platform.images.len);

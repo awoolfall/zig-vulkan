@@ -769,6 +769,7 @@ pub const ImageViewType = enum {
     ImageView1D,
     ImageView2D,
     ImageView2DArray,
+    ImageView3D,
 };
 
 pub const ImageAspect = packed struct {

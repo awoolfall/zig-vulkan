@@ -172,5 +172,5 @@ float3 calculate_light_contribution(LightData light, float3 fragment_albedo, flo
 
 float3 calculate_depth_frag_in_world_pos(float depth, float2 ndc, float4x4 inv_view_projection_matrix) {
     const float4 depth_world = mul(float4(ndc, depth, 1.0), inv_view_projection_matrix);
-    return depth_world.xyz / depth_world.z;
+    return depth_world.xyz / depth_world.w;
 }
