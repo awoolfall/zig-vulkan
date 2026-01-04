@@ -15,9 +15,11 @@ struct LightData
     float penumbra;
     uint type;
 };
-#define LIGHT_TYPE_DIRECTIONAL 0
-#define LIGHT_TYPE_POINT 1
-#define LIGHT_TYPE_SPOT 2
+#define LIGHT_TYPE_NONE 0
+#define LIGHT_TYPE_SUN 1
+#define LIGHT_TYPE_DIRECTIONAL 2
+#define LIGHT_TYPE_POINT 3
+#define LIGHT_TYPE_SPOT 4
 
 #define PI 3.14159
 
@@ -92,6 +94,8 @@ float3 calculate_blinn_phong_specular(float3 light_dir, float3 view_vector, floa
 bool calculate_light(LightData light, float3 fragment_world_pos, out float3 light_dir, out float3 light_colour)
 {
     switch (light.type) {
+        
+    case LIGHT_TYPE_SUN:
     case LIGHT_TYPE_DIRECTIONAL: {
         light_colour = light.colour.rgb * light.intensity;
         light_dir = normalize(light.direction.xyz);
