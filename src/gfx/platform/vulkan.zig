@@ -959,7 +959,7 @@ pub const GfxStateVulkan = struct {
         }
     }
 
-    pub inline fn submit_command_buffer(self: *Self, info: gf.GfxState.SubmitInfo) !void {
+    pub fn submit_command_buffer(self: *Self, info: gf.GfxState.SubmitInfo) !void {
         const MAX_COMMAND_BUFFERS = 16;
         std.debug.assert(info.command_buffers.len < MAX_COMMAND_BUFFERS);
         const MAX_SIGNAL_SEMAPHORES = 16;
@@ -998,7 +998,7 @@ pub const GfxStateVulkan = struct {
         try vkt(c.vkQueueSubmit(self.queues.all, 1, &submit_info, vk_fence));
     }
 
-    pub inline fn present(self: *Self, wait_semaphores: []const *gf.Semaphore) !void {
+    pub fn present(self: *Self, wait_semaphores: []const *gf.Semaphore) !void {
         const MAX_WAIT_SEMAPHORES = 16;
         std.debug.assert(wait_semaphores.len < MAX_WAIT_SEMAPHORES);
 
@@ -1015,7 +1015,7 @@ pub const GfxStateVulkan = struct {
                 .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
                 .srcAccessMask = accessflags_to_vulkan(.{ .color_attachment_write = true, }),
-                .dstAccessMask = accessflags_to_vulkan(.{ .memory_read = true, }),
+                .dstAccessMask = accessflags_to_vulkan(.{ .color_attachment_read = true, }),
                 .subresourceRange = .{
                     .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
                     .baseMipLevel = 0,
@@ -1027,7 +1027,7 @@ pub const GfxStateVulkan = struct {
             c.vkCmdPipelineBarrier(
                 cmd.platform.vk_command_buffer, 
                 pipelinestageflags_to_vulkan(.{ .color_attachment_output = true, }), 
-                pipelinestageflags_to_vulkan(.{ .bottom_of_pipe = true, }), 
+                pipelinestageflags_to_vulkan(.{ .all_commands = true, }), 
                 0, 
                 0, null,
                 0, null,
@@ -1055,7 +1055,7 @@ pub const GfxStateVulkan = struct {
         try vkt(c.vkQueuePresentKHR(self.queues.present, &present_info));
     }
 
-    pub inline fn flush(self: *Self) void {
+    pub fn flush(self: *Self) void {
         vkt(c.vkDeviceWaitIdle(self.device)) catch |err| {
             std.log.err("Unable to wait for vulkan device idle: {}", .{err});
             // probably device lost
@@ -1447,10 +1447,10 @@ pub const BufferVulkan = struct {
         }
 
         // Free vulkan memory and destroy vulkan buffers
-        c.vkFreeMemory(eng.get().gfx.platform.device, self.vk_device_memory, null);
         for (self.vk_buffers) |buf| {
             c.vkDestroyBuffer(eng.get().gfx.platform.device, buf, null);
         }
+        c.vkFreeMemory(eng.get().gfx.platform.device, self.vk_device_memory, null);
 
         // Free cpu memory assosciated with buffer
         GfxStateVulkan.get().alloc.free(self.vk_buffers);
@@ -1734,8 +1734,8 @@ pub const ImageVulkan = struct {
 
     pub fn deinit(self: *const Self) void {
         for (self.images) |i| {
-            c.vkFreeMemory(GfxStateVulkan.get().device, i.vk_device_memory, null);
             c.vkDestroyImage(GfxStateVulkan.get().device, i.vk_image, null);
+            c.vkFreeMemory(GfxStateVulkan.get().device, i.vk_device_memory, null);
         }
         GfxStateVulkan.get().alloc.free(self.images);
     }
@@ -1944,7 +1944,7 @@ pub const ImageVulkan = struct {
                             .oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                             .newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                             .srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT,
-                            .dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT,
+                            .dstAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT,
                             .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
                             .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
                             .subresourceRange = .{

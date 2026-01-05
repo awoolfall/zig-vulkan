@@ -232,63 +232,65 @@ pub const Debug = struct {
 
     pub fn render_cmd(self: *Self, cmd: *gfx.CommandBuffer, camera: *const Camera) !void {
         defer self.lines.clearRetainingCapacity();
+        
+        if (self.lines.items.len > 0) {
+            cmd.cmd_begin_render_pass(gfx.CommandBuffer.BeginRenderPassInfo {
+                .render_pass = self.render_pass,
+                .framebuffer = self.framebuffer,
+                .render_area = .full_screen_pixels(),
+            });
+            defer cmd.cmd_end_render_pass();
 
-        cmd.cmd_begin_render_pass(gfx.CommandBuffer.BeginRenderPassInfo {
-            .render_pass = self.render_pass,
-            .framebuffer = self.framebuffer,
-            .render_area = .full_screen_pixels(),
-        });
-        defer cmd.cmd_end_render_pass();
+            cmd.cmd_set_viewports(.{
+                .viewports = &.{ .full_screen_viewport(), },
+            });
+            cmd.cmd_set_scissors(.{
+                .scissors = &.{ .full_screen_pixels(), },
+            });
 
-        cmd.cmd_set_viewports(.{
-            .viewports = &.{ .full_screen_viewport(), },
-        });
-        cmd.cmd_set_scissors(.{
-            .scissors = &.{ .full_screen_pixels(), },
-        });
+            cmd.cmd_bind_graphics_pipeline(self.lines_pipeline);
 
-        cmd.cmd_bind_graphics_pipeline(self.lines_pipeline);
-
-        cmd.cmd_bind_vertex_buffers(gfx.CommandBuffer.BindVertexBuffersInfo {
-            .buffers = &.{
-                gfx.VertexBufferInput {
-                    .buffer = self.lines_instance_buffer,
+            cmd.cmd_bind_vertex_buffers(gfx.CommandBuffer.BindVertexBuffersInfo {
+                .buffers = &.{
+                    gfx.VertexBufferInput {
+                        .buffer = self.lines_instance_buffer,
+                    },
                 },
-            },
-        });
+            });
 
-        {
-            const mapped_camera_buffer = try (try self.camera_buffer.get()).map(.{ .write = .EveryFrame, });
-            defer mapped_camera_buffer.unmap();
+            {
+                const mapped_camera_buffer = try (try self.camera_buffer.get()).map(.{ .write = .EveryFrame, });
+                defer mapped_camera_buffer.unmap();
 
-            mapped_camera_buffer.data(CameraData).* = CameraData {
-                .view = camera.transform.generate_view_matrix(),
-                .projection = camera.generate_perspective_matrix(gfx.GfxState.get().swapchain_aspect()),
-            };
-        }
-
-        cmd.cmd_bind_descriptor_sets(gfx.CommandBuffer.BindDescriptorSetInfo {
-            .descriptor_sets = &.{ self.camera_descriptor_set, },
-        });
-
-        {
-            const mapped_lines_buffer = try (try self.lines_instance_buffer.get()).map(.{ .write = .EveryFrame, });
-            defer mapped_lines_buffer.unmap();
-
-            const mapped_slice = mapped_lines_buffer.data_array(LineDetails, Self.MAX_LINES);
-            for (self.lines.items, 0..) |line, idx| {
-                mapped_slice[idx] = LineDetails {
-                    .start_point = line.p0,
-                    .end_point = line.p1,
-                    .colour = line.colour,
+                mapped_camera_buffer.data(CameraData).* = CameraData {
+                    .view = camera.transform.generate_view_matrix(),
+                    .projection = camera.generate_perspective_matrix(gfx.GfxState.get().swapchain_aspect()),
                 };
             }
-        }
 
-        cmd.cmd_draw(gfx.CommandBuffer.DrawInfo {
-            .vertex_count = 6,
-            .instance_count = @intCast(self.lines.items.len),
-        });
+            cmd.cmd_bind_descriptor_sets(gfx.CommandBuffer.BindDescriptorSetInfo {
+                .descriptor_sets = &.{ self.camera_descriptor_set, },
+            });
+
+            {
+                const mapped_lines_buffer = try (try self.lines_instance_buffer.get()).map(.{ .write = .EveryFrame, });
+                defer mapped_lines_buffer.unmap();
+
+                const mapped_slice = mapped_lines_buffer.data_array(LineDetails, Self.MAX_LINES);
+                for (self.lines.items, 0..) |line, idx| {
+                    mapped_slice[idx] = LineDetails {
+                        .start_point = line.p0,
+                        .end_point = line.p1,
+                        .colour = line.colour,
+                    };
+                }
+            }
+
+            cmd.cmd_draw(gfx.CommandBuffer.DrawInfo {
+                .vertex_count = 6,
+                .instance_count = @intCast(self.lines.items.len),
+            });
+        }
     }
 
     pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: gfx.ImageView.Ref) void {
