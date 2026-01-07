@@ -8,10 +8,10 @@ const gf = eng.gfx;
 const pl = eng.platform;
 const Rect = eng.Rect;
 
-
 pub const GfxStateVulkan = struct {
     const Self = @This();
     const ENABLE_VALIDATION_LAYERS: bool = true;
+    const FORCE_INTEGRATED_GPU: bool = false;
 
     pub const ShaderModule = ShaderModuleVulkan;
     pub const VertexInput = VertexInputVulkan;
@@ -48,40 +48,6 @@ pub const GfxStateVulkan = struct {
             return (self.all_family_index != self.cpu_gpu_transfer_family_index);
         }
     };
-
-    const SwapchainInfo = struct {
-        swapchain: c.VkSwapchainKHR,
-        swapchain_images: []c.VkImage,
-        swapchain_image_views: []c.VkImageView,
-
-        surface_format: c.VkSurfaceFormatKHR,
-        present_mode: c.VkPresentModeKHR,
-        extent: c.VkExtent2D,
-
-        current_image_index: u32 = 0,
-        image_available_semaphores: []gf.Semaphore,
-        present_transition_semaphores: []gf.Semaphore,
-
-        pub fn deinit(self: *@This(), gfx_state: *GfxStateVulkan) void {
-            for (self.swapchain_image_views) |image_view| {
-                c.vkDestroyImageView(gfx_state.device, image_view, null);
-            }
-            gfx_state.alloc.free(self.swapchain_image_views);
-            
-            c.vkDestroySwapchainKHR(gfx_state.device, self.swapchain, null);
-            gfx_state.alloc.free(self.swapchain_images);
-
-            for (self.image_available_semaphores) |s| { s.deinit(); }
-            gfx_state.alloc.free(self.image_available_semaphores);
-
-            for (self.present_transition_semaphores) |s| { s.deinit(); }
-            gfx_state.alloc.free(self.present_transition_semaphores);
-        }
-
-        pub inline fn swapchain_image_count(self: *const SwapchainInfo) u32 {
-            return @intCast(self.swapchain_images.len);
-        }
-    };
     
     const BufferUpdates = struct {
         vk_buffers: []const c.VkBuffer,
@@ -107,7 +73,7 @@ pub const GfxStateVulkan = struct {
     all_command_pool: gf.CommandPool,
     transfer_command_pool: gf.CommandPool,
 
-    swapchain: SwapchainInfo,
+    swapchain: SwapchainVulkan,
     temp_frame_wait_fence: c.VkFence,
 
     buffer_updates: std.ArrayList(BufferUpdates),
@@ -381,8 +347,14 @@ pub const GfxStateVulkan = struct {
             }
 
             // @TODO: better physical device selection
-            if (prop.deviceType == c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-                best_physical_device_idx = idx;
+            if (!FORCE_INTEGRATED_GPU) {
+                if (prop.deviceType == c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+                    best_physical_device_idx = idx;
+                }
+            } else {
+                if (prop.deviceType != c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+                    best_physical_device_idx = idx;
+                }
             }
         }
 
@@ -650,7 +622,7 @@ pub const GfxStateVulkan = struct {
             .all_command_pool = all_command_pool,
             .transfer_command_pool = transfer_command_pool,
 
-            .swapchain = SwapchainInfo {
+            .swapchain = SwapchainVulkan {
                 .surface_format = surface_format,
                 .present_mode = present_mode,
                 .swapchain = undefined,
@@ -669,13 +641,13 @@ pub const GfxStateVulkan = struct {
     pub fn init_late(self: *Self, window: *pl.Window) !void {
         // Create swap chain
         const window_size = try window.get_client_size();
-        self.swapchain = try self.create_swapchain(.{
+        self.swapchain = try SwapchainVulkan.init(self, .{
             .width = @intCast(@max(window_size.width, 1)),
             .height = @intCast(@max(window_size.height, 1)),
             .format = self.swapchain.surface_format,
             .present_mode = self.swapchain.present_mode,
         });
-        errdefer self.swapchain.deinit(self.device);
+        errdefer self.swapchain.deinit(self);
     }
 
     pub fn debug_callback (
@@ -743,137 +715,6 @@ pub const GfxStateVulkan = struct {
         return c.VK_FALSE;
     }
 
-    const SwapchainCreateOptions = struct {
-        width: u32,
-        height: u32,
-        format: c.VkSurfaceFormatKHR,
-        present_mode: c.VkPresentModeKHR,
-    };
-
-    fn create_swapchain(self: *Self, opt: SwapchainCreateOptions) !SwapchainInfo {
-        var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
-        try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface, &surface_capabilities));
-
-        var swapchain_extent = surface_capabilities.currentExtent;
-        if (swapchain_extent.width == std.math.maxInt(u32)) {
-            swapchain_extent = c.VkExtent2D {
-                .width = std.math.clamp(@as(u32, @intCast(opt.width)),
-                    surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width),
-                .height = std.math.clamp(@as(u32, @intCast(opt.height)),
-                    surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height),
-            };
-        }
-
-        var swapchain_create_info = c.VkSwapchainCreateInfoKHR {
-            .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-            .surface = self.surface,
-            .minImageCount = self.frames_in_flight(),
-            .imageFormat = opt.format.format,
-            .imageColorSpace = opt.format.colorSpace,
-            .imageExtent = swapchain_extent,
-            .imageArrayLayers = 1,
-            .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-            .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
-            .preTransform = surface_capabilities.currentTransform,
-            .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-            .presentMode = opt.present_mode,
-            .clipped = c.VK_TRUE,
-            .oldSwapchain = @ptrCast(c.VK_NULL_HANDLE),
-        };
-        const swapchain_create_queue_indices = [2]u32 { self.queues.all_family_index, self.queues.present_family_index };
-        if (self.queues.all_family_index == self.queues.present_family_index) {
-            swapchain_create_info.imageSharingMode = c.VK_SHARING_MODE_CONCURRENT;
-            swapchain_create_info.queueFamilyIndexCount = @intCast(swapchain_create_queue_indices.len);
-            swapchain_create_info.pQueueFamilyIndices = &swapchain_create_queue_indices;
-        }
-
-        var vk_swapchain: c.VkSwapchainKHR = undefined;
-        try vkt(c.vkCreateSwapchainKHR(self.device, &swapchain_create_info, null, &vk_swapchain));
-        errdefer c.vkDestroySwapchainKHR(self.device, vk_swapchain, null);
-
-        var swapchain_images_count: u32 = 0;
-        try vkt(c.vkGetSwapchainImagesKHR(self.device, vk_swapchain, &swapchain_images_count, null));
-        std.debug.assert(swapchain_images_count == self.frames_in_flight());
-
-        const swapchain_images = try self.alloc.alloc(c.VkImage, swapchain_images_count);
-        errdefer self.alloc.free(swapchain_images);
-
-        try vkt(c.vkGetSwapchainImagesKHR(self.device, vk_swapchain, &swapchain_images_count, swapchain_images.ptr));
-
-        const swapchain_image_views = try self.alloc.alloc(c.VkImageView, swapchain_images_count);
-        errdefer self.alloc.free(swapchain_image_views);
-
-        var swapchain_image_views_list = std.ArrayList(c.VkImageView).initBuffer(swapchain_image_views);
-        errdefer for (swapchain_image_views_list.items) |image_view| { c.vkDestroyImageView(self.device, image_view, null); };
-
-        for (swapchain_images) |img| {
-            const view_create_info = c.VkImageViewCreateInfo {
-                .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = img,
-                .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-                .format = opt.format.format,
-                .components = .{
-                    .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-                    .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-                    .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-                    .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-                },
-                .subresourceRange = .{
-                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1,
-                },
-            };
-
-            var swapchain_image_view: c.VkImageView = null;
-            try vkt(c.vkCreateImageView(self.device, &view_create_info, null, &swapchain_image_view));
-            errdefer c.vkDestroyImageView(self.device, swapchain_image_view, null);
-
-            try swapchain_image_views_list.append(self.alloc, swapchain_image_view);
-        }
-
-        const image_available_semaphores = try self.alloc.alloc(gf.Semaphore, self.frames_in_flight());
-        errdefer self.alloc.free(image_available_semaphores);
-
-        var image_available_semaphores_list = std.ArrayList(gf.Semaphore).initBuffer(image_available_semaphores);
-        errdefer for (image_available_semaphores_list.items) |s| { s.deinit(); };
-
-        for (0..self.frames_in_flight()) |_| {
-            const semaphore = try gf.Semaphore.init(.{});
-            errdefer semaphore.deinit();
-
-            try image_available_semaphores_list.append(self.alloc, semaphore);
-        }
-
-        const present_transition_semaphores = try self.alloc.alloc(gf.Semaphore, self.frames_in_flight());
-        errdefer self.alloc.free(present_transition_semaphores);
-
-        var present_transition_semaphores_list = std.ArrayList(gf.Semaphore).initBuffer(present_transition_semaphores);
-        errdefer for (present_transition_semaphores_list.items) |s| { s.deinit(); };
-
-        for (0..self.frames_in_flight()) |_| {
-            const semaphore = try gf.Semaphore.init(.{});
-            errdefer semaphore.deinit();
-
-            try present_transition_semaphores_list.append(self.alloc, semaphore);
-        }
-
-        std.log.info("swapchain extent is {}", .{swapchain_extent});
-        return .{
-            .swapchain = vk_swapchain,
-            .swapchain_images = swapchain_images,
-            .swapchain_image_views = swapchain_image_views,
-
-            .extent = swapchain_extent,
-            .surface_format = opt.format,
-            .present_mode = opt.present_mode,
-            .image_available_semaphores = image_available_semaphores,
-            .present_transition_semaphores = present_transition_semaphores,
-        };
-    }
-
     pub inline fn get() *Self {
         return &eng.get().gfx.platform;
     }
@@ -910,7 +751,7 @@ pub const GfxStateVulkan = struct {
             )) catch |err| {
                 switch (err) {
                     error.VK_ERROR_OUT_OF_DATE_KHR => {
-                        self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]);
+                        self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]) catch unreachable;
                         continue;
                     },
                     else => return err,
@@ -1115,24 +956,24 @@ pub const GfxStateVulkan = struct {
         }
     }
 
-    pub fn resize_swapchain(self: *Self, new_width: u32, new_height: u32) void {
+    pub fn resize_swapchain(self: *Self, new_width: u32, new_height: u32) !void {
         self.flush();
         defer self.flush();
 
         self.swapchain.deinit(self);
-        self.swapchain = self.create_swapchain(.{
+        self.swapchain = SwapchainVulkan.init(self, .{
             .width = new_width,
             .height = new_height,
             .format = self.swapchain.surface_format,
             .present_mode = self.swapchain.present_mode,
         }) catch |err| {
-            std.log.err("Unable to recreate swapchain: {}", .{err});
-            unreachable;
+            std.log.err("Unable to resize swapchain: {}", .{err});
+            return err;
         };
 
         self.recreate_swapchain_dependant_gfx_structures() catch |err| {
             std.log.err("Failed to recreate swapchain dependant gfx structures: {}", .{err});
-            unreachable;
+            return err;
         };
     }
 
@@ -1141,6 +982,473 @@ pub const GfxStateVulkan = struct {
             .Graphics, .Compute => self.queues.all_family_index,
             .Transfer => self.queues.cpu_gpu_transfer_family_index,
         };
+    }
+};
+
+const SwapchainVulkan = struct {
+    swapchain: c.VkSwapchainKHR,
+    swapchain_images: []c.VkImage,
+    swapchain_image_views: []c.VkImageView,
+
+    surface_format: c.VkSurfaceFormatKHR,
+    present_mode: c.VkPresentModeKHR,
+    extent: c.VkExtent2D,
+
+    current_image_index: u32 = 0,
+    image_available_semaphores: []gf.Semaphore,
+    present_transition_semaphores: []gf.Semaphore,
+
+    pub fn deinit(self: *@This(), gfx_state: *GfxStateVulkan) void {
+        for (self.swapchain_image_views) |image_view| {
+            c.vkDestroyImageView(gfx_state.device, image_view, null);
+        }
+        gfx_state.alloc.free(self.swapchain_image_views);
+        
+        c.vkDestroySwapchainKHR(gfx_state.device, self.swapchain, null);
+        gfx_state.alloc.free(self.swapchain_images);
+
+        for (self.image_available_semaphores) |s| { s.deinit(); }
+        gfx_state.alloc.free(self.image_available_semaphores);
+
+        for (self.present_transition_semaphores) |s| { s.deinit(); }
+        gfx_state.alloc.free(self.present_transition_semaphores);
+    }
+
+    pub const SwapchainCreateOptions = struct {
+        width: u32,
+        height: u32,
+        format: c.VkSurfaceFormatKHR,
+        present_mode: c.VkPresentModeKHR,
+    };
+
+    pub fn init(gfxstate: *GfxStateVulkan, opt: SwapchainCreateOptions) !SwapchainVulkan {
+        var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
+        try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gfxstate.physical_device, gfxstate.surface, &surface_capabilities));
+
+        var swapchain_extent = surface_capabilities.currentExtent;
+        if (swapchain_extent.width == std.math.maxInt(u32)) {
+            swapchain_extent = c.VkExtent2D {
+                .width = std.math.clamp(@as(u32, @intCast(opt.width)),
+                    surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width),
+                .height = std.math.clamp(@as(u32, @intCast(opt.height)),
+                    surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height),
+            };
+        }
+        if (swapchain_extent.width == 0 or swapchain_extent.height == 0) {
+            return error.RequestedSwapchainSizeIsZero;
+        }
+
+        var swapchain_create_info = c.VkSwapchainCreateInfoKHR {
+            .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+            .surface = gfxstate.surface,
+            .minImageCount = gfxstate.frames_in_flight(),
+            .imageFormat = opt.format.format,
+            .imageColorSpace = opt.format.colorSpace,
+            .imageExtent = swapchain_extent,
+            .imageArrayLayers = 1,
+            .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+            .preTransform = surface_capabilities.currentTransform,
+            .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            .presentMode = opt.present_mode,
+            .clipped = c.VK_TRUE,
+            .oldSwapchain = @ptrCast(c.VK_NULL_HANDLE),
+        };
+        const swapchain_create_queue_indices = [2]u32 { gfxstate.queues.all_family_index, gfxstate.queues.present_family_index };
+        if (gfxstate.queues.all_family_index == gfxstate.queues.present_family_index) {
+            swapchain_create_info.imageSharingMode = c.VK_SHARING_MODE_CONCURRENT;
+            swapchain_create_info.queueFamilyIndexCount = @intCast(swapchain_create_queue_indices.len);
+            swapchain_create_info.pQueueFamilyIndices = &swapchain_create_queue_indices;
+        }
+
+        var vk_swapchain: c.VkSwapchainKHR = undefined;
+        try vkt(c.vkCreateSwapchainKHR(gfxstate.device, &swapchain_create_info, null, &vk_swapchain));
+        errdefer c.vkDestroySwapchainKHR(gfxstate.device, vk_swapchain, null);
+
+        var swapchain_images_count: u32 = 0;
+        try vkt(c.vkGetSwapchainImagesKHR(gfxstate.device, vk_swapchain, &swapchain_images_count, null));
+        std.debug.assert(swapchain_images_count == gfxstate.frames_in_flight());
+
+        const swapchain_images = try gfxstate.alloc.alloc(c.VkImage, swapchain_images_count);
+        errdefer gfxstate.alloc.free(swapchain_images);
+
+        try vkt(c.vkGetSwapchainImagesKHR(gfxstate.device, vk_swapchain, &swapchain_images_count, swapchain_images.ptr));
+
+        const swapchain_image_views = try gfxstate.alloc.alloc(c.VkImageView, swapchain_images_count);
+        errdefer gfxstate.alloc.free(swapchain_image_views);
+
+        var swapchain_image_views_list = std.ArrayList(c.VkImageView).initBuffer(swapchain_image_views);
+        errdefer for (swapchain_image_views_list.items) |image_view| { c.vkDestroyImageView(gfxstate.device, image_view, null); };
+
+        for (swapchain_images) |img| {
+            const view_create_info = c.VkImageViewCreateInfo {
+                .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = img,
+                .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+                .format = opt.format.format,
+                .components = .{
+                    .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                },
+                .subresourceRange = .{
+                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+            };
+
+            var swapchain_image_view: c.VkImageView = null;
+            try vkt(c.vkCreateImageView(gfxstate.device, &view_create_info, null, &swapchain_image_view));
+            errdefer c.vkDestroyImageView(gfxstate.device, swapchain_image_view, null);
+
+            try swapchain_image_views_list.append(gfxstate.alloc, swapchain_image_view);
+        }
+
+        const image_available_semaphores = try gfxstate.alloc.alloc(gf.Semaphore, gfxstate.frames_in_flight());
+        errdefer gfxstate.alloc.free(image_available_semaphores);
+
+        var image_available_semaphores_list = std.ArrayList(gf.Semaphore).initBuffer(image_available_semaphores);
+        errdefer for (image_available_semaphores_list.items) |s| { s.deinit(); };
+
+        for (0..gfxstate.frames_in_flight()) |_| {
+            const semaphore = try gf.Semaphore.init(.{});
+            errdefer semaphore.deinit();
+
+            try image_available_semaphores_list.append(gfxstate.alloc, semaphore);
+        }
+
+        const present_transition_semaphores = try gfxstate.alloc.alloc(gf.Semaphore, gfxstate.frames_in_flight());
+        errdefer gfxstate.alloc.free(present_transition_semaphores);
+
+        var present_transition_semaphores_list = std.ArrayList(gf.Semaphore).initBuffer(present_transition_semaphores);
+        errdefer for (present_transition_semaphores_list.items) |s| { s.deinit(); };
+
+        for (0..gfxstate.frames_in_flight()) |_| {
+            const semaphore = try gf.Semaphore.init(.{});
+            errdefer semaphore.deinit();
+
+            try present_transition_semaphores_list.append(gfxstate.alloc, semaphore);
+        }
+
+        std.log.info("swapchain extent is {}", .{swapchain_extent});
+        return .{
+            .swapchain = vk_swapchain,
+            .swapchain_images = swapchain_images,
+            .swapchain_image_views = swapchain_image_views,
+
+            .extent = swapchain_extent,
+            .surface_format = opt.format,
+            .present_mode = opt.present_mode,
+            .image_available_semaphores = image_available_semaphores,
+            .present_transition_semaphores = present_transition_semaphores,
+        };
+    }
+
+    pub inline fn swapchain_image_count(self: *const SwapchainVulkan) u32 {
+        return @intCast(self.swapchain_images.len);
+    }
+};
+
+const VkAllocator = struct {
+    pub const UserData = struct {
+        alloc: std.mem.Allocator,
+    };
+
+    user_data: *UserData,
+
+    pub fn deinit(self: *VkAllocator) void {
+        const alloc = self.user_data.alloc;
+        alloc.destroy(self.user_data);
+    }
+
+    pub fn init(alloc: std.mem.Allocator) !VkAllocator {
+        const user_data = try alloc.create(VkAllocator.UserData);
+        errdefer alloc.destroy(user_data);
+
+        user_data.* = UserData {
+            .alloc = alloc,
+        };
+
+        return VkAllocator {
+            .user_data = user_data,
+        };
+    }
+
+    pub fn vk_callbacks(self: *const VkAllocator) c.VkAllocationCallbacks {
+        return c.VkAllocationCallbacks {
+            .pUserData = @ptrCast(self.user_data),
+            .pfnAllocation = VkAllocator.alloc_fn,
+            .pfnReallocation = VkAllocator.realloc_fn,
+            .pfnFree = VkAllocator.free_fn,
+            .pfnInternalAllocation = VkAllocator.internal_alloc_notif_fn,
+            .pfnInternalFree = VkAllocator.internal_free_notif_fn,
+        };
+    }
+
+    fn cast_user_data(ptr: ?*anyopaque) ?*UserData {
+        return @ptrCast(ptr);
+    }
+
+    pub fn alloc_fn(pUserData: ?*anyopaque, size: usize, alignment: usize, allocationScope: c.VkSystemAllocationScope) callconv(.c) ?*anyopaque {
+        _ = allocationScope;
+
+        const user_data = cast_user_data(pUserData) orelse return null;
+        if (!std.math.isPowerOfTwo(alignment)) { return null; }
+
+        const allocation = user_data.alloc.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(alignment), size) catch |err| {
+            std.log.err("VkAllocator: Unable to allocate memory: {}", .{err});
+            return null;
+        };
+        return @ptrCast(allocation.ptr);
+    }
+
+    pub fn realloc_fn(pUserData: ?*anyopaque, pOriginal: ?*anyopaque, size: usize, alignment: usize, allocationScope: c.VkSystemAllocationScope) callconv(.c) ?*anyopaque {
+        const user_data = cast_user_data(pUserData) orelse return null;
+        if (!std.math.isPowerOfTwo(alignment)) { return null; }
+
+        if (pOriginal == null) {
+            return alloc_fn(pUserData, size, alignment, allocationScope);
+        } else {
+            const new_allocation = user_data.alloc.realloc(@as([*]u8, @ptrCast(pOriginal.?)), size) catch |err| {
+                std.log.err("VkAllocator: Unable to reallocate memory: {}", .{err});
+                return null;
+            };
+            return @ptrCast(new_allocation.ptr);
+        }
+    }
+
+    pub fn free_fn(pUserData: ?*anyopaque, pMemory: ?*anyopaque) callconv(.c) void {
+        const user_data = cast_user_data(pUserData) orelse return;
+        if (pMemory == null) { return; }
+        user_data.alloc.free(@as([*]u8, @ptrCast(pMemory.?)));
+    }
+
+    pub fn internal_alloc_notif_fn(pUserData: ?*anyopaque, size: usize, allocationType: c.VkInternalAllocationType, allocationScope: c.VkSystemAllocationScope) callconv(.c) void {
+        _ = pUserData;
+        _ = size;
+        _ = allocationType;
+        _ = allocationScope;
+    }
+
+    pub fn internal_free_notif_fn(pUserData: ?*anyopaque, size: usize, allocationType: c.VkInternalAllocationType, allocationScope: c.VkSystemAllocationScope) callconv(.c) void {
+        _ = pUserData;
+        _ = size;
+        _ = allocationType;
+        _ = allocationScope;
+    }
+};
+
+// Vk device memory allocator using a 'Buddy' Memory Allocation scheme
+const VkDeviceMemoryAllocator = struct {
+    const Self = @This();
+
+    pub const AllocationHandle = struct {
+        memory_group_id: u32,
+        binary_path: BTree.Path,
+        allocation_size: u32,
+    };
+
+    const BTree = struct {
+        pub const Path = packed struct (u32) {
+            const max_len = 24;
+            path: u24,
+            len: u8,
+        };
+
+        pub const Node = struct {
+            pub const Direction = enum (u1) { Left = 0, Right = 1 };
+
+            left: ?*Node = null,
+            right: ?*Node = null,
+
+            allocation: ?u32 = null,
+
+            pub fn deinit(self: *BTree.Node, alloc: std.mem.Allocator) void {
+                std.debug.assert(self.allocation == null);
+                self.destroy_child(alloc, .Left);
+                self.destroy_child(alloc, .Right);
+            }
+
+            pub fn create_child(self: *BTree.Node, alloc: std.mem.Allocator, dir: Direction) !void {
+                if ((if (dir == .Left) self.left else self.right) != null) { return error.NodeIsNotNull; }
+                const new_node = try alloc.create(BTree.Node);
+                (if (dir == .Left) self.left else self.right) = new_node;
+            }
+
+            pub fn destroy_child(self: *BTree.Node, alloc: std.mem.Allocator, dir: Direction) void {
+                if (if (dir == .Left) self.left else self.right) |node| {
+                    node.deinit(alloc);
+                    alloc.destroy(node);
+                }
+                (if (dir == .Left) self.left else self.right) = null;
+            }
+        };
+
+        alloc: std.mem.Allocator,
+        root_node: Node,
+
+        pub fn deinit(self: *BTree) void {
+            self.root_node.deinit(self.alloc);
+        }
+
+        pub fn init(alloc: std.mem.Allocator) !BTree {
+            return BTree{
+                .alloc = alloc,
+                .root_node = .{},
+            };
+        }
+
+        pub fn navigate_to_path(self: *BTree, path: BTree.Path) !*BTree.Node {
+            var node: *BTree.Node = &self.root_node;
+            for (0..path.len) |bit| {
+                if (node.allocation != null) { return error.AllocationBlocksPath; }
+
+                if (if (path.path & bit) node.left else node.right) |next_node| {
+                    node = next_node;
+                } else {
+                    return error.NodeAtPathDoesNotExist;
+                }
+            }
+            return node;
+        }
+
+        pub fn create_node_at_path(self: *BTree, path: BTree.Path) !*BTree.Node {
+            // if creating a node fails somewhere in the chain we want to return the b-tree to the state it was previously.
+            // store the 'root' of the new branch and deinit this if a error occurs.
+            var new_node_root: ?struct { *BTree.Node, BTree.Node.Direction } = null;
+            errdefer if (new_node_root) |pair| { pair.@"0".destroy_child(self.alloc, pair.@"1"); };
+
+            // handle path.len == 0 case by checking if an allocation exists in the root node
+            if (self.root_node.allocation != null) { return error.AllocationBlocksPath; }
+
+            var node: *BTree.Node = &self.root_node;
+            for (0..path.len) |bit| {
+                if (node.allocation != null) { return error.AllocationBlocksPath; }
+
+                if (if (path.path & bit) node.left else node.right) |next_node| {
+                    node = next_node;
+                } else {
+                    const new_node = try self.alloc.create(BTree.Node);
+                    (if (path.path & bit) node.left else node.right) = new_node;
+                    if (new_node_root == null) { new_node_root = .{ node, if (path.path & bit) .Left else .Right }; }
+                    node = new_node;
+                }
+            }
+            return node;
+        }
+    };
+
+    const MemoryGroup = struct {
+        vk_device_memory: c.VkDeviceMemory,
+        vk_memory_type_index: u32,
+        memory_group_size: u32,
+        b_tree: BTree,
+
+        pub fn deinit(self: *MemoryGroup) void {
+            self.b_tree.deinit();
+            c.vkFreeMemory(eng.get().gfx.platform.device, self.vk_device_memory, null);
+        }
+
+        pub fn init(memory_group_size: u32, memory_type_index: u32) !MemoryGroup {
+            if (!std.math.isPowerOfTwo(memory_group_size)) { return error.MemoryGroupSizeMustBePowerOfTwo; }
+
+            const b_tree = try BTree.init();
+            errdefer b_tree.deinit();
+
+            const memory_allocate_info = c.VkMemoryAllocateInfo {
+                .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = memory_group_size,
+                .memoryTypeIndex = memory_type_index,
+            };
+
+            var vk_device_memory: c.VkDeviceMemory = undefined;
+            try vkt(c.vkAllocateMemory(GfxStateVulkan.get().device, &memory_allocate_info, null, &vk_device_memory));
+            errdefer c.vkFreeMemory(eng.get().gfx.platform.device, vk_device_memory, null);
+
+            return MemoryGroup {
+                .vk_device_memory = vk_device_memory,
+                .vk_memory_type_index = memory_type_index,
+                .memory_group_size = memory_group_size,
+                .b_tree = b_tree,
+            };
+        }
+
+        pub fn allocate(self: *MemoryGroup, allocation_size: u32) !BTree.Path {
+            // find free node
+            const al: u32 = @intFromFloat(@floor(std.math.log2(@as(f32, @floatFromInt(allocation_size)))));
+            const ml = std.math.log2(self.memory_group_size);
+            const level = @min(ml - al, BTree.Path.max_len);
+
+            for (0..std.math.pow(2, level)) |i| {
+                const path = BTree.Path{ .path = @intCast(i), .len = level, };
+                const node = self.b_tree.create_node_at_path(path) catch |err| {
+                    if (err == error.AllocationBlocksPath) { continue; }
+                    else { return err; }
+                };
+                node.allocation = allocation_size;
+                return path;
+            }
+            return error.MemoryGroupIsFull;
+        }
+
+        pub fn deallocate(self: *MemoryGroup, allocation: AllocationHandle) !void {
+            _ = self;
+            _ = allocation;
+            // TODO
+        }
+    };
+
+    memory_groups: std.ArrayList(MemoryGroup),
+
+    pub fn deinit(self: *Self) void {
+        if (self.memory_groups.items.len > 0) {
+            std.log.warn("Not all memory groups have been cleared", .{});
+        }
+        for (self.memory_groups.items) |*group| {
+            group.deinit();
+        }
+        self.memory_groups.deinit(eng.get().general_allocator);
+    }
+
+    pub fn allocate(self: *VkDeviceMemoryAllocator, allocation_size: u32, memory_type_index: u32) !AllocationHandle {
+        if (allocation_size == 0) { return error.AllocationSizeMustNotBeZero; }
+
+        for (self.memory_groups.items, 0..) |*group, group_idx| {
+            if (group.vk_memory_type_index == memory_type_index) {
+                const allocation_path = group.allocate(allocation_size) catch { continue; };
+                return AllocationHandle {
+                    .memory_group_id = group_idx,
+                    .binary_path = allocation_path,
+                    .allocation_size = allocation_size,
+                };
+            }
+        }
+        
+        const memory_group_size = std.math.pow(2, 24);
+        std.debug.assert(allocation_size < memory_group_size);
+
+        const new_memory_group = try MemoryGroup.init(memory_group_size, memory_type_index);
+        errdefer new_memory_group.deinit();
+
+        const path = try new_memory_group.allocate(allocation_size);
+
+        try self.memory_groups.append(eng.get().general_allocator, new_memory_group);
+
+        return AllocationHandle {
+            .memory_group_id = self.memory_groups.items.len - 1,
+            .binary_path = path,
+            .allocation_size = allocation_size,
+        };
+    }
+
+    pub fn deallocate(self: *VkDeviceMemoryAllocator, allocation: AllocationHandle) !void {
+        _ = self;
+        _ = allocation;
+        // TODO
     }
 };
 

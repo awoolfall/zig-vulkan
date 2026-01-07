@@ -343,7 +343,7 @@ pub const GfxState = struct {
 
     pub fn window_resized(self: *Self, new_width: u32, new_height: u32) void {
         self.flush();
-        self.platform.resize_swapchain(@max(new_width, 1), @max(new_height, 1));
+        self.platform.resize_swapchain(@max(new_width, 1), @max(new_height, 1)) catch unreachable;
     }
 
     pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
