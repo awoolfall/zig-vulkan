@@ -1835,7 +1835,7 @@ pub const ImageVulkan = struct {
         };
 
         if (data) |d| {
-            const buffer_length = info.width * info.height * info.array_length * info.format.byte_width();
+            const buffer_length = info.width * info.height * info.depth * info.array_length * info.format.byte_width();
             const staging_buffer = try BufferVulkan.init_staging(@intCast(buffer_length));
             defer staging_buffer.deinit();
 
@@ -1872,7 +1872,7 @@ pub const ImageVulkan = struct {
                         .imageExtent = .{
                             .width = info.width,
                             .height = info.height,
-                            .depth = 1,
+                            .depth = info.depth,
                         }
                     };
 
