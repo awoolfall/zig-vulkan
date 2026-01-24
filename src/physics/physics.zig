@@ -99,8 +99,10 @@ pub const PhysicsSystem = struct {
         zphy.deinit();
     }
 
-    pub fn update(self: *Self) void {
-        const entity_list = &eng.get().entities;
+    pub fn update(
+        self: *Self,
+        components_query_iterator: eng.ecs.GenericQueryIterator(.{ eng.entity.TransformComponent, eng.entity.PhysicsComponent })
+    ) void {
         const time = &eng.get().time;
 
         // find out how many times we need to update to hit UpdateRateHz
@@ -111,34 +113,38 @@ pub const PhysicsSystem = struct {
 
         if (times_to_update >= 1) {
             { // TODO: Speed: change this to only update when something has changed. Hash?
-                var entity_iter = entity_list.list.iterator();
                 const body_interface = self.zphy.getBodyInterfaceMut();
-                while (entity_iter.next()) |entity| {
-                    switch (entity.physics.runtime_data) {
+
+                components_query_iterator.reset();
+                while (components_query_iterator.next()) |components| {
+                    const entity_transform: *eng.entity.TransformComponent,
+                    const entity_physics: *eng.entity.PhysicsComponent = components;
+
+                    switch (entity_physics.runtime_data) {
                         .None => {
-                            entity.physics.last_frame_data.position = entity.transform.position;
-                            entity.physics.last_frame_data.rotation = entity.transform.rotation;
+                            entity_physics.last_frame_data.position = entity_transform.transform.position;
+                            entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
                         },
                         .Body => |body| {
-                            body_interface.setPosition(body.id, zm.vecToArr3(entity.transform.position), .dont_activate);
-                            body_interface.setRotation(body.id, entity.transform.rotation, .activate);
+                            body_interface.setPosition(body.id, zm.vecToArr3(entity_transform.transform.position), .dont_activate);
+                            body_interface.setRotation(body.id, entity_transform.transform.rotation, .activate);
 
-                            entity.physics.last_frame_data.position = zm.loadArr3(body_interface.getPosition(body.id));
-                            entity.physics.last_frame_data.rotation = zm.loadArr4(body_interface.getRotation(body.id));
+                            entity_physics.last_frame_data.position = zm.loadArr3(body_interface.getPosition(body.id));
+                            entity_physics.last_frame_data.rotation = zm.loadArr4(body_interface.getRotation(body.id));
                         },
                         .Character => |character| {
-                            character.character.setPosition(zm.vecToArr3(entity.transform.position));
+                            character.character.setPosition(zm.vecToArr3(entity_transform.transform.position));
                             //character.character.setRotation(entity.transform.rotation);
 
-                            entity.physics.last_frame_data.position = zm.loadArr3(character.character.getPosition());
-                            entity.physics.last_frame_data.rotation = entity.transform.rotation;
+                            entity_physics.last_frame_data.position = zm.loadArr3(character.character.getPosition());
+                            entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
                         },
                         .CharacterVirtual => |character| {
-                            character.virtual.setPosition(zm.vecToArr3(entity.transform.position));
+                            character.virtual.setPosition(zm.vecToArr3(entity_transform.transform.position));
                             //character.virtual.setRotation(entity.transform.rotation);
 
-                            entity.physics.last_frame_data.position = zm.loadArr3(character.virtual.getPosition());
-                            entity.physics.last_frame_data.rotation = entity.transform.rotation;
+                            entity_physics.last_frame_data.position = zm.loadArr3(character.virtual.getPosition());
+                            entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
                         },
                     }
                 }
@@ -154,16 +160,19 @@ pub const PhysicsSystem = struct {
 
                 // After physics update set all entity transforms to match physics bodies
 
-                var entity_iter = entity_list.list.iterator();
-                while (entity_iter.next()) |e| {
-                    switch (e.physics.runtime_data) {
+                components_query_iterator.reset();
+                while (components_query_iterator.next()) |components| {
+                    _,
+                    const entity_physics: *eng.entity.PhysicsComponent = components;
+
+                    switch (entity_physics.runtime_data) {
                         .None => {}, 
                         .Body => |_| {},
                         .Character => |character| {
                             character.character.postSimulation(0.1, true);
                         },
                         .CharacterVirtual => |character| {
-                            const extended_update_settings = switch (e.physics.settings) {
+                            const extended_update_settings = switch (entity_physics.settings) {
                                 .CharacterVirtual => |v| v.extended_update_settings,
                                 else => null
                             };
@@ -206,19 +215,22 @@ pub const PhysicsSystem = struct {
             self.last_update_time_offset = @mod(ns_since_last_update, UpdateRateNs);
 
             // update entity transforms to match updated physics
-            var entity_iter = entity_list.list.iterator();
-            while (entity_iter.next()) |e| {
-                switch (e.physics.runtime_data) {
+            components_query_iterator.reset();
+            while (components_query_iterator.next()) |components| {
+                const entity_transform: *eng.entity.TransformComponent,
+                const entity_physics: *eng.entity.PhysicsComponent = components;
+                
+                switch (entity_physics.runtime_data) {
                     .None => {}, 
                     .Body => |body| {
-                        e.transform.position = zm.loadArr3(body_interface.getPosition(body.id));
-                        e.transform.rotation = zm.loadArr4(body_interface.getRotation(body.id));
+                        entity_transform.transform.position = zm.loadArr3(body_interface.getPosition(body.id));
+                        entity_transform.transform.rotation = zm.loadArr4(body_interface.getRotation(body.id));
                     },
                     .Character => |character| {
-                        e.transform.position = zm.loadArr3(character.character.getPosition());
+                        entity_transform.transform.position = zm.loadArr3(character.character.getPosition());
                     },
                     .CharacterVirtual => |character| {
-                        e.transform.position = zm.loadArr3(character.virtual.getPosition());
+                        entity_transform.transform.position = zm.loadArr3(character.virtual.getPosition());
                     },
                 }
             }

@@ -18,6 +18,7 @@ pub const image = @import("engine/image.zig");
 pub const entity = @import("engine/entity.zig");
 pub const gen = @import("engine/gen_list.zig");
 pub const Transform = @import("engine/transform.zig");
+pub const ecs = @import("engine/ecs.zig");
 
 pub const camera = @import("engine/camera.zig");
 pub const path = @import("engine/path.zig");

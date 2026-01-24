@@ -98,7 +98,9 @@ fn serialize_array(comptime Type: type, alloc: std.mem.Allocator, value: Type, a
     return std.json.Value { .array = array };
 }
 
-pub fn deserialize_value(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value) !Type {
+pub fn deserialize_value(comptime Type: type, alloc: std.mem.Allocator, maybe_value: ?std.json.Value) !Type {
+    const value = maybe_value orelse return error.MissingRequiredField;
+
     switch (Type) {
         void => switch (value) { .object => {}, else => return error.InvalidType, },
         bool => switch (value) { .bool => |b| return b, else => return error.InvalidType, },

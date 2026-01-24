@@ -1,5 +1,6 @@
 const std = @import("std");
 const App = @import("app");
+const eng = @import("self");
 
 const znoise = @import("znoise");
 const zmesh = @import("zmesh");
@@ -25,9 +26,8 @@ const wd = @import("window.zig");
 const Self = @This();
 const Log = std.log.scoped(.Engine);
 
-pub const EntitySuperStruct = entity.EntitySuperStruct;
-pub const EntityDescriptor = entity.EntityDescriptor;
-pub const EntityList = entity.EntityList;
+const EntityComponentsTuple = entity.StandardEntityComponents ++ App.EntityComponents;
+const AppEcsSystem = eng.ecs.EcsSystem(EntityComponentsTuple);
 
 window: platform.Window,
 gfx: gf.GfxState,
@@ -39,7 +39,7 @@ debug: db.Debug,
 imui: Imui,
 asset_manager: assets.AssetManager,
 app: *App,
-entities: EntityList,
+ecs: AppEcsSystem,
 exe_path: []u8,
 
 general_allocator: std.mem.Allocator,
@@ -64,7 +64,7 @@ pub export fn deinit(self: *Self) void {
     defer self.imui.deinit();
     defer self.debug.deinit();
     defer self.physics.deinit();
-    defer self.entities.deinit();
+    defer self.ecs.deinit();
 
     defer self.asset_manager.unload_asset_pack(self.core_asset_pack_id) catch |err| {
         std.log.err("Unable to unload core asset pack: {}", .{err});
@@ -139,8 +139,8 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.physics = try ph.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager);
     errdefer engine.physics.deinit();
 
-    engine.entities = try EntityList.init(engine.general_allocator);
-    errdefer engine.entities.deinit();
+    engine.ecs = try AppEcsSystem.init(engine.general_allocator);
+    errdefer engine.ecs.deinit();
 
     // load core assets
     var core_asset_pack = blk: {
@@ -190,7 +190,8 @@ fn pre_app_update(self: *Self) !void {
     self.imui.end_frame();
 
     // Update physics
-    self.physics.update();
+    var physics_iter = self.ecs.query_iterator(.{ eng.entity.TransformComponent, eng.entity.PhysicsComponent });
+    self.physics.update(physics_iter.create_generic_iterator());
 }
 
 fn window_event_received(engine_void_ptr: *anyopaque, event: wd.WindowEvent) void {
