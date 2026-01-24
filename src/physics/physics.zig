@@ -17,8 +17,9 @@ const DebugRenderer = if (debug_renderer_enabled()) @import("physics_debug_rende
 
 pub const PhysicsSystem = struct {
     const Self = @This();
-    const UpdateRateHz = 60.0;
-    const UpdateRateNs: u64 = std.time.ns_per_s / @as(u64, @intFromFloat(60.0));
+    pub const UpdateRateHz = 15;
+    pub const UpdateRateS = (1.0 / @as(comptime_float, @floatFromInt(UpdateRateHz)));
+    pub const UpdateRateNs = @divFloor(std.time.ns_per_s, UpdateRateHz);
 
     _allocator: std.mem.Allocator,
     _interfaces: struct {
@@ -103,67 +104,63 @@ pub const PhysicsSystem = struct {
         const time = &eng.get().time;
 
         // find out how many times we need to update to hit UpdateRateHz
-        const ns_since_with_offset = time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
-        const times_to_update = ns_since_with_offset / UpdateRateNs;
+        const ns_since_last_update = time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
+        const times_to_update = @divFloor(ns_since_last_update, UpdateRateNs);
+        
+        const physics_delta_time: f32 = UpdateRateS * @as(f32, @floatCast(eng.get().time.time_scale));
 
-        // if we haven't hit UpdateRateHz yet, return
-        if (times_to_update == 0) {
-            return;
-        }
-
-        // update last_update_time and last_update_time_offset
-        // last_update_time_offset accounts for the portion of time between the 
-        // last sub-frame physics update and the actual frame time 
-        self.last_update_time = time.frame_start_time;
-        self.last_update_time_offset = ns_since_with_offset - (times_to_update * UpdateRateNs);
-
-        { // TODO: Speed: change this to only update when something has changed. Hash?
-            var entity_iter = entity_list.list.iterator();
-            const body_interface = self.zphy.getBodyInterfaceMut();
-            while (entity_iter.next()) |entity| {
-                switch (entity.physics.runtime_data) {
-                    .None => {},
-                    .Body => |body| {
-                        body_interface.setPosition(body.id, zm.vecToArr3(entity.transform.position), .dont_activate);
-                        body_interface.setRotation(body.id, entity.transform.rotation, .activate);
-                    },
-                    .Character => |character| {
-                        character.character.setPosition(zm.vecToArr3(entity.transform.position));
-                        //character.character.setRotation(entity.transform.rotation);
-                    },
-                    .CharacterVirtual => |character| {
-                        character.virtual.setPosition(zm.vecToArr3(entity.transform.position));
-                        //character.virtual.setRotation(entity.transform.rotation);
-                    },
-                }
-            }
-        }
-
-        const delta_time: f32 = (1.0 / UpdateRateHz) * @as(f32, @floatCast(eng.get().time.time_scale));
-
-        // Update at UpdateRateHz, this may happen zero or more than one times before returning
-        for (0..@intCast(times_to_update)) |_| {
-            // Run physics update
-            self.zphy.update(delta_time, .{}) 
-                catch std.log.err("Unable to update physics", .{});
-
-            // After physics update set all entity transforms to match physics bodies
-            const body_interface = self.zphy.getBodyInterface();
-            for (entity_list.list.data.items) |*it| {
-                if (it.item_data) |*e| {
-                    switch (e.physics.runtime_data) {
-                        .None => {},
+        if (times_to_update >= 1) {
+            { // TODO: Speed: change this to only update when something has changed. Hash?
+                var entity_iter = entity_list.list.iterator();
+                const body_interface = self.zphy.getBodyInterfaceMut();
+                while (entity_iter.next()) |entity| {
+                    switch (entity.physics.runtime_data) {
+                        .None => {
+                            entity.physics.last_frame_data.position = entity.transform.position;
+                            entity.physics.last_frame_data.rotation = entity.transform.rotation;
+                        },
                         .Body => |body| {
-                            const pos = body_interface.getPosition(body.id);
-                            e.transform.position = zm.f32x4(pos[0], pos[1], pos[2], 1.0);
-                            e.transform.rotation = body_interface.getRotation(body.id);
+                            body_interface.setPosition(body.id, zm.vecToArr3(entity.transform.position), .dont_activate);
+                            body_interface.setRotation(body.id, entity.transform.rotation, .activate);
+
+                            entity.physics.last_frame_data.position = zm.loadArr3(body_interface.getPosition(body.id));
+                            entity.physics.last_frame_data.rotation = zm.loadArr4(body_interface.getRotation(body.id));
                         },
                         .Character => |character| {
-                            character.character.postSimulation(0.1, true);
+                            character.character.setPosition(zm.vecToArr3(entity.transform.position));
+                            //character.character.setRotation(entity.transform.rotation);
 
-                            const pos = character.character.getPosition();
-                            e.transform.position = zm.loadArr3(pos);
-                            //e.transform.rotation = character.getRotation();
+                            entity.physics.last_frame_data.position = zm.loadArr3(character.character.getPosition());
+                            entity.physics.last_frame_data.rotation = entity.transform.rotation;
+                        },
+                        .CharacterVirtual => |character| {
+                            character.virtual.setPosition(zm.vecToArr3(entity.transform.position));
+                            //character.virtual.setRotation(entity.transform.rotation);
+
+                            entity.physics.last_frame_data.position = zm.loadArr3(character.virtual.getPosition());
+                            entity.physics.last_frame_data.rotation = entity.transform.rotation;
+                        },
+                    }
+                }
+            }
+
+            const body_interface = self.zphy.getBodyInterface();
+
+            // Update at UpdateRateHz, this may happen zero or more than one times before returning
+            for (0..@intCast(times_to_update)) |_| {
+                // Run physics update
+                self.zphy.update(physics_delta_time, .{}) 
+                    catch std.log.err("Unable to update physics", .{});
+
+                // After physics update set all entity transforms to match physics bodies
+
+                var entity_iter = entity_list.list.iterator();
+                while (entity_iter.next()) |e| {
+                    switch (e.physics.runtime_data) {
+                        .None => {}, 
+                        .Body => |_| {},
+                        .Character => |character| {
+                            character.character.postSimulation(0.1, true);
                         },
                         .CharacterVirtual => |character| {
                             const extended_update_settings = switch (e.physics.settings) {
@@ -174,7 +171,7 @@ pub const PhysicsSystem = struct {
                             // Run update for virtual character
                             if (extended_update_settings) |ext| {
                                 character.virtual.extendedUpdate(
-                                    delta_time,
+                                    physics_delta_time,
                                     self.zphy.getGravity(),
                                     &ext,
                                     .{
@@ -183,7 +180,7 @@ pub const PhysicsSystem = struct {
                                 );
                             } else {
                                 character.virtual.update(
-                                    delta_time,
+                                    physics_delta_time,
                                     self.zphy.getGravity(),
                                     .{
                                         .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
@@ -191,19 +188,74 @@ pub const PhysicsSystem = struct {
                                 );
                             }
 
-                            const pos = character.virtual.getPosition();
+                            const new_pos = character.virtual.getPosition();
+
                             if (character.character) |c| {
-                                c.setPosition(pos);
+                                c.setPosition(new_pos);
                                 c.postSimulation(0.05, true);
                             }
-
-                            e.transform.position = zm.loadArr3(pos);
-                            e.transform.rotation = character.virtual.getRotation();
                         },
                     }
                 }
             }
+
+            // update last_update_time and last_update_time_offset
+            // last_update_time_offset accounts for the portion of time between the 
+            // last sub-frame physics update and the actual frame time 
+            self.last_update_time = time.frame_start_time;
+            self.last_update_time_offset = @mod(ns_since_last_update, UpdateRateNs);
+
+            // update entity transforms to match updated physics
+            var entity_iter = entity_list.list.iterator();
+            while (entity_iter.next()) |e| {
+                switch (e.physics.runtime_data) {
+                    .None => {}, 
+                    .Body => |body| {
+                        e.transform.position = zm.loadArr3(body_interface.getPosition(body.id));
+                        e.transform.rotation = zm.loadArr4(body_interface.getRotation(body.id));
+                    },
+                    .Character => |character| {
+                        e.transform.position = zm.loadArr3(character.character.getPosition());
+                    },
+                    .CharacterVirtual => |character| {
+                        e.transform.position = zm.loadArr3(character.virtual.getPosition());
+                    },
+                }
+            }
         }
+    }
+
+    pub fn calculate_entity_visual_transform(self: *const Self, entity: *eng.entity.EntitySuperStruct) Transform {
+        // update positions and rotations of all entities based on current physics info
+        const ns_since_last_update = eng.get().time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
+        const offset_seconds = @as(f32, @floatFromInt(ns_since_last_update)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+
+        const body_interface = self.zphy.getBodyInterface();
+        const pos, const rot = switch (entity.physics.runtime_data) {
+            .None => .{
+                entity.transform.position,
+                entity.transform.rotation,
+            },
+            .Body => |body| .{ 
+                zm.loadArr3(body_interface.getPosition(body.id)),
+                zm.loadArr4(body_interface.getRotation(body.id)),
+            },
+            .Character => |character| .{
+                zm.loadArr3(character.character.getPosition()),
+                entity.transform.rotation, // TODO add binding for jolt character GetRotation
+            },
+            .CharacterVirtual => |character_virtual| .{
+                zm.loadArr3(character_virtual.virtual.getPosition()),
+                entity.transform.rotation, // TODO add binding for jolt character GetRotation
+            },
+        };
+
+        const t = offset_seconds / UpdateRateS;
+        return Transform {
+            .position = zm.lerp(entity.physics.last_frame_data.position, pos, t),
+            .rotation = zm.slerp(entity.physics.last_frame_data.rotation, rot, t),
+            .scale = entity.transform.scale,
+        };
     }
 
     pub fn debug_draw_bodies(self: *Self, cmd: *_gfx.CommandBuffer, projection: zm.Mat, view: zm.Mat) void {

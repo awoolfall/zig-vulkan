@@ -196,6 +196,11 @@ pub const EntityPhysics = struct {
     settings: PhysicsSettings = .{ .None = {} },
     runtime_data: PhysicsRuntimeData = .{ .None = {} },
 
+    last_frame_data: struct {
+        position: zm.F32x4 = zm.f32x4s(0.0),
+        rotation: zm.F32x4 = zm.qidentity(),
+    } = .{},
+
     pub fn deinit(self: *Self) void {
         self.deinit_runtime_data();
     }
