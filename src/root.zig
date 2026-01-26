@@ -35,6 +35,10 @@ pub const window = @import("window.zig");
 
 pub const serialize = @import("serialize/serialize.zig");
 
+const App = @import("app");
+const EntityComponentsTuple = entity.StandardEntityComponents ++ App.EntityComponents;
+pub const AppEcsSystem = ecs.EcsSystem(EntityComponentsTuple);
+
 pub fn get() *Engine {
     return @import("global_engine.zig").__global_engine;
 }

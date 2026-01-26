@@ -11,9 +11,9 @@ const sr = eng.serialize;
 
 pub const StandardEntityComponents = .{
     SerializationComponent,
-    NameComponent,
     TransformComponent,
     PhysicsComponent,
+    ModelComponent,
 };
 
 pub const SerializationComponent = struct {
@@ -23,7 +23,8 @@ pub const SerializationComponent = struct {
         _ = self;
     }
 
-    pub fn init() !SerializationComponent {
+    pub fn init(alloc: std.mem.Allocator) !SerializationComponent {
+        _ = alloc;
         return .{};
     }
 
@@ -31,7 +32,7 @@ pub const SerializationComponent = struct {
         var object = std.json.ObjectMap.init(alloc);
         errdefer object.deinit();
 
-        try object.put("serialize_id", try sr.serialize_value(u32, alloc, value.serialize_id));
+        try object.put("serialize_id", try sr.serialize_value(u32, alloc, value.serialize_id orelse return error.SerializeIdWasNull));
 
         return std.json.Value { .object = object };
     }
@@ -44,41 +45,25 @@ pub const SerializationComponent = struct {
 
         return component;
     }
-};
 
-pub const NameComponent = struct {
-    name: ?[]const u8 = null,
+    pub fn editor_ui(imui: *eng.ui, component: *SerializationComponent, key: anytype) !void {
+        const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
+        defer imui.pop_layout();
 
-    pub fn deinit(self: *NameComponent) void {
-        _ = self;
-    }
+        if (imui.get_widget(outer_layout)) |w| {
+            w.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false };
+        }
 
-    pub fn init() !NameComponent {
-        return .{};
-    }
+        {
+            _ = imui.push_form_layout_item(key ++ .{@src()});
+            defer imui.pop_layout();
 
-    pub fn serialize(alloc: std.mem.Allocator, value: NameComponent) !std.json.Value {
-        var object = std.json.ObjectMap.init(alloc);
-        errdefer object.deinit();
-
-        try object.put("name", try sr.serialize_value(?[]const u8, alloc, value.name));
-
-        return std.json.Value { .object = object };
-    }
-
-    pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !NameComponent {
-        var component: NameComponent = .{};
-        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
-
-        if (object.get("name")) |v| blk: { component.name = sr.deserialize_value(?[]const u8, alloc, v) catch break :blk; }
-
-        return component;
-    }
-
-    pub fn set_name(self: *NameComponent, name: ?[]const u8) !void {
-        if (self.name) |n| { eng.get().general_allocator.free(n); }
-        self.name = null;
-        if (name) |n| { self.name = try eng.get().general_allocator.dupe(u8, n); }
+            _ = eng.ui.widgets.label.create(imui, "serialization id: ");
+            const serialization_id_string = if (component.serialize_id) |serialization_id|
+                try std.fmt.allocPrint(imui.widget_allocator(), "{}", .{serialization_id})
+                else "TBD on next save";
+            _ = eng.ui.widgets.label.create(imui, serialization_id_string);
+        }
     }
 };
 
@@ -89,7 +74,8 @@ pub const TransformComponent = struct {
         _ = self;
     }
 
-    pub fn init() !TransformComponent {
+    pub fn init(alloc: std.mem.Allocator) !TransformComponent {
+        _ = alloc;
         return .{};
     }
 
@@ -109,6 +95,184 @@ pub const TransformComponent = struct {
         if (object.get("transform")) |v| blk: { component.transform = sr.deserialize_value(Transform, alloc, v) catch break :blk; }
 
         return component;
+    }
+
+    pub fn editor_ui(imui: *eng.ui, component: *TransformComponent, key: anytype) !void {
+        const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
+        defer imui.pop_layout();
+
+        if (imui.get_widget(outer_layout)) |w| {
+            w.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false };
+        }
+
+        {
+            _ = imui.push_form_layout_item(.{@src()});
+            defer imui.pop_layout();
+
+            _ = eng.ui.widgets.label.create(imui, "position: ");
+            _ = eng.ui.widgets.number_slider.create(imui, &component.transform.position[0], .{}, key ++ .{@src()});
+            _ = eng.ui.widgets.number_slider.create(imui, &component.transform.position[1], .{}, key ++ .{@src()});
+            _ = eng.ui.widgets.number_slider.create(imui, &component.transform.position[2], .{}, key ++ .{@src()});
+        }
+        {
+            _ = imui.push_form_layout_item(.{@src()});
+            defer imui.pop_layout();
+
+            _ = eng.ui.widgets.label.create(imui, "rotation: ");
+            var rot = zm.loadArr3(zm.quatToRollPitchYaw(component.transform.rotation)) * zm.f32x4s(180.0 / std.math.pi);
+            const rx = eng.ui.widgets.number_slider.create(imui, &rot[0], .{}, key ++ .{@src()});
+            const ry = eng.ui.widgets.number_slider.create(imui, &rot[1], .{}, key ++ .{@src()});
+            const rz = eng.ui.widgets.number_slider.create(imui, &rot[2], .{}, key ++ .{@src()});
+
+            if (rx.data_changed or ry.data_changed or rz.data_changed) {
+                rot = rot * zm.f32x4s(std.math.pi / 180.0);
+                component.transform.rotation = zm.quatFromRollPitchYawV(rot);
+            }
+        }
+        {
+            _ = imui.push_form_layout_item(.{@src()});
+            defer imui.pop_layout();
+
+            _ = eng.ui.widgets.label.create(imui, "scale: ");
+            _ = eng.ui.widgets.number_slider.create(imui, &component.transform.scale[0], .{}, key ++ .{@src()});
+            _ = eng.ui.widgets.number_slider.create(imui, &component.transform.scale[1], .{}, key ++ .{@src()});
+            _ = eng.ui.widgets.number_slider.create(imui, &component.transform.scale[2], .{}, key ++ .{@src()});
+        }
+    }
+};
+
+pub const ModelComponent = struct {
+    model: ?as.ModelAssetId = null,
+
+    pub fn deinit(self: *ModelComponent) void {
+        _ = self;
+    }
+
+    pub fn init(alloc: std.mem.Allocator) !ModelComponent {
+        _ = alloc;
+        return .{};
+    }
+
+    pub fn serialize(alloc: std.mem.Allocator, value: ModelComponent) !std.json.Value {
+        var object = std.json.ObjectMap.init(alloc);
+        errdefer object.deinit();
+
+        try object.put("model", try sr.serialize_value(?as.ModelAssetId, alloc, value.model));
+
+        return std.json.Value { .object = object };
+    }
+
+    pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !ModelComponent {
+        var component: ModelComponent = .{};
+        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
+
+        if (object.get("model")) |v| blk: { component.model = sr.deserialize_value(?as.ModelAssetId, alloc, v) catch break :blk; }
+
+        return component;
+    }
+
+    pub fn editor_ui(imui: *eng.ui, component: *ModelComponent, key: anytype) !void {
+        const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
+        defer imui.pop_layout();
+
+        if (imui.get_widget(outer_layout)) |w| {
+            w.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false };
+        }
+
+        {
+            _ = imui.push_form_layout_item(key ++ .{@src()});
+            defer imui.pop_layout();
+
+            _ = eng.ui.widgets.label.create(imui, "model: ");
+
+            const model_combobox = eng.ui.widgets.combobox.create(imui, key ++ .{@src()});
+            if (model_combobox.init) {
+                std.log.info("model combobox init", .{});
+
+                const model_combobox_data, _ = imui.get_widget_data(eng.ui.widgets.combobox.ComboBoxState, model_combobox.id) catch unreachable;
+                model_combobox_data.default_text = imui.widget_allocator().dupe(u8, "None") catch unreachable;
+                model_combobox_data.can_be_default = true;
+
+                var model_names = get_all_model_names(eng.get().frame_allocator) catch unreachable;
+                defer model_names.deinit();
+
+                for (model_names.names) |option| {
+                    model_combobox_data.append_option(imui.widget_allocator(), option) catch |err| {
+                        std.log.err("Failed to append combobox option: {}", .{err});
+                        break;
+                    };
+                }
+
+                model_combobox_data.selected_index = null;
+
+                if (component.model) |model_id| {
+                    const model_text = model_id.to_string_identifier(eng.get().frame_allocator) catch unreachable;
+                    defer eng.get().frame_allocator.free(model_text);
+
+                    for (model_combobox_data.options.items, 0..) |option, i| {
+                        if (std.mem.eql(u8, option, model_text)) {
+                            model_combobox_data.selected_index = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (model_combobox.data_changed) {
+                const model_combobox_data, _ = imui.get_widget_data(eng.ui.widgets.combobox.ComboBoxState, model_combobox.id) catch unreachable;
+                if (model_combobox_data.selected_index) |si| {
+                    if (eng.assets.ModelAssetId.from_string_identifier(model_combobox_data.options.items[si])) |model_id| {
+                        component.model = model_id;
+                    } else |_| { 
+                        std.log.err("Failed to deserialize model id!", .{});
+                    }
+                } else {
+                    component.model = null;
+                }
+            }
+        }
+    }
+    
+    const ModelNames = struct {
+        arena: std.heap.ArenaAllocator,
+        names: [][]u8,
+
+        pub fn deinit(self: *ModelNames) void {
+            self.arena.allocator().free(self.names);
+            self.arena.deinit();
+        }
+    };
+
+    fn get_all_model_names(alloc: std.mem.Allocator) !ModelNames {
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        errdefer arena.deinit();
+
+        // generate model option names from asset packs
+        var model_names = std.ArrayList([]u8).empty;
+        defer model_names.deinit(alloc);
+
+        var asset_packs_iter = eng.get().asset_manager.asset_packs.iterator();
+        while (asset_packs_iter.next()) |it| {
+            const pack = it.value_ptr;
+            var iter = pack.assets.iterator();
+            while (iter.next()) |p| {
+                switch (p.value_ptr.asset) {
+                    .Model => {
+                        const asset_id = eng.assets.ModelAssetId{ .pack_id = pack.unique_name_hash, .asset_id = p.key_ptr.* };
+
+                        const asset_identifier_string = try asset_id.to_string_identifier(alloc);
+                        defer alloc.free(asset_identifier_string);
+
+                        try model_names.append(alloc, try std.fmt.allocPrint(arena.allocator(), "{s}", .{asset_identifier_string}));
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        return ModelNames {
+            .arena = arena,
+            .names = try model_names.toOwnedSlice(alloc),
+        };
     }
 };
 
@@ -211,88 +375,103 @@ pub const PhysicsComponent = struct {
         return component;
     }
 
-    // pub fn update_runtime_data(self: *Self, entity_id: EntityId) !void {
-    //     const entity = eng.get().entities.get(entity_id) orelse return error.UnableToGetEntity;
-    //     const transform = entity.transform;
-    //     const phys = &eng.get().physics;
+    pub fn editor_ui(imui: *eng.ui, component: *PhysicsComponent, key: anytype) !void {
+        const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
+        defer imui.pop_layout();
 
-    //     self.deinit_runtime_data();
+        if (imui.get_widget(outer_layout)) |w| {
+            w.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false };
+        }
 
-    //     switch (self.settings) {
-    //         .None => {
-    //             self.runtime_data = .{ .None = {} };
-    //         },
-    //         .Body => |b| {
-    //             var settings = b.settings;
-    //             settings.offset_transform.scale *= transform.scale;
-    //             const shape = try phys.create_shape(settings);
-    //             defer shape.release();
+        {
+            // TODO
+            _ = component;
+        }
+    }
 
-    //             const body = try phys.zphy.getBodyInterfaceMut().createAndAddBody(.{
-    //                 .shape = shape,
-    //                 .object_layer = if (b.is_static) physics.object_layers.non_moving else physics.object_layers.moving,
-    //                 .motion_type = if (b.is_static) .static else .dynamic, // TODO: fix this
-    //                 .is_sensor = b.is_sensor,
-    //             }, .activate);
+    pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity) !void {
+        const entity_transform_component = eng.get().ecs.get_component(eng.entity.TransformComponent, entity) orelse return error.EntityDoesNotHaveTransform;
+        const transform = entity_transform_component.transform;
 
-    //             self.runtime_data = .{
-    //                 .Body = .{
-    //                     .id = body,
-    //                 }
-    //             };
-    //         },
-    //         .Character => |settings| {
-    //             const zphy_character = try settings.settings.create_character(transform, phys);
-    //             errdefer zphy_character.destroy();
+        const phys = &eng.get().physics;
 
-    //             zphy_character.addToPhysicsSystem(.{});
+        self.deinit_runtime_data();
 
-    //             self.runtime_data = .{
-    //                 .Character = .{
-    //                     .character = zphy_character,
-    //                 }
-    //             };
-    //         },
-    //         .CharacterVirtual => |settings| {
-    //             const zphy_virtual_character = try settings.settings.create_character_virtual(transform, phys);
-    //             errdefer zphy_virtual_character.destroy();
+        switch (self.settings) {
+            .None => {
+                self.runtime_data = .{ .None = {} };
+            },
+            .Body => |b| {
+                var settings = b.settings;
+                settings.offset_transform.scale *= transform.scale;
+                const shape = try phys.create_shape(settings);
+                defer shape.release();
 
-    //             var zphy_character: ?*zphy.Character = null;
-    //             var body_filter: ?physics.IgnoreIdsBodyFilter = null;
-    //             if (settings.create_character) {
-    //                 var character_settings = physics.CharacterSettings {
-    //                     .base = settings.settings.base,
-    //                     .mass = settings.settings.mass,
-    //                     .layer = physics.object_layers.moving,
-    //                     .friction = 0.0,
-    //                     .gravity_factor = 0.0,
-    //                 };
-    //                 switch (character_settings.base.shape.shape) {
-    //                     .Capsule => |*c| {
-    //                         c.half_height /= 2.0;
-    //                     },
-    //                     else => {},
-    //                 }
+                const body = try phys.zphy.getBodyInterfaceMut().createAndAddBody(.{
+                    .shape = shape,
+                    .object_layer = if (b.is_static) physics.object_layers.non_moving else physics.object_layers.moving,
+                    .motion_type = if (b.is_static) .static else .dynamic, // TODO: fix this
+                    .is_sensor = b.is_sensor,
+                }, .activate);
 
-    //                 zphy_character = try character_settings.create_character(transform, phys);
-    //                 zphy_character.?.addToPhysicsSystem(.{});
+                self.runtime_data = .{
+                    .Body = .{
+                        .id = body,
+                    }
+                };
+            },
+            .Character => |settings| {
+                const zphy_character = try settings.settings.create_character(transform, phys);
+                errdefer zphy_character.destroy();
 
-    //                 body_filter = physics.IgnoreIdsBodyFilter.init(&[1]physics.zphy.BodyId{zphy_character.?.getBodyId()});
-    //             }
+                zphy_character.addToPhysicsSystem(.{});
 
-    //             self.runtime_data = .{
-    //                 .CharacterVirtual = .{
-    //                     .virtual = zphy_virtual_character,
-    //                     .character = zphy_character,
-    //                     .body_filter = body_filter,
-    //                 },
-    //             };
-    //         },
-    //     }
-    //     errdefer self.deinit_runtime_data();
+                self.runtime_data = .{
+                    .Character = .{
+                        .character = zphy_character,
+                    }
+                };
+            },
+            .CharacterVirtual => |settings| {
+                const zphy_virtual_character = try settings.settings.create_character_virtual(transform, phys);
+                errdefer zphy_virtual_character.destroy();
 
-    //     try self.set_full_user_data(physics.PhysicsSystem.construct_entity_user_data(entity_id, 0));
-    // }
+                var zphy_character: ?*zphy.Character = null;
+                var body_filter: ?physics.IgnoreIdsBodyFilter = null;
+                if (settings.create_character) {
+                    var character_settings = physics.CharacterSettings {
+                        .base = settings.settings.base,
+                        .mass = settings.settings.mass,
+                        .layer = physics.object_layers.moving,
+                        .friction = 0.0,
+                        .gravity_factor = 0.0,
+                    };
+                    switch (character_settings.base.shape.shape) {
+                        .Capsule => |*c| {
+                            c.half_height /= 2.0;
+                        },
+                        else => {},
+                    }
+
+                    zphy_character = try character_settings.create_character(transform, phys);
+                    zphy_character.?.addToPhysicsSystem(.{});
+
+                    body_filter = physics.IgnoreIdsBodyFilter.init(&[1]physics.zphy.BodyId{zphy_character.?.getBodyId()});
+                }
+
+                self.runtime_data = .{
+                    .CharacterVirtual = .{
+                        .virtual = zphy_virtual_character,
+                        .character = zphy_character,
+                        .body_filter = body_filter,
+                    },
+                };
+            },
+        }
+        errdefer self.deinit_runtime_data();
+
+        try self.set_full_user_data(physics.PhysicsSystem.construct_entity_user_data(entity.idx, 0));
+    }
 
     /// Sets the full 64 bit user data for the physics body
     fn set_full_user_data(self: *const Self, data: u64) !void {

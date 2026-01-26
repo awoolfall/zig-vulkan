@@ -237,37 +237,42 @@ pub const PhysicsSystem = struct {
         }
     }
 
-    pub fn calculate_entity_visual_transform(self: *const Self, entity: *eng.entity.EntitySuperStruct) Transform {
-        // update positions and rotations of all entities based on current physics info
-        const ns_since_last_update = eng.get().time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
-        const offset_seconds = @as(f32, @floatFromInt(ns_since_last_update)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+    pub fn calculate_entity_visual_transform(self: *const Self, entity: eng.ecs.Entity) Transform {
+        const transform_component = eng.get().ecs.get_component(eng.entity.TransformComponent, entity) orelse return .{};
+        if (eng.get().ecs.get_component(eng.entity.PhysicsComponent, entity)) |physics_component| {
+            // update positions and rotations of all entities based on current physics info
+            const ns_since_last_update = eng.get().time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
+            const offset_seconds = @as(f32, @floatFromInt(ns_since_last_update)) / @as(f32, @floatFromInt(std.time.ns_per_s));
 
-        const body_interface = self.zphy.getBodyInterface();
-        const pos, const rot = switch (entity.physics.runtime_data) {
-            .None => .{
-                entity.transform.position,
-                entity.transform.rotation,
-            },
-            .Body => |body| .{ 
-                zm.loadArr3(body_interface.getPosition(body.id)),
-                zm.loadArr4(body_interface.getRotation(body.id)),
-            },
-            .Character => |character| .{
-                zm.loadArr3(character.character.getPosition()),
-                entity.transform.rotation, // TODO add binding for jolt character GetRotation
-            },
-            .CharacterVirtual => |character_virtual| .{
-                zm.loadArr3(character_virtual.virtual.getPosition()),
-                entity.transform.rotation, // TODO add binding for jolt character GetRotation
-            },
-        };
+            const body_interface = self.zphy.getBodyInterface();
+            const pos, const rot = switch (physics_component.runtime_data) {
+                .None => .{
+                    transform_component.transform.position,
+                    transform_component.transform.rotation,
+                },
+                .Body => |body| .{ 
+                    zm.loadArr3(body_interface.getPosition(body.id)),
+                    zm.loadArr4(body_interface.getRotation(body.id)),
+                },
+                .Character => |character| .{
+                    zm.loadArr3(character.character.getPosition()),
+                    transform_component.transform.rotation, // TODO add binding for jolt character GetRotation
+                },
+                .CharacterVirtual => |character_virtual| .{
+                    zm.loadArr3(character_virtual.virtual.getPosition()),
+                    transform_component.transform.rotation, // TODO add binding for jolt character GetRotation
+                },
+            };
 
-        const t = offset_seconds / UpdateRateS;
-        return Transform {
-            .position = zm.lerp(entity.physics.last_frame_data.position, pos, t),
-            .rotation = zm.slerp(entity.physics.last_frame_data.rotation, rot, t),
-            .scale = entity.transform.scale,
-        };
+            const t = offset_seconds / UpdateRateS;
+            return Transform {
+                .position = zm.lerp(physics_component.last_frame_data.position, pos, t),
+                .rotation = zm.slerp(physics_component.last_frame_data.rotation, rot, t),
+                .scale = transform_component.transform.scale,
+            };
+        } else {
+            return transform_component.transform;
+        }
     }
 
     pub fn debug_draw_bodies(self: *Self, cmd: *_gfx.CommandBuffer, projection: zm.Mat, view: zm.Mat) void {

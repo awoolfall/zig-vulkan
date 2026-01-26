@@ -26,9 +26,6 @@ const wd = @import("window.zig");
 const Self = @This();
 const Log = std.log.scoped(.Engine);
 
-const EntityComponentsTuple = entity.StandardEntityComponents ++ App.EntityComponents;
-const AppEcsSystem = eng.ecs.EcsSystem(EntityComponentsTuple);
-
 window: platform.Window,
 gfx: gf.GfxState,
 image: im.ImageLoader,
@@ -39,7 +36,7 @@ debug: db.Debug,
 imui: Imui,
 asset_manager: assets.AssetManager,
 app: *App,
-ecs: AppEcsSystem,
+ecs: eng.AppEcsSystem,
 exe_path: []u8,
 
 general_allocator: std.mem.Allocator,
@@ -139,7 +136,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.physics = try ph.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager);
     errdefer engine.physics.deinit();
 
-    engine.ecs = try AppEcsSystem.init(engine.general_allocator);
+    engine.ecs = try eng.AppEcsSystem.init(engine.general_allocator);
     errdefer engine.ecs.deinit();
 
     // load core assets

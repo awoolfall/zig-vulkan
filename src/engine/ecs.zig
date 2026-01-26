@@ -1,14 +1,20 @@
 const std = @import("std");
-const gen = @import("gen_list.zig");
+const eng = @import("self");
+const gen = eng.gen;
+const sr = eng.serialize;
 
-pub fn EcsSystem(comptime ComponentTypes: anytype) type {
-    const info = @typeInfo(@TypeOf(ComponentTypes));
+pub const Entity = struct {
+    idx: gen.GenerationalIndex,
+};
+
+pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
+    const info = @typeInfo(@TypeOf(EcsComponentTypes));
 
     // ensure all component types are unique
     inline for (info.@"struct".fields, 0..) |_, idx0| {
         inline for (info.@"struct".fields, 0..) |_, idx1| {
             if (idx0 == idx1) { continue; }
-            if (ComponentTypes[idx0] == ComponentTypes[idx1]) {
+            if (EcsComponentTypes[idx0] == EcsComponentTypes[idx1]) {
                 @compileError("All component types must be unique.");
             }
         }
@@ -16,7 +22,7 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
 
     // default component indices tuple contains null in all fields
     const component_indices_tuple_default_value = blk: {
-        var tuple: ComponentIndicesTuple(ComponentTypes) = undefined;
+        var tuple: ComponentIndicesTuple(EcsComponentTypes) = undefined;
         inline for (info.@"struct".fields, 0..) |_, idx| {
             tuple[idx] = null;
         }
@@ -25,14 +31,11 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
 
     return struct {
         const Self = @This();
+        pub const ComponentTypes = EcsComponentTypes;
         
         pub const EntityInternal = struct {
+            name: ?[]const u8 = null,
             components: ComponentIndicesTuple(ComponentTypes) = component_indices_tuple_default_value,
-        };
-
-        pub const Entity = struct {
-            ecs: *Self,
-            idx: gen.GenerationalIndex,
         };
 
         alloc: std.mem.Allocator,
@@ -76,6 +79,33 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
             };
         }
 
+        pub fn set_entity_name(self: *Self, entity: Entity, name: ?[]const u8) !void {
+            const ent = self.entity_data.get(entity.idx) orelse return;
+            if (ent.name) |n| {
+                eng.get().general_allocator.free(n);
+                ent.name = null;
+            }
+            if (name) |n| {
+                ent.name = try eng.get().general_allocator.dupe(u8, n);
+            }
+        }
+
+        pub fn get_entity_name(self: *const Self, entity: Entity) ?[]const u8 {
+            return (self.entity_data.get(entity.idx) orelse return null).name;
+        }
+
+        pub fn find_first_entity_with_name(self: *Self, search_name: []const u8) ?Entity {
+            var entity_iter = self.entity_iterator();
+            while (entity_iter.next()) |entity| {
+                if (self.get_entity_name(entity)) |entity_name| {
+                    if (std.mem.eql(u8, entity_name, search_name)) {
+                        return entity;
+                    }
+                }
+            }
+            return null;
+        }
+
         fn get_component_list(self: *Self, comptime T: type) *gen.GenerationalList(T) {
             return &self.components[get_component_id(T)];
         }
@@ -84,11 +114,15 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
             inline for (info.@"struct".fields, 0..) |_, idx| {
                 if (T == ComponentTypes[idx]) { return idx; }
             }
-            @compileError("The supplied type is not a ECS component.");
+            @compileError(std.fmt.comptimePrint("The type '{s}' is not a ECS component.", .{@typeName(T)}));
+        }
+
+        pub fn get_component_count(self: *const Self, comptime T: type) usize {
+            return self.components[get_component_id(T)].item_count();
         }
 
         pub fn component_iterator(self: *Self, comptime Component: type) gen.GenerationalListIterator(Component) {
-            return self.get_component_list(ComponentA).iterator();
+            return self.get_component_list(Component).iterator();
         }
 
         pub fn query_iterator(self: *Self, comptime QueryComponents: anytype) QueryIterator(QueryComponents) {
@@ -101,13 +135,15 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
 
         pub fn create_new_entity(self: *Self) !Entity {
             return Entity {
-                .ecs = self,
                 .idx = try self.entity_data.insert(.{}),
             };
         }
 
         pub fn remove_entity(self: *Self, entity: Entity) void {
             const ent = self.entity_data.get(entity.idx) orelse return;
+
+            // deinit entity name by setting it to null
+            self.set_entity_name(entity, null) catch {};
 
             // remove all entity components
             inline for (info.@"struct".fields, 0..) |_, idx| {
@@ -127,8 +163,9 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
 
         pub fn add_component(self: *Self, comptime Component: type, entity: Entity) !*Component {
             const ent = self.entity_data.get(entity.idx) orelse return error.EntityDoesNotExist;
-            std.debug.assert(ent.components[get_component_id(Component)] == null);
-            ent.components[get_component_id(Component)] = try self.get_component_list(Component).insert(try Component.init(self.alloc));
+            if (ent.components[get_component_id(Component)] == null) {
+                ent.components[get_component_id(Component)] = try self.get_component_list(Component).insert(try Component.init(self.alloc));
+            }
             return self.get_component(Component, entity) orelse return error.EntityDoesNotHaveComponent;
         }
 
@@ -141,6 +178,43 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
                 unreachable;
             };
             ent.components[get_component_id(Component)] = null;
+        }
+
+        pub fn serialize_entity(self: *Self, alloc: std.mem.Allocator, entity: Entity) !std.json.Value {
+            var object = std.json.ObjectMap.init(alloc);
+            errdefer object.deinit();
+
+            const ent = self.entity_data.get(entity.idx) orelse return error.EntityDoesNotExist;
+            try object.put("name", try sr.serialize_value(?[]const u8, alloc, ent.name));
+
+            inline for (info.@"struct".fields, 0..) |_, idx| {
+                if (self.get_component(ComponentTypes[idx], entity)) |component| {
+                    try object.put(@typeName(ComponentTypes[idx]), try sr.serialize_value(ComponentTypes[idx], alloc, component.*));
+                }
+            }
+
+            return std.json.Value { .object = object };
+        }
+
+        pub fn deserialize_to_entity(self: *Self, value: std.json.Value) !Entity {
+            const alloc = eng.get().general_allocator;
+
+            const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
+
+            const entity = try self.create_new_entity();
+            errdefer self.remove_entity(entity);
+
+            const ent = self.entity_data.get(entity.idx) orelse return error.EntityDoesNotExist;
+            if (object.get("name")) |v| blk: { ent.name = sr.deserialize_value(?[]const u8, alloc, v) catch break :blk; }
+
+            inline for (info.@"struct".fields, 0..) |_, idx| {
+                if (object.get(@typeName(ComponentTypes[idx]))) |v| {
+                    const component = try self.add_component(ComponentTypes[idx], entity);
+                    component.* = try sr.deserialize_value(ComponentTypes[idx], alloc, v);
+                }
+            }
+
+            return entity;
         }
 
         const EntityIterator = struct {
@@ -163,7 +237,6 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
                     defer self.index += 1;
                     if (self.ecs.entity_data.data.items[self.index].item_data) |_| {
                         const entity: Entity = .{
-                            .ecs = self.ecs,
                             .idx = .{
                                 .generation = self.ecs.entity_data.data.items[self.index].generation,
                                 .index = self.index,
@@ -203,6 +276,7 @@ pub fn EcsSystem(comptime ComponentTypes: anytype) type {
                 }
 
                 pub fn next(self: *QueryIteratorSelf) ?ComponentValuePointersTuple(QueryComponents) {
+                    // TODO SPEED instead of iterating entities, we should iterate the component with the lowest gen_list item count.
                     while (self.ecs_entity_iterator.next()) |entity| {
                         const components: ?ComponentValuePointersTuple(QueryComponents) = blk: {
                             var components: ComponentValuePointersTuple(QueryComponents) = undefined;
