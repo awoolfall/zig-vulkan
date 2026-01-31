@@ -143,7 +143,7 @@ pub const Widget = struct {
     // sibling data
     next_sibling: ?WidgetId = null,
     prev_sibling: ?WidgetId = null,
-    parent: WidgetId = WidgetId { .location = .Standard, .index = 0 },
+    parent: ?WidgetId = null,
 
     // parent data
     layout_axis: ?Axis = null,
@@ -151,6 +151,8 @@ pub const Widget = struct {
     last_child: ?WidgetId = null,
     num_children: usize = 0,
     children_gap: f32 = 0.0,
+
+    priority: u32 = 0,
 
     form_labels_width: f32 = 0.0,
 
@@ -251,27 +253,24 @@ pub fn WidgetSignal(comptime T: type) type {
     };
 }
 
-pub const LabelKey: Key = std.hash.XxHash64.hash(0, "Imuilabel");
+pub const DontCareKey: Key = 0;
 
 pub const WidgetLocation = enum(u1) {
     Standard,
     Priority,
 };
 
-pub const WidgetId = packed struct(u32) {
-    location: WidgetLocation,
-    index: u31,
+pub const WidgetId = struct {
+    pointer: *Widget,
 
-    const InvalidIndex = std.math.maxInt(u31);
-
-    pub const invalid = WidgetId {
-        .location = .Standard,
-        .index = InvalidIndex,
-    };
-
-    pub fn is_valid(self: *const WidgetId) bool {
-        return self.index != InvalidIndex;
+    pub fn get(self: *const WidgetId) *Widget {
+        return self.pointer;
     }
+};
+
+const RootWidget = struct {
+    widget: WidgetId,
+    priority: u32,
 };
 
 alloc: std.mem.Allocator,
@@ -297,14 +296,10 @@ fonts: [@intFromEnum(FontEnum.Count)]font.Font,
 parent_stack: std.ArrayList(WidgetId),
 palette_stack: std.ArrayList(Palette),
 
-standard_widgets: std.ArrayList(Widget),
-// widgets within the priority array will always be rendered on top of standard widgets and will
-// demand interactions over standard widgets. This is useful for things like dropdown or context menus.
-priority_widgets: std.ArrayList(Widget),
+root_widgets: std.ArrayList(RootWidget),
 
-last_frame_widgets: std.AutoHashMap(Key, Widget),
-
-last_frame_arena: u8,
+last_frame_index: u8 = 0,
+frame_widgets_maps: [2]std.AutoHashMap(Key, WidgetId),
 arenas: [2]std.heap.ArenaAllocator,
 
 deinit_functions: std.ArrayList(*const fn (alloc: std.mem.Allocator) void) = .empty,
@@ -326,9 +321,11 @@ pub fn deinit(self: *Self) void {
 
     self.palette_stack.deinit(self.alloc);
     self.parent_stack.deinit(self.alloc);
-    self.standard_widgets.deinit(self.alloc);
-    self.priority_widgets.deinit(self.alloc);
-    self.last_frame_widgets.deinit();
+    self.root_widgets.deinit(self.alloc);
+
+    for (&self.frame_widgets_maps) |*frame_widget_map| {
+        frame_widget_map.deinit();
+    }
 
     for (self.arenas) |a| {
         a.deinit();
@@ -356,12 +353,13 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
     var self = Self {
         .alloc = alloc,
-        .parent_stack = std.ArrayList(WidgetId).empty,
-        .palette_stack = std.ArrayList(Palette).empty,
-        .standard_widgets = std.ArrayList(Widget).empty,
-        .priority_widgets = std.ArrayList(Widget).empty,
-        .last_frame_widgets = std.AutoHashMap(Key, Widget).init(alloc),
-        .last_frame_arena = 0,
+        .parent_stack = .empty,
+        .palette_stack = .empty,
+        .root_widgets = .empty,
+        .frame_widgets_maps = .{
+            .init(alloc),
+            .init(alloc),
+        },
         .arenas = [_]std.heap.ArenaAllocator{
             std.heap.ArenaAllocator.init(alloc),
             std.heap.ArenaAllocator.init(alloc),
@@ -371,15 +369,8 @@ pub fn init(alloc: std.mem.Allocator) !Self {
         .compositor = compositor,
     };
 
-    self.add_root_widget();
+    _ = self.add_fullscreen_root_widget(0);
     return self;
-}
-
-pub inline fn root_widget_id(location: WidgetLocation) WidgetId {
-    return WidgetId {
-        .location = location,
-        .index = 0,
-    };
 }
 
 pub fn get_font(self: *Self, font_enum: FontEnum) *font.Font {
@@ -387,7 +378,15 @@ pub fn get_font(self: *Self, font_enum: FontEnum) *font.Font {
 }
 
 fn arena(self: *Self) *std.heap.ArenaAllocator {
-    return &self.arenas[(@as(usize, @intCast(self.last_frame_arena)) + 1) % 2];
+    return &self.arenas[(@as(usize, @intCast(self.last_frame_index)) + 1) % 2];
+}
+
+fn this_frame_widgets_map(self: *Self) *std.AutoHashMap(Key, WidgetId) {
+    return &self.frame_widgets_maps[(@as(usize, @intCast(self.last_frame_index)) + 1) % 2];
+}
+
+fn last_frame_widgets_map(self: *Self) *std.AutoHashMap(Key, WidgetId) {
+    return &self.frame_widgets_maps[(@as(usize, @intCast(self.last_frame_index))) % 2];
 }
 
 pub fn widget_allocator(self: *const Self) std.mem.Allocator {
@@ -399,28 +398,26 @@ pub fn palette(self: *const Self) Palette {
 }
 
 fn add_heirarchy_links(self: *Self, parent_id: WidgetId, widget_id: WidgetId) !void {
-    std.debug.assert(parent_id != widget_id);
+    std.debug.assert(parent_id.pointer != widget_id.pointer);
 
     const parent = self.get_widget(parent_id) orelse return error.ParentDoesNotExist;
     const widget = self.get_widget(widget_id) orelse return error.WidgetDoesNotExist;
 
     widget.parent = parent_id;
 
-    if (widget_id.location == parent_id.location) {
-        if (parent.first_child == null) {
-            parent.first_child = widget_id;
-            parent.last_child = widget_id;
-        } else {
-            std.debug.assert(parent.last_child != null);
-            const sibling_id = parent.last_child.?;
-            const sibling = self.get_widget(sibling_id) orelse return error.SiblingDoesNotExist;
-            sibling.next_sibling = widget_id;
-            parent.last_child = widget_id;
-            widget.prev_sibling = sibling_id;
-        }
-
-        parent.num_children += 1;
+    if (parent.first_child == null) {
+        parent.first_child = widget_id;
+        parent.last_child = widget_id;
+    } else {
+        std.debug.assert(parent.last_child != null);
+        const sibling_id = parent.last_child.?;
+        const sibling = self.get_widget(sibling_id) orelse return error.SiblingDoesNotExist;
+        sibling.next_sibling = widget_id;
+        parent.last_child = widget_id;
+        widget.prev_sibling = sibling_id;
     }
+
+    parent.num_children += 1;
 }
 
 inline fn apply_padding(widget: *Widget, axis: usize) void {
@@ -467,41 +464,64 @@ fn compute_standalone_widget_size(self: *Self, widget: *Widget) void {
     }
 }
 
-pub const AddWidgetOptions = struct {
-    destination: union(enum) {
-        Auto: void,
-        Manual: WidgetLocation,
-    } = .Auto,
-};
+pub fn add_widget(self: *Self, widget: Widget, priority: ?u32) WidgetId {
+    const owned_widget = self.arena().allocator().create(Widget) catch unreachable;
+    owned_widget.* = widget;
 
-pub fn add_widget(self: *Self, widget: Widget, opt: AddWidgetOptions) WidgetId {
-    var widget_to_add = widget;
     // we need to own the text content so duplicate it using this frame's arena before adding the widget
-    if (widget_to_add.text_content) |*text| {
+    if (owned_widget.text_content) |*text| {
         text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
     }
 
-    const parent_id = self.parent_stack.getLast();
-
-    const widget_id = blk: {
-        const destination = switch (opt.destination) {
-            .Auto => parent_id.location,
-            .Manual => |manual_location| manual_location,
-        };
-        const destination_array = switch (destination) {
-            .Priority => &self.priority_widgets,
-            .Standard => &self.standard_widgets,
-        };
-
-        const widget_index = destination_array.items.len;
-        destination_array.append(self.alloc, widget_to_add) catch unreachable;
-        break :blk WidgetId {
-            .location = destination,
-            .index = @truncate(widget_index),
-        };
+    const widget_id = WidgetId {
+        .pointer = owned_widget,
     };
 
-    self.add_heirarchy_links(parent_id, widget_id) catch unreachable;
+    var parent_priority: u32 = 0;
+    if (self.parent_stack.getLastOrNull()) |parent_id| {
+        self.add_heirarchy_links(parent_id, widget_id) catch unreachable;
+        parent_priority = parent_id.get().priority;
+    }
+
+    owned_widget.priority = priority orelse parent_priority;
+
+    if (priority != null) {
+        self.root_widgets.append(self.alloc, .{ .widget = widget_id, .priority = owned_widget.priority, }) catch unreachable;
+    }
+
+    (if (owned_widget.key == DontCareKey) self.this_frame_widgets_map().put(owned_widget.key, widget_id)
+    else self.this_frame_widgets_map().putNoClobber(owned_widget.key, widget_id))
+    catch |err| {
+        std.log.err("Failed to put widget in frame map: {}", .{err});
+        unreachable;
+    };
+
+    return widget_id;
+}
+
+fn add_root_widget(self: *Self, widget: Widget, priority: ?u32) WidgetId {
+    const owned_widget = self.arena().allocator().create(Widget) catch unreachable;
+    owned_widget.* = widget;
+
+    // we need to own the text content so duplicate it using this frame's arena before adding the widget
+    if (owned_widget.text_content) |*text| {
+        text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
+    }
+
+    const widget_id = WidgetId {
+        .pointer = owned_widget,
+    };
+
+    owned_widget.priority = priority orelse @intCast(self.root_widgets.items.len);
+
+    self.this_frame_widgets_map().putNoClobber(owned_widget.key, widget_id) catch |err| {
+        std.log.err("Failed to put widget in frame map: {}", .{err});
+        unreachable;
+    };
+
+    self.root_widgets.append(self.alloc, .{ .widget = widget_id, .priority = owned_widget.priority, }) catch unreachable;
+    self.parent_stack.append(self.alloc, widget_id) catch unreachable;
+
     return widget_id;
 }
 
@@ -547,17 +567,10 @@ pub fn clear_focus_item(self: *Self) void {
     self.focus_item = null;
 }
 
+// TODO remove this function
 pub fn get_widget(self: *Self, widget_id: WidgetId) ?*Widget {
-    switch (widget_id.location) {
-        .Standard => {
-            if (widget_id.index >= self.standard_widgets.items.len) { return null; }
-            return &self.standard_widgets.items[widget_id.index];
-        },
-        .Priority => {
-            if (widget_id.index >= self.priority_widgets.items.len) { return null; }
-            return &self.priority_widgets.items[widget_id.index];
-        },
-    }
+    _ = self;
+    return widget_id.get();
 }
 
 pub const WidgetDataState = enum {
@@ -608,13 +621,16 @@ pub fn get_widget_data(self: *Self, comptime WidgetDataType: type, widget_id: Wi
 
 pub fn get_widget_from_last_frame(self: *Self, widget_id: WidgetId) ?*const Widget {
     const widget = self.get_widget(widget_id) orelse return null;
-    return self.last_frame_widgets.getPtr(widget.key);
+    if (self.last_frame_widgets_map().getPtr(widget.key)) |last_frame_widget_id| {
+        return last_frame_widget_id.get();
+    } else {
+        return null;
+    }
 }
 
-fn add_root_widget(self: *Self) void {
-    std.debug.assert(self.standard_widgets.items.len == 0);
-    const swapchain_size = engine.get().gfx.swapchain_size();
 
+fn add_fullscreen_root_widget(self: *Self, priority: u32) WidgetId {
+    const swapchain_size = engine.get().gfx.swapchain_size();
     const root_widget = Widget {
         .semantic_size = [_]SemanticSize{.{.kind = .None, .value = 0.0, }} ** 2,
         .key = gen_key(.{@src()}),
@@ -626,9 +642,7 @@ fn add_root_widget(self: *Self) void {
             .allows_overflow_y = false,
         },
     };
-    self.standard_widgets.append(self.alloc, root_widget) catch unreachable;
-
-    self.parent_stack.append(self.alloc, .{ .location = .Standard, .index = 0 }) catch unreachable;
+    return self.add_root_widget(root_widget, priority);
 }
 
 fn solve_upward_dependant_sizes(self: *Self, widget: *Widget) void {
@@ -698,9 +712,13 @@ fn widget_potential_space(self: *Self, widget_id: WidgetId) [2]f32 {
 
 fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId, axis: usize) void {
     const widget = self.get_widget(widget_id) orelse unreachable;
-    if (widget.parent == widget_id) { return; }
 
-    const parent = self.get_widget(widget.parent) orelse unreachable;
+    // widget cannot be its own parent
+    if (widget.parent) |widget_parent| {
+        std.debug.assert(widget_parent.pointer != widget_id.pointer);
+    }
+
+    const parent = self.get_widget(widget.parent orelse return) orelse unreachable;
     const parent_content_rect = parent.content_rect();
     const parent_content_anchor_pos = [2]f32{
         parent_content_rect.left,
@@ -761,6 +779,7 @@ const SizeResolutionErrors = error {
     UnableToGetWidget,
     ChildrenSizeWidgetHasNoChildren,
     ParentPercentageUnderChildSize,
+    WidgetHasNoParent,
 };
 
 fn resolve_widget_size_violations(self: *Self, widget_id: WidgetId, axis: usize) SizeResolutionErrors!void {
@@ -823,6 +842,8 @@ fn resolve_widget_size_violations(self: *Self, widget_id: WidgetId, axis: usize)
 fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId) SizeResolutionErrors!void {
     const widget = self.get_widget(widget_id) orelse return error.UnableToGetWidget;
 
+    self.compute_standalone_widget_size(widget);
+
     for (widget.semantic_size, 0..) |s, axis| {
         // skip if we already have calculated this widget's size on this axis
         if (widget.computed_size[axis] != 0) { continue; }
@@ -870,7 +891,7 @@ fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId) SizeResolutionE
                 widget.semantic_size[axis].minimum_pixel_size = @max(children_minimum_size, 0.0);
             },
             .ParentPercentage => {
-                const parent = self.get_widget(widget.parent) orelse return error.UnableToGetWidget;
+                const parent = self.get_widget(widget.parent orelse return error.WidgetHasNoParent) orelse return error.UnableToGetWidget;
 
                 const widget_padding: [2]f32 = .{
                     widget.padding_px.left + widget.padding_px.right + widget.border_width_px.left + widget.border_width_px.right + widget.margin_px.left + widget.margin_px.right,
@@ -891,37 +912,25 @@ fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId) SizeResolutionE
     }
 }
 
+fn recurse_resolve_widget_size_violations(self: *Self, widget_id: WidgetId, axis: usize) void {
+    self.resolve_widget_size_violations(widget_id, axis) catch unreachable;
+    self.compute_widget_relative_positions(widget_id, axis);
+
+    var maybe_child = widget_id.get().first_child;
+    while (maybe_child) |child| {
+        self.recurse_resolve_widget_size_violations(child, axis);
+        maybe_child = child.get().next_sibling;
+    }
+}
+
 fn compute_widget_rects(self: *Self) void {
-    // standard widgets
-    for (0..self.standard_widgets.items.len) |id| {
-        const widget = &self.standard_widgets.items[id];
-        self.compute_standalone_widget_size(widget);
-    }
-    if (self.standard_widgets.items.len > 0) {
-        self.recurse_compute_widget_rect(.{ .location = .Standard, .index = 0 }) catch unreachable;
-    }
-    for (0..self.standard_widgets.items.len) |id| {
-        const widget_id = WidgetId{ .location = .Standard, .index = @intCast(id) };
-        self.resolve_widget_size_violations(widget_id, 0) catch unreachable;
-        self.resolve_widget_size_violations(widget_id, 1) catch unreachable;
-        self.compute_widget_relative_positions(widget_id, 0);
-        self.compute_widget_relative_positions(widget_id, 1);
+    for (self.root_widgets.items) |root_widget| {
+        self.recurse_compute_widget_rect(root_widget.widget) catch unreachable;
     }
 
-    // priority widgets
-    for (0..self.priority_widgets.items.len) |id| {
-        const widget = &self.priority_widgets.items[id];
-        self.compute_standalone_widget_size(widget);
-    }
-    if (self.priority_widgets.items.len > 0) {
-        self.recurse_compute_widget_rect(.{ .location = .Priority, .index = 0 }) catch unreachable;
-    }
-    for (0..self.priority_widgets.items.len) |id| {
-        const widget_id = WidgetId{ .location = .Priority, .index = @intCast(id) };
-        self.resolve_widget_size_violations(widget_id, 0) catch unreachable;
-        self.resolve_widget_size_violations(widget_id, 1) catch unreachable;
-        self.compute_widget_relative_positions(widget_id, 0);
-        self.compute_widget_relative_positions(widget_id, 1);
+    for (self.root_widgets.items) |root_widget| {
+        self.recurse_resolve_widget_size_violations(root_widget.widget, 0);
+        self.recurse_resolve_widget_size_violations(root_widget.widget, 1);
     }
 }
 
@@ -1074,6 +1083,11 @@ fn render_imui_recursive(
     }
 }
 
+fn sort_root_widgets_function(user_data: ?usize, a: RootWidget, b: RootWidget) bool {
+    _ = user_data;
+    return a.priority < b.priority;
+}
+
 pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
     self.compositor.finish_frame(self);
 
@@ -1088,8 +1102,11 @@ pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
     };
     const render_palette = self.palette();
 
-    self.render_imui_recursive(.{ .location = .Standard, .index = 0 }, 0, screen_scissor, render_palette);
-    self.render_imui_recursive(.{ .location = .Priority, .index = 0 }, 0, screen_scissor, render_palette);
+    std.mem.sort(RootWidget, self.root_widgets.items, @as(?usize, null), sort_root_widgets_function);
+
+    for (self.root_widgets.items) |root_widget| {
+        self.render_imui_recursive(root_widget.widget, 0, screen_scissor, render_palette);
+    }
 
     self.quad_renderer.render_quads(cmd) catch |err| {
         std.log.warn("Unable to render quads: {}", .{err});
@@ -1120,25 +1137,12 @@ pub fn end_frame(self: *Self) void {
     }
     self.should_clear_focus_next_frame = engine.get().input.get_key_down(self.primary_interact_key);
 
-    // fill last frame widgets with widgets from current frame
-    self.last_frame_widgets.clearRetainingCapacity();
-    for (self.standard_widgets.items) |w| {
-        if (w.key != Self.LabelKey) {
-            std.debug.assert(!self.last_frame_widgets.contains(w.key)); // widget key is getting squashed. This may mean two or more widgets have the same key.
-            self.last_frame_widgets.put(w.key, w) catch unreachable;
-        }
-    }
-    self.standard_widgets.clearRetainingCapacity();
-    for (self.priority_widgets.items) |w| {
-        if (w.key != Self.LabelKey) {
-            std.debug.assert(!self.last_frame_widgets.contains(w.key)); // widget key is getting squashed. This may mean two or more widgets have the same key.
-            self.last_frame_widgets.put(w.key, w) catch unreachable;
-        }
-    }
-    self.priority_widgets.clearRetainingCapacity();
+    // clear old data
+    self.last_frame_widgets_map().clearRetainingCapacity();
+    self.root_widgets.clearRetainingCapacity();
 
     // swap arenas
-    self.last_frame_arena = (self.last_frame_arena + 1) % 2;
+    self.last_frame_index = (self.last_frame_index + 1) % 2;
 
     // reset arena for the next frame
     if (!self.arena().reset(.retain_capacity)) {
@@ -1147,7 +1151,7 @@ pub fn end_frame(self: *Self) void {
     }
 
     // add the root widget for the next frame
-    self.add_root_widget();
+    _ = self.add_fullscreen_root_widget(0);
 }
 
 pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(WidgetId) {
@@ -1155,7 +1159,8 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
     var widget_signal = WidgetSignal(WidgetId) {
         .id = widget_id,
     };
-    const last_frame_widget = self.last_frame_widgets.getPtr(widget.key);
+
+    const last_frame_widget = self.get_widget_from_last_frame(widget_id);
     widget_signal.init = (last_frame_widget == null);
 
     if (last_frame_widget) |lfw| {
@@ -1174,7 +1179,7 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
 
             var new_next_hot_item = widget_id;
             if (self.next_hot_item) |ni| {
-                if (ni.location == .Priority and widget_id.location == .Standard) {
+                if (new_next_hot_item.get().priority < ni.get().priority) {
                     new_next_hot_item = ni;
                 }
             }
@@ -1203,7 +1208,7 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
 
     const time = &engine.get().time;
 
-    if (self.last_frame_widgets.getPtr(widget.key)) |lw| {
+    if (self.get_widget_from_last_frame(widget_id)) |lw| {
         if (self.hot_item == widget.key) {
             widget.hot_t = @min(lw.hot_t + time.delta_time_unscaled_f32() / widget.hot_t_timescale, 1.0);
         } else {
@@ -1246,13 +1251,13 @@ pub fn pop_pallete(self: *Self) void {
 }
 
 pub fn push_layout_widget_priority(self: *Self, widget: Widget) WidgetId {
-    const widget_id = self.add_widget(widget, .{ .destination = .{ .Manual = .Priority } });
+    const widget_id = self.add_widget(widget, std.math.maxInt(u32));
     self.parent_stack.append(self.alloc, widget_id) catch unreachable;
     return widget_id;
 }
 
 pub fn push_layout_widget(self: *Self, widget: Widget) WidgetId {
-    const widget_id = self.add_widget(widget, .{});
+    const widget_id = self.add_widget(widget, null);
     self.parent_stack.append(self.alloc, widget_id) catch unreachable;
     return widget_id;
 }
@@ -1301,16 +1306,21 @@ fn floating_layout_widget(layout_axis: Axis, floating_x: f32, floating_y: f32, k
 
 pub fn push_priority_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) WidgetId {
     const widget = Self.floating_layout_widget(layout_axis, floating_x, floating_y, key);
-    const widget_id = self.add_widget(widget, .{ 
-        .destination = .{ .Manual = .Priority },
-    });
+    const widget_id = self.add_widget(widget, std.math.maxInt(u32));
     self.push_layout_id(widget_id);
     return widget_id;
 }
 
 pub fn push_floating_layout(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) WidgetId {
     const widget = Self.floating_layout_widget(layout_axis, floating_x, floating_y, key);
-    const widget_id = self.add_widget(widget, .{});
+    const widget_id = self.add_widget(widget, null);
+    self.push_layout_id(widget_id);
+    return widget_id;
+}
+
+pub fn push_floating_layout_with_priority(self: *Self, layout_axis: Axis, floating_x: f32, floating_y: f32, priority: u32, key: anytype) WidgetId {
+    const widget = Self.floating_layout_widget(layout_axis, floating_x, floating_y, key);
+    const widget_id = self.add_widget(widget, priority);
     self.push_layout_id(widget_id);
     return widget_id;
 }

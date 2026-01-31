@@ -47,6 +47,6 @@ pub fn create(imui: *Imui, texture_view: gfx.ImageView.Ref, sampler: gfx.Sampler
         }
     }
 
-    const image_widget_id = imui.add_widget(image_widget, .{});
+    const image_widget_id = imui.add_widget(image_widget, null);
     return imui.generate_widget_signals(image_widget_id);
 }

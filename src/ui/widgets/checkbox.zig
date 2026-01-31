@@ -34,7 +34,7 @@ pub fn create(imui: *Imui, checked: *bool, text: []const u8, key: anytype) Imui.
             .clickable = true,
         },
     };
-    const box_widget_id = imui.add_widget(box_widget, .{});
+    const box_widget_id = imui.add_widget(box_widget, null);
     const box_widget_signals = imui.generate_widget_signals(box_widget_id);
 
     const label = Imui.widgets.label.create(imui, if (checked.*) "X" else " ");
@@ -64,7 +64,7 @@ pub fn create(imui: *Imui, checked: *bool, text: []const u8, key: anytype) Imui.
         .anchor = .{ 0.0, 0.5 },
         .pivot = .{ 0.0, 0.5 },
     };
-    const text_widget_id = imui.add_widget(text_widget, .{});
+    const text_widget_id = imui.add_widget(text_widget, null);
     const text_widget_signals = imui.generate_widget_signals(text_widget_id);
 
     imui.pop_layout();

@@ -19,7 +19,7 @@ pub fn create(imui: *Imui, text: []const u8, is_open_param: ?*bool, key: anytype
     _ = label.create(imui, if (is_open.*) "▼" else "▶");
     _ = label.create(imui, text);
     const line_widget = Imui.Widget {
-        .key = Imui.LabelKey,
+        .key = Imui.DontCareKey,
         .semantic_size = [2]Imui.SemanticSize{
             Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
             Imui.SemanticSize{ .kind = .Pixels, .value = 1.0, .shrinkable = false, },
@@ -31,7 +31,7 @@ pub fn create(imui: *Imui, text: []const u8, is_open_param: ?*bool, key: anytype
         .anchor = .{0.0, 0.5},
         .pivot = .{0.0, 0.5},
     };
-    _ = imui.add_widget(line_widget, .{});
+    _ = imui.add_widget(line_widget, null);
 
     imui.pop_layout();
 

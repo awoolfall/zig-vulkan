@@ -42,7 +42,7 @@ pub fn create(imui: *Imui, colour_rgb: *zm.F32x4, key: anytype) Imui.WidgetSigna
             .hover_effect = true,
         },
     };
-    const swatch_id = imui.add_widget(swatch_widget, .{});
+    const swatch_id = imui.add_widget(swatch_widget, null);
     const swatch_signals = imui.generate_widget_signals(swatch_id);
 
     // RGB hex + intensity + alpha display

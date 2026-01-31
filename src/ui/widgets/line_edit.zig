@@ -105,7 +105,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
             .clickable = true,
         },
     };
-    const text_input_widget_id = imui.add_widget(text_input_widget, .{});
+    const text_input_widget_id = imui.add_widget(text_input_widget, null);
 
     // ensure data is in a valid state
     state.cursor = @min(state.cursor, state.text.items.len);
@@ -131,7 +131,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
     phantom_text.key = Imui.gen_key(key ++ .{@src()});
     phantom_text.flags.render = false;
     phantom_text.text_content.?.text = state.text.items[0..l_sel];
-    _ = imui.add_widget(phantom_text, .{});
+    _ = imui.add_widget(phantom_text, null);
 
     // render cursor and selection box
     const selection_bounds = f.text_bounds_2d_pixels(
@@ -152,7 +152,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
             .render = (line_edit_is_focus_widget or state.cursor != state.mark),
         },
     };
-    _ = imui.add_widget(cursor, .{});
+    _ = imui.add_widget(cursor, null);
     imui.pop_layout(); // phantom and cursor
 
     imui.pop_layout(); // content box
