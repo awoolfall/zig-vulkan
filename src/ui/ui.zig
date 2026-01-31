@@ -16,6 +16,7 @@ const RectPixels = engine.Rect;
 
 pub const Palette = @import("palette.zig");
 pub const widgets = @import("widgets.zig");
+const ImuiCompositor = @import("compositor.zig");
 
 const Self = @This();
 
@@ -308,7 +309,11 @@ arenas: [2]std.heap.ArenaAllocator,
 
 deinit_functions: std.ArrayList(*const fn (alloc: std.mem.Allocator) void) = .empty,
 
+compositor: ImuiCompositor,
+
 pub fn deinit(self: *Self) void {
+    self.compositor.deinit();
+
     for (self.deinit_functions.items) |func| {
         func(self.alloc);
     }
@@ -346,6 +351,9 @@ pub fn init(alloc: std.mem.Allocator) !Self {
         fonts[idx] = font_obj;
     }
 
+    var compositor = try ImuiCompositor.init(alloc);
+    errdefer compositor.deinit();
+
     var self = Self {
         .alloc = alloc,
         .parent_stack = std.ArrayList(WidgetId).empty,
@@ -360,6 +368,7 @@ pub fn init(alloc: std.mem.Allocator) !Self {
         },
         .quad_renderer = try QuadRenderer.init(alloc),
         .fonts = fonts,
+        .compositor = compositor,
     };
 
     self.add_root_widget();
@@ -1066,6 +1075,8 @@ fn render_imui_recursive(
 }
 
 pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
+    self.compositor.finish_frame(self);
+
     // widget rects must be computed before rendering
     self.compute_widget_rects();
     

@@ -13,6 +13,7 @@ pub fn create(imui: *Imui, text: []const u8, key: anytype) Imui.WidgetSignal(But
     defer imui.pop_layout();
 
     if (imui.get_widget(box_layout)) |w| {
+        w.semantic_size[0].shrinkable = false;
         w.layout_axis = null;
         w.background_colour = imui.palette().primary;
         w.border_width_px = .all(1);

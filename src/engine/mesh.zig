@@ -605,7 +605,7 @@ pub const Model = struct {
                     var mesh_set = MeshSet {
                         .num_primitives = 0,
                         .primitives = [1]usize{0} ** MeshSet.MAX_PRIMITIVES_PER_SET,
-                        .physics_shape_settings = null, // TODO
+                        .physics_shape_settings = null, // will be generated on demand
                     };
 
                     for (assimp_node.meshes(), 0..) |assimp_mesh_index, primitive_index| {
@@ -1061,7 +1061,7 @@ pub const Model = struct {
             .mesh_set = MeshSet {
                 .primitives = .{0} ** MeshSet.MAX_PRIMITIVES_PER_SET,
                 .num_primitives = 1,
-                .physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(@ptrCast(shape.positions.ptr), @intCast(shape.positions.len), @sizeOf([3]f32))),
+                .physics_shape_settings = null, // will be generated on demand
             },
         };
 
@@ -1303,7 +1303,9 @@ pub const Model = struct {
         var shape_settings = try zphy.CompoundShapeSettings.createStatic();
         for (self.nodes) |*node| {
             if (node.mesh_set) |mid| {
-                const physics_shape_settings = mid.physics_shape_settings orelse return error.NoShapeSettings;
+                // TODO generate this on demand by pulling vertex data from GPU
+                const physics_shape_settings = mid.physics_shape_settings orelse return error.ModelDoesNotHaveAnyGeneratedShapeSettings;
+
                 var scaled_shape_settings = try zphy.DecoratedShapeSettings.createScaled(
                     physics_shape_settings,
                     .{node.transform.scale[0], node.transform.scale[1], node.transform.scale[2]}

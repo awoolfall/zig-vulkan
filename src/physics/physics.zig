@@ -726,4 +726,3 @@ pub const CharacterVirtualSettings = struct {
         );
     }
 };
-
