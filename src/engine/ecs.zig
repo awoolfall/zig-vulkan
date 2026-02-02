@@ -173,6 +173,8 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
             std.debug.assert(self.entity_data.get(entity.idx) != null);
             const ent = self.entity_data.get(entity.idx) orelse return;
             std.debug.assert(ent.components[get_component_id(Component)] != null);
+            
+            self.get_component_list(Component).get(ent.components[get_component_id(Component)].?).?.deinit();
             self.get_component_list(Component).remove(ent.components[get_component_id(Component)].?) catch |err| {
                 std.log.err("Unable to remove component from ECS system: {}", .{err});
                 unreachable;
@@ -210,6 +212,10 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
             inline for (info.@"struct".fields, 0..) |_, idx| {
                 if (object.get(@typeName(ComponentTypes[idx]))) |v| {
                     const component = try self.add_component(ComponentTypes[idx], entity);
+                    // deinit default component to replace with the deserialized value
+                    // TODO ideally we dont do this.
+                    component.deinit();
+
                     component.* = try sr.deserialize_value(ComponentTypes[idx], alloc, v);
                 }
             }

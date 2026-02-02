@@ -266,6 +266,14 @@ pub const WidgetId = struct {
     pub fn get(self: *const WidgetId) *Widget {
         return self.pointer;
     }
+
+    pub fn get_last_frame(self: *const WidgetId, imui: *const Self) ?*const Widget {
+        return imui.get_widget_from_last_frame(self.*);
+    }
+
+    pub fn get_widget_data(self: *const WidgetId, comptime WidgetDataType: type, imui: *Self) !struct { *WidgetDataType, WidgetDataState } {
+        return imui.get_widget_data(WidgetDataType, self.*);
+    }
 };
 
 const RootWidget = struct {
