@@ -17,6 +17,7 @@ const entity = @import("engine/entity.zig");
 const gen = @import("engine/gen_list.zig");
 const Transform = @import("engine/transform.zig");
 const Imui = @import("ui/ui.zig");
+const Profiler = @import("profiler.zig");
 
 const path = @import("engine/path.zig");
 const db = @import("debug/debug.zig");
@@ -35,6 +36,7 @@ time: tm.TimeState,
 debug: db.Debug,
 imui: Imui,
 asset_manager: assets.AssetManager,
+profiler: Profiler,
 app: *App,
 ecs: eng.AppEcsSystem,
 exe_path: []u8,
@@ -51,6 +53,7 @@ pub export fn deinit(self: *Self) void {
     defer self.general_allocator.destroy(self);
     defer self.frame_arena.deinit();
     defer self.general_allocator.free(self.exe_path);
+    defer self.profiler.deinit();
     defer zmesh.deinit();
     defer self.time.deinit();
     defer self.input.deinit();
@@ -95,6 +98,9 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.exe_path = try alloc.realloc(engine.exe_path, engine.exe_path.len + 1);
     engine.exe_path[engine.exe_path.len - 1] = '\\';
     errdefer engine.general_allocator.free(engine.exe_path);
+
+    engine.profiler = Profiler.init(engine.general_allocator);
+    errdefer engine.profiler.deinit();
 
     zmesh.init(engine.general_allocator);
     errdefer zmesh.deinit();

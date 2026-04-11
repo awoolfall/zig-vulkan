@@ -29,6 +29,8 @@ pub const animation = @import("engine/anim_controller.zig");
 pub const ui = @import("ui/ui.zig");
 pub const debugg = @import("debug/debug.zig");
 
+pub const Profiler = @import("profiler.zig");
+
 pub const Rect = @import("rect.zig");
 
 pub const window = @import("window.zig");

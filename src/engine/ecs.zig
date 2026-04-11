@@ -241,6 +241,12 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
                 }
             }
 
+            // hack to update physics when the entity is deserialized
+            // TODO: figure out a way for components to access their own entity id during deserialization?
+            if (self.get_component(eng.entity.PhysicsComponent, entity)) |physics_component| {
+                try physics_component.update_runtime_data(entity);
+            }
+
             return entity;
         }
 
