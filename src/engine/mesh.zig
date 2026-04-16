@@ -1,14 +1,13 @@
 const std = @import("std");
+const eng = @import("self");
 const zmesh = @import("zmesh");
-const zm = @import("zmath");
-const zphy = @import("zphysics");
 const zstbi = @import("zstbi");
-const assert = std.debug.assert;
-const gf = @import("../gfx/gfx.zig");
-const Transform = @import("../engine/transform.zig");
-const path = @import("../engine/path.zig");
-const an = @import("animation.zig");
 const assimp = @import("assimp");
+const zm = eng.zmath;
+const zphy = eng.physics.zphy;
+const assert = std.debug.assert;
+const gf = eng.gfx;
+const Transform = eng.Transform;
 
 pub const PrimitiveTopology = enum {
     Points,
@@ -188,7 +187,7 @@ pub const Model = struct {
     nodes: []ModelNode,
 
     meshes: []MeshPrimitive,
-    animations: []an.BoneAnimation,
+    animations: []eng.animation.BoneAnimation,
     materials: []MaterialTemplate,
     textures: []gf.Image.Ref,
 
@@ -404,7 +403,7 @@ pub const Model = struct {
         return material;
     }
 
-    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: path.Path) !Self {
+    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: eng.util.Path) !Self {
         const file_path = try file.resolve_path_c_str(alloc);
         defer alloc.free(file_path);
 
@@ -664,15 +663,15 @@ pub const Model = struct {
         errdefer model_arena.allocator().free(model_nodes);
 
         // Animations //
-        const animations = try model_arena.allocator().alloc(an.BoneAnimation, scene.animations().len);
+        const animations = try model_arena.allocator().alloc(eng.animation.BoneAnimation, scene.animations().len);
         errdefer model_arena.allocator().free(animations);
 
         for (scene.animations(), 0..) |anim, anim_id| {
-            animations[anim_id] = an.BoneAnimation {
+            animations[anim_id] = eng.animation.BoneAnimation {
                 .name = try model_arena.allocator().dupe(u8, anim.name()),
                 .duration_ticks = anim.duration(),
                 .ticks_per_second = anim.ticks_per_second(),
-                .channels = try model_arena.allocator().alloc(an.BoneAnimationChannel, anim.channels().len),
+                .channels = try model_arena.allocator().alloc(eng.animation.BoneAnimationChannel, anim.channels().len),
                 .current_tick = 0.0,
             };
             for (anim.channels(), 0..) |ch, ch_id| {
@@ -681,29 +680,29 @@ pub const Model = struct {
                     continue;
                 };
 
-                animations[anim_id].channels[ch_id] = an.BoneAnimationChannel {
+                animations[anim_id].channels[ch_id] = eng.animation.BoneAnimationChannel {
                     .node_name = model_nodes[node_id].name.?,
-                    .position_keys = try model_arena.allocator().alloc(an.AnimationKey, ch.position_keys().len),
-                    .rotation_keys = try model_arena.allocator().alloc(an.AnimationKey, ch.rotation_keys().len),
-                    .scale_keys = try model_arena.allocator().alloc(an.AnimationKey, ch.scale_keys().len),
+                    .position_keys = try model_arena.allocator().alloc(eng.animation.AnimationKey, ch.position_keys().len),
+                    .rotation_keys = try model_arena.allocator().alloc(eng.animation.AnimationKey, ch.rotation_keys().len),
+                    .scale_keys = try model_arena.allocator().alloc(eng.animation.AnimationKey, ch.scale_keys().len),
                 };
 
                 for (ch.position_keys(), 0..) |pk, pk_id| {
-                    animations[anim_id].channels[ch_id].position_keys[pk_id] = an.AnimationKey {
+                    animations[anim_id].channels[ch_id].position_keys[pk_id] = eng.animation.AnimationKey {
                         .time = pk.time(),
                         .value = pk.value(),
                     };
                 }
 
                 for (ch.rotation_keys(), 0..) |rk, rk_id| {
-                    animations[anim_id].channels[ch_id].rotation_keys[rk_id] = an.AnimationKey {
+                    animations[anim_id].channels[ch_id].rotation_keys[rk_id] = eng.animation.AnimationKey {
                         .time = rk.time(),
                         .value = rk.value(),
                     };
                 }
 
                 for (ch.scale_keys(), 0..) |sk, sk_id| {
-                    animations[anim_id].channels[ch_id].scale_keys[sk_id] = an.AnimationKey {
+                    animations[anim_id].channels[ch_id].scale_keys[sk_id] = eng.animation.AnimationKey {
                         .time = sk.time(),
                         .value = sk.value(),
                     };
@@ -1255,11 +1254,11 @@ pub const Model = struct {
     }
 
     pub const AnimationEntry = struct {
-        animation: *an.BoneAnimation,
+        animation: *eng.animation.BoneAnimation,
         strength: f32,
     };
 
-    pub fn blend_animation_bone_transforms(self: *const Self, animation: *const an.BoneAnimation, strength: f32, io_bone_transforms: []Transform) void {
+    pub fn blend_animation_bone_transforms(self: *const Self, animation: *const eng.animation.BoneAnimation, strength: f32, io_bone_transforms: []Transform) void {
         for (self.bones_info, 0..) |*bone_info, bone_id| {
             if (animation.find_node_anim(bone_info.bone_name)) |anim_channel| {
                 io_bone_transforms[@intCast(bone_id)] = io_bone_transforms[@intCast(bone_id)].lerp(&anim_channel.selected_transform, strength);

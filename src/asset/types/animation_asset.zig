@@ -1,17 +1,16 @@
 const std = @import("std");
-const eng = @import("../root.zig");
-const an = @import("../engine/animation.zig");
-const FileWatcher = @import("file_watcher.zig");
+const eng = @import("self");
+const FileWatcher = @import("../file_watcher.zig");
 
 const ModelAsset = @import("model_asset.zig").ModelAsset;
-const ModelAssetId = @import("asset_id.zig").AssetId(ModelAsset);
+const ModelAssetId = @import("../asset_id.zig").AssetId(ModelAsset);
 
 const AnimationPath = struct {
     model_id: ModelAssetId,
     animation_id: u64,
 
     
-    pub fn get_animation(self: *const AnimationPath) !*an.BoneAnimation {
+    pub fn get_animation(self: *const AnimationPath) !*eng.animation.BoneAnimation {
         const model = try eng.get().asset_manager.get_asset(ModelAsset, self.model_id);
         if (self.animation_id >= model.animations.len) {
             return error.AnimationIdOutOfBounds;

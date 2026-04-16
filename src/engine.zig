@@ -1,41 +1,26 @@
 const std = @import("std");
 const App = @import("app");
 const eng = @import("self");
+const Imui = eng.ui;
+const db = @import("debug/debug.zig");
 
 const znoise = @import("znoise");
 const zmesh = @import("zmesh");
 
-const platform = @import("platform/platform.zig");
-const gf = @import("gfx/gfx.zig");
-const assets = @import("asset/asset.zig");
-const in = @import("input/input.zig");
-const tm = @import("engine/time.zig");
-const mesh = @import("engine/mesh.zig");
-const ph = @import("physics/physics.zig");
-const im = @import("engine/image.zig");
-const gen = @import("engine/gen_list.zig");
-const Transform = @import("engine/transform.zig");
-const Imui = @import("ui/ui.zig");
-const Profiler = @import("profiler.zig");
-
-const path = @import("engine/path.zig");
-const db = @import("debug/debug.zig");
-
-const wd = @import("window.zig");
-
 const Self = @This();
+
 const Log = std.log.scoped(.Engine);
 
-window: platform.Window,
-gfx: gf.GfxState,
-image: im.ImageLoader,
-physics: ph.PhysicsSystem,
-input: in.InputState,
-time: tm.TimeState,
+window: eng.window.Window,
+gfx: eng.gfx.GfxState,
+image: eng.image.ImageLoader,
+physics: eng.physics.PhysicsSystem,
+input: eng.input.InputState,
+time: eng.time.TimeState,
 debug: db.Debug,
 imui: Imui,
-asset_manager: assets.AssetManager,
-profiler: Profiler,
+asset_manager: eng.assets.AssetManager,
+profiler: eng.util.Profiler,
 app: *App,
 ecs: eng.AppEcsSystem,
 exe_path: []u8,
@@ -98,28 +83,28 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.exe_path[engine.exe_path.len - 1] = '\\';
     errdefer engine.general_allocator.free(engine.exe_path);
 
-    engine.profiler = Profiler.init(engine.general_allocator);
+    engine.profiler = eng.util.Profiler.init(engine.general_allocator);
     errdefer engine.profiler.deinit();
 
     zmesh.init(engine.general_allocator);
     errdefer zmesh.deinit();
 
-    engine.time = tm.TimeState.init();
+    engine.time = eng.time.TimeState.init();
     errdefer engine.time.deinit();
 
     Log.debug("Calling Input init", .{});
-    engine.input = try in.InputState.init();
+    engine.input = try eng.input.InputState.init();
     errdefer engine.input.deinit();
 
-    engine.image = try im.ImageLoader.init(engine.general_allocator);
+    engine.image = try eng.image.ImageLoader.init(engine.general_allocator);
     errdefer engine.image.deinit();
 
     Log.debug("Calling Window init!", .{});
-    engine.window = try platform.Window.init();
+    engine.window = try eng.window.Window.init();
     errdefer engine.window.deinit();
 
     Log.debug("Calling GFX init!", .{});
-    engine.gfx = try gf.GfxState.init(engine.general_allocator, &engine.window);
+    engine.gfx = try eng.gfx.GfxState.init(engine.general_allocator, &engine.window);
     errdefer engine.gfx.deinit();
     try engine.gfx.init_late(&engine.window);
 
@@ -127,7 +112,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
         const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "../../res"});
         defer engine.general_allocator.free(resources_path);
 
-        break :blk try assets.AssetManager.init(engine.general_allocator, resources_path);
+        break :blk try eng.assets.AssetManager.init(engine.general_allocator, resources_path);
     };
     errdefer engine.asset_manager.deinit();
 
@@ -138,7 +123,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.debug.deinit();
 
     Log.debug("Calling physics init", .{});
-    engine.physics = try ph.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager);
+    engine.physics = try eng.physics.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager);
     errdefer engine.physics.deinit();
 
     engine.ecs = try eng.AppEcsSystem.init(engine.general_allocator);
@@ -150,7 +135,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
         const core_asset_pack_zon_0 = try engine.general_allocator.dupeZ(u8, core_asset_pack_zon[0..]);
         defer engine.general_allocator.free(core_asset_pack_zon_0);
 
-        break :blk try assets.AssetPack.init_from_buffer(engine.general_allocator, "core", core_asset_pack_zon_0);
+        break :blk try eng.assets.AssetPack.init_from_buffer(engine.general_allocator, "core", core_asset_pack_zon_0);
     };
     errdefer core_asset_pack.deinit();
 
@@ -196,7 +181,7 @@ fn pre_app_update(self: *Self) !void {
     self.physics.update(physics_iter.create_generic_iterator());
 }
 
-fn window_event_received(engine_void_ptr: *anyopaque, event: wd.WindowEvent) void {
+fn window_event_received(engine_void_ptr: *anyopaque, event: eng.window.WindowEvent) void {
     const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
 
     // Timing needs to be updated at the very beginning of a frame

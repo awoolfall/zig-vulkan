@@ -51,6 +51,7 @@ pub const PhysicsRuntimeData = union(PhysicsOptionsEnum) {
 
 settings: PhysicsSettings = .{ .None = {} },
 runtime_data: PhysicsRuntimeData = .{ .None = {} },
+velocity: zm.F32x4 = zm.f32x4s(0.0),
 
 last_frame_data: struct {
     position: zm.F32x4 = zm.f32x4s(0.0),
@@ -88,21 +89,17 @@ pub fn deinit_runtime_data(self: *Self) void {
     self.runtime_data = .{ .None = {} };
 }
 
-pub fn serialize(alloc: std.mem.Allocator, value: Self) !std.json.Value {
-    var object = std.json.ObjectMap.init(alloc);
-    errdefer object.deinit();
-
-    try object.put("settings", try sr.serialize_value(PhysicsSettings, alloc, value.settings));
-
-    return std.json.Value { .object = object };
+pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
+    _ = entity;
+    try object.put("settings", try sr.serialize_value(PhysicsSettings, alloc, self.settings));
 }
 
-pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !Self {
+pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std.json.ObjectMap) !Self {
     var component: Self = .{};
-    const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
 
     if (object.get("settings")) |v| blk: { component.settings = sr.deserialize_value(PhysicsSettings, alloc, v) catch break :blk; }
 
+    try component.update_runtime_data(entity);
     return component;
 }
 

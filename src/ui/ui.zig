@@ -1,18 +1,17 @@
 const std = @import("std");
+const eng = @import("self");
 const zstbi = @import("zstbi");
-const zm = @import("zmath");
-const engine = @import("self");
-const _gfx = engine.gfx;
-const tm = engine.time;
-const in = engine.input;
-const es = engine.easings;
-const platform = engine.platform;
-const path = engine.path;
+const zm = eng.zmath;
+const _gfx = eng.gfx;
+const tm = eng.time;
+const in = eng.input;
+const es = eng.util.easings;
+const Path = eng.util.Path;
+const RectPixels = eng.util.Rect;
 
 pub const font = @import("render/font.zig");
 pub const qr = @import("render/quad_renderer.zig");
 const QuadRenderer = qr.QuadRenderer;
-const RectPixels = engine.Rect;
 
 pub const Palette = @import("palette.zig");
 pub const widgets = @import("widgets.zig");
@@ -25,15 +24,15 @@ pub const FontEnum = enum(usize) {
     Geist,
     Count,
 
-    fn font_paths(font_enum: FontEnum, alloc: std.mem.Allocator) !struct {json: path.Path, png: path.Path} {
+    fn font_paths(font_enum: FontEnum, alloc: std.mem.Allocator) !struct {json: Path, png: Path} {
         switch (font_enum) {
             FontEnum.GeistMono => return .{
-                .json = try path.Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.json"}),
-                .png = try path.Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.png"}),
+                .json = try Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.json"}),
+                .png = try Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.png"}),
             },
             FontEnum.Geist => return .{
-                .json = try path.Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.json"}),
-                .png = try path.Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.png"}),
+                .json = try Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.json"}),
+                .png = try Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.png"}),
             },
             FontEnum.Count => unreachable,
         }
@@ -638,7 +637,7 @@ pub fn get_widget_from_last_frame(self: *Self, widget_id: WidgetId) ?*const Widg
 
 
 fn add_fullscreen_root_widget(self: *Self, priority: u32) WidgetId {
-    const swapchain_size = engine.get().gfx.swapchain_size();
+    const swapchain_size = eng.get().gfx.swapchain_size();
     const root_widget = Widget {
         .semantic_size = [_]SemanticSize{.{.kind = .None, .value = 0.0, }} ** 2,
         .key = gen_key(.{@src()}),
@@ -1022,7 +1021,7 @@ fn render_imui_recursive(
         // widget_scissor.height = @min(widget_scissor.top + widget_scissor.height, parent_scissor.top + parent_scissor.height) - widget_scissor.top;
 
         // expand scissor if overflow is allowed
-        const swapchain_size = engine.get().gfx.swapchain_size();
+        const swapchain_size = eng.get().gfx.swapchain_size();
         if (widget.flags.allows_overflow_x) {
             widget_scissor.right = @floatFromInt(swapchain_size[0]);
             widget_scissor.left = 0;
@@ -1044,7 +1043,7 @@ fn render_imui_recursive(
         scissor.bottom = @min(scissor.bottom, parent_scissor.bottom);
 
         // expand scissor if overflow is allowed
-        const swapchain_size = engine.get().gfx.swapchain_size();
+        const swapchain_size = eng.get().gfx.swapchain_size();
         if (widget.flags.allows_overflow_x) {
             scissor.right = @floatFromInt(swapchain_size[0]);
             scissor.left = 0;
@@ -1105,8 +1104,8 @@ pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
     const screen_scissor = RectPixels {
         .left = 0.0,
         .top = 0.0,
-        .right = @floatFromInt(engine.get().gfx.swapchain_size()[0]),
-        .bottom = @floatFromInt(engine.get().gfx.swapchain_size()[1]),
+        .right = @floatFromInt(eng.get().gfx.swapchain_size()[0]),
+        .bottom = @floatFromInt(eng.get().gfx.swapchain_size()[1]),
     };
     const render_palette = self.palette();
 
@@ -1143,7 +1142,7 @@ pub fn end_frame(self: *Self) void {
     } else if (self.should_clear_focus_next_frame) {
         self.clear_focus_item();
     }
-    self.should_clear_focus_next_frame = engine.get().input.get_key_down(self.primary_interact_key);
+    self.should_clear_focus_next_frame = eng.get().input.get_key_down(self.primary_interact_key);
 
     // clear old data
     self.last_frame_widgets_map().clearRetainingCapacity();
@@ -1172,7 +1171,7 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
     widget_signal.init = (last_frame_widget == null);
 
     if (last_frame_widget) |lfw| {
-        const input = &engine.get().input;
+        const input = &eng.get().input;
 
         const lfw_contains_cursor = lfw.rect().contains([2]f32{
             @floatFromInt(input.cursor_position[0]),
@@ -1214,7 +1213,7 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
         }
     }
 
-    const time = &engine.get().time;
+    const time = &eng.get().time;
 
     if (self.get_widget_from_last_frame(widget_id)) |lw| {
         if (self.hot_item == widget.key) {

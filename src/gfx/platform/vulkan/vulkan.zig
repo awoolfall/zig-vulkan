@@ -2,39 +2,38 @@ const std = @import("std");
 const eng = @import("self");
 const zm = eng.zmath;
 const gf = eng.gfx;
-const pl = eng.platform;
-const Rect = eng.Rect;
-const c = @import("vulkan/vk_import.zig").c;
-const vkt = @import("vulkan/vk_error.zig").vulkan_result_to_zig_error;
-const SwapchainVulkan = @import("vulkan/vk_swapchain.zig").SwapchainVulkan;
+const Rect = eng.util.Rect;
+const c = @import("vk_import.zig").c;
+const vkt = @import("vk_error.zig").vulkan_result_to_zig_error;
+const SwapchainVulkan = @import("vk_swapchain.zig").SwapchainVulkan;
 
 pub const GfxStateVulkan = struct {
     const Self = @This();
     const ENABLE_VALIDATION_LAYERS: bool = true;
     const FORCE_INTEGRATED_GPU: bool = false;
 
-    pub const ShaderModule = @import("vulkan/vk_shader_module.zig").ShaderModuleVulkan;
-    pub const VertexInput = @import("vulkan/vk_vertex_input.zig").VertexInputVulkan;
+    pub const ShaderModule = @import("vk_shader_module.zig").ShaderModuleVulkan;
+    pub const VertexInput = @import("vk_vertex_input.zig").VertexInputVulkan;
     
-    pub const Buffer = @import("vulkan/vk_buffer.zig").BufferVulkan;
-    pub const Image = @import("vulkan/vk_image.zig").ImageVulkan;
-    pub const ImageView = @import("vulkan/vk_image_view.zig").ImageViewVulkan;
-    pub const Sampler = @import("vulkan/vk_sampler.zig").SamplerVulkan;
+    pub const Buffer = @import("vk_buffer.zig").BufferVulkan;
+    pub const Image = @import("vk_image.zig").ImageVulkan;
+    pub const ImageView = @import("vk_image_view.zig").ImageViewVulkan;
+    pub const Sampler = @import("vk_sampler.zig").SamplerVulkan;
 
-    pub const RenderPass = @import("vulkan/vk_render_pass.zig").RenderPassVulkan;
-    pub const GraphicsPipeline = @import("vulkan/vk_graphics_pipeline.zig").GraphicsPipelineVulkan;
-    pub const ComputePipeline = @import("vulkan/vk_compute_pipeline.zig").ComputePipelineVulkan;
-    pub const FrameBuffer = @import("vulkan/vk_frame_buffer.zig").FrameBufferVulkan;
+    pub const RenderPass = @import("vk_render_pass.zig").RenderPassVulkan;
+    pub const GraphicsPipeline = @import("vk_graphics_pipeline.zig").GraphicsPipelineVulkan;
+    pub const ComputePipeline = @import("vk_compute_pipeline.zig").ComputePipelineVulkan;
+    pub const FrameBuffer = @import("vk_frame_buffer.zig").FrameBufferVulkan;
 
-    pub const DescriptorLayout = @import("vulkan/vk_descriptor_layout.zig").DescriptorLayoutVulkan;
-    pub const DescriptorPool = @import("vulkan/vk_descriptor_pool.zig").DescriptorPoolVulkan;
-    pub const DescriptorSet = @import("vulkan/vk_descriptor_set.zig").DescriptorSetVulkan;
+    pub const DescriptorLayout = @import("vk_descriptor_layout.zig").DescriptorLayoutVulkan;
+    pub const DescriptorPool = @import("vk_descriptor_pool.zig").DescriptorPoolVulkan;
+    pub const DescriptorSet = @import("vk_descriptor_set.zig").DescriptorSetVulkan;
 
-    pub const CommandPool = @import("vulkan/vk_command_pool.zig").CommandPoolVulkan;
-    pub const CommandBuffer = @import("vulkan/vk_command_buffer.zig").CommandBufferVulkan;
+    pub const CommandPool = @import("vk_command_pool.zig").CommandPoolVulkan;
+    pub const CommandBuffer = @import("vk_command_buffer.zig").CommandBufferVulkan;
 
-    pub const Semaphore = @import("vulkan/vk_synchronisation.zig").SemaphoreVulkan;
-    pub const Fence = @import("vulkan/vk_synchronisation.zig").FenceVulkan;
+    pub const Semaphore = @import("vk_synchronisation.zig").SemaphoreVulkan;
+    pub const Fence = @import("vk_synchronisation.zig").FenceVulkan;
 
     const VkQueues = struct {
         all: c.VkQueue,
@@ -105,7 +104,7 @@ pub const GfxStateVulkan = struct {
         c.vkDestroyInstance(self.instance, null);
     }
 
-    pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
+    pub fn init(alloc: std.mem.Allocator, window: *eng.window.Window) !Self {
         // Request vulkan version
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));
@@ -638,7 +637,7 @@ pub const GfxStateVulkan = struct {
         };
     }
 
-    pub fn init_late(self: *Self, window: *pl.Window) !void {
+    pub fn init_late(self: *Self, window: *eng.window.Window) !void {
         // Create swap chain
         const window_size = try window.get_client_size();
         self.swapchain = try SwapchainVulkan.init(self, .{

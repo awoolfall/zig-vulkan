@@ -1,7 +1,7 @@
 const std = @import("std");
+const eng = @import("self");
 const kc = @import("keycode.zig");
 pub const KeyCode = kc.KeyCode;
-const wb = @import("../window.zig");
 
 pub const KeyState = enum {
     RELEASED,
@@ -41,7 +41,7 @@ pub const InputState = struct {
         _ = self;
     }
 
-    pub fn received_window_event_early(self: *Self, event: *const wb.WindowEvent) void {
+    pub fn received_window_event_early(self: *Self, event: *const eng.window.WindowEvent) void {
         switch (event.*) {
             .KEY_DOWN => |k| {
                 const e = @intFromEnum(k.keycode);
@@ -92,7 +92,7 @@ pub const InputState = struct {
         }
     }
 
-    pub fn received_window_event_late(self: *Self, event: *const wb.WindowEvent) void {
+    pub fn received_window_event_late(self: *Self, event: *const eng.window.WindowEvent) void {
         switch (event.*) {
             .EVENTS_CLEARED => {
                 self.on_update();

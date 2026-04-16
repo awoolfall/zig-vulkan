@@ -6,9 +6,9 @@ pub const AssetPackId = usize;
 
 pub const AssetId = @import("asset_id.zig").AssetId;
 
-pub const ModelAsset = @import("model_asset.zig").ModelAsset;
-pub const AnimationAsset = @import("animation_asset.zig").AnimationAsset;
-pub const ImageAsset = @import("image_asset.zig").ImageAsset;
+pub const ModelAsset = @import("types/model_asset.zig").ModelAsset;
+pub const AnimationAsset = @import("types/animation_asset.zig").AnimationAsset;
+pub const ImageAsset = @import("types/image_asset.zig").ImageAsset;
 
 pub const ModelAssetId = AssetId(ModelAsset);
 pub const AnimationAssetId = AssetId(AnimationAsset);

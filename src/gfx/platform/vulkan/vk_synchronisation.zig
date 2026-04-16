@@ -3,7 +3,7 @@ const eng = @import("self");
 const gf = eng.gfx;
 const c = @import("vk_import.zig").c;
 const vkt = @import("vk_error.zig").vulkan_result_to_zig_error;
-const vk = @import("../vulkan.zig");
+const vk = @import("vulkan.zig");
 const GfxStateVulkan = vk.GfxStateVulkan;
 
 pub const SemaphoreVulkan = struct {

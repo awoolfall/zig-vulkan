@@ -1,10 +1,10 @@
 const std = @import("std");
-const eng = @import("../root.zig");
+const eng = @import("self");
 const zstbi = @import("zstbi");
 const im = eng.image;
 const gf = eng.gfx;
 const pt = eng.path;
-const FileWatcher = @import("file_watcher.zig");
+const FileWatcher = @import("../file_watcher.zig");
 
 pub const ImagePath = union(enum) {
     Path: []const u8,
@@ -60,7 +60,7 @@ pub const ImageAsset = struct {
     pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
         const is_image_array = switch (self.path) {
             .Path => |p| blk: {
-                const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
+                const asset_path = try eng.util.Path.init(alloc, .{ .Asset = p });
                 defer asset_path.deinit();
 
                 const pp = try asset_path.resolve_path(alloc);
@@ -211,7 +211,7 @@ pub const ImageAsset = struct {
     fn load_image(alloc: std.mem.Allocator, path: *const ImagePath) !gf.Image.Ref {
         switch (path.*) {
             .Path => |p| {
-                const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
+                const asset_path = try eng.util.Path.init(alloc, .{ .Asset = p });
                 defer asset_path.deinit();
 
                 const pp = try asset_path.resolve_path(alloc);
@@ -247,7 +247,7 @@ pub const ImageAsset = struct {
         };
     }
 
-    fn load_single_image(alloc: std.mem.Allocator, asset_path: eng.path.Path) !gf.Image.Ref {
+    fn load_single_image(alloc: std.mem.Allocator, asset_path: eng.util.Path) !gf.Image.Ref {
         var image = try Self.load_single_image_cpu(alloc, asset_path);
         defer image.deinit();
 
@@ -456,7 +456,7 @@ pub const ImageAsset = struct {
         }
     }
 
-    fn load_single_image_cpu(alloc: std.mem.Allocator, asset_path: eng.path.Path) !im.Image {
+    fn load_single_image_cpu(alloc: std.mem.Allocator, asset_path: eng.util.Path) !im.Image {
         const path_string = try asset_path.resolve_path(alloc);
         defer alloc.free(path_string);
 

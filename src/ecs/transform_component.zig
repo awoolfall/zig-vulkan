@@ -19,18 +19,14 @@ pub fn init(alloc: std.mem.Allocator) !Self {
     return .{};
 }
 
-pub fn serialize(alloc: std.mem.Allocator, value: Self) !std.json.Value {
-    var object = std.json.ObjectMap.init(alloc);
-    errdefer object.deinit();
-
-    try object.put("transform", try sr.serialize_value(eng.Transform, alloc, value.transform));
-
-    return std.json.Value { .object = object };
+pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
+    _ = entity;
+    try object.put("transform", try sr.serialize_value(eng.Transform, alloc, self.transform));
 }
 
-pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !Self {
+pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std.json.ObjectMap) !Self {
+    _ = entity;
     var component: Self = .{};
-    const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
 
     if (object.get("transform")) |v| blk: { component.transform = sr.deserialize_value(eng.Transform, alloc, v) catch break :blk; }
 

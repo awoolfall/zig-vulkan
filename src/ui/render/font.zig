@@ -4,8 +4,8 @@ const eng = @import("self");
 const _gfx = eng.gfx;
 const zm = eng.zmath;
 const ui = eng.ui;
-const path = eng.path;
-const RectPixels = eng.Rect;
+const Path = eng.util.Path;
+const RectPixels = eng.util.Rect;
 
 pub const AtlasDetails = struct {
     distance_range: f32,
@@ -126,7 +126,7 @@ pub const Font = struct {
         self.character_map.deinit();
     }
 
-    pub fn init(font_json: path.Path, font_msdf_png: path.Path) !Font {
+    pub fn init(font_json: Path, font_msdf_png: Path) !Font {
         const alloc = eng.get().general_allocator;
 
         const font_json_path = try font_json.resolve_path(alloc);

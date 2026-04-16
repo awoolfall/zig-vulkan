@@ -1,6 +1,6 @@
 const std = @import("std");
 const eng = @import("self");
-const gen = eng.gen;
+const gen = eng.util.gen;
 const sr = eng.serialize;
 
 // -- Standard Components --
@@ -228,8 +228,13 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
 
             inline for (info.@"struct".fields, 0..) |_, idx| {
                 if (self.get_component(ComponentTypes[idx], entity)) |component| {
-                    var serialized_value = try sr.serialize_value(ComponentTypes[idx], alloc, component.*);
-                    try serialized_value.object.put("_ecs_COMPONENT_NAME", std.json.Value{ .string = ComponentTypes[idx].COMPONENT_NAME, });
+                    var component_object_map = std.json.ObjectMap.init(alloc);
+                    errdefer component_object_map.deinit();
+
+                    try component_object_map.put("_ecs_COMPONENT_NAME", std.json.Value{ .string = ComponentTypes[idx].COMPONENT_NAME, });
+                    try component.serialize(alloc, entity, &component_object_map);
+
+                    const serialized_value = std.json.Value { .object = component_object_map };
                     try object.put(ComponentTypes[idx].COMPONENT_UUID, serialized_value);
                 }
             }
@@ -255,14 +260,9 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
                     // TODO ideally we dont do this.
                     component.deinit();
 
-                    component.* = try sr.deserialize_value(ComponentTypes[idx], alloc, v);
+                    const component_object_map = switch (v) { .object => |obj| obj, else => return error.InvalidType, };
+                    component.* = try ComponentTypes[idx].deserialize(alloc, entity, component_object_map);
                 }
-            }
-
-            // hack to update physics when the entity is deserialized
-            // TODO: figure out a way for components to access their own entity id during deserialization?
-            if (self.get_component(eng.ecs.PhysicsComponent, entity)) |physics_component| {
-                try physics_component.update_runtime_data(entity);
             }
 
             return entity;

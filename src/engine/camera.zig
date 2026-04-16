@@ -1,11 +1,8 @@
 const std = @import("std");
-const Transform = @import("transform.zig");
+const eng = @import("self");
+const Transform = eng.Transform;
 const zm = @import("zmath");
 const kc = @import("../input/keycode.zig");
-const engine = @import("../root.zig");
-const Window = engine.platform.Window;
-const _input = engine.input;
-const _time = engine.time;
 
 const CameraBufferStruct = extern struct {
     projection: [4]zm.F32x4,
@@ -50,9 +47,9 @@ pub const Camera = struct {
 
     pub fn fly_camera_update(
         self: *Self, 
-        window: *Window,
-        input: *const _input.InputState,
-        time: *const _time.TimeState,
+        window: *eng.window.Window,
+        input: *const eng.input.InputState,
+        time: *const eng.time.TimeState,
     ) void {
         self.local_transform = self.transform;
 
@@ -106,9 +103,9 @@ pub const Camera = struct {
     pub fn orbit_camera_update(
         self: *Self, 
         orbit_target: zm.F32x4, 
-        window: *Window,
-        input: *const _input.InputState,
-        time: *const _time.TimeState,
+        window: *eng.window.Window,
+        input: *const eng.input.InputState,
+        time: *const eng.time.TimeState,
     ) void {
         if (input.get_key_down(kc.KeyCode.MouseRight)) {
             window.show_cursor(false);
@@ -168,4 +165,3 @@ pub const Camera = struct {
         return 2.0 * std.math.atan(std.math.tan(horizontal_fov / 2.0) * (1.0 / aspect_ratio));
     }
 };
-

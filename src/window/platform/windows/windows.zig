@@ -1,4 +1,6 @@
 const std = @import("std");
+const eng = @import("self");
+const wb = eng.window;
 const w32 = @cImport({
     @cDefine("WIN32_LEAN_AND_MEAN", "1");
     @cInclude("windows.h");
@@ -7,8 +9,6 @@ const w32 = @cImport({
 
 const __c = @import("windows_keycode.zig");
 const convert_windows_keycode = __c.convert_windows_keycode;
-const __k = @import("../input/keycode.zig");
-const wb = @import("../window.zig");
 
 
 const GlobalEnginePtr = struct {
@@ -376,7 +376,7 @@ pub const Win32Window = struct {
                 _ = w32.SetCapture(hwnd);
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
-                    .keycode = __k.KeyCode.MouseLeft,
+                    .keycode = eng.input.KeyCode.MouseLeft,
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
@@ -385,7 +385,7 @@ pub const Win32Window = struct {
             w32.WM_LBUTTONUP => {
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_UP = wb.KeyEvent {
-                    .keycode = __k.KeyCode.MouseLeft,
+                    .keycode = eng.input.KeyCode.MouseLeft,
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
@@ -396,7 +396,7 @@ pub const Win32Window = struct {
                 _ = w32.SetCapture(hwnd);
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
-                    .keycode = __k.KeyCode.MouseMiddle,
+                    .keycode = eng.input.KeyCode.MouseMiddle,
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
@@ -405,7 +405,7 @@ pub const Win32Window = struct {
             w32.WM_MBUTTONUP => {
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_UP = wb.KeyEvent {
-                    .keycode = __k.KeyCode.MouseMiddle,
+                    .keycode = eng.input.KeyCode.MouseMiddle,
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
@@ -416,7 +416,7 @@ pub const Win32Window = struct {
                 _ = w32.SetCapture(hwnd);
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_DOWN = wb.KeyEvent {
-                    .keycode = __k.KeyCode.MouseRight,
+                    .keycode = eng.input.KeyCode.MouseRight,
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});
@@ -425,7 +425,7 @@ pub const Win32Window = struct {
             w32.WM_RBUTTONUP => {
                 g_engine.send_window_event(wb.WindowEvent { .CURSOR_MOVED = construct_cursor_move_event(w_param, l_param) });
                 g_engine.send_window_event(wb.WindowEvent { .KEY_UP = wb.KeyEvent {
-                    .keycode = __k.KeyCode.MouseRight,
+                    .keycode = eng.input.KeyCode.MouseRight,
                     .repeat_count = 1,
                     .scan_code = 0,
                 }});

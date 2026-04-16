@@ -3,7 +3,7 @@ const eng = @import("self");
 const zm = eng.zmath;
 const _gfx = eng.gfx;
 const ui = eng.ui;
-const RectPixels = eng.Rect;
+const RectPixels = eng.util.Rect;
 
 pub const RectEdges = packed struct {
     left: f32 = 0.0,

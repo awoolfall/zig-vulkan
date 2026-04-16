@@ -1,14 +1,11 @@
 const std = @import("std");
+const eng = @import("self");
+const zm = eng.zmath;
+const Transform = eng.Transform;
+
 pub const zphy = @import("zphysics");
-const zm = @import("zmath");
-pub const BodyId = zphy.BodyId;
-const eng = @import("../root.zig");
-const ms = @import("../engine/mesh.zig");
-const as = @import("../asset/asset.zig");
-const tm = @import("../engine/time.zig");
-const Transform = @import("../engine/transform.zig");
-const _gfx = @import("../gfx/gfx.zig");
 pub const util = @import("util.zig");
+pub const BodyId = zphy.BodyId;
 
 inline fn debug_renderer_enabled() bool {
     return true;
@@ -28,12 +25,12 @@ pub const PhysicsSystem = struct {
         object_layer_pair_filter: *ObjectLayerPairFilter,
     },
     _debug_renderer: if (debug_renderer_enabled()) *DebugRenderer else void,
-    asset_manager: *as.AssetManager,
+    asset_manager: *eng.assets.AssetManager,
     zphy: *zphy.PhysicsSystem, 
     last_update_time: std.time.Instant,
     last_update_time_offset: u64 = 0,
 
-    pub fn init(alloc: std.mem.Allocator, asset_manager: *as.AssetManager) !Self {
+    pub fn init(alloc: std.mem.Allocator, asset_manager: *eng.assets.AssetManager) !Self {
         try zphy.init(alloc, .{});
         errdefer zphy.deinit();
 
@@ -126,22 +123,27 @@ pub const PhysicsSystem = struct {
                             entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
                         },
                         .Body => |body| {
+                            body_interface.setLinearVelocity(body.id, zm.vecToArr3(entity_physics.velocity));
                             body_interface.setPosition(body.id, zm.vecToArr3(entity_transform.transform.position), .dont_activate);
-                            body_interface.setRotation(body.id, entity_transform.transform.rotation, .activate);
+                            body_interface.setRotation(body.id, zm.vecToArr4(entity_transform.transform.rotation), .activate);
 
                             entity_physics.last_frame_data.position = zm.loadArr3(body_interface.getPosition(body.id));
                             entity_physics.last_frame_data.rotation = zm.loadArr4(body_interface.getRotation(body.id));
                         },
                         .Character => |character| {
                             character.character.setPosition(zm.vecToArr3(entity_transform.transform.position));
-                            //character.character.setRotation(entity.transform.rotation);
+                            //character.character.setRotation(zm.vecToArr4(entity_transform.transform.rotation));
+
+                            character.character.setLinearVelocity(zm.vecToArr3(entity_physics.velocity));
 
                             entity_physics.last_frame_data.position = zm.loadArr3(character.character.getPosition());
                             entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
                         },
                         .CharacterVirtual => |character| {
                             character.virtual.setPosition(zm.vecToArr3(entity_transform.transform.position));
-                            //character.virtual.setRotation(entity.transform.rotation);
+                            //character.virtual.setRotation(zm.vecToArr4(entity_transform.transform.rotation));
+                            
+                            character.virtual.setLinearVelocity(zm.vecToArr3(entity_physics.velocity));
 
                             entity_physics.last_frame_data.position = zm.loadArr3(character.virtual.getPosition());
                             entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
@@ -225,12 +227,15 @@ pub const PhysicsSystem = struct {
                     .Body => |body| {
                         entity_transform.transform.position = zm.loadArr3(body_interface.getPosition(body.id));
                         entity_transform.transform.rotation = zm.loadArr4(body_interface.getRotation(body.id));
+                        entity_physics.velocity = zm.loadArr3(body_interface.getLinearVelocity(body.id));
                     },
                     .Character => |character| {
                         entity_transform.transform.position = zm.loadArr3(character.character.getPosition());
+                        entity_physics.velocity = zm.loadArr3(character.character.getLinearVelocity());
                     },
                     .CharacterVirtual => |character| {
                         entity_transform.transform.position = zm.loadArr3(character.virtual.getPosition());
+                        entity_physics.velocity = zm.loadArr3(character.virtual.getLinearVelocity());
                     },
                 }
             }
@@ -275,7 +280,7 @@ pub const PhysicsSystem = struct {
         }
     }
 
-    pub fn debug_draw_bodies(self: *Self, cmd: *_gfx.CommandBuffer, projection: zm.Mat, view: zm.Mat) void {
+    pub fn debug_draw_bodies(self: *Self, cmd: *eng.gfx.CommandBuffer, projection: zm.Mat, view: zm.Mat) void {
         if (debug_renderer_enabled()) {
             self._debug_renderer.draw_bodies(cmd, projection, view);
         }
@@ -290,7 +295,7 @@ pub const PhysicsSystem = struct {
             .Box => |*b| 
                 (try zphy.BoxShapeSettings.create([3]f32{b.width/2.0, b.height/2.0, b.depth/2.0})).asShapeSettings(),
             .ModelCompoundConvexHull => |m|
-                (try (try self.asset_manager.get_asset(as.ModelAsset, m)).gen_static_compound_physics_shape()).asShapeSettings(),
+                (try (try self.asset_manager.get_asset(eng.assets.ModelAsset, m)).gen_static_compound_physics_shape()).asShapeSettings(),
             };
         defer shape_settings.release();
 
@@ -385,7 +390,7 @@ pub const PhysicsSystem = struct {
         additional_data: u16,
     };
 
-    pub fn construct_entity_user_data(generational_idx: eng.gen.GenerationalIndex, additional_data: u16) u64 {
+    pub fn construct_entity_user_data(generational_idx: eng.util.gen.GenerationalIndex, additional_data: u16) u64 {
         const entity_user_data = UserDataStruct {
             .index = @intCast(generational_idx.index),
             .generation = generational_idx.generation,
@@ -394,10 +399,10 @@ pub const PhysicsSystem = struct {
         return @bitCast(entity_user_data);
     }
 
-    pub fn extract_entity_from_user_data(user_data: u64) struct{ entity: eng.gen.GenerationalIndex, additional_data: u16 } {
+    pub fn extract_entity_from_user_data(user_data: u64) struct{ entity: eng.util.gen.GenerationalIndex, additional_data: u16 } {
         const entity_user_data: UserDataStruct = @bitCast(user_data);
         return .{
-            .entity = eng.gen.GenerationalIndex {
+            .entity = eng.util.gen.GenerationalIndex {
                 .index = @intCast(entity_user_data.index),
                 .generation = entity_user_data.generation,
             },
@@ -620,7 +625,7 @@ pub const ShapeSettings = struct {
             height: f32,
             depth: f32,
         },
-        ModelCompoundConvexHull: as.ModelAssetId,
+        ModelCompoundConvexHull: eng.assets.ModelAssetId,
     } = .{ .Box = .{ .width = 1.0, .height = 1.0, .depth = 1.0 } },
     offset_transform: Transform = .{},
 };

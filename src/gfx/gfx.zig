@@ -1,21 +1,27 @@
 const std = @import("std");
+const eng = @import("self");
 const builtin = @import("builtin");
 const zm = @import("zmath");
-const wb = @import("../window.zig");
-const path = @import("../engine/path.zig");
+const wb = eng.window;
 const bloom = @import("bloom.zig");
-const pl = @import("../platform/platform.zig");
-const gen = @import("self").gen;
+const gen = eng.util.gen;
 const ToneMappingFilter = @import("tonemapping_filter.zig");
 const BloomFilter = @import("bloom.zig");
 const ShaderManager = @import("shader_manager.zig");
 
-const eng = @import("../root.zig");
-const Rect = eng.Rect;
+const Rect = eng.util.Rect;
+
+pub const graphics_backend = @import("build_options").graphics_backend;
+
+const GfxPlatform = switch (graphics_backend) {
+    .Vulkan => @import("../gfx/platform/vulkan/vulkan.zig").GfxStateVulkan,
+    .WebGPU => @compileError("Not yet implemented"),
+    .Noop => @compileError("Not yet implemented"),
+};
 
 pub const GfxState = struct {
     const Self = @This();
-    const Platform = pl.GfxPlatform;
+    const Platform = GfxPlatform;
 
     pub const FULL_SCREEN_QUAD_VS = @embedFile("full_screen_quad_vs.slang");
 
@@ -113,7 +119,7 @@ pub const GfxState = struct {
         self.command_pools.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, window: *pl.Window) !Self {
+    pub fn init(alloc: std.mem.Allocator, window: *wb.Window) !Self {
         var shader_manager = try ShaderManager.init();
         errdefer shader_manager.deinit();
 
@@ -182,7 +188,7 @@ pub const GfxState = struct {
         };
     }
 
-    pub fn init_late(self: *Self, window: *pl.Window) !void {
+    pub fn init_late(self: *Self, window: *wb.Window) !void {
         try self.platform.init_late(window);
 
         self.default.hdr_image = try Image.init(.{
@@ -449,14 +455,14 @@ pub const ShaderModuleInfo = struct {
 };
 
 pub const ShaderModule = struct {
-    platform: pl.GfxPlatform.ShaderModule,
+    platform: GfxPlatform.ShaderModule,
 
     pub fn deinit(self: *const ShaderModule) void {
         self.platform.deinit();
     }
 
     pub fn init(info: ShaderModuleInfo) !ShaderModule {
-        const platform = pl.GfxPlatform.ShaderModule.init(info) catch |err| {
+        const platform = GfxPlatform.ShaderModule.init(info) catch |err| {
             std.log.err("Failed to initialise shader module: {}", .{err});
             return err;
         };
@@ -477,14 +483,14 @@ pub const VertexInputInfo = struct {
 };
 
 pub const VertexInput = struct {
-    platform: pl.GfxPlatform.VertexInput,
+    platform: GfxPlatform.VertexInput,
 
     pub fn deinit(self: *const VertexInput) void {
         self.platform.deinit();
     }
 
     pub fn init(info: VertexInputInfo) !VertexInput {
-        const platform = pl.GfxPlatform.VertexInput.init(info) catch |err| {
+        const platform = GfxPlatform.VertexInput.init(info) catch |err| {
             std.log.err("Failed to initialise vertex input: {}", .{err});
             return err;
         };
@@ -555,7 +561,7 @@ pub fn Reference(comptime T: type) type {
 pub const Buffer = struct {
     pub const Ref = Reference(Buffer);
 
-    platform: pl.GfxPlatform.Buffer,
+    platform: GfxPlatform.Buffer,
 
     pub fn deinit(self: *const Buffer) void {
         self.platform.deinit();
@@ -566,7 +572,7 @@ pub const Buffer = struct {
         usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
     ) !Buffer.Ref {
-        const platform = try pl.GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags);
+        const platform = try GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags);
         errdefer platform.deinit();
 
         const buffer = Buffer {
@@ -583,7 +589,7 @@ pub const Buffer = struct {
         usage_flags: BufferUsageFlags,
         access_flags: AccessFlags,
     ) !Buffer.Ref {
-        const platform = try pl.GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags);
+        const platform = try GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags);
         errdefer platform.deinit();
 
         const buffer = Buffer {
@@ -612,7 +618,7 @@ pub const Buffer = struct {
     }
 
     pub const MappedBuffer = struct {
-        platform: pl.GfxPlatform.Buffer.MappedBuffer,
+        platform: GfxPlatform.Buffer.MappedBuffer,
 
         pub fn unmap(self: *const MappedBuffer) void {
             self.platform.unmap();
@@ -753,7 +759,7 @@ pub const Image = struct {
     }
 
     pub const MappedImage = struct {
-        platform: pl.GfxPlatform.Image.MappedImage,
+        platform: GfxPlatform.Image.MappedImage,
 
         pub fn unmap(self: *const MappedImage) void {
             self.platform.unmap();
@@ -979,7 +985,7 @@ pub const Sampler = struct {
     }
 
     pub fn init(info: SamplerInfo) !Sampler.Ref {
-        const platform = try pl.GfxPlatform.Sampler.init(info);
+        const platform = try GfxPlatform.Sampler.init(info);
         errdefer platform.deinit();
 
         const sampler = Sampler {
@@ -1141,7 +1147,7 @@ pub const RenderPass = struct {
     }
 
     pub fn init(info: RenderPassInfo) !RenderPass.Ref {
-        const platform = try pl.GfxPlatform.RenderPass.init(info);
+        const platform = try GfxPlatform.RenderPass.init(info);
         errdefer platform.deinit();
 
         const owned_attachments = try eng.get().general_allocator.dupe(AttachmentInfo, info.attachments);
@@ -1212,7 +1218,7 @@ pub const GraphicsPipeline = struct {
     }
     
     pub fn init(info: GraphicsPipelineInfo) !GraphicsPipeline.Ref {
-        const platform = try pl.GfxPlatform.GraphicsPipeline.init(info);
+        const platform = try GfxPlatform.GraphicsPipeline.init(info);
         errdefer platform.deinit();
 
         const graphics_pipeline = GraphicsPipeline {
@@ -1244,7 +1250,7 @@ pub const ComputePipeline = struct {
     }
     
     pub fn init(info: ComputePipelineInfo) !ComputePipeline.Ref {
-        const platform = try pl.GfxPlatform.ComputePipeline.init(info);
+        const platform = try GfxPlatform.ComputePipeline.init(info);
         errdefer platform.deinit();
 
         const compute_pipeline = ComputePipeline {
@@ -1290,7 +1296,7 @@ pub const FrameBuffer = struct {
     }
 
     pub fn init_standalone(info: FrameBufferInfo) !FrameBuffer {
-        const platform = try pl.GfxPlatform.FrameBuffer.init(info);
+        const platform = try GfxPlatform.FrameBuffer.init(info);
         errdefer platform.deinit();
 
         var owned_info = info;

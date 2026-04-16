@@ -1,8 +1,8 @@
 const std = @import("std");
-const eng = @import("../root.zig");
+const eng = @import("self");
 const ms = eng.mesh;
 const pt = eng.path;
-const FileWatcher = @import("file_watcher.zig");
+const FileWatcher = @import("../file_watcher.zig");
 
 pub const ModelAssetPath = union(enum) {
     Path: []const u8,
@@ -123,7 +123,7 @@ pub const ModelAsset = struct {
     fn load_model(self: *const ModelAssetPath, alloc: std.mem.Allocator) !ms.Model {
         switch (self.*) {
             .Path => |p| {
-                const asset_path = try eng.path.Path.init(alloc, .{ .Asset = p });
+                const asset_path = try eng.util.Path.init(alloc, .{ .Asset = p });
                 defer asset_path.deinit();
 
                 return try ms.Model.init_from_file_assimp(

@@ -1,6 +1,6 @@
 const eng = @import("self");
 const Imui = eng.ui;
-const es = eng.easings;
+const es = eng.util.easings;
 const label = @import("label.zig");
 
 pub const ButtonId = struct {

@@ -1,13 +1,10 @@
 const std = @import("std");
 const eng = @import("self");
-const zm = @import("zmath");
-const ms = @import("mesh.zig");
-const tm = @import("time.zig");
-const Transform = @import("transform.zig");
+const zm = eng.zmath;
+const es = eng.util.easings;
+const sr = eng.serialize;
+const Transform = eng.Transform;
 const an = @import("animation.zig");
-const as = @import("../asset/asset.zig");
-const es = @import("../easings.zig");
-const sr = @import("../serialize/serialize.zig");
 
 /// Animation Controller provides a state machine for controlling skeletal animations. 
 /// It provides functionality to blend between animations based on variable values and node transitions.
@@ -17,7 +14,7 @@ pub const AnimController = struct {
     variables: std.AutoHashMap(u32, f32),
     nodes: std.ArrayList(Node),
     active_node: usize = 0,
-    base_animation: ?as.AnimationAssetId = null,
+    base_animation: ?eng.assets.AnimationAssetId = null,
     base_animation_time: f64 = 0.0,
 
     current_transition: ?struct {
@@ -59,7 +56,7 @@ pub const AnimController = struct {
         errdefer object.deinit();
 
         try object.put("nodes", try sr.serialize_value([]const Node, alloc, value.nodes.items));
-        try object.put("base_animation", try sr.serialize_value(?as.AnimationAssetId, alloc, value.base_animation));
+        try object.put("base_animation", try sr.serialize_value(?eng.assets.AnimationAssetId, alloc, value.base_animation));
 
         return std.json.Value { .object = object };
     }
@@ -78,19 +75,19 @@ pub const AnimController = struct {
             try anim_controller.nodes.appendSlice(eng.get().general_allocator, nodes);
         }
 
-        if (object.get("base_animation")) |v| blk: { anim_controller.base_animation = sr.deserialize_value(?as.AnimationAssetId, alloc, v) catch break :blk; }
+        if (object.get("base_animation")) |v| blk: { anim_controller.base_animation = sr.deserialize_value(?eng.assets.AnimationAssetId, alloc, v) catch break :blk; }
 
         return anim_controller;
     }
 
     /// Calculates the bone transforms for a given node.
     /// This function will blend between the base animation and the animation specified in the node.
-    fn calculate_bone_transforms_for_node(self: *Self, asset_manager: *as.AssetManager, model: *const ms.Model, node: *const Node, out_transforms: []Transform) void {
+    fn calculate_bone_transforms_for_node(self: *Self, asset_manager: *eng.assets.AssetManager, model: *const eng.mesh.Model, node: *const Node, out_transforms: []Transform) void {
         @memset(out_transforms[0..], Transform{});
 
         // calcualte base animation transforms at full strength
         if (self.base_animation) |base_animation_id| blk: {
-            const animation_asset = asset_manager.get_asset(as.AnimationAsset, base_animation_id)
+            const animation_asset = asset_manager.get_asset(eng.assets.AnimationAsset, base_animation_id)
                 catch break :blk;
             const base_animation = animation_asset.get_animation()
                 catch break :blk;
@@ -103,7 +100,7 @@ pub const AnimController = struct {
         switch (node.node) {
             .Basic => |basic| blk: {
                 // blend in the single basic animation based on the provided strength variable
-                const animation_asset = asset_manager.get_asset(as.AnimationAsset, basic.animation)
+                const animation_asset = asset_manager.get_asset(eng.assets.AnimationAsset, basic.animation)
                     catch break :blk;
                 const animation = animation_asset.get_animation()
                     catch break :blk;
@@ -130,7 +127,7 @@ pub const AnimController = struct {
                 const blend_value = std.math.clamp((blend_variable - blend.left_value) / (blend.right_value - blend.left_value), 0.0, 1.0);
 
                 // replace base animation with left animation at full strength
-                const left_animation_asset = asset_manager.get_asset(as.AnimationAsset, blend.left_animation)
+                const left_animation_asset = asset_manager.get_asset(eng.assets.AnimationAsset, blend.left_animation)
                     catch break :blk;
                 const left_animation = left_animation_asset.get_animation()
                     catch break :blk;
@@ -147,7 +144,7 @@ pub const AnimController = struct {
                 model.blend_animation_bone_transforms(left_animation, 1.0 * strength, out_transforms[0..]);
 
                 // blend in right animation based on blend variable
-                const right_animation_asset = asset_manager.get_asset(as.AnimationAsset, blend.right_animation)
+                const right_animation_asset = asset_manager.get_asset(eng.assets.AnimationAsset, blend.right_animation)
                     catch break :blk;
                 const right_animation = right_animation_asset.get_animation()
                     catch break :blk;
@@ -167,14 +164,14 @@ pub const AnimController = struct {
     }
 
     /// Generates the bone transform matricies for the current active node and any transitioning nodes.
-    pub fn calculate_bone_transforms(self: *Self, alloc: std.mem.Allocator, asset_manager: *as.AssetManager, model: *const ms.Model, out_transforms: []zm.Mat) void {
+    pub fn calculate_bone_transforms(self: *Self, alloc: std.mem.Allocator, asset_manager: *eng.assets.AssetManager, model: *const eng.mesh.Model, out_transforms: []zm.Mat) void {
         // calculate the transforms for the current active node
-        var active_node_transforms = [_]Transform{.{}} ** ms.MAX_BONES;
+        var active_node_transforms = [_]Transform{.{}} ** eng.mesh.MAX_BONES;
         self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes.items[self.active_node], active_node_transforms[0..]);
 
         // calculate and blend the transforms for any transitioning nodes based on the transition timings and easing
         if (self.current_transition) |transition| {
-            var transition_node_transforms = [_]Transform{.{}} ** ms.MAX_BONES;
+            var transition_node_transforms = [_]Transform{.{}} ** eng.mesh.MAX_BONES;
             self.calculate_bone_transforms_for_node(asset_manager, model, &self.nodes.items[transition.node_0], transition_node_transforms[0..]);
 
             for (0..active_node_transforms.len) |i| {
@@ -248,7 +245,7 @@ pub const AnimController = struct {
     }
 
     /// Updates the animation controller state and transitions to a new node if necessary.
-    pub fn update(self: *Self, asset_manager: *const as.AssetManager, time: *const tm.TimeState) void {
+    pub fn update(self: *Self, asset_manager: *const eng.assets.AssetManager, time: *const eng.time.TimeState) void {
         // check if we should transition to a new node
         forblk: for (self.nodes.items[self.active_node].next) |t| {
             const should_transition = cblk: { switch (t.condition) {
@@ -257,7 +254,7 @@ pub const AnimController = struct {
                         .Basic => |basic| basic.animation,
                         .Blend1D => |blend| blend.left_animation,
                     };
-                    const animation_asset = asset_manager.get_asset(as.AnimationAsset, animation_id)
+                    const animation_asset = asset_manager.get_asset(eng.assets.AnimationAsset, animation_id)
                         catch break :cblk false;
                     const animation = animation_asset.get_animation()
                         catch break :cblk false;
@@ -349,15 +346,15 @@ pub const TransitionCondition = union(enum) {
 /// A basic node in the animation controller state machine which runs a single 
 /// animation with optional strength value.
 pub const BasicNode = struct {
-    animation: as.AnimationAssetId,
+    animation: eng.assets.AnimationAssetId,
     strength_variable: ?u32 = null,
 };
 
 /// A blend node in the animation controller state machine allowing the blending
 /// of animations based on a single variable value.
 pub const BlendNode1D = struct {
-    left_animation: as.AnimationAssetId,
-    right_animation: as.AnimationAssetId,
+    left_animation: eng.assets.AnimationAssetId,
+    right_animation: eng.assets.AnimationAssetId,
     variable: ?u32 = null,
     left_value: f32,
     right_value: f32,

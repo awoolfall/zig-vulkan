@@ -1,6 +1,6 @@
 const std = @import("std");
+const eng = @import("self");
 const builtin = @import("builtin");
-const wb = @import("../window.zig");
 
 pub const TimeState = struct {
     const Self = @This();
@@ -57,7 +57,7 @@ pub const TimeState = struct {
         self.frame_start_time = new_frame_start_time;
     }
 
-    pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
+    pub fn received_window_event(self: *Self, event: *const eng.window.WindowEvent) void {
         switch (event.*) {
             .EVENTS_CLEARED => { self.on_update(); },
             .LOST_FOCUS => { self.is_focused = false; },

@@ -1,6 +1,6 @@
 const std = @import("std");
+const eng = @import("self");
 const stbi = @import("zstbi");
-const path = @import("path.zig");
 
 pub const Image = struct {
     alloc: std.mem.Allocator,

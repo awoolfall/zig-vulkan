@@ -1,10 +1,10 @@
+const eng = @import("self");
+const KeyCode = eng.input.KeyCode;
 const w32 = @cImport({
     @cDefine("WIN32_LEAN_AND_MEAN", "1");
     @cInclude("windows.h");
     @cInclude("winuser.h");
 });
-const kc = @import("../input/keycode.zig");
-const KeyCode = kc.KeyCode;
 
 pub fn convert_windows_keycode(winkc: usize) ?KeyCode {
     return switch (winkc) {

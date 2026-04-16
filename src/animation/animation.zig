@@ -1,7 +1,7 @@
 const std = @import("std");
-const zm = @import("zmath");
-const Transform = @import("transform.zig");
-const ms = @import("mesh.zig");
+const eng = @import("self");
+const zm = eng.zmath;
+const Transform = eng.Transform;
 
 pub const AnimationKey = struct {
     time: f64,

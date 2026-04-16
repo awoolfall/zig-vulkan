@@ -1,4 +1,12 @@
-const kc = @import("input/keycode.zig");
+const std = @import("std");
+const eng = @import("self");
+const builtin = @import("builtin");
+pub const os = builtin.os;
+
+pub const Window = switch (builtin.os.tag) {
+    .windows => @import("platform/windows/windows.zig").Win32Window,
+    else => @compileError("Unsupported OS"),
+};
 
 pub const WindowEvent = union(enum) {
     RESIZED: WindowSize,
@@ -26,7 +34,7 @@ pub const WindowSize = struct {
 };
 
 pub const KeyEvent = struct {
-    keycode: kc.KeyCode,
+    keycode: eng.input.KeyCode,
     repeat_count: u16,
     scan_code: u16,
 };
