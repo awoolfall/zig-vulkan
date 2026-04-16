@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("../vulkan_import.zig").c;
+const c = @import("vk_import.zig").c;
 
 pub const VkAllocator = struct {
     const UserData = struct {

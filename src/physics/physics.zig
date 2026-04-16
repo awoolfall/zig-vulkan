@@ -101,7 +101,7 @@ pub const PhysicsSystem = struct {
 
     pub fn update(
         self: *Self,
-        components_query_iterator: eng.ecs.GenericQueryIterator(.{ eng.entity.TransformComponent, eng.entity.PhysicsComponent })
+        components_query_iterator: eng.ecs.GenericQueryIterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent })
     ) void {
         const time = &eng.get().time;
 
@@ -117,8 +117,8 @@ pub const PhysicsSystem = struct {
 
                 components_query_iterator.reset();
                 while (components_query_iterator.next()) |components| {
-                    const entity_transform: *eng.entity.TransformComponent,
-                    const entity_physics: *eng.entity.PhysicsComponent = components;
+                    const entity_transform: *eng.ecs.TransformComponent,
+                    const entity_physics: *eng.ecs.PhysicsComponent = components;
 
                     switch (entity_physics.runtime_data) {
                         .None => {
@@ -163,7 +163,7 @@ pub const PhysicsSystem = struct {
                 components_query_iterator.reset();
                 while (components_query_iterator.next()) |components| {
                     _,
-                    const entity_physics: *eng.entity.PhysicsComponent = components;
+                    const entity_physics: *eng.ecs.PhysicsComponent = components;
 
                     switch (entity_physics.runtime_data) {
                         .None => {}, 
@@ -217,8 +217,8 @@ pub const PhysicsSystem = struct {
             // update entity transforms to match updated physics
             components_query_iterator.reset();
             while (components_query_iterator.next()) |components| {
-                const entity_transform: *eng.entity.TransformComponent,
-                const entity_physics: *eng.entity.PhysicsComponent = components;
+                const entity_transform: *eng.ecs.TransformComponent,
+                const entity_physics: *eng.ecs.PhysicsComponent = components;
                 
                 switch (entity_physics.runtime_data) {
                     .None => {}, 
@@ -238,8 +238,8 @@ pub const PhysicsSystem = struct {
     }
 
     pub fn calculate_entity_visual_transform(self: *const Self, entity: eng.ecs.Entity) Transform {
-        const transform_component = eng.get().ecs.get_component(eng.entity.TransformComponent, entity) orelse return .{};
-        if (eng.get().ecs.get_component(eng.entity.PhysicsComponent, entity)) |physics_component| {
+        const transform_component = eng.get().ecs.get_component(eng.ecs.TransformComponent, entity) orelse return .{};
+        if (eng.get().ecs.get_component(eng.ecs.PhysicsComponent, entity)) |physics_component| {
             // update positions and rotations of all entities based on current physics info
             const ns_since_last_update = eng.get().time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
             const offset_seconds = @as(f32, @floatFromInt(ns_since_last_update)) / @as(f32, @floatFromInt(std.time.ns_per_s));

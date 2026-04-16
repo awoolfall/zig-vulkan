@@ -13,7 +13,6 @@ const tm = @import("engine/time.zig");
 const mesh = @import("engine/mesh.zig");
 const ph = @import("physics/physics.zig");
 const im = @import("engine/image.zig");
-const entity = @import("engine/entity.zig");
 const gen = @import("engine/gen_list.zig");
 const Transform = @import("engine/transform.zig");
 const Imui = @import("ui/ui.zig");
@@ -193,7 +192,7 @@ fn pre_app_update(self: *Self) !void {
     self.imui.end_frame();
 
     // Update physics
-    var physics_iter = self.ecs.query_iterator(.{ eng.entity.TransformComponent, eng.entity.PhysicsComponent });
+    var physics_iter = self.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent });
     self.physics.update(physics_iter.create_generic_iterator());
 }
 

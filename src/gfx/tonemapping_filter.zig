@@ -118,7 +118,7 @@ pub fn init() !Self {
             .name = "ldr_colour",
             .format = gf.GfxState.ldr_format,
             .load_op = .Clear,
-            .clear_value = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+            .clear_value = gf.ClearValue { .u32x4 = [4]u32 { 0, 0, 0, 255 } },
             .initial_layout = .Undefined,
             .final_layout = .ColorAttachmentOptimal,
         },

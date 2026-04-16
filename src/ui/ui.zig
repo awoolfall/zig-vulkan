@@ -42,8 +42,8 @@ pub const FontEnum = enum(usize) {
 
 pub fn position_pixels_to_screen_space(x: f32, y: f32, max_width: f32, max_height: f32) [2]f32 {
     const y_multiplier = switch (@import("build_options").graphics_backend) {
-        .Direct3D11 => -1.0,
-        else => 1.0,
+        .Vulkan => 1.0,
+        else => -1.0, // direct 3d uses -1.0
     };
     return [2]f32{
         ((x / max_width) * 2.0) - 1.0,

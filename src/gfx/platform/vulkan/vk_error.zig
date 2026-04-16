@@ -1,4 +1,4 @@
-const c = @import("vulkan_import.zig").c;
+const c = @import("vk_import.zig").c;
 const std = @import("std");
 
 pub inline fn vulkan_result_to_zig_error(result: c.VkResult) !void {

@@ -3,6 +3,22 @@ const eng = @import("self");
 const gen = eng.gen;
 const sr = eng.serialize;
 
+// -- Standard Components --
+
+pub const SerializationComponent = @import("../ecs/serialization_component.zig");
+pub const TransformComponent = @import("../ecs/transform_component.zig");
+pub const ModelComponent = @import("../ecs/model_component.zig");
+pub const PhysicsComponent = @import("../ecs/physics_component.zig");
+
+pub const StandardEntityComponents = .{
+    SerializationComponent,
+    TransformComponent,
+    ModelComponent,
+    PhysicsComponent,
+};
+
+// -- Standard Components --
+
 pub const Entity = struct {
     idx: gen.GenerationalIndex,
 };
@@ -212,7 +228,9 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
 
             inline for (info.@"struct".fields, 0..) |_, idx| {
                 if (self.get_component(ComponentTypes[idx], entity)) |component| {
-                    try object.put(@typeName(ComponentTypes[idx]), try sr.serialize_value(ComponentTypes[idx], alloc, component.*));
+                    var serialized_value = try sr.serialize_value(ComponentTypes[idx], alloc, component.*);
+                    try serialized_value.object.put("_ecs_COMPONENT_NAME", std.json.Value{ .string = ComponentTypes[idx].COMPONENT_NAME, });
+                    try object.put(ComponentTypes[idx].COMPONENT_UUID, serialized_value);
                 }
             }
 
@@ -231,7 +249,7 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
             if (object.get("name")) |v| blk: { ent.name = sr.deserialize_value(?[]const u8, alloc, v) catch break :blk; }
 
             inline for (info.@"struct".fields, 0..) |_, idx| {
-                if (object.get(@typeName(ComponentTypes[idx]))) |v| {
+                if (object.get(ComponentTypes[idx].COMPONENT_UUID)) |v| {
                     const component = try self.add_component(ComponentTypes[idx], entity);
                     // deinit default component to replace with the deserialized value
                     // TODO ideally we dont do this.
@@ -243,7 +261,7 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
 
             // hack to update physics when the entity is deserialized
             // TODO: figure out a way for components to access their own entity id during deserialization?
-            if (self.get_component(eng.entity.PhysicsComponent, entity)) |physics_component| {
+            if (self.get_component(eng.ecs.PhysicsComponent, entity)) |physics_component| {
                 try physics_component.update_runtime_data(entity);
             }
 

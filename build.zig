@@ -2,9 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub const GraphicsBackend = enum {
-    Direct3D11,
     Vulkan,
-    OpenGL_ES3,
+    WebGPU,
     Noop,
 };
 
@@ -27,7 +26,6 @@ pub fn build(b: *std.Build) !void {
     std.log.info("Target OS: {s}", .{@tagName(os)});
 
     const default_backend: GraphicsBackend = switch (os) {
-        //.windows => .Direct3D11,
         .windows => .Vulkan,
         else => .Noop,
     };
@@ -68,9 +66,6 @@ pub fn build(b: *std.Build) !void {
     }
 
     switch (graphics_backend) {
-        .Direct3D11 => {
-            std.debug.assert(os == .windows);
-        },
         .Vulkan => {
             const env_map = try std.process.getEnvMap(b.allocator);
             if (env_map.get("VK_SDK_PATH")) |path| {
@@ -80,10 +75,7 @@ pub fn build(b: *std.Build) !void {
 
             engine.linkSystemLibrary("vulkan-1", .{});
         },
-        .OpenGL_ES3 => {
-            const zopengl = b.dependency("zopengl", .{
-            });
-            engine.addImport("zopengl", zopengl.module("root"));
+        .WebGPU => {
         },
         else => {},
     }

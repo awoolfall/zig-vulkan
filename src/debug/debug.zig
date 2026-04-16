@@ -137,6 +137,7 @@ pub const Debug = struct {
                 .final_layout = .DepthStencilAttachmentOptimal,
                 .load_op = .Clear,
                 .stencil_load_op = .Clear,
+                .clear_value = gfx.ClearValue { .depth_stencil = .{ .depth = 0.0, .stencil = 0 } },
             },
         };
 

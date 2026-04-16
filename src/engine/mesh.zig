@@ -676,7 +676,10 @@ pub const Model = struct {
                 .current_tick = 0.0,
             };
             for (anim.channels(), 0..) |ch, ch_id| {
-                const node_id = nodes_names_map.get(ch.node_name()).?;
+                const node_id = nodes_names_map.get(ch.node_name()) orelse {
+                    std.log.warn("node name was not in node names map: {s}", .{ch.node_name()});
+                    continue;
+                };
 
                 animations[anim_id].channels[ch_id] = an.BoneAnimationChannel {
                     .node_name = model_nodes[node_id].name.?,

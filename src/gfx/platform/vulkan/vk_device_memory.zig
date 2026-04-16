@@ -1,7 +1,7 @@
 const std = @import("std");
 const eng = @import("self");
-const c = @import("../vulkan_import.zig").c;
-const vkt = @import("../vulkan_error.zig").vulkan_result_to_zig_error;
+const c = @import("vk_import.zig").c;
+const vkt = @import("vk_error.zig").vulkan_result_to_zig_error;
 
 pub const AllocationHandle = struct {
     memory_group_id: u32,

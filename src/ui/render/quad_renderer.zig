@@ -191,6 +191,7 @@ pub const QuadRenderer = struct {
                 .stencil_load_op = .Clear,
                 .initial_layout = .DepthStencilAttachmentOptimal,
                 .final_layout = .DepthStencilAttachmentOptimal,
+                .clear_value = _gfx.ClearValue { .depth_stencil = .{ .depth = 0.0, .stencil = 0 } },
             },
         };
 

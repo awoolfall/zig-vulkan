@@ -1039,6 +1039,16 @@ pub const AttachmentStoreOp = enum {
     DontCare,
 };
 
+pub const ClearValue = union {
+    none: void,
+    f32x4: zm.F32x4,
+    u32x4: [4]u32,
+    depth_stencil: struct {
+        depth: f32,
+        stencil: u32,
+    },
+};
+
 pub const AttachmentInfo = struct {
     name: []const u8, // an identifier to relate this attachment to attachments in other subpasses
     format: ImageFormat,
@@ -1053,7 +1063,7 @@ pub const AttachmentInfo = struct {
     initial_layout: ImageLayout,
     final_layout: ImageLayout,
 
-    clear_value: zm.F32x4 = zm.f32x4(0.0, 0.0, 0.0, 1.0),
+    clear_value: ClearValue = .{ .none = {} },
 };
 
 pub const SubpassInfo = struct {

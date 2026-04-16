@@ -15,7 +15,6 @@ pub const time = @import("engine/time.zig");
 pub const mesh = @import("engine/mesh.zig");
 pub const physics = @import("physics/physics.zig");
 pub const image = @import("engine/image.zig");
-pub const entity = @import("engine/entity.zig");
 pub const gen = @import("engine/gen_list.zig");
 pub const Transform = @import("engine/transform.zig");
 pub const ecs = @import("engine/ecs.zig");
@@ -38,7 +37,7 @@ pub const window = @import("window.zig");
 pub const serialize = @import("serialize/serialize.zig");
 
 const App = @import("app");
-const EntityComponentsTuple = entity.StandardEntityComponents ++ App.EntityComponents;
+const EntityComponentsTuple = ecs.StandardEntityComponents ++ App.EntityComponents;
 pub const AppEcsSystem = ecs.EcsSystem(EntityComponentsTuple);
 
 pub fn get() *Engine {
