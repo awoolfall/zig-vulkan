@@ -9,12 +9,14 @@ pub const SerializationComponent = @import("../ecs/serialization_component.zig")
 pub const TransformComponent = @import("../ecs/transform_component.zig");
 pub const ModelComponent = @import("../ecs/model_component.zig");
 pub const PhysicsComponent = @import("../ecs/physics_component.zig");
+pub const AnimationControllerComponent = @import("../ecs/animation_controller_component.zig");
 
 pub const StandardEntityComponents = .{
     SerializationComponent,
     TransformComponent,
     ModelComponent,
     PhysicsComponent,
+    AnimationControllerComponent,
 };
 
 // -- Standard Components --

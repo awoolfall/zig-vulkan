@@ -9,8 +9,7 @@ const AnimationPath = struct {
     model_id: ModelAssetId,
     animation_id: u64,
 
-    
-    pub fn get_animation(self: *const AnimationPath) !*eng.animation.BoneAnimation {
+    pub fn get_animation(self: *const AnimationPath) !*eng.animation.QuantisedBoneAnimation {
         const model = try eng.get().asset_manager.get_asset(ModelAsset, self.model_id);
         if (self.animation_id >= model.animations.len) {
             return error.AnimationIdOutOfBounds;

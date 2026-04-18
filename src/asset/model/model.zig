@@ -8,79 +8,10 @@ const zphy = eng.physics.zphy;
 const assert = std.debug.assert;
 const gf = eng.gfx;
 const Transform = eng.Transform;
+const BoundingBox = eng.util.BoundingBox;
 
-pub const PrimitiveTopology = enum {
-    Points,
-    Lines,
-    LineLoop,
-    LineStrip,
-    Triangles,
-    TriangleStrip,
-    TriangleFan,
-};
-
-pub const MaterialTextureMap = struct {
-    map: gf.ImageView.Ref,
-    uv_index: u8,
-    sampler: ?gf.Sampler.Ref = null,
-
-    fn deinit(self: *MaterialTextureMap) void {
-        self.map.deinit();
-        if (self.sampler) |*s| s.deinit();
-    }
-};
-
-pub const MaterialTemplate = struct {
-    double_sided: bool = true,
-    metallic_factor: f32 = 0.0,
-    roughness_factor: f32 = 1.0,
-    shininess: f32 = 0.0,
-    emissiveness: f32 = 0.0,
-    opacity: f32 = 1.0,
-    unlit: bool = false,
-    diffuse_map: ?MaterialTextureMap = null,
-    normals_map: ?MaterialTextureMap = null,
-
-    fn deinit(self: *MaterialTemplate) void {
-        if (self.diffuse_map) |*m| m.deinit();
-        if (self.normals_map) |*m| m.deinit();
-    }
-};
-
-pub const MeshPrimitive = struct {
-    pub const STRIDE =  @sizeOf([3]f32)     // positions
-                    +   @sizeOf([3]f32)     // normals
-                    +   @sizeOf([3]f32)     // tangents
-                    +   @sizeOf([3]f32)     // bitangents
-                    +   @sizeOf([2]f32)     // tex_coords
-                    +   @sizeOf([4]i32)     // bone_ids
-                    +   @sizeOf([4]f32);    // bone_weights
-
-    index_count: usize,
-    vertex_count: usize,
-
-    indices_offset: usize,
-    vertices_offset: usize,
-
-    topology: PrimitiveTopology,
-    material_template: ?usize,
-
-    bounding_box: BoundingBox,
-
-    // Check whether the mesh primitive has indices
-    pub inline fn has_indices(self: *const MeshPrimitive) bool {
-        return self.index_count != 0;
-    }
-};
-
-pub const BoundingBox = struct {
-    min: zm.F32x4,
-    max: zm.F32x4,
-
-    pub fn center(self: *const BoundingBox) zm.F32x4 {
-        return (self.max + self.min) / zm.f32x4s(2.0);
-    }
-};
+pub const MaterialTemplate = @import("material_template.zig");
+pub const MeshPrimitive = @import("mesh_primitive.zig");
 
 pub const MeshSet = struct {
     pub const MAX_PRIMITIVES_PER_SET = 4;
@@ -187,7 +118,7 @@ pub const Model = struct {
     nodes: []ModelNode,
 
     meshes: []MeshPrimitive,
-    animations: []eng.animation.BoneAnimation,
+    animations: []eng.animation.QuantisedBoneAnimation,
     materials: []MaterialTemplate,
     textures: []gf.Image.Ref,
 
@@ -330,77 +261,6 @@ pub const Model = struct {
                 }
             }
         }
-    }
-
-    fn create_material_texture_map_from_assimp(
-        textures_names_map: *const std.StringHashMap(usize),
-        textures: []gf.Image.Ref,
-        assimp_material: assimp.Material.Ptr,
-        texture_type: assimp.TextureType,
-    ) !?MaterialTextureMap {
-        const texture_props = assimp_material.get_texture_properties(texture_type, 0)
-            orelse return null;
-
-        const texture_index =   if (assimp.index_from_embedded_texture_path(texture_props.path())) |idx| idx
-                                else textures_names_map.get(texture_props.path()) orelse return null;
-
-        return MaterialTextureMap {
-            .map = try gf.ImageView.init(.{
-                .image = textures[texture_index],
-                .view_type = .ImageView2D,
-            }),
-            .uv_index = @truncate(texture_props.uvindex),
-            .sampler = try gf.Sampler.init(.{
-                .filter_min_mag = .Linear,
-            }),
-        };
-    }
-
-    fn create_material_template_from_assimp(
-        alloc: std.mem.Allocator,
-        textures_names_map: *const std.StringHashMap(usize),
-        textures: []gf.Image.Ref,
-        assimp_material: assimp.Material.Ptr
-    ) !MaterialTemplate {
-        var material = MaterialTemplate {};
-
-        var material_property_map = std.StringHashMap(assimp.MaterialProperty.Ptr).init(alloc);
-        defer material_property_map.deinit();
-
-        // fill property map
-        material_property_map.clearRetainingCapacity();
-        for (assimp_material.properties()) |prop| {
-            try material_property_map.put(prop.key(), prop);
-        }
-
-        // collect material properties
-        if (material_property_map.get("$mat.twosided")) |prop| {
-            material.double_sided = prop.data_bytes()[0] != 0;
-        }
-        if (material_property_map.get("$mat.metallicFactor")) |prop| {
-            material.metallic_factor = prop.data_f32();
-        }
-        if (material_property_map.get("$mat.roughnessFactor")) |prop| {
-            material.roughness_factor = prop.data_f32();
-        }
-        if (material_property_map.get("$mat.shininess")) |prop| {
-            material.shininess = prop.data_f32();
-        }
-        if (material_property_map.get("$mat.emissive")) |prop| {
-            material.emissiveness = prop.data_f32();
-        }
-        if (material_property_map.get("$mat.opacity")) |prop| {
-            material.opacity = prop.data_f32();
-        }
-        if (material_property_map.get("$mat.gltf.unlit")) |prop| {
-            material.unlit = prop.data_bytes()[0] != 0;
-        }
-
-        // collect material texture properties
-        material.diffuse_map = try create_material_texture_map_from_assimp(textures_names_map, textures, assimp_material, assimp.TextureType.Diffuse);
-        material.normals_map = try create_material_texture_map_from_assimp(textures_names_map, textures, assimp_material, assimp.TextureType.Normals);
-    
-        return material;
     }
 
     pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: eng.util.Path) !Self {
@@ -565,7 +425,7 @@ pub const Model = struct {
                     _ = material_property_map_arena.reset(.free_all);
                 }
 
-                var material_template = try create_material_template_from_assimp(
+                var material_template = try MaterialTemplate.init_from_assimp(
                     material_property_map_arena.allocator(),
                     &texture_names_map,
                     textures,
@@ -663,51 +523,55 @@ pub const Model = struct {
         errdefer model_arena.allocator().free(model_nodes);
 
         // Animations //
-        const animations = try model_arena.allocator().alloc(eng.animation.BoneAnimation, scene.animations().len);
+        const animations = try model_arena.allocator().alloc(eng.animation.QuantisedBoneAnimation, scene.animations().len);
         errdefer model_arena.allocator().free(animations);
 
         for (scene.animations(), 0..) |anim, anim_id| {
-            animations[anim_id] = eng.animation.BoneAnimation {
-                .name = try model_arena.allocator().dupe(u8, anim.name()),
-                .duration_ticks = anim.duration(),
-                .ticks_per_second = anim.ticks_per_second(),
-                .channels = try model_arena.allocator().alloc(eng.animation.BoneAnimationChannel, anim.channels().len),
-                .current_tick = 0.0,
+            const seconds_per_tick = 1.0 / anim.ticks_per_second();
+            const duration_seconds = anim.duration() * seconds_per_tick;
+
+            const bone_animation = eng.animation.BoneAnimation {
+                .name = try local_arena.allocator().dupe(u8, anim.name()),
+                .duration_seconds = duration_seconds,
+                .channels = try local_arena.allocator().alloc(eng.animation.BoneAnimationChannel, anim.channels().len),
             };
+
             for (anim.channels(), 0..) |ch, ch_id| {
                 const node_id = nodes_names_map.get(ch.node_name()) orelse {
                     std.log.warn("node name was not in node names map: {s}", .{ch.node_name()});
                     continue;
                 };
 
-                animations[anim_id].channels[ch_id] = eng.animation.BoneAnimationChannel {
+                bone_animation.channels[ch_id] = eng.animation.BoneAnimationChannel {
                     .node_name = model_nodes[node_id].name.?,
-                    .position_keys = try model_arena.allocator().alloc(eng.animation.AnimationKey, ch.position_keys().len),
-                    .rotation_keys = try model_arena.allocator().alloc(eng.animation.AnimationKey, ch.rotation_keys().len),
-                    .scale_keys = try model_arena.allocator().alloc(eng.animation.AnimationKey, ch.scale_keys().len),
+                    .position_keys = try local_arena.allocator().alloc(eng.animation.AnimationKey, ch.position_keys().len),
+                    .rotation_keys = try local_arena.allocator().alloc(eng.animation.AnimationKey, ch.rotation_keys().len),
+                    .scale_keys = try local_arena.allocator().alloc(eng.animation.AnimationKey, ch.scale_keys().len),
                 };
 
                 for (ch.position_keys(), 0..) |pk, pk_id| {
-                    animations[anim_id].channels[ch_id].position_keys[pk_id] = eng.animation.AnimationKey {
-                        .time = pk.time(),
+                    bone_animation.channels[ch_id].position_keys[pk_id] = eng.animation.AnimationKey {
+                        .time = pk.time() * seconds_per_tick,
                         .value = pk.value(),
                     };
                 }
 
                 for (ch.rotation_keys(), 0..) |rk, rk_id| {
-                    animations[anim_id].channels[ch_id].rotation_keys[rk_id] = eng.animation.AnimationKey {
-                        .time = rk.time(),
+                    bone_animation.channels[ch_id].rotation_keys[rk_id] = eng.animation.AnimationKey {
+                        .time = rk.time() * seconds_per_tick,
                         .value = rk.value(),
                     };
                 }
 
                 for (ch.scale_keys(), 0..) |sk, sk_id| {
-                    animations[anim_id].channels[ch_id].scale_keys[sk_id] = eng.animation.AnimationKey {
-                        .time = sk.time(),
+                    bone_animation.channels[ch_id].scale_keys[sk_id] = eng.animation.AnimationKey {
+                        .time = sk.time() * seconds_per_tick,
                         .value = sk.value(),
                     };
                 }
             }
+
+            animations[anim_id] = try bone_animation.quantise(model_arena.allocator(), 0.1);
         }
 
         // Bounding Box //
@@ -1257,14 +1121,6 @@ pub const Model = struct {
         animation: *eng.animation.BoneAnimation,
         strength: f32,
     };
-
-    pub fn blend_animation_bone_transforms(self: *const Self, animation: *const eng.animation.BoneAnimation, strength: f32, io_bone_transforms: []Transform) void {
-        for (self.bones_info, 0..) |*bone_info, bone_id| {
-            if (animation.find_node_anim(bone_info.bone_name)) |anim_channel| {
-                io_bone_transforms[@intCast(bone_id)] = io_bone_transforms[@intCast(bone_id)].lerp(&anim_channel.selected_transform, strength);
-            }
-        }
-    }
 
     pub fn generate_bone_transforms_for_pose(self: *const Self, alloc: std.mem.Allocator, in_bone_pose_transforms: []const Transform, out_bone_matrix_transforms: []zm.Mat) void {
         std.debug.assert(in_bone_pose_transforms.len >= MAX_BONES);
