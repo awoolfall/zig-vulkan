@@ -1,165 +1,45 @@
 const std = @import("std");
 const eng = @import("self");
 const ms = eng.mesh;
-const pt = eng.path;
-const FileWatcher = @import("../file_watcher.zig");
 
-pub const ModelAssetPath = union(enum) {
-    Path: []const u8,
-    Plane: struct {
-        slices: i32 = 32,
-        stacks: i32 = 32,
-    },
-    PlaneOnSphere: struct {
-        slices: i32 = 32,
-        stacks: i32 = 32,
-        plane_extent_radians: f32,
-    },
-    HeightMap: struct {
-        height_map: ms.Model.Heightmap,
-        slices: i32 = 32,
-        stacks: i32 = 32,
-        plane_extent_radians: f32 = 0.0,
-        height_map_scale: f32 = 1.0,
-    },
-    Cone: struct {
-        slices: i32,
-    },
-    Sphere: struct {
-        subdivisions: i32,
-    },
-    Cube: struct {},
-};
+const Self = @This();
 
-pub const ModelAsset = struct {
-    const Self = @This();
-    pub const BaseType = ms.Model;
-    pub const Path = ModelAssetPath;
+pub const BaseType = ms.Model;
+pub const Loader = Self;
 
-    arena: std.heap.ArenaAllocator,
-    path: ModelAssetPath,
+pub fn deinit(self: *Self) void {
+    _ = self;
+}
 
-    loaded_model: ?struct {
-        watcher: ?FileWatcher = null,
-        model: ms.Model,
-    } = null,
+pub fn init(alloc: std.mem.Allocator) !Self {
+    _ = alloc;
+    return Self {};
+}
 
-    pub fn deinit(self: *Self) void {
-        self.arena.deinit();
+pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseType {
+    _ = self;
+
+    const uri = try std.Uri.parse(asset_uri);
+
+    if (!std.mem.eql(u8, uri.scheme, "res")) {
+        return error.AssetIsNotAResourceFile;
     }
 
-    pub fn init(alloc: std.mem.Allocator, path: Self.Path) !Self {
-        var arena = std.heap.ArenaAllocator.init(alloc);
-        errdefer arena.deinit();
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
 
-        var owned_path = path;
-        switch (owned_path) {
-            .Path => |p| { 
-                owned_path = .{ 
-                    .Path = try arena.allocator().dupe(u8, p)
-                };
-            },
-            else => {},
-        }
+    const asset_relative_path = try uri.path.toRawMaybeAlloc(arena.allocator());
 
-        return .{
-            .arena = arena,
-            .path = owned_path,
-        };
-    }
+    const asset_path = try eng.get().asset_manager.resolve_resource_relative_path(alloc, asset_relative_path);
+    defer alloc.free(asset_path);
 
-    pub fn loaded_asset(self: *Self) ?*ms.Model {
-        const loaded_model = &(self.loaded_model orelse return null);
-        return &loaded_model.model;
-    }
+    return try ms.Model.init_from_file_assimp(
+        alloc, 
+        asset_path
+    );
+}
 
-    pub fn file_watcher(self: *Self) ?*FileWatcher {
-        const loaded_model = &(self.loaded_model orelse return null);
-        return &(loaded_model.watcher orelse return null);
-    }
-
-    pub fn unload(self: *Self) void {
-        if (self.loaded_model) |*l| {
-            if (l.watcher) |*w| {
-                w.deinit();
-            }
-            l.model.deinit();
-        }
-    }
-
-    pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
-        if (self.loaded_model != null) { return error.AlreadyLoaded; }
-
-        var watcher = switch (self.path) {
-            .Path => |p| blk: {
-                const asset_path = try eng.get().asset_manager.resolve_asset_path(alloc, p);
-                defer alloc.free(asset_path);
-
-                break :blk try FileWatcher.init(alloc, asset_path, 500);
-            },
-            else => null
-        };
-        errdefer if (watcher) |*w| { w.deinit(); };
-
-        const model = try load_model(&self.path, alloc);
-        errdefer model.deinit();
-
-        self.loaded_model = .{
-            .watcher = watcher,
-            .model = model,
-        };
-    }
-
-    pub fn reload(self: *Self, alloc: std.mem.Allocator) !void {
-        const loaded_model = &(self.loaded_model orelse return);
-
-        const new_model = try load_model(&self.path, alloc);
-        errdefer new_model.deinit();
-
-        loaded_model.model.deinit();
-        loaded_model.model = new_model;
-    }
-
-    fn load_model(self: *const ModelAssetPath, alloc: std.mem.Allocator) !ms.Model {
-        switch (self.*) {
-            .Path => |p| {
-                const asset_path = try eng.util.Path.init(alloc, .{ .Asset = p });
-                defer asset_path.deinit();
-
-                return try ms.Model.init_from_file_assimp(
-                    alloc, 
-                    asset_path
-                );
-            },
-            .Plane => |d| {
-                return try ms.Model.plane(alloc, d.slices, d.stacks);
-            },
-            .PlaneOnSphere => |d| {
-                return try ms.Model.plane_on_sphere(
-                    alloc, 
-                    d.slices, 
-                    d.stacks, 
-                    d.plane_extent_radians, 
-                );
-            },
-            .HeightMap => |h| {
-                return try ms.Model.heightmap_plane_on_sphere(alloc, &h.height_map, .{
-                    .slices = h.slices,
-                    .stacks = h.stacks,
-                    .plane_extent_radians = h.plane_extent_radians,
-                    .heightmap_scale = h.height_map_scale,
-                });
-            },
-            .Cone => |d| {
-                return try ms.Model.cone(alloc, d.slices);
-            },
-            .Sphere => |s| {
-                return try ms.Model.sphere(alloc, s.subdivisions);
-            },
-            .Cube => {
-                return try ms.Model.cube(alloc);
-            },
-        }
-    }
-};
-
+pub fn unload(self: *Self, asset: *BaseType) void {
+    _ = self;
+    asset.deinit();
+}

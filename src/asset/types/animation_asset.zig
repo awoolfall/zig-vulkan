@@ -2,62 +2,68 @@ const std = @import("std");
 const eng = @import("self");
 const FileWatcher = @import("../file_watcher.zig");
 
-const ModelAsset = @import("model_asset.zig").ModelAsset;
-const ModelAssetId = @import("../asset_id.zig").AssetId(ModelAsset);
+const ModelAsset = eng.assets.ModelAsset;
 
-const AnimationPath = struct {
-    model_id: ModelAssetId,
-    animation_id: u64,
+pub const AnimationPointer = struct {
+    model_id: eng.assets.ModelAssetId,
+    animation_id: usize,
 
-    pub fn get_animation(self: *const AnimationPath) !*eng.animation.QuantisedBoneAnimation {
-        const model = try eng.get().asset_manager.get_asset(ModelAsset, self.model_id);
-        if (self.animation_id >= model.animations.len) {
-            return error.AnimationIdOutOfBounds;
-        }
+    pub fn get(self: AnimationPointer) !*eng.animation.QuantisedBoneAnimation {
+        const model: *eng.mesh.Model = try eng.get().asset_manager.get_asset(ModelAsset, self.model_id);
         return &model.animations[self.animation_id];
     }
 };
 
-pub const AnimationAsset = struct {
-    const Self = @This();
-    pub const BaseType = AnimationPath;
-    pub const Path = AnimationPath;
+const Self = @This();
 
-    animation: BaseType,
+pub const BaseType = AnimationPointer;
+pub const Loader = Self;
 
-    pub fn deinit(self: *Self) void {
-        _ = self;
+pub fn deinit(self: *Self) void {
+    _ = self;
+}
+
+pub fn init(alloc: std.mem.Allocator) !Self {
+    _ = alloc;
+
+    return Self {};
+}
+
+pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseType {
+    // asset uri for animations will be: asset://model_pretty_name#animation_name
+    _ = self;
+
+    const uri = try std.Uri.parse(asset_uri);
+
+    if (!std.mem.eql(u8, uri.scheme, "asset")) {
+        return error.NotAnAssetUri;
     }
 
-    pub fn init(alloc: std.mem.Allocator, path: Self.Path) !Self {
-        _ = alloc;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
 
-        return .{
-            .animation = path,
-        };
-    }
+    const host_model_pretty_name = try uri.getHostAlloc(arena.allocator());
 
-    pub fn loaded_asset(self: *Self) ?*BaseType {
-        return &self.animation;
-    }
+    const animation_name_component: std.Uri.Component = try uri.fragment orelse return error.UriContainsNoFragment;
+    const animation_name = try animation_name_component.toRawMaybeAlloc(arena.allocator());
 
-    pub fn file_watcher(self: *Self) ?*FileWatcher {
-        _ = self;
-        return null;
-    }
+    const model_asset_id = try eng.get().asset_manager.get_asset_id_from_pretty_name(ModelAsset, host_model_pretty_name);
 
-    pub fn unload(self: *Self) void {
-        _ = self;
-    }
+    const model: *eng.mesh.Model = try eng.get().asset_manager.get_asset(ModelAsset, model_asset_id);
 
-    pub fn load(self: *Self, alloc: std.mem.Allocator) !void {
-        _ = self;
-        _ = alloc;
-    }
+    const animation_idx = for (model.animations, 0..) |animation, idx| {
+        if (std.mem.eql(u8, animation.name, animation_name)) {
+            break idx;
+        }
+    } else return error.AnimationDoesNotExistInModel;
 
-    pub fn reload(self: *Self, alloc: std.mem.Allocator) !void {
-        _ = self;
-        _ = alloc;
-    }
-};
+    return BaseType {
+        .model_id = model_asset_id,
+        .animation_id = animation_idx,
+    };
+}
 
+pub fn unload(self: *Self, asset: *BaseType) void {
+    _ = self;
+    _ = asset;
+}

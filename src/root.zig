@@ -25,7 +25,6 @@ pub const ui = @import("ui/ui.zig");
 pub const debugg = @import("debug/debug.zig");
 
 pub const util = struct {
-    pub const Path = @import("util/path.zig");
     pub const Profiler = @import("util/profiler.zig");
     pub const Rect = @import("util/rect.zig");
     pub const BoundingBox = @import("util/bounding_box.zig");

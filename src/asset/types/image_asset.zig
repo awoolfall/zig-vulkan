@@ -109,7 +109,7 @@ pub const ImageAsset = struct {
         return &(loaded.watcher orelse return null);
     }
 
-    pub fn loaded_asset(self: *Self) ?*BaseType {
+    pub fn get_loaded_asset(self: *Self) ?*BaseType {
         const loaded = &(self.loaded orelse return null);
         return &loaded.image;
     }

@@ -50,10 +50,6 @@ pub export fn deinit(self: *Self) void {
     defer self.physics.deinit();
     defer self.ecs.deinit();
 
-    defer self.asset_manager.unload_asset_pack(self.core_asset_pack_id) catch |err| {
-        std.log.err("Unable to unload core asset pack: {}", .{err});
-    };
-
     defer self.general_allocator.destroy(self.app);
     defer self.app.deinit();
 }
@@ -85,6 +81,8 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
 
     engine.profiler = eng.util.Profiler.init(engine.general_allocator);
     errdefer engine.profiler.deinit();
+
+    const _init_context = engine.profiler.start_context("init");
 
     zmesh.init(engine.general_allocator);
     errdefer zmesh.deinit();
@@ -129,36 +127,50 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.ecs = try eng.AppEcsSystem.init(engine.general_allocator);
     errdefer engine.ecs.deinit();
 
-    // load core assets
-    var core_asset_pack = blk: {
-        const core_asset_pack_zon = @embedFile("core_assets.zon");
-        const core_asset_pack_zon_0 = try engine.general_allocator.dupeZ(u8, core_asset_pack_zon[0..]);
-        defer engine.general_allocator.free(core_asset_pack_zon_0);
-
-        break :blk try eng.assets.AssetPack.init_from_buffer(engine.general_allocator, "core", core_asset_pack_zon_0);
-    };
-    errdefer core_asset_pack.deinit();
-
-    engine.core_asset_pack_id = try engine.asset_manager.add_asset_pack(core_asset_pack);
-    try engine.asset_manager.load_asset_pack(engine.core_asset_pack_id);
-    errdefer engine.asset_manager.unload_asset_pack(engine.core_asset_pack_id) catch |err| {
-        std.log.err("Unable to unload core asset pack: {}", .{err});
-    };
-
     Log.debug("Engine inited!", .{});
 
     Log.debug("Creating app!", .{});
     engine.app = try engine.general_allocator.create(App);
     errdefer engine.general_allocator.destroy(engine.app);
 
+    const _app_init_context = engine.profiler.start_context("app_init");
     Log.debug("Calling app init!", .{});
     engine.app.* = App.init() catch |err| {
         Log.err("App init failed! Error: {s}", .{@errorName(err)});
         unreachable;
     };
+    _app_init_context.end_context();
     errdefer engine.app.deinit();
 
     engine.gfx.flush();
+
+    // end init profiling
+    _init_context.end_context();
+
+    { // TODO print this
+        var profiler_text = std.ArrayList(u8).initCapacity(eng.get().frame_allocator, 32) catch unreachable;
+        defer profiler_text.deinit(eng.get().frame_allocator);
+
+        profiler_text.appendSlice(eng.get().frame_allocator, "Profiler:\n") catch unreachable;
+
+        for (engine.profiler.contexts_array.items) |context| {
+            const context_name = engine.profiler.context_names_map.get(context.name_hash) orelse "unnamed";
+            const context_text = std.fmt.allocPrint(eng.get().frame_allocator, 
+                "- {s}: {} ms\n", 
+                .{
+                    context_name,
+                    context.result_duration_ms(),
+                }
+            ) catch unreachable;
+            defer eng.get().frame_allocator.free(context_text);
+
+            profiler_text.appendSlice(eng.get().frame_allocator, context_text) catch unreachable;
+        }
+
+        std.log.info("initialisation profiler data:\n{s}\n---", .{profiler_text.items});
+    }
+    engine.profiler.end_frame();
+
     return engine;
 }
 

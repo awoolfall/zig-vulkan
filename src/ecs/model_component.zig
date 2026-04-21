@@ -112,6 +112,10 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
                     for (model.animations, 0..) |anim, anim_idx| {
                         std.log.info("{} - animation: {s}", .{anim_idx, anim.name});
                     }
+                    std.log.info("nodes: {}", .{model.nodes.len});
+                    for (model.nodes, 0..) |node, node_idx| {
+                        std.log.info("{} - {s}, parent: {}", .{node_idx, node.name orelse "unnamed", node.parent orelse 0});
+                    }
                 }
             } else |_| { 
                 std.log.err("Failed to deserialize model id!", .{});

@@ -263,9 +263,9 @@ pub const Model = struct {
         }
     }
 
-    pub fn init_from_file_assimp(alloc: std.mem.Allocator, file: eng.util.Path) !Self {
-        const file_path = try file.resolve_path_c_str(alloc);
-        defer alloc.free(file_path);
+    pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []const u8) !Self {
+        const file_path_c = try alloc.dupeZ(u8, absolute_file_path);
+        defer alloc.free(file_path_c);
 
         var model_arena = std.heap.ArenaAllocator.init(alloc);
         errdefer model_arena.deinit();
@@ -285,7 +285,7 @@ pub const Model = struct {
 
         prop_store.set_fbx_preserve_pivots(false);
 
-        const scene = try assimp.aiImportFileWithProps(file_path, 
+        const scene = try assimp.aiImportFileWithProps(file_path_c, 
             calc_tangents_flag | triangulate_flag | global_scale_flag | optimize_mesh_flag | armature_data_flag,
             &prop_store);
         defer assimp.aiReleaseImport(scene);
