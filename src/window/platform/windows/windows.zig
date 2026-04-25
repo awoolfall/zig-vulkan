@@ -5,6 +5,7 @@ const w32 = @cImport({
     @cDefine("WIN32_LEAN_AND_MEAN", "1");
     @cInclude("windows.h");
     @cInclude("combaseapi.h");
+    @cInclude("shellapi.h");
 });
 
 const __c = @import("windows_keycode.zig");
@@ -109,6 +110,8 @@ pub const Win32Window = struct {
         if (!register_mouse_for_raw_input(hwnd)) {
             std.log.warn("Failed to get raw mouse input..", .{});
         }
+
+        w32.DragAcceptFiles(hwnd, w32.TRUE);
 
         return Win32Window {
             .hInstance = hInstance,
@@ -442,6 +445,45 @@ pub const Win32Window = struct {
                     }});
                 }
                 return 0;
+            },
+
+            w32.WM_DROPFILES => (blk: {
+                defer w32.DragFinish(w_param);
+                
+                const alloc = eng.get().general_allocator;
+
+                const file_count = w32.DragQueryFileA(w_param, 0xFFFFFFFF, 0, 0);
+
+                const file_paths = alloc.alloc([]u8, file_count) catch |err| break :blk err;
+                errdefer alloc.free(file_paths);
+
+                var file_paths_list = std.ArrayList([]u8).initBuffer(file_paths);
+                errdefer for (file_paths_list.items) |path| { alloc.free(path); };
+
+                for (0..file_count) |file_index| {
+                    const required_file_buffer_size = w32.DragQueryFileA(w_param, @truncate(file_index), null, 0);
+
+                    const file_path_buffer_0: [:0]u8 = alloc.allocSentinel(u8, required_file_buffer_size, 0) catch |err| break :blk err;
+                    defer alloc.free(file_path_buffer_0);
+
+                    const result = w32.DragQueryFileA(w_param, @truncate(file_index), file_path_buffer_0.ptr, @truncate(file_path_buffer_0.len + 1));
+                    if (result == 0) {
+                        break :blk error.UnableToGetFilePath;
+                    }
+
+                    const file_path_buffer = alloc.dupe(u8, file_path_buffer_0) catch |err| break :blk err;
+                    errdefer alloc.free(file_path_buffer);
+
+                    // std.mem.replaceScalar(u8, file_path_buffer, '\\', '/');
+
+                    file_paths_list.appendBounded(file_path_buffer) catch |err| break :blk err;
+                }
+
+                g_engine.send_window_event(wb.WindowEvent { .DROPPED_FILES = .{
+                    .paths = file_paths,
+                }, });
+            }) catch |err| {
+                std.log.err("Error receiving dropped file: {}", .{err});
             },
 
             else => {},

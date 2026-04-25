@@ -6,7 +6,6 @@ const _gfx = eng.gfx;
 const tm = eng.time;
 const in = eng.input;
 const es = eng.util.easings;
-const Path = eng.util.Path;
 const RectPixels = eng.util.Rect;
 
 pub const font = @import("render/font.zig");
@@ -24,15 +23,15 @@ pub const FontEnum = enum(usize) {
     Geist,
     Count,
 
-    fn font_paths(font_enum: FontEnum, alloc: std.mem.Allocator) !struct {json: Path, png: Path} {
+    fn font_paths(font_enum: FontEnum) struct {json: []const u8, png: []const u8} {
         switch (font_enum) {
             FontEnum.GeistMono => return .{
-                .json = try Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.json"}),
-                .png = try Path.init(alloc, .{.ExeRelative = "../../res/GeistMono-Regular.png"}),
+                .json = "res:/GeistMono-Regular.json",
+                .png = "res:/GeistMono-Regular.png",
             },
             FontEnum.Geist => return .{
-                .json = try Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.json"}),
-                .png = try Path.init(alloc, .{.ExeRelative = "../../res/Geist-Regular.png"}),
+                .json = "res:/Geist-Regular.json",
+                .png = "res:/Geist-Regular.png",
             },
             FontEnum.Count => unreachable,
         }
@@ -345,8 +344,7 @@ pub fn init(alloc: std.mem.Allocator) !Self {
     for (0..@intFromEnum(FontEnum.Count)) |idx| {
         const font_enum = @as(FontEnum, @enumFromInt(idx));
 
-        const font_paths = try font_enum.font_paths(alloc);
-        defer { font_paths.json.deinit(); font_paths.png.deinit(); }
+        const font_paths = font_enum.font_paths();
 
         const font_obj = try font.Font.init(
             font_paths.json,

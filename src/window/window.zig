@@ -19,6 +19,7 @@ pub const WindowEvent = union(enum) {
     CHAR: CharEvent,
     CURSOR_MOVED: CursorMoveEvent,
     RAW_MOUSE_MOVED: RawMouseMoveEvent,
+    DROPPED_FILES: DroppedFilesEvent,
 };
 
 pub const Rect = struct {
@@ -54,4 +55,15 @@ pub const CursorMoveEvent = struct {
 pub const RawMouseMoveEvent = struct {
     x_delta: i32,
     y_delta: i32,
+};
+
+pub const DroppedFilesEvent = struct {
+    paths: []const []const u8,
+
+    pub fn deinit(self: DroppedFilesEvent, alloc: std.mem.Allocator) void {
+        for (self.paths) |path| {
+            alloc.free(path);
+        }
+        alloc.free(self.paths);
+    }
 };

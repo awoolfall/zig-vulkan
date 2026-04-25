@@ -217,5 +217,13 @@ fn window_event_received(engine_void_ptr: *anyopaque, event: eng.window.WindowEv
 
     // Run update procedure on inputs after everything has finished their update()
     self.input.received_window_event_late(&event);
+
+    // deinit events
+    switch (event) {
+        .DROPPED_FILES => |d| {
+            d.deinit(eng.get().general_allocator);
+        },
+        else => {},
+    }
 }
 

@@ -10,3 +10,4 @@ pub const number_slider = @import("widgets/number_slider.zig");
 pub const slider = @import("widgets/slider.zig");
 pub const colour_indicator = @import("widgets/colour_indicator.zig");
 pub const colour_picker = @import("widgets/colour_picker.zig");
+pub const file_drop_zone = @import("widgets/file_drop_zone.zig");

@@ -18,6 +18,7 @@ const Self = @This();
 
 pub const BaseType = AnimationPointer;
 pub const Loader = Self;
+pub const extensions = [_][]const u8{};
 
 pub fn deinit(self: *Self) void {
     _ = self;
@@ -30,24 +31,28 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 }
 
 pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseType {
-    // asset uri for animations will be: asset://model_pretty_name#animation_name
+    // asset uri for animations will be: res:model_asset/animations/animation_name
     _ = self;
 
     const uri = try std.Uri.parse(asset_uri);
 
-    if (!std.mem.eql(u8, uri.scheme, "asset")) {
-        return error.NotAnAssetUri;
-    }
-
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
 
-    const host_model_pretty_name = try uri.getHostAlloc(arena.allocator());
+    var path = try uri.path.toRawMaybeAlloc(arena.allocator());
+    const animation_name = std.fs.path.basename(path);
 
-    const animation_name_component: std.Uri.Component = try uri.fragment orelse return error.UriContainsNoFragment;
-    const animation_name = try animation_name_component.toRawMaybeAlloc(arena.allocator());
+    path = std.fs.path.dirname(path) orelse return error.InvalidFormat;
+    if (!std.mem.eql(u8, std.fs.path.basename(path), "animations")) {
+        return error.InvalidFormat;
+    }
 
-    const model_asset_id = try eng.get().asset_manager.get_asset_id_from_pretty_name(ModelAsset, host_model_pretty_name);
+    path = std.fs.path.dirname(path) orelse return error.InvalidFormat;
+
+    const base_model_uri = try std.fmt.allocPrint(arena.allocator(), "{s}:{s}", .{ uri.scheme, path });
+    defer arena.allocator().free(base_model_uri);
+
+    const model_asset_id = try eng.get().asset_manager.get_asset_id(ModelAsset, base_model_uri);
 
     const model: *eng.mesh.Model = try eng.get().asset_manager.get_asset(ModelAsset, model_asset_id);
 

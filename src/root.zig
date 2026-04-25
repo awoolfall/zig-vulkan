@@ -30,6 +30,7 @@ pub const util = struct {
     pub const BoundingBox = @import("util/bounding_box.zig");
     pub const easings = @import("util/easings.zig");
     pub const gen = @import("util/gen_list.zig");
+    pub const uri = @import("util/uri.zig");
 };
 
 pub const Transform = @import("util/transform.zig");

@@ -24,6 +24,8 @@ pub const InputState = struct {
     cursor_position: [2]i32,
     mouse_delta: [2]f32,
 
+    dropped_files: [][]u8,
+
     pub fn init() !Self {
         comptime std.debug.assert(KEY_STATE_LEN < 0xff);
 
@@ -34,11 +36,15 @@ pub const InputState = struct {
             .char_events = [_]?[2:0]u8{null} ** 8,
             .cursor_position = [2]i32{0, 0},
             .mouse_delta = [2]f32{0.0, 0.0},
+            .dropped_files = try eng.get().general_allocator.alloc([]u8, 0),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        _ = self;
+        for (self.dropped_files) |path| {
+            eng.get().general_allocator.free(path);
+        }
+        eng.get().general_allocator.free(self.dropped_files);
     }
 
     pub fn received_window_event_early(self: *Self, event: *const eng.window.WindowEvent) void {
@@ -88,6 +94,16 @@ pub const InputState = struct {
                     }
                 }
             },
+            .DROPPED_FILES => |d| {
+                const alloc = eng.get().general_allocator;
+                for (self.dropped_files) |path| {
+                    alloc.free(path);
+                }
+                self.dropped_files = alloc.realloc(self.dropped_files, d.paths.len) catch unreachable;
+                for (d.paths, 0..) |path, idx| {
+                    self.dropped_files[idx] = alloc.dupe(u8, path) catch unreachable;
+                }
+            },
             else => {},
         }
     }
@@ -115,6 +131,13 @@ pub const InputState = struct {
 
         self.mouse_delta = .{0.0, 0.0};
         @memset(&self.char_events, null);
+
+        if (self.dropped_files.len != 0) {
+            for (self.dropped_files) |path| {
+                eng.get().general_allocator.free(path);
+            }
+            self.dropped_files = eng.get().general_allocator.realloc(self.dropped_files, 0) catch unreachable;
+        }
     }
 
     pub fn get_key_state(self: *const Self, key: kc.KeyCode) KeyState {

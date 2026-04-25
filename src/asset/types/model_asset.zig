@@ -6,6 +6,7 @@ const Self = @This();
 
 pub const BaseType = ms.Model;
 pub const Loader = Self;
+pub const extensions = [_][]const u8{ ".glb", ".gltf", ".fbx" };
 
 pub fn deinit(self: *Self) void {
     _ = self;
@@ -19,23 +20,12 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseType {
     _ = self;
 
-    const uri = try std.Uri.parse(asset_uri);
-
-    if (!std.mem.eql(u8, uri.scheme, "res")) {
-        return error.AssetIsNotAResourceFile;
-    }
-
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    defer arena.deinit();
-
-    const asset_relative_path = try uri.path.toRawMaybeAlloc(arena.allocator());
-
-    const asset_path = try eng.get().asset_manager.resolve_resource_relative_path(alloc, asset_relative_path);
-    defer alloc.free(asset_path);
+    const file_path = try eng.util.uri.resolve_file_uri(alloc, asset_uri);
+    defer alloc.free(file_path);
 
     return try ms.Model.init_from_file_assimp(
         alloc, 
-        asset_path
+        file_path
     );
 }
 

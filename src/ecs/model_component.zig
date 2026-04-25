@@ -48,78 +48,54 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
         defer imui.pop_layout();
 
         _ = eng.ui.widgets.label.create(imui, "model: ");
+        const drop_zone = eng.ui.widgets.file_drop_zone.create(imui, key ++ .{@src()});
 
-        const model_combobox = eng.ui.widgets.combobox.create(imui, key ++ .{@src()});
-        const model_combobox_data, _ = imui.get_widget_data(eng.ui.widgets.combobox.ComboBoxState, model_combobox.id) catch unreachable;
+        drop_zone.id.get().semantic_size[1].kind = .Pixels;
+        drop_zone.id.get().semantic_size[1].value = 100.0;
+        
+        if (drop_zone.data_changed) blk: {
+            if (eng.get().input.dropped_files.len == 0) { break :blk; }
+            const file_path = eng.get().input.dropped_files[0];
 
-        if (model_combobox.init) {
-            std.log.info("model combobox init", .{});
+            if (std.mem.startsWith(u8, file_path, eng.get().asset_manager.resource_directory_str)) {
+                const uri = std.fmt.allocPrint(eng.get().frame_allocator, "res:{s}", .{file_path[eng.get().asset_manager.resource_directory_str.len..]}) catch break :blk;
+                defer eng.get().frame_allocator.free(uri);
 
-            model_combobox_data.default_text = imui.widget_allocator().dupe(u8, "None") catch unreachable;
-            model_combobox_data.can_be_default = true;
-
-            var model_names = get_all_model_names(eng.get().frame_allocator) catch unreachable;
-            defer model_names.deinit();
-
-            for (model_names.names) |option| {
-                model_combobox_data.append_option(imui.widget_allocator(), option) catch |err| {
-                    std.log.err("Failed to append combobox option: {}", .{err});
-                    break;
-                };
-            }
-
-            model_combobox_data.selected_index = null;
-
-            if (component.model) |model_id| {
-                const model_text = model_id.to_string_identifier(eng.get().frame_allocator) catch unreachable;
-                defer eng.get().frame_allocator.free(model_text);
-
-                for (model_combobox_data.options.items, 0..) |option, i| {
-                    if (std.mem.eql(u8, option, model_text)) {
-                        model_combobox_data.selected_index = i;
-                        break;
-                    }
-                }
+                const model_id = eng.get().asset_manager.get_asset_id(eng.assets.ModelAsset, uri) catch break :blk;
+                component.model = model_id;
             }
         }
-        if (model_combobox.data_changed) {
-            if (model_combobox_data.selected_index) |si| {
-                if (eng.assets.ModelAssetId.from_string_identifier(model_combobox_data.options.items[si])) |model_id| {
-                    component.model = model_id;
-                } else |_| { 
-                    std.log.err("Failed to deserialize model id!", .{});
-                }
-            } else {
-                component.model = null;
-            }
-        }
+    }
 
-        if (model_combobox_data.selected_index) |selected_model_index| {
-            if (eng.assets.ModelAssetId.from_string_identifier(model_combobox_data.options.items[selected_model_index])) |model_id| {
-                if (eng.ui.widgets.badge.create(imui, "print model details", key ++ .{@src()}).clicked) blk: {
-                    const model: *eng.mesh.Model = eng.get().asset_manager.get_asset(eng.assets.ModelAsset, model_id) catch |err| {
-                        std.log.err("Failed to get model asset from id: {}", .{err});
-                        break :blk;
-                    };
-                    std.log.info("model: {s}", .{model_combobox_data.options.items[selected_model_index]});
-                    std.log.info("num meshes: {}", .{model.meshes.len});
-                    for (model.meshes, 0..) |mesh, mesh_idx| {
-                        std.log.info("{} - num vertices: {}", .{mesh_idx, mesh.vertex_count});
-                        std.log.info("{} - num indices: {}", .{mesh_idx, mesh.index_count});
-                    }
-                    std.log.info("num bones: {}", .{model.bones_info.len});
-                    std.log.info("num animations: {}", .{model.animations.len});
-                    for (model.animations, 0..) |anim, anim_idx| {
-                        std.log.info("{} - animation: {s}", .{anim_idx, anim.name});
-                    }
-                    std.log.info("nodes: {}", .{model.nodes.len});
-                    for (model.nodes, 0..) |node, node_idx| {
-                        std.log.info("{} - {s}, parent: {}", .{node_idx, node.name orelse "unnamed", node.parent orelse 0});
-                    }
-                }
-            } else |_| { 
-                std.log.err("Failed to deserialize model id!", .{});
-            }
+    if (component.model) |model_id| {
+        const asset_metadata = eng.get().asset_manager.asset_metadata.get(model_id.unique_id) orelse unreachable;
+        _ = eng.ui.widgets.label.create(imui, asset_metadata.uri);
+    } else {
+        _ = eng.ui.widgets.label.create(imui, "none");
+    }
+
+    if (eng.ui.widgets.badge.create(imui, "print model details", key ++ .{@src()}).clicked) blk: {
+        const model_id = component.model orelse break :blk;
+        const model_asset_metadata = eng.get().asset_manager.asset_metadata.get(model_id.unique_id) orelse unreachable;
+        const model: *eng.mesh.Model = eng.get().asset_manager.get_asset(eng.assets.ModelAsset, model_id) catch |err| {
+            std.log.err("Failed to get model asset from id: {}", .{err});
+            break :blk;
+        };
+
+        std.log.info("model: {s}", .{model_asset_metadata.uri});
+        std.log.info("num meshes: {}", .{model.meshes.len});
+        for (model.meshes, 0..) |mesh, mesh_idx| {
+            std.log.info("{} - num vertices: {}", .{mesh_idx, mesh.vertex_count});
+            std.log.info("{} - num indices: {}", .{mesh_idx, mesh.index_count});
+        }
+        std.log.info("num bones: {}", .{model.bones_info.len});
+        std.log.info("num animations: {}", .{model.animations.len});
+        for (model.animations, 0..) |anim, anim_idx| {
+            std.log.info("{} - animation: {s}", .{anim_idx, anim.name});
+        }
+        std.log.info("nodes: {}", .{model.nodes.len});
+        for (model.nodes, 0..) |node, node_idx| {
+            std.log.info("{} - {s}, parent: {}", .{node_idx, node.name orelse "unnamed", node.parent orelse 0});
         }
     }
 }
@@ -142,24 +118,32 @@ fn get_all_model_names(alloc: std.mem.Allocator) !ModelNames {
     var model_names = std.ArrayList([]u8).empty;
     defer model_names.deinit(alloc);
 
-    var asset_packs_iter = eng.get().asset_manager.asset_packs.iterator();
-    while (asset_packs_iter.next()) |it| {
-        const pack = it.value_ptr;
-        var iter = pack.assets.iterator();
-        while (iter.next()) |p| {
-            switch (p.value_ptr.asset) {
-                .Model => {
-                    const asset_id = eng.assets.ModelAssetId{ .pack_id = pack.unique_name_hash, .asset_id = p.key_ptr.* };
+    const model_asset_type_index = eng.assets.AssetManager.get_asset_type_index(eng.assets.ModelAsset);
+    var model_asset_iterator = eng.get().asset_manager.assets[model_asset_type_index].map.iterator();
 
-                    const asset_identifier_string = try asset_id.to_string_identifier(alloc);
-                    defer alloc.free(asset_identifier_string);
-
-                    try model_names.append(alloc, try std.fmt.allocPrint(arena.allocator(), "{s}", .{asset_identifier_string}));
-                },
-                else => {},
-            }
-        }
+    while (model_asset_iterator.next()) |entry| {
+        _ = entry;
+        // TODO: this only returns the ids of the loaded models, we need a full list of all models loaded or not...
     }
+
+    // var asset_packs_iter = eng.get().asset_manager.asset_packs.iterator();
+    // while (asset_packs_iter.next()) |it| {
+    //     const pack = it.value_ptr;
+    //     var iter = pack.assets.iterator();
+    //     while (iter.next()) |p| {
+    //         switch (p.value_ptr.asset) {
+    //             .Model => {
+    //                 const asset_id = eng.assets.ModelAssetId{ .pack_id = pack.unique_name_hash, .asset_id = p.key_ptr.* };
+
+    //                 const asset_identifier_string = try asset_id.to_string_identifier(alloc);
+    //                 defer alloc.free(asset_identifier_string);
+
+    //                 try model_names.append(alloc, try std.fmt.allocPrint(arena.allocator(), "{s}", .{asset_identifier_string}));
+    //             },
+    //             else => {},
+    //         }
+    //     }
+    // }
 
     return ModelNames {
         .arena = arena,

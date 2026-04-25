@@ -4,7 +4,6 @@ const eng = @import("self");
 const _gfx = eng.gfx;
 const zm = eng.zmath;
 const ui = eng.ui;
-const Path = eng.util.Path;
 const RectPixels = eng.util.Rect;
 
 pub const AtlasDetails = struct {
@@ -126,10 +125,10 @@ pub const Font = struct {
         self.character_map.deinit();
     }
 
-    pub fn init(font_json: Path, font_msdf_png: Path) !Font {
+    pub fn init(font_json_uri: []const u8, font_msdf_png_uri: []const u8) !Font {
         const alloc = eng.get().general_allocator;
 
-        const font_json_path = try font_json.resolve_path(alloc);
+        const font_json_path = try eng.util.uri.resolve_file_uri(alloc, font_json_uri);
         defer alloc.free(font_json_path);
 
         // find font json file size
@@ -193,7 +192,7 @@ pub const Font = struct {
         };
 
         // load msdf font png file
-        const font_png_path = try font_msdf_png.resolve_path_c_str(alloc);
+        const font_png_path = try eng.util.uri.resolve_file_uri_c(alloc, font_msdf_png_uri);
         defer alloc.free(font_png_path);
 
         var font_image = try zstbi.Image.loadFromFile(font_png_path, 4);

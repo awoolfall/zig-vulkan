@@ -114,7 +114,7 @@ fn calculate_bone_transforms_for_node(
         .Basic => |basic| blk: {
             const animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, basic.animation)
                 catch break :blk;
-            const animation: *eng.animation.QuantisedBoneAnimation = animation_asset.get_animation()
+            const animation: *eng.animation.QuantisedBoneAnimation = animation_asset.get()
                 catch break :blk;
 
             for (model.bones_info, 0..) |bone_info, i| {
@@ -133,7 +133,7 @@ fn calculate_bone_transforms_for_node(
 
             const left_animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, blend.left_animation)
                 catch break :blk;
-            const left_animation: *eng.animation.QuantisedBoneAnimation = left_animation_asset.get_animation()
+            const left_animation: *eng.animation.QuantisedBoneAnimation = left_animation_asset.get()
                 catch break :blk;
 
             var strength: f32 = 1.0;
@@ -144,7 +144,7 @@ fn calculate_bone_transforms_for_node(
             // blend in right animation based on blend variable
             const right_animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, blend.right_animation)
                 catch break :blk;
-            const right_animation: *eng.animation.QuantisedBoneAnimation = right_animation_asset.get_animation()
+            const right_animation: *eng.animation.QuantisedBoneAnimation = right_animation_asset.get()
                 catch break :blk;
 
             strength = 1.0;
@@ -277,7 +277,7 @@ pub fn update(graph: *Self, data: *ControlData) void {
                     .Blend1D => |blend| blend.left_animation,
                 };
                 const animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, animation_id) catch break :blk false;
-                const animation: *eng.animation.QuantisedBoneAnimation = animation_asset.get_animation() catch break :blk false;
+                const animation: *eng.animation.QuantisedBoneAnimation = animation_asset.get() catch break :blk false;
 
                 break :blk (data.active_time >= (animation.duration_seconds - transition.transition_duration));
             },

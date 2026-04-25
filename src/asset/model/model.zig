@@ -332,7 +332,6 @@ pub const Model = struct {
             std.debug.assert(@divExact(mesh_vertex_data_writer.written().len - start_vertices_offset, mesh_vertex_count) == MeshPrimitive.STRIDE);
 
             const positions = try mesh_local_arena.allocator().alloc([3]f32, assimp_mesh.vertices().?.len);
-            defer mesh_local_arena.allocator().free(positions);
 
             var min_bounds = zm.f32x4s(std.math.floatMax(f32));
             var max_bounds = zm.f32x4s(std.math.floatMin(f32));
