@@ -52,7 +52,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseT
     const base_model_uri = try std.fmt.allocPrint(arena.allocator(), "{s}:{s}", .{ uri.scheme, path });
     defer arena.allocator().free(base_model_uri);
 
-    const model_asset_id = try eng.get().asset_manager.get_asset_id(ModelAsset, base_model_uri);
+    const model_asset_id = try eng.get().asset_manager.get_asset_id(base_model_uri);
 
     const model: *eng.mesh.Model = try eng.get().asset_manager.get_asset(ModelAsset, model_asset_id);
 
