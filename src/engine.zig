@@ -20,7 +20,6 @@ time: eng.time.TimeState,
 debug: db.Debug,
 imui: Imui,
 asset_manager: eng.assets.AssetManager,
-profiler: eng.util.Profiler,
 app: *App,
 ecs: eng.AppEcsSystem,
 exe_path: []u8,
@@ -37,7 +36,6 @@ pub export fn deinit(self: *Self) void {
     defer self.general_allocator.destroy(self);
     defer self.frame_arena.deinit();
     defer self.general_allocator.free(self.exe_path);
-    defer self.profiler.deinit();
     defer zmesh.deinit();
     defer self.time.deinit();
     defer self.input.deinit();
@@ -81,11 +79,6 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.exe_path = try alloc.realloc(engine.exe_path, engine.exe_path.len + 1);
     engine.exe_path[engine.exe_path.len - 1] = '\\';
     errdefer engine.general_allocator.free(engine.exe_path);
-
-    engine.profiler = eng.util.Profiler.init(engine.general_allocator);
-    errdefer engine.profiler.deinit();
-
-    const _init_context = engine.profiler.start_context("init");
 
     zmesh.init(engine.general_allocator);
     errdefer zmesh.deinit();
@@ -136,43 +129,14 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.app = try engine.general_allocator.create(App);
     errdefer engine.general_allocator.destroy(engine.app);
 
-    const _app_init_context = engine.profiler.start_context("app_init");
     Log.debug("Calling app init!", .{});
     engine.app.* = App.init() catch |err| {
         Log.err("App init failed! Error: {s}", .{@errorName(err)});
         unreachable;
     };
-    _app_init_context.end_context();
     errdefer engine.app.deinit();
 
     engine.gfx.flush();
-
-    // end init profiling
-    _init_context.end_context();
-
-    { // TODO print this
-        var profiler_text = std.ArrayList(u8).initCapacity(eng.get().frame_allocator, 32) catch unreachable;
-        defer profiler_text.deinit(eng.get().frame_allocator);
-
-        profiler_text.appendSlice(eng.get().frame_allocator, "Profiler:\n") catch unreachable;
-
-        for (engine.profiler.contexts_array.items) |context| {
-            const context_name = engine.profiler.context_names_map.get(context.name_hash) orelse "unnamed";
-            const context_text = std.fmt.allocPrint(eng.get().frame_allocator, 
-                "- {s}: {} ms\n", 
-                .{
-                    context_name,
-                    context.result_duration_ms(),
-                }
-            ) catch unreachable;
-            defer eng.get().frame_allocator.free(context_text);
-
-            profiler_text.appendSlice(eng.get().frame_allocator, context_text) catch unreachable;
-        }
-
-        std.log.info("initialisation profiler data:\n{s}\n---", .{profiler_text.items});
-    }
-    engine.profiler.end_frame();
 
     return engine;
 }
