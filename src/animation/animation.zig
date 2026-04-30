@@ -16,6 +16,13 @@ pub const QuantisedBoneAnimationChannel = struct {
         alloc.free(self.scale_keys);
     }
 
+    fn slerp_between_frames(channel: []const zm.F32x4, frame_tick: f32) zm.F32x4 {
+        std.debug.assert(channel.len != 0);
+        const lower_value = channel[@intFromFloat(@mod(@floor(frame_tick), @as(f32, @floatFromInt(channel.len))))];
+        const upper_value = channel[@intFromFloat(@mod(@floor(frame_tick + 1.0), @as(f32, @floatFromInt(channel.len))))];
+        return zm.slerp(lower_value, upper_value, @mod(frame_tick, 1.0));
+    }
+
     fn lerp_between_frames(channel: []const zm.F32x4, frame_tick: f32) zm.F32x4 {
         std.debug.assert(channel.len != 0);
         const lower_value = channel[@intFromFloat(@mod(@floor(frame_tick), @as(f32, @floatFromInt(channel.len))))];
@@ -26,7 +33,7 @@ pub const QuantisedBoneAnimationChannel = struct {
     pub fn transform_at_time(self: *const QuantisedBoneAnimationChannel, frame_tick: f32) Transform {
         return Transform {
             .position = lerp_between_frames(self.position_keys, frame_tick),
-            .rotation = lerp_between_frames(self.rotation_keys, frame_tick),
+            .rotation = slerp_between_frames(self.rotation_keys, frame_tick),
             .scale = lerp_between_frames(self.scale_keys, frame_tick),
         };
     }
@@ -220,5 +227,3 @@ pub const BoneAnimation = struct {
         };
     }
 };
-
-
