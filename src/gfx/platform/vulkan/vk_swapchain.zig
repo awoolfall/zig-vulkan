@@ -17,6 +17,7 @@ pub const SwapchainVulkan = struct {
 
     current_image_index: u32 = 0,
     image_available_semaphores: []gf.Semaphore,
+    image_available_fences: []gf.Fence,
     present_transition_semaphores: []gf.Semaphore,
 
     pub fn deinit(self: *@This(), gfx_state: *GfxStateVulkan) void {
@@ -30,6 +31,9 @@ pub const SwapchainVulkan = struct {
 
         for (self.image_available_semaphores) |s| { s.deinit(); }
         gfx_state.alloc.free(self.image_available_semaphores);
+
+        for (self.image_available_fences) |f| { f.deinit(); }
+        gfx_state.alloc.free(self.image_available_fences);
 
         for (self.present_transition_semaphores) |s| { s.deinit(); }
         gfx_state.alloc.free(self.present_transition_semaphores);
@@ -139,7 +143,20 @@ pub const SwapchainVulkan = struct {
             const semaphore = try gf.Semaphore.init(.{});
             errdefer semaphore.deinit();
 
-            try image_available_semaphores_list.append(gfxstate.alloc, semaphore);
+            try image_available_semaphores_list.appendBounded(semaphore);
+        }
+
+        const image_available_fences = try gfxstate.alloc.alloc(gf.Fence, gfxstate.frames_in_flight());
+        errdefer gfxstate.alloc.free(image_available_semaphores);
+
+        var image_available_fences_list = std.ArrayList(gf.Fence).initBuffer(image_available_fences);
+        errdefer for (image_available_fences_list.items) |f| { f.deinit(); };
+
+        for (0..gfxstate.frames_in_flight()) |_| {
+            const fence = try gf.Fence.init(.{ .create_signalled = true, });
+            errdefer fence.deinit();
+
+            try image_available_fences_list.appendBounded(fence);
         }
 
         const present_transition_semaphores = try gfxstate.alloc.alloc(gf.Semaphore, gfxstate.frames_in_flight());
@@ -165,6 +182,7 @@ pub const SwapchainVulkan = struct {
             .surface_format = opt.format,
             .present_mode = opt.present_mode,
             .image_available_semaphores = image_available_semaphores,
+            .image_available_fences = image_available_fences,
             .present_transition_semaphores = present_transition_semaphores,
         };
     }

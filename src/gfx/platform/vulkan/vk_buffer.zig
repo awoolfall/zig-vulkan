@@ -242,8 +242,7 @@ pub const BufferVulkan = struct {
     }
 
     pub fn map(self: *const Self, options: gf.Buffer.MapOptions) !MappedBuffer {
-        const cfi = GfxStateVulkan.get().current_frame_index();
-        const buffer_index = cfi % self.vk_buffers.len;
+        const buffer_index = @mod(GfxStateVulkan.get().current_frame_index(), self.vk_buffers.len);
 
         var data_ptr: ?*anyopaque = undefined;
         try vkt(c.vkMapMemory(
@@ -294,7 +293,7 @@ pub const BufferVulkan = struct {
     };
 
     pub fn get_frame_vk_buffer(self: *const BufferVulkan) c.VkBuffer {
-        const cfi = GfxStateVulkan.get().current_frame_index();
-        return self.vk_buffers[@as(usize, @intCast(cfi)) % self.vk_buffers.len];
+        const idx = @mod(GfxStateVulkan.get().current_frame_index(), self.vk_buffers.len);
+        return self.vk_buffers[idx];
     }
 };

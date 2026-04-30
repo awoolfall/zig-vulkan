@@ -41,6 +41,8 @@ pub const TimeState = struct {
         const frame_wait_start_time = new_frame_start_time;
         const target_frame_time_ns = if (self.is_focused) self.target_frame_time_ns else self.target_lost_focus_frame_time_ns;
         if (target_frame_time_ns != 0) {
+            const __tracy_zone = eng.ztracy.ZoneN(@src(), "wait for target frame rate");
+            defer __tracy_zone.End();
             // while loop to account for "spurious wakeups"
             while (frame_diff_ns < target_frame_time_ns) {
                 // sleep remaining ns to hit desired frame rate

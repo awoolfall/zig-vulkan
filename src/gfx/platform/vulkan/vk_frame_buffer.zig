@@ -104,7 +104,7 @@ pub const FrameBufferVulkan = struct {
     }
 
     pub fn get_frame_framebuffer(self: *const FrameBufferVulkan) c.VkFramebuffer {
-        const idx = @min(GfxStateVulkan.get().current_frame_index(), self.vk_framebuffers.len - 1);
+        const idx = @mod(GfxStateVulkan.get().swapchain.current_image_index, self.vk_framebuffers.len);
         return self.vk_framebuffers[idx];
     }
 };

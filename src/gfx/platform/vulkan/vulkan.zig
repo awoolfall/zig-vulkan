@@ -67,15 +67,18 @@ pub const GfxStateVulkan = struct {
     debug_messenger: ?c.VkDebugUtilsMessengerEXT,
 
     num_frames_in_flight: u32,
-    frame_count: u128 = 0,
+    frames_in_flight_index: u32 = 0,
+    last_frames_in_flight_index: u32 = 0,
 
     all_command_pool: gf.CommandPool,
     transfer_command_pool: gf.CommandPool,
 
     swapchain: SwapchainVulkan,
-    temp_frame_wait_fence: c.VkFence,
+    pre_present_cmd_buffers: []gf.CommandBuffer,
 
     buffer_updates: std.ArrayList(BufferUpdates),
+    buffer_updates_complete_semaphores: []gf.Semaphore,
+    buffer_updates_cmd_buffers: []gf.CommandBuffer,
 
     pub fn deinit(self: *Self) void {
         std.log.info("Vulkan deinit", .{});
@@ -84,8 +87,22 @@ pub const GfxStateVulkan = struct {
         };
 
         self.buffer_updates.deinit(self.alloc);
+
+        for (self.buffer_updates_complete_semaphores) |s| {
+            s.deinit();
+        }
+        self.alloc.free(self.buffer_updates_complete_semaphores);
+
+        for (self.buffer_updates_cmd_buffers) |cmd| {
+            cmd.deinit();
+        }
+        self.alloc.free(self.buffer_updates_cmd_buffers);
+
+        for (self.pre_present_cmd_buffers) |cmd| {
+            cmd.deinit();
+        }
+        self.alloc.free(self.pre_present_cmd_buffers);
         
-        c.vkDestroyFence(self.device, self.temp_frame_wait_fence, null);
         self.swapchain.deinit(self);
 
         self.all_command_pool.deinit();
@@ -579,6 +596,7 @@ pub const GfxStateVulkan = struct {
         const all_command_pool_create_info = c.VkCommandPoolCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .queueFamilyIndex = queues.all_family_index,
+            .flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, // TODO: maybe this shouldnt be the default? idk
         };
 
         var vk_all_command_pool: c.VkCommandPool = undefined;
@@ -588,20 +606,9 @@ pub const GfxStateVulkan = struct {
         errdefer all_command_pool.deinit();
         errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
 
-        // Create frame wait fence?
-        // TODO remove?
-        const frame_wait_fence_info = c.VkFenceCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
-        };
-
-        var vk_temp_frame_wait_fence: c.VkFence = undefined;
-        try vkt(c.vkCreateFence(vk_device, &frame_wait_fence_info, null, &vk_temp_frame_wait_fence));
-        errdefer c.vkDestroyFence(vk_device, vk_temp_frame_wait_fence, null);
-
         // Create FiF buffer updates structure
-        const buffer_updates = try std.ArrayList(BufferUpdates).initCapacity(alloc, 32);
-        errdefer buffer_updates.deinit();
+        var buffer_updates = try std.ArrayList(BufferUpdates).initCapacity(alloc, 32);
+        errdefer buffer_updates.deinit(alloc);
 
         return Self {
             .alloc = alloc,
@@ -627,17 +634,68 @@ pub const GfxStateVulkan = struct {
                 .swapchain = undefined,
                 .extent = undefined,
                 .image_available_semaphores = undefined,
+                .image_available_fences = undefined,
                 .present_transition_semaphores = undefined,
                 .swapchain_image_views = undefined,
                 .swapchain_images = undefined,
             },
-            .temp_frame_wait_fence = vk_temp_frame_wait_fence,
+            .pre_present_cmd_buffers = undefined,
 
             .buffer_updates = buffer_updates,
+            .buffer_updates_complete_semaphores = undefined,
+            .buffer_updates_cmd_buffers = undefined,
         };
     }
 
     pub fn init_late(self: *Self, window: *eng.window.Window) !void {
+        // create buffer updates semaphores
+        const buffer_updates_complete_semaphores = try self.alloc.alloc(gf.Semaphore, self.frames_in_flight());
+        errdefer self.alloc.free(buffer_updates_complete_semaphores);
+
+        var buffer_updates_complete_semaphores_list = std.ArrayList(gf.Semaphore).initBuffer(buffer_updates_complete_semaphores);
+        errdefer for (buffer_updates_complete_semaphores_list.items) |s| { s.deinit(); };
+
+        for (0..self.frames_in_flight()) |_| {
+            const semaphore = try gf.Semaphore.init(.{});
+            errdefer semaphore.deinit();
+
+            try buffer_updates_complete_semaphores_list.appendBounded(semaphore);
+        }
+        
+        self.buffer_updates_complete_semaphores = buffer_updates_complete_semaphores;
+
+        // buffer updates command buffers
+        const buffer_updates_cmd_buffers = try self.alloc.alloc(gf.CommandBuffer, self.frames_in_flight());
+        errdefer self.alloc.free(buffer_updates_cmd_buffers);
+
+        var buffer_updates_cmd_buffers_list = std.ArrayList(gf.CommandBuffer).initBuffer(buffer_updates_cmd_buffers);
+        errdefer for (buffer_updates_cmd_buffers_list.items) |cmd| { cmd.deinit(); };
+
+        for (0..self.frames_in_flight()) |_| {
+            const cmd = try self.all_command_pool.allocate_command_buffer(.{ .level = .Primary, });
+            errdefer cmd.deinit();
+
+            try buffer_updates_cmd_buffers_list.appendBounded(cmd);
+        }
+        
+        self.buffer_updates_cmd_buffers = buffer_updates_cmd_buffers;
+
+        // pre present command buffers
+        const pre_present_cmd_buffers = try self.alloc.alloc(gf.CommandBuffer, self.frames_in_flight());
+        errdefer self.alloc.free(pre_present_cmd_buffers);
+
+        var pre_present_cmd_buffers_list = std.ArrayList(gf.CommandBuffer).initBuffer(pre_present_cmd_buffers);
+        errdefer for (pre_present_cmd_buffers_list.items) |cmd| { cmd.deinit(); };
+
+        for (0..self.frames_in_flight()) |_| {
+            const cmd = try self.all_command_pool.allocate_command_buffer(.{ .level = .Primary, });
+            errdefer cmd.deinit();
+
+            try pre_present_cmd_buffers_list.appendBounded(cmd);
+        }
+        
+        self.pre_present_cmd_buffers = pre_present_cmd_buffers;
+
         // Create swap chain
         const window_size = try window.get_client_size();
         self.swapchain = try SwapchainVulkan.init(self, .{
@@ -730,14 +788,14 @@ pub const GfxStateVulkan = struct {
         return self.num_frames_in_flight;
     }
 
-    pub fn current_frame_index(self: *const Self) u32 {
-        return self.swapchain.current_image_index;
-    }
-
     pub fn begin_frame(self: *Self) !gf.Semaphore {
-        self.frame_count += 1;
+        self.last_frames_in_flight_index = self.frames_in_flight_index;
+        self.frames_in_flight_index = @mod(self.frames_in_flight_index + 1, self.num_frames_in_flight);
 
         const image_available_semaphore = self.swapchain.image_available_semaphores[self.current_frame_index()];
+
+        try self.swapchain.image_available_fences[self.current_frame_index()].wait();
+        try self.swapchain.image_available_fences[self.current_frame_index()].reset();
 
         while (true) {
             vkt(c.vkAcquireNextImageKHR(
@@ -758,22 +816,21 @@ pub const GfxStateVulkan = struct {
             };
             break;
         }
-        // TODO do I have to wait on a fence for image acquisition before updating buffers?
 
         // Update frame in flight resources before continuing to the new frame
-        self.copy_updated_fif_buffers() catch |err| {
+        const buffer_updates_complete_semaphore = self.copy_updated_fif_buffers(&image_available_semaphore) catch |err| {
             std.log.warn("Unable to update fif buffers: {}", .{err});
+            return err;
         };
 
-        return image_available_semaphore;
+        return buffer_updates_complete_semaphore;
     }
 
-    fn copy_updated_fif_buffers(self: *Self) !void {
-        var cmd = try begin_single_time_command_buffer(&self.all_command_pool);
-        defer end_single_time_command_buffer(&cmd, null);
+    fn copy_updated_fif_buffers(self: *Self, image_available_semaphore: *const eng.gfx.Semaphore) !eng.gfx.Semaphore {
+        const cmd = &self.buffer_updates_cmd_buffers[self.current_frame_index()];
+        try cmd.reset();
 
-        const cfi = self.current_frame_index();
-        const cfi_minus_one = (cfi + self.frames_in_flight() - 1) % self.frames_in_flight();
+        try cmd.cmd_begin(.{ .one_time_submit = true, });
 
         // std.log.info("fif update count is {}", .{self.buffer_updates.items.len});
 
@@ -786,8 +843,8 @@ pub const GfxStateVulkan = struct {
             };
             c.vkCmdCopyBuffer(
                 cmd.platform.vk_command_buffer,
-                update.vk_buffers[cfi_minus_one],
-                update.vk_buffers[cfi],
+                update.vk_buffers[self.last_frames_in_flight_index],
+                update.vk_buffers[self.frames_in_flight_index],
                 1,
                 &buffer_copy_region
             );
@@ -797,6 +854,23 @@ pub const GfxStateVulkan = struct {
                 _ = self.buffer_updates.swapRemove(iter.index);
             }
         }
+
+        try cmd.cmd_end();
+
+        const buffer_updates_complete_semaphore = self.buffer_updates_complete_semaphores[self.current_frame_index()];
+
+        try self.submit_command_buffer(.{
+            .command_buffers = &.{ cmd },
+            .wait_semaphores = &.{
+                eng.gfx.GfxState.SubmitWaitSemaphoreInfo {
+                    .dst_stage = .{ .transfer = true, },
+                    .semaphore = image_available_semaphore,
+                }
+            },
+            .signal_semaphores = &.{ &buffer_updates_complete_semaphore },
+        });
+
+        return buffer_updates_complete_semaphore;
     }
 
     pub fn submit_command_buffer(self: *Self, info: gf.GfxState.SubmitInfo) !void {
@@ -839,17 +913,26 @@ pub const GfxStateVulkan = struct {
     }
 
     pub fn present(self: *Self, wait_semaphores: []const *gf.Semaphore) !void {
-        const MAX_WAIT_SEMAPHORES = 16;
-        std.debug.assert(wait_semaphores.len < MAX_WAIT_SEMAPHORES);
+        const wait_semaphores_infos = try eng.get().frame_allocator.alloc(eng.gfx.GfxState.SubmitWaitSemaphoreInfo, wait_semaphores.len);
+        defer eng.get().frame_allocator.free(wait_semaphores_infos);
+
+        for (wait_semaphores, 0..) |s, idx| {
+            wait_semaphores_infos[idx] = eng.gfx.GfxState.SubmitWaitSemaphoreInfo {
+                .dst_stage = .{ .all_commands = true, }, // TODO: is this the correct stage?
+                .semaphore = s,
+            };
+        }
 
         const present_transition_semaphore = self.swapchain.present_transition_semaphores[self.current_frame_index()];
         {
-            var cmd = try begin_single_time_command_buffer(&self.all_command_pool);
-            defer end_single_time_command_buffer(&cmd, present_transition_semaphore);
+            const cmd = &self.pre_present_cmd_buffers[self.current_frame_index()];
+            try cmd.reset();
+
+            try cmd.cmd_begin(.{ .one_time_submit = true, });
 
             const image_barrier = c.VkImageMemoryBarrier {
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .image = self.swapchain.swapchain_images[@intCast(self.current_frame_index())],
+                .image = self.swapchain.swapchain_images[self.swapchain.current_image_index],
                 .oldLayout = imagelayout_to_vulkan(.ColorAttachmentOptimal),
                 .newLayout = imagelayout_to_vulkan(.PresentSrc),
                 .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
@@ -873,14 +956,16 @@ pub const GfxStateVulkan = struct {
                 0, null,
                 1, &image_barrier
             );
-        }
 
-        var vk_wait_semaphores: [MAX_WAIT_SEMAPHORES + 1]c.VkSemaphore = undefined;
+            try cmd.cmd_end();
 
-        for (wait_semaphores, 0..) |s, idx| {
-            vk_wait_semaphores[idx] = s.platform.vk_semaphore;
+            try self.submit_command_buffer(eng.gfx.GfxState.SubmitInfo{
+                .command_buffers = &.{ cmd },
+                .wait_semaphores = wait_semaphores_infos[0..],
+                .signal_semaphores = &.{ &present_transition_semaphore },
+                .fence = self.swapchain.image_available_fences[self.current_frame_index()],
+            });
         }
-        vk_wait_semaphores[wait_semaphores.len] = present_transition_semaphore.platform.vk_semaphore;
 
         const present_info = c.VkPresentInfoKHR {
             .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -888,8 +973,8 @@ pub const GfxStateVulkan = struct {
             .pSwapchains = @ptrCast(&self.swapchain.swapchain),
             .pImageIndices = @ptrCast(&self.swapchain.current_image_index),
             .pResults = null,
-            .waitSemaphoreCount = @intCast(wait_semaphores.len + 1),
-            .pWaitSemaphores = @ptrCast(vk_wait_semaphores[0..].ptr),
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = @ptrCast(&present_transition_semaphore.platform.vk_semaphore),
         };
 
         try vkt(c.vkQueuePresentKHR(self.queues.present, &present_info));
@@ -901,6 +986,10 @@ pub const GfxStateVulkan = struct {
             // probably device lost
             unreachable;
         };
+    }
+
+    pub fn current_frame_index(self: *const Self) u32 {
+        return self.frames_in_flight_index;
     }
 
     fn image_needs_to_be_recreated_on_swapchain_changes(image: *gf.Image) bool {

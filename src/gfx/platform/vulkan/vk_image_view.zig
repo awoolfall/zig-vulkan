@@ -65,9 +65,7 @@ pub const ImageViewVulkan = struct {
     }
 
     pub inline fn get_frame_view(self: *const Self) c.VkImageView {
-        if (self.vk_image_views.len == 1) { return self.vk_image_views[0]; }
-        const idx = GfxStateVulkan.get().current_frame_index();
-        std.debug.assert(idx < self.vk_image_views.len);
+        const idx = @mod(GfxStateVulkan.get().swapchain.current_image_index, self.vk_image_views.len);
         return self.vk_image_views[idx];
     }
 };

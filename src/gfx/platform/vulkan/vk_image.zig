@@ -270,8 +270,8 @@ pub const ImageVulkan = struct {
     }
 
     pub inline fn get_frame_image(self: *const Self) *const ImageData {
-        const idx = GfxStateVulkan.get().current_frame_index();
-        return &self.images[@as(usize, @intCast(idx)) % self.images.len];
+        const idx = @mod(GfxStateVulkan.get().swapchain.current_image_index, self.images.len);
+        return &self.images[idx];
     }
 
     pub fn map(self: *const Self, options: gf.Image.MapOptions) !MappedImage {

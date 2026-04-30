@@ -59,6 +59,9 @@ pub export fn init_engine(alloc: *std.mem.Allocator) ?*Self {
 }
 
 pub fn init(alloc: std.mem.Allocator) !*Self {
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "Engine init");
+    defer __tracy_zone.End();
+
     Log.debug("Engine init!", .{});
     errdefer std.log.debug("Engine deinit!", .{});
 
@@ -179,6 +182,8 @@ pub export fn run(engine: *Self) void {
 }
 
 fn pre_app_update(self: *Self) !void {
+    eng.ztracy.FrameMark();
+    
     // Reset the frame allocator
     if (!self.frame_arena.reset(.retain_capacity)) {
         std.log.err("failed to reset frame arena", .{});

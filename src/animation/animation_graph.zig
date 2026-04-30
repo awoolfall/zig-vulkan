@@ -184,6 +184,9 @@ pub fn calculate_bone_transforms(
     data: *const ControlData,
     out_transforms: []zm.Mat
 ) void {
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "animation graph calculate bone transforms");
+    defer __tracy_zone.End();
+    
     // calculate the transforms for the current active node
     var active_node_transforms = [_]Transform{.{}} ** eng.mesh.MAX_BONES;
     self.calculate_bone_transforms_for_node(model, &self.nodes.items[data.active_node], data.active_time, data, active_node_transforms[0..]);

@@ -297,7 +297,7 @@ pub const GfxState = struct {
         return self.platform.frames_in_flight();
     }
 
-    pub fn current_frame_index(self: *const Self) u32 {
+    pub fn current_frame_index(self: *const Self) usize {
         return self.platform.current_frame_index();
     }
 
@@ -317,6 +317,9 @@ pub const GfxState = struct {
     }
 
     pub fn begin_frame(self: *Self) !Semaphore {
+        const __tracy_zone = eng.ztracy.ZoneN(@src(), "gfx begin frame");
+        defer __tracy_zone.End();
+
         return try self.platform.begin_frame();
     }
 
@@ -333,10 +336,16 @@ pub const GfxState = struct {
     };
 
     pub fn submit_command_buffer(self: *Self, info: SubmitInfo) !void {
+        const __tracy_zone = eng.ztracy.ZoneN(@src(), "gfx submit");
+        defer __tracy_zone.End();
+        
         try self.platform.submit_command_buffer(info);
     }
 
     pub fn present(self: *Self, wait_semaphores: []const *Semaphore) !void {
+        const __tracy_zone = eng.ztracy.ZoneN(@src(), "gfx present");
+        defer __tracy_zone.End();
+
         if (self.swapchain_size()[0] * self.swapchain_size()[1] == 0) {
             return error.SwapchainSizeIsZero;
         }
@@ -344,10 +353,16 @@ pub const GfxState = struct {
     }
 
     pub fn flush(self: *Self) void {
+        const __tracy_zone = eng.ztracy.ZoneN(@src(), "gfx flush");
+        defer __tracy_zone.End();
+
         self.platform.flush();
     }
 
     pub fn window_resized(self: *Self, new_width: u32, new_height: u32) void {
+        const __tracy_zone = eng.ztracy.ZoneN(@src(), "gfx window resize");
+        defer __tracy_zone.End();
+
         self.flush();
         self.platform.resize_swapchain(@max(new_width, 1), @max(new_height, 1)) catch unreachable;
     }

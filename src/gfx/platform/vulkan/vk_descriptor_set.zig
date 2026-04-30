@@ -94,7 +94,7 @@ pub const DescriptorSetVulkan = struct {
     }
 
     pub fn get_frame_set(self: *const DescriptorSetVulkan) c.VkDescriptorSet {
-        return self.vk_sets[@min(GfxStateVulkan.get().current_frame_index(), self.vk_sets.len)];
+        return self.vk_sets[@mod(GfxStateVulkan.get().current_frame_index(), self.vk_sets.len)];
     }
 
     pub fn update(self: *DescriptorSetVulkan, info: gf.DescriptorSetUpdateInfo) !void {

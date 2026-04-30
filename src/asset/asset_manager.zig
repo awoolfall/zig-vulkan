@@ -205,6 +205,9 @@ pub fn get_asset_id(self: *Self, asset_uri: []const u8) !GenericAssetId {
 }
 
 fn load_asset(self: *Self, comptime AssetType: type, asset_id: GenericAssetId) !void {
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "load asset");
+    defer __tracy_zone.End();
+    
     const asset_type_index = get_asset_type_index(AssetType);
     const asset_metadata = self.asset_metadata.getPtr(asset_id.unique_id) orelse return error.AssetMetadataDoesNotExist;
 
@@ -239,6 +242,11 @@ const ReloadAssetError = error {
 };
 
 fn reload_asset_if_required(self: *Self, asset_id: GenericAssetId) ReloadAssetError!void {
+    // TODO: disable this function in release
+    
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "asset reload if required");
+    defer __tracy_zone.End();
+    
     const asset_metadata = self.asset_metadata.getPtr(asset_id.unique_id) orelse return error.AssetHasNoMetadata;
 
     const last_modify_time = if (asset_metadata.base_asset_id) |base_asset_id| blk: {
@@ -276,6 +284,9 @@ fn reload_asset_if_required(self: *Self, asset_id: GenericAssetId) ReloadAssetEr
 }
 
 pub fn get_asset(self: *Self, comptime AssetType: type, asset_id: GenericAssetId) !*AssetType.BaseType {
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "get asset");
+    defer __tracy_zone.End();
+
     const asset_type_index = get_asset_type_index(AssetType);
     if (asset_type_index >= AssetTypeInfo.@"struct".fields.len) {
         return error.InvalidAssetType;

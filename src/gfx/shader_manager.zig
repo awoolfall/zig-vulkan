@@ -102,6 +102,9 @@ pub const GenerateSpirvInfo = struct {
 };
 
 pub fn generate_spirv(self: *const Self, alloc: std.mem.Allocator, info: GenerateSpirvInfo) ![:0]u8 {
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "slang generate spirv");
+    defer __tracy_zone.End();
+
     var preproc_macro_arena = std.heap.ArenaAllocator.init(self.alloc);
     defer preproc_macro_arena.deinit();
     const macro_alloc = preproc_macro_arena.allocator();

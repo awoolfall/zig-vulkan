@@ -105,6 +105,6 @@ pub const FenceVulkan = struct {
     }
 
     pub inline fn reset(self: *Self) !void {
-        try vkt(c.vkResetFences(GfxStateVulkan.get().device, 1, self.vk_fence));
+        try vkt(c.vkResetFences(GfxStateVulkan.get().device, 1, @ptrCast(&self.vk_fence)));
     }
 };

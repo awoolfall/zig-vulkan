@@ -519,6 +519,9 @@ pub const Font = struct {
         self: *Font,
         cmd: *_gfx.CommandBuffer,
     ) !void {
+        const __tracy_zone = eng.ztracy.Zone(@src());
+        defer __tracy_zone.End();
+
         // return early if there are no text items
         if (self.frame_texts.items.len == 0) { return; }
 

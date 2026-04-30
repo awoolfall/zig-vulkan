@@ -368,6 +368,9 @@ pub fn render_bloom(
     cmd: *gf.CommandBuffer,
     settings: BloomSettings,
 ) !void {
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "render bloom");
+    defer __tracy_zone.End();
+    
     // Transition HDR image to shader resource
     transition_image_to_shader_read_only(cmd, gf.GfxState.get().default.hdr_image, 0, 1);
 

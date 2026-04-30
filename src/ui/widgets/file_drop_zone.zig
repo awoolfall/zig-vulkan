@@ -1,5 +1,6 @@
 const std = @import("std");
 const eng = @import("self");
+const zm = eng.zmath;
 const Imui = eng.ui;
 const gfx = eng.gfx;
 
@@ -7,11 +8,14 @@ pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
     const box_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src()}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, },
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
         },
+        .border_width_px = .all(4.0),
+        .corner_radii_px = .all(20.0),
+        .border_colour = zm.f32x4(1.0, 1.0, 1.0, 0.2),
         .flags = .{
-            .render = false, // TODO: add ability to render dotted border using 9 grid split thing
+            .render = true,
         },
     };
 

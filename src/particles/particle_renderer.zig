@@ -75,8 +75,8 @@ pub const ParticleRenderer = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator) !Self {
-        const _profile_context = eng.get().profiler.start_context("particle_renderer_init");
-        defer _profile_context.end_context();
+        const __tracy_zone = eng.ztracy.ZoneN(@src(), "particle renderer init");
+        defer __tracy_zone.End();
 
         const particle_path = try std.fs.path.join(alloc, &[_][]const u8{ @import("build_options").engine_src_path, "particles/particles.slang" });
         defer alloc.free(particle_path);

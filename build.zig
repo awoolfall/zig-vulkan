@@ -117,6 +117,15 @@ pub fn build(b: *std.Build) !void {
     engine.addImport("slang", slang_module.module("root"));
     engine.linkLibrary(slang_module.artifact("slang"));
 
+    const ztracy = b.dependency("ztracy", .{
+        .enable_ztracy = true,
+        .enable_fibers = false,
+        .on_demand = true,
+        .callstack = 0,
+    });
+    engine.addImport("ztracy", ztracy.module("root"));
+    engine.linkLibrary(ztracy.artifact("tracy"));
+
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{

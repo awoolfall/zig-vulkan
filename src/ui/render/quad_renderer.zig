@@ -442,6 +442,9 @@ pub const QuadRenderer = struct {
         self: *QuadRenderer,
         cmd: *_gfx.CommandBuffer,
     ) !void {
+        const __tracy_zone = eng.ztracy.Zone(@src());
+        defer __tracy_zone.End();
+        
         defer self.frame_quads.clearRetainingCapacity();
 
         self.create_new_sets_for_rendering() catch |err| {

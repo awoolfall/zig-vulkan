@@ -14,7 +14,6 @@ const QuadRenderer = qr.QuadRenderer;
 
 pub const Palette = @import("palette.zig");
 pub const widgets = @import("widgets.zig");
-const ImuiCompositor = @import("compositor.zig");
 
 const Self = @This();
 
@@ -310,11 +309,7 @@ arenas: [2]std.heap.ArenaAllocator,
 
 deinit_functions: std.ArrayList(*const fn (alloc: std.mem.Allocator) void) = .empty,
 
-compositor: ImuiCompositor,
-
 pub fn deinit(self: *Self) void {
-    self.compositor.deinit();
-
     for (self.deinit_functions.items) |func| {
         func(self.alloc);
     }
@@ -353,9 +348,6 @@ pub fn init(alloc: std.mem.Allocator) !Self {
         fonts[idx] = font_obj;
     }
 
-    var compositor = try ImuiCompositor.init(alloc);
-    errdefer compositor.deinit();
-
     var self = Self {
         .alloc = alloc,
         .parent_stack = .empty,
@@ -371,7 +363,6 @@ pub fn init(alloc: std.mem.Allocator) !Self {
         },
         .quad_renderer = try QuadRenderer.init(alloc),
         .fonts = fonts,
-        .compositor = compositor,
     };
 
     _ = self.add_fullscreen_root_widget(0);
@@ -929,6 +920,9 @@ fn recurse_resolve_widget_size_violations(self: *Self, widget_id: WidgetId, axis
 }
 
 fn compute_widget_rects(self: *Self) void {
+    const __tracy_zone = eng.ztracy.Zone(@src());
+    defer __tracy_zone.End();
+
     for (self.root_widgets.items) |root_widget| {
         self.recurse_compute_widget_rect(root_widget.widget) catch unreachable;
     }
@@ -1094,7 +1088,8 @@ fn sort_root_widgets_function(user_data: ?usize, a: RootWidget, b: RootWidget) b
 }
 
 pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
-    self.compositor.finish_frame(self);
+    const __tracy_zone = eng.ztracy.ZoneN(@src(), "imui render");
+    defer __tracy_zone.End();
 
     // widget rects must be computed before rendering
     self.compute_widget_rects();
@@ -1109,9 +1104,11 @@ pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
 
     std.mem.sort(RootWidget, self.root_widgets.items, @as(?usize, null), sort_root_widgets_function);
 
+    const _render_imui_recursive_tracy_zone = eng.ztracy.ZoneN(@src(), "render_imui_recursive");
     for (self.root_widgets.items) |root_widget| {
         self.render_imui_recursive(root_widget.widget, 0, screen_scissor, render_palette);
     }
+    _render_imui_recursive_tracy_zone.End();
 
     self.quad_renderer.render_quads(cmd) catch |err| {
         std.log.warn("Unable to render quads: {}", .{err});
