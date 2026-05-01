@@ -1,9 +1,9 @@
 #include "slang_c.h"
 
 #include <cassert>
-#include <slang/slang.h>
-#include <slang/slang-com-ptr.h>
-#include <slang/slang-com-helper.h>
+#include <slang.h>
+#include <slang-com-ptr.h>
+#include <slang-com-helper.h>
 
 #include <vector>
 
@@ -157,7 +157,7 @@ slang::CompilerOptionName convert_compiler_option_name(CompilerOptionName name)
         case CompilerOptionName::PreprocessorOutput: return slang::CompilerOptionName::PreprocessorOutput;
         case CompilerOptionName::OutputIncludes: return slang::CompilerOptionName::OutputIncludes;
         case CompilerOptionName::ReproFileSystem: return slang::CompilerOptionName::ReproFileSystem;
-        case CompilerOptionName::SerialIr: return slang::CompilerOptionName::SerialIr;
+        //case CompilerOptionName::SerialIr: return slang::CompilerOptionName::SerialIr;
         case CompilerOptionName::SkipCodeGen: return slang::CompilerOptionName::SkipCodeGen;
         case CompilerOptionName::ValidateIr: return slang::CompilerOptionName::ValidateIr;
         case CompilerOptionName::VerbosePaths: return slang::CompilerOptionName::VerbosePaths;

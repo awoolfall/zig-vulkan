@@ -50,11 +50,8 @@ pub fn build(b: *std.Build) !void {
     slangc.linkLibC();
     slangc.linkLibCpp();
 
-    const env_map = try std.process.getEnvMap(b.allocator);
-    if (env_map.get("VK_SDK_PATH")) |path| {
-        slangc.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Lib", .{ path }) catch @panic("OOM") });
-        slangc.addIncludePath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Include", .{ path }) catch @panic("OOM") });
-    }
+    slangc.root_module.addIncludePath(b.path("libs/windows_x86_64/include"));
+    slangc.root_module.addLibraryPath(b.path("libs/windows_x86_64/lib"));
     slangc.linkSystemLibrary("slang");
 
     const src_dir = "cpp";
