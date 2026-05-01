@@ -126,27 +126,18 @@ pub const PhysicsSystem = struct {
                             body_interface.setLinearVelocity(body.id, zm.vecToArr3(entity_physics.velocity));
                             body_interface.setPosition(body.id, zm.vecToArr3(entity_transform.transform.position), .dont_activate);
                             body_interface.setRotation(body.id, zm.vecToArr4(entity_transform.transform.rotation), .activate);
-
-                            entity_physics.last_frame_data.position = zm.loadArr3(body_interface.getPosition(body.id));
-                            entity_physics.last_frame_data.rotation = zm.loadArr4(body_interface.getRotation(body.id));
                         },
                         .Character => |character| {
                             character.character.setPosition(zm.vecToArr3(entity_transform.transform.position));
                             //character.character.setRotation(zm.vecToArr4(entity_transform.transform.rotation));
 
                             character.character.setLinearVelocity(zm.vecToArr3(entity_physics.velocity));
-
-                            entity_physics.last_frame_data.position = zm.loadArr3(character.character.getPosition());
-                            entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
                         },
                         .CharacterVirtual => |character| {
                             character.virtual.setPosition(zm.vecToArr3(entity_transform.transform.position));
                             //character.virtual.setRotation(zm.vecToArr4(entity_transform.transform.rotation));
-                            
-                            character.virtual.setLinearVelocity(zm.vecToArr3(entity_physics.velocity));
 
-                            entity_physics.last_frame_data.position = zm.loadArr3(character.virtual.getPosition());
-                            entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
+                            character.virtual.setLinearVelocity(zm.vecToArr3(entity_physics.velocity));
                         },
                     }
                 }
@@ -156,8 +147,30 @@ pub const PhysicsSystem = struct {
 
             // Update at UpdateRateHz, this may happen zero or more than one times before returning
             for (0..@intCast(times_to_update)) |_| {
+                // Snapshot pre-step positions into last_frame_data for visual interpolation.
+                components_query_iterator.reset();
+                while (components_query_iterator.next()) |components| {
+                    const entity_transform: *eng.ecs.TransformComponent,
+                    const entity_physics: *eng.ecs.PhysicsComponent = components;
+                    switch (entity_physics.runtime_data) {
+                        .None => {},
+                        .Body => |body| {
+                            entity_physics.last_frame_data.position = zm.loadArr3(body_interface.getPosition(body.id));
+                            entity_physics.last_frame_data.rotation = zm.loadArr4(body_interface.getRotation(body.id));
+                        },
+                        .Character => |character| {
+                            entity_physics.last_frame_data.position = zm.loadArr3(character.character.getPosition());
+                            entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
+                        },
+                        .CharacterVirtual => |character| {
+                            entity_physics.last_frame_data.position = zm.loadArr3(character.virtual.getPosition());
+                            entity_physics.last_frame_data.rotation = entity_transform.transform.rotation;
+                        },
+                    }
+                }
+
                 // Run physics update
-                self.zphy.update(physics_delta_time, .{}) 
+                self.zphy.update(physics_delta_time, .{})
                     catch std.log.err("Unable to update physics", .{});
 
                 // After physics update set all entity transforms to match physics bodies
