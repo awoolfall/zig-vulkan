@@ -801,9 +801,9 @@ pub const GfxStateVulkan = struct {
             vkt(c.vkAcquireNextImageKHR(
                     self.device,
                     self.swapchain.swapchain,
-                    std.math.maxInt(u32),
+                    std.math.maxInt(u64),
                     image_available_semaphore.platform.vk_semaphore,
-                    @ptrCast(c.VK_NULL_HANDLE),
+                    null, //c.VK_NULL_HANDLE,
                     &self.swapchain.current_image_index
             )) catch |err| {
                 switch (err) {

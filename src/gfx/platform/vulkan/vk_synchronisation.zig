@@ -57,15 +57,13 @@ pub const FenceVulkan = struct {
     }
 
     pub inline fn wait(self: *Self) !void {
-        vkt(c.vkWaitForFences(
+        try vkt(c.vkWaitForFences(
                 GfxStateVulkan.get().device,
                 1,
                 @ptrCast(&self.vk_fence),
                 vk.bool_to_vulkan(true),
                 std.math.maxInt(u64)
-        )) catch |err| {
-            std.log.warn("Failed waiting for fence: {}", .{err});
-        };
+        ));
     }
 
     pub inline fn wait_all(fences: []const *Self) !void {

@@ -65,34 +65,46 @@ pub const SwapchainVulkan = struct {
 
         var swapchain_create_info = c.VkSwapchainCreateInfoKHR {
             .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+            .pNext = null,
+            .flags = 0,
             .surface = gfxstate.surface,
-            .minImageCount = gfxstate.frames_in_flight(),
+            .minImageCount = std.math.clamp(
+                gfxstate.frames_in_flight(),
+                surface_capabilities.minImageCount,
+                if (surface_capabilities.maxImageCount != 0) surface_capabilities.maxImageCount else std.math.maxInt(u32),
+            ),
             .imageFormat = opt.format.format,
             .imageColorSpace = opt.format.colorSpace,
             .imageExtent = swapchain_extent,
             .imageArrayLayers = 1,
             .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
             .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = null,
             .preTransform = surface_capabilities.currentTransform,
             .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
             .presentMode = opt.present_mode,
             .clipped = c.VK_TRUE,
-            .oldSwapchain = @ptrCast(c.VK_NULL_HANDLE),
+            .oldSwapchain = null, //c.VK_NULL_HANDLE,
         };
         const swapchain_create_queue_indices = [2]u32 { gfxstate.queues.all_family_index, gfxstate.queues.present_family_index };
-        if (gfxstate.queues.all_family_index == gfxstate.queues.present_family_index) {
+        if (gfxstate.queues.all_family_index != gfxstate.queues.present_family_index) {
             swapchain_create_info.imageSharingMode = c.VK_SHARING_MODE_CONCURRENT;
             swapchain_create_info.queueFamilyIndexCount = @intCast(swapchain_create_queue_indices.len);
             swapchain_create_info.pQueueFamilyIndices = &swapchain_create_queue_indices;
         }
 
+        std.log.info("Creating swapchain with minImageCount={}, extent={}x{}", .{swapchain_create_info.minImageCount, swapchain_extent.width, swapchain_extent.height});
         var vk_swapchain: c.VkSwapchainKHR = undefined;
         try vkt(c.vkCreateSwapchainKHR(gfxstate.device, &swapchain_create_info, null, &vk_swapchain));
         errdefer c.vkDestroySwapchainKHR(gfxstate.device, vk_swapchain, null);
 
         var swapchain_images_count: u32 = 0;
         try vkt(c.vkGetSwapchainImagesKHR(gfxstate.device, vk_swapchain, &swapchain_images_count, null));
-        std.debug.assert(swapchain_images_count == gfxstate.frames_in_flight());
+        
+        if (swapchain_images_count != gfxstate.frames_in_flight()) {
+            std.log.warn("Swapchain returned {} images, expected {}", .{swapchain_images_count, gfxstate.frames_in_flight()});
+        }
 
         const swapchain_images = try gfxstate.alloc.alloc(c.VkImage, swapchain_images_count);
         errdefer gfxstate.alloc.free(swapchain_images);
@@ -147,7 +159,7 @@ pub const SwapchainVulkan = struct {
         }
 
         const image_available_fences = try gfxstate.alloc.alloc(gf.Fence, gfxstate.frames_in_flight());
-        errdefer gfxstate.alloc.free(image_available_semaphores);
+        errdefer gfxstate.alloc.free(image_available_fences);
 
         var image_available_fences_list = std.ArrayList(gf.Fence).initBuffer(image_available_fences);
         errdefer for (image_available_fences_list.items) |f| { f.deinit(); };

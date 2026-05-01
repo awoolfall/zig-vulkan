@@ -149,11 +149,10 @@ pub const BufferVulkan = struct {
         defer staging.deinit();
 
         {
-            var data_ptr: ?*anyopaque = undefined;
-            try vkt(c.vkMapMemory(GfxStateVulkan.get().device, staging.vk_device_memory, 0, staging.buffer_size, 0, &data_ptr));
-            defer c.vkUnmapMemory(GfxStateVulkan.get().device, staging.vk_device_memory);
+            const mapped_buffer = try staging.map(.{ .write = .Infrequent });
+            defer mapped_buffer.unmap();
 
-            @memcpy(@as([*]u8, @ptrCast(data_ptr))[0..(data.len)], data[0..]);
+            @memcpy(mapped_buffer.data_array(u8, data.len), data[0..]);
         }
 
         var command_buffer = try vk.begin_single_time_command_buffer(&GfxStateVulkan.get().all_command_pool);
