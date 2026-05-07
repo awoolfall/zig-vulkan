@@ -310,7 +310,7 @@ pub fn get_asset(self: *Self, comptime AssetType: type, asset_id: GenericAssetId
     return self.assets[asset_type_index].map.getPtr(asset_id.unique_id) orelse return error.CouldNotGetAsset;
 }
 
-const AssetMetadata = struct {
+pub const AssetMetadata = struct {
     uri: []const u8,
     type_index: usize,
     last_modify_time: i128,

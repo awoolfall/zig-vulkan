@@ -3,6 +3,8 @@ const eng = @import("self");
 const zm = eng.zmath;
 const Transform = eng.Transform;
 
+pub const Graph = @import("animation_graph.zig");
+
 pub const QuantisedBoneAnimationChannel = struct {
     node_name: []const u8,
     position_keys: []zm.F32x4,
@@ -32,9 +34,9 @@ pub const QuantisedBoneAnimationChannel = struct {
 
     pub fn transform_at_time(self: *const QuantisedBoneAnimationChannel, frame_tick: f32) Transform {
         return Transform {
-            .position = lerp_between_frames(self.position_keys, frame_tick),
-            .rotation = slerp_between_frames(self.rotation_keys, frame_tick),
-            .scale = lerp_between_frames(self.scale_keys, frame_tick),
+            .position = if (self.position_keys.len == 0) zm.f32x4s(0.0) else lerp_between_frames(self.position_keys, frame_tick),
+            .rotation = if (self.rotation_keys.len == 0) zm.qidentity() else slerp_between_frames(self.rotation_keys, frame_tick),
+            .scale = if (self.scale_keys.len == 0) zm.f32x4s(1.0) else lerp_between_frames(self.scale_keys, frame_tick),
         };
     }
 };

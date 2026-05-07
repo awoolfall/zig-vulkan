@@ -36,3 +36,14 @@ pub fn resolve_file_uri_c(alloc: std.mem.Allocator, uri_str: []const u8) ![:0]u8
 
     return try std.fs.path.joinZ(alloc, &.{ relative_path_head, resource_relative_path });
 }
+
+pub fn construct_uri_from_path(alloc: std.mem.Allocator, path_str: []const u8) ![]u8 {
+    if (std.mem.startsWith(u8, path_str, eng.get().asset_manager.resource_directory_str)) {
+        const uri = try std.fmt.allocPrint(alloc, "res:{s}", .{path_str[eng.get().asset_manager.resource_directory_str.len..]});
+        errdefer alloc.free(uri);
+
+        return uri;
+    }
+
+    return error.UnableToShortenPathIntoUri;
+}
