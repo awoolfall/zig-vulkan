@@ -27,6 +27,7 @@ pub const ImageViewVulkan = struct {
             .ImageView2D => c.VK_IMAGE_VIEW_TYPE_2D,
             .ImageView2DArray => c.VK_IMAGE_VIEW_TYPE_2D_ARRAY,
             .ImageView3D => c.VK_IMAGE_VIEW_TYPE_3D,
+            .ImageViewCube => c.VK_IMAGE_VIEW_TYPE_CUBE,
         };
 
         const image_views = try alloc.alloc(c.VkImageView, img.platform.images.len);

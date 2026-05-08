@@ -64,6 +64,7 @@ pub const ImageVulkan = struct {
         for (0..image_count) |_| {
             const image_info = c.VkImageCreateInfo {
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .flags = if (info.is_cube) c.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT else 0,
                 .format = vk_format,
                 .imageType = vk_image_type,
                 .extent = c.VkExtent3D {

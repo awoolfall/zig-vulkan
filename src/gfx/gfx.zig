@@ -195,7 +195,7 @@ pub const GfxState = struct {
             .format = GfxState.hdr_format,
             .match_swapchain_extent = true,
 
-            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, .ShaderResource = true, },
+            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, .ShaderResource = true, .StorageResource = true, },
             .access_flags = .{ .GpuWrite = true, },
             .dst_layout = .ColorAttachmentOptimal,
         }, null);
@@ -671,6 +671,7 @@ pub const ImageInfo = struct {
     depth: u32 = 1,
     mip_levels: u32 = 1,
     array_length: u32 = 1,
+    is_cube: bool = false,
     dst_layout: ImageLayout,
 
     usage_flags: ImageUsageFlags,
@@ -791,6 +792,7 @@ pub const ImageViewType = enum {
     ImageView2D,
     ImageView2DArray,
     ImageView3D,
+    ImageViewCube,
 };
 
 pub const ImageAspect = packed struct {

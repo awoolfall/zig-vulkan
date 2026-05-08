@@ -31,8 +31,8 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
     const filled_bar_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = complete_percent, .shrinkable_percent = 0.0, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = complete_percent, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable = false, },
         },
         .background_colour = imui.palette().primary,
         .border_colour = imui.palette().primary,
@@ -45,7 +45,7 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
         .anchor = .{0.0, 0.5},
         .pivot = .{0.0, 0.5},
     };
-    const filled_bar_widget_id = imui.add_widget(filled_bar_widget, .{});
+    const filled_bar_widget_id = imui.add_widget(filled_bar_widget, null);
 
     const l1 = imui.push_layout(.X, key ++ .{@src().line});
     if (imui.get_widget(l1)) |lw| {
@@ -60,8 +60,8 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
     const empty_bar_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable_percent = 0.0, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable = false, },
         },
         .flags = .{
             .render = true,
@@ -75,13 +75,13 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
         .anchor = .{0.0, 0.5},
         .pivot = .{0.0, 0.5},
     };
-    const empty_bar_widget_id = imui.add_widget(empty_bar_widget, .{});
+    const empty_bar_widget_id = imui.add_widget(empty_bar_widget, null);
 
     const middle_dot_widget = Imui.Widget {
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable_percent = 0.0, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false, },
         },
         .flags = .{
             .render = true,
@@ -96,7 +96,7 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
         .anchor = .{0.0, 0.5},
         .pivot = .{0.5, 0.5},
     };
-    const middle_dot_widget_id = imui.add_widget(middle_dot_widget, .{});
+    const middle_dot_widget_id = imui.add_widget(middle_dot_widget, null);
 
     imui.pop_layout(); // l1
     imui.pop_layout();
@@ -112,8 +112,8 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
 
     if (signals.dragged) {
         if (imui.get_widget_from_last_frame(signals.id.background_bar)) |b| {
-            const pixel_width: f32 = @floatFromInt(b.content_rect().width);
-            const percent = @as(f32, @floatFromInt(imui.input.cursor_position[0] - b.computed.rect().left)) / pixel_width;
+            const pixel_width: f32 = b.content_rect().width();
+            const percent = (@as(f32, @floatFromInt(eng.get().input.cursor_position[0])) - b.rect().left) / pixel_width;
             const a = std.math.round((1.0 / options.step) * percent * (options.max - options.min)) * options.step;
             value.* = std.math.clamp(a + options.min, options.min, options.max);
             signals.data_changed = true;
