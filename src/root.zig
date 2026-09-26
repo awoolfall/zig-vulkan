@@ -27,6 +27,7 @@ pub const debugg = @import("debug/debug.zig");
 
 pub const util = struct {
     pub const Rect = @import("util/rect.zig");
+    pub const Ray = @import("util/ray.zig");
     pub const BoundingBox = @import("util/bounding_box.zig");
     pub const easings = @import("util/easings.zig");
     pub const gen = @import("util/gen_list.zig");

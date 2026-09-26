@@ -39,7 +39,7 @@ pub const TextInputId = struct {
 fn character_advance_at_cursor(font: *const Imui.font.Font, text_input_widget: *const Imui.Widget, text_input_state: *const TextInputState) f32 {
     if (text_input_state.cursor == 0) { return 0; }
     return 
-        font.character_map.get(text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]).?.advance *  // TODO handle error
+        font.character_map[text_input_state.text.items[text_input_state.cursor - @intFromBool(text_input_state.cursor > 0)]].?.advance *  // TODO handle error
         text_input_widget.text_content.?.size;
 }
 

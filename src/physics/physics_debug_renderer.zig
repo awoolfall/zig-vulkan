@@ -250,7 +250,7 @@ pub const D3D11DebugRenderer = extern struct {
         self.cmd = cmd;
         defer self.cmd = null;
 
-        eng.get().physics.zphy.drawBodies(&.{}, null);
+        eng.get().physics.zphysics.system.drawBodies(&.{}, null);
     }
 
     pub fn shouldBodyDraw(_: *const zphy.Body) align(zphy.DebugRenderer.BodyDrawFilterFuncAlignment) callconv(.C) bool {

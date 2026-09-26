@@ -117,7 +117,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.debug.deinit();
 
     Log.debug("Calling physics init", .{});
-    engine.physics = try eng.physics.PhysicsSystem.init(engine.general_allocator, &engine.asset_manager);
+    engine.physics = try eng.physics.PhysicsSystem.init(engine.general_allocator);
     errdefer engine.physics.deinit();
 
     engine.ecs = try eng.AppEcsSystem.init(engine.general_allocator);
@@ -158,7 +158,7 @@ fn pre_app_update(self: *Self) !void {
     self.imui.end_frame();
 
     // Update physics
-    var physics_iter = self.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent });
+    var physics_iter = self.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent });
     self.physics.update(physics_iter.create_generic_iterator());
 }
 

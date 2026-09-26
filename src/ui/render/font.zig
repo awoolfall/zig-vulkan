@@ -77,7 +77,7 @@ pub const Font = struct {
 
     atlas_details: AtlasDetails,
     font_metrics: FontMetrics,
-    character_map: std.AutoHashMap(u21, CharacterInfo),
+    character_map: []?CharacterInfo,
 
     msdf_image: _gfx.Image.Ref,
     msdf_image_view: _gfx.ImageView.Ref,
@@ -122,7 +122,7 @@ pub const Font = struct {
         self.msdf_image.deinit();
         self.sampler.deinit();
 
-        self.character_map.deinit();
+        eng.get().general_allocator.free(self.character_map);
     }
 
     pub fn init(font_json_uri: []const u8, font_msdf_png_uri: []const u8) !Font {
@@ -388,8 +388,9 @@ pub const Font = struct {
         const msdf_width: f32 = @floatFromInt(atlas_details.width);
         const msdf_height: f32 = @floatFromInt(atlas_details.height);
 
-        var character_map = std.AutoHashMap(u21, CharacterInfo).init(alloc);
-        errdefer character_map.deinit();
+        const character_map = try eng.get().general_allocator.alloc(?CharacterInfo, std.math.maxInt(u21));
+        errdefer eng.get().general_allocator.free(character_map);
+        @memset(character_map, null);
 
         // fill font character info array with data from font json
         for (font_data.value.glyphs) |*glyph| {
@@ -403,7 +404,7 @@ pub const Font = struct {
                     .bottom = 1.0 - (glyph.atlasBounds.bottom / msdf_height),
                 },
             };
-            try character_map.put(glyph.unicode, character_info);
+            character_map[glyph.unicode] = character_info;
         }
 
         // create arrays
@@ -441,6 +442,10 @@ pub const Font = struct {
 
             .frame_texts = frame_texts,
         };
+    }
+
+    inline fn get_character_info(self: *const Font, c: u21) !CharacterInfo {
+        return self.character_map[c] orelse self.character_map[UNKNOWN_CHARACTER] orelse error.InvalidDefaultCharacter;
     }
 
     fn frame_allocator() std.mem.Allocator {
@@ -650,6 +655,8 @@ pub const Font = struct {
 
             const character_start_idx = next_character_idx;
 
+            const data_array = mapped_vertex_buffer.?.data_array(CharacterInfoConstantBuffer, Font.CHARACTERS_PER_VERTEX_BUFFER);
+
             // iterate codepoints and fill character vertex buffer
             while (text_utf8_iter.nextCodepoint()) |c| {
                 const character_quad_bounds = self.calculate_character_quad_bounds(&layout_info, c, t.position, t.size)
@@ -660,11 +667,8 @@ pub const Font = struct {
                     continue;
                 }
 
-                const character_info = self.character_map.get(c) orelse self.character_map.get(UNKNOWN_CHARACTER) orelse {
-                    continue;
-                };
+                const character_info = self.get_character_info(c) catch continue;
 
-                const data_array = mapped_vertex_buffer.?.data_array(CharacterInfoConstantBuffer, Font.CHARACTERS_PER_VERTEX_BUFFER);
                 data_array[next_character_idx] = CharacterInfoConstantBuffer {
                     .atlas_bounds = character_info.atlas_bounds,
                     .quad_bounds = character_quad_bounds,
@@ -731,7 +735,7 @@ pub const Font = struct {
                 info.line_count += 1.0;
             },
             else => {
-                const char_info = self.character_map.get(character_codepoint) orelse return;
+                const char_info = self.get_character_info(character_codepoint) catch return;
                 info.x_location += char_info.advance;
             },
         }
@@ -746,7 +750,10 @@ pub const Font = struct {
         text_start_location: zm.F32x4,
         pixel_height: f32,
     ) !Bounds {
-        const char_info = self.character_map.get(character_codepoint) orelse self.character_map.get(UNKNOWN_CHARACTER) orelse return error.CharacterInfoDoesNotExist;
+        const __tracy_zone = eng.ztracy.Zone(@src());
+        defer __tracy_zone.End();
+
+        const char_info = try self.get_character_info(character_codepoint);
 
         const screen_size = eng.get().gfx.swapchain_size();
         const size_f32 = [2]f32{ @floatFromInt(screen_size[0]), @floatFromInt(screen_size[1]) };
@@ -775,6 +782,9 @@ pub const Font = struct {
         text: []const u8,
         pixel_height: f32,
     ) RectPixels {
+        const __tracy_zone = eng.ztracy.Zone(@src());
+        defer __tracy_zone.End();
+        
         var line_count: f32 = 0.0;
         var x_loc: f32 = 0.0;
 
@@ -792,7 +802,7 @@ pub const Font = struct {
                     line_count += 1.0;
                 },
                 else => {
-                    const char_info = self.character_map.get(c) orelse self.character_map.get(UNKNOWN_CHARACTER) orelse continue; // TODO handle error
+                    const char_info = self.get_character_info(c) catch continue; // TODO handle error
 
                     x_loc += char_info.advance;
                     max_x = @max(max_x, x_loc);

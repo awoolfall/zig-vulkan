@@ -304,9 +304,6 @@ pub fn update(graph: *Self, data: *ControlData) void {
             break :fblk;
         }
     }
-    
-    // update active animation time
-    data.active_time += eng.get().time.delta_time_f32();
 
     // update transition timings
     if (data.transition) |*transition| {

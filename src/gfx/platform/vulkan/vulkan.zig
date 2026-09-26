@@ -797,6 +797,7 @@ pub const GfxStateVulkan = struct {
         try self.swapchain.image_available_fences[self.current_frame_index()].wait();
         try self.swapchain.image_available_fences[self.current_frame_index()].reset();
 
+        const __tracy_zone = eng.ztracy.ZoneN(@src(), "acquire next image");
         while (true) {
             vkt(c.vkAcquireNextImageKHR(
                     self.device,
@@ -816,6 +817,7 @@ pub const GfxStateVulkan = struct {
             };
             break;
         }
+        __tracy_zone.End();
 
         // Update frame in flight resources before continuing to the new frame
         const buffer_updates_complete_semaphore = self.copy_updated_fif_buffers(&image_available_semaphore) catch |err| {
@@ -827,6 +829,9 @@ pub const GfxStateVulkan = struct {
     }
 
     fn copy_updated_fif_buffers(self: *Self, image_available_semaphore: *const eng.gfx.Semaphore) !eng.gfx.Semaphore {
+        // TODO: this copy reads from vk_buffers[last_fif_index] while the previous frame's
+        // rendering may still be using it. Proper fix: wait on image_available_fences[last_fif_index]
+        // here, or rearchitect buffer updates to not require inter-frame copies.
         const cmd = &self.buffer_updates_cmd_buffers[self.current_frame_index()];
         try cmd.reset();
 

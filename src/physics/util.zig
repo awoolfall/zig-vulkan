@@ -1,4 +1,6 @@
 const std = @import("std");
+const eng = @import("self");
+const zm = eng.zmath;
 const zphy = @import("zphysics");
 
 pub const CollideShapeCollector = extern struct {

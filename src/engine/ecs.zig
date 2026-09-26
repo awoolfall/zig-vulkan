@@ -9,6 +9,7 @@ pub const SerializationComponent = @import("../ecs/serialization_component.zig")
 pub const TransformComponent = @import("../ecs/transform_component.zig");
 pub const ModelComponent = @import("../ecs/model_component.zig");
 pub const PhysicsComponent = @import("../ecs/physics_component.zig");
+pub const PhysicsRuntimeComponent = @import("../ecs/physics_runtime_component.zig");
 pub const AnimationControllerComponent = @import("../ecs/animation_controller_component.zig");
 
 pub const StandardEntityComponents = .{
@@ -16,6 +17,7 @@ pub const StandardEntityComponents = .{
     TransformComponent,
     ModelComponent,
     PhysicsComponent,
+    PhysicsRuntimeComponent,
     AnimationControllerComponent,
 };
 
@@ -230,14 +232,16 @@ pub fn EcsSystem(comptime EcsComponentTypes: anytype) type {
 
             inline for (info.@"struct".fields, 0..) |_, idx| {
                 if (self.get_component(ComponentTypes[idx], entity)) |component| {
-                    var component_object_map = std.json.ObjectMap.init(alloc);
-                    errdefer component_object_map.deinit();
+                    if (ComponentTypes[idx].COMPONENT_UUID.len != 0) {
+                        var component_object_map = std.json.ObjectMap.init(alloc);
+                        errdefer component_object_map.deinit();
 
-                    try component_object_map.put("_ecs_COMPONENT_NAME", std.json.Value{ .string = ComponentTypes[idx].COMPONENT_NAME, });
-                    try component.serialize(alloc, entity, &component_object_map);
+                        try component_object_map.put("_ecs_COMPONENT_NAME", std.json.Value{ .string = ComponentTypes[idx].COMPONENT_NAME, });
+                        try component.serialize(alloc, entity, &component_object_map);
 
-                    const serialized_value = std.json.Value { .object = component_object_map };
-                    try object.put(ComponentTypes[idx].COMPONENT_UUID, serialized_value);
+                        const serialized_value = std.json.Value { .object = component_object_map };
+                        try object.put(ComponentTypes[idx].COMPONENT_UUID, serialized_value);
+                    }
                 }
             }
 

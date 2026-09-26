@@ -6,6 +6,7 @@ const w32 = @cImport({
     @cInclude("windows.h");
     @cInclude("combaseapi.h");
     @cInclude("shellapi.h");
+    @cInclude("dwmapi.h");
 });
 
 const __c = @import("windows_keycode.zig");
@@ -106,6 +107,9 @@ pub const Win32Window = struct {
                 std.log.err("Unable to create windows window: {}", .{err});
                 return error.UnableToCreateWindow;
             };
+
+        const set_value: w32.BOOL = w32.TRUE;
+        _ = w32.DwmSetWindowAttribute(hwnd, w32.DWMWA_USE_IMMERSIVE_DARK_MODE, &set_value, @sizeOf(w32.BOOL));
 
         if (!register_mouse_for_raw_input(hwnd)) {
             std.log.warn("Failed to get raw mouse input..", .{});
@@ -279,6 +283,15 @@ pub const Win32Window = struct {
             .width = 1,
             .height = 1,
         });
+    }
+
+    pub fn open_directory_in_file_explorer(self: *Win32Window, path: [:0]const u8) !void {
+        const return_value = w32.ShellExecuteA(self.hwnd, null, path.ptr, null, null, w32.SW_SHOWNORMAL);
+        const return_value_int = @intFromPtr(return_value);
+        if (return_value_int < 32) {
+            std.log.err("ShellExecute failed with code: {}", .{return_value_int});
+            return error.Failed;
+        }
     }
 
     fn construct_key_event(w_param: w32.WPARAM, l_param: w32.LPARAM) ?wb.KeyEvent {

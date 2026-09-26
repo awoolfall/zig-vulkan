@@ -20,7 +20,10 @@ pub const PhysicsOptionsEnum = enum {
 pub const PhysicsSettings = union(PhysicsOptionsEnum) {
     None: void,
     Body: struct {
-        settings: physics.ShapeSettings = .{},
+        shape: physics.Shape = .{
+            .shape = .{ .Box = .{} },
+            .offset_transform = .{},
+        },
         is_static: bool = true,
         is_sensor: bool = false,
     },
@@ -34,59 +37,17 @@ pub const PhysicsSettings = union(PhysicsOptionsEnum) {
     },
 };
 
-pub const PhysicsRuntimeData = union(PhysicsOptionsEnum) {
-    None: void,
-    Body: struct {
-        id: physics.zphy.BodyId,
-    },
-    Character: struct {
-        character: *physics.zphy.Character,
-    },
-    CharacterVirtual: struct {
-        virtual: *physics.zphy.CharacterVirtual,
-        character: ?*physics.zphy.Character,
-        body_filter: ?physics.IgnoreIdsBodyFilter = null,
-    },
-};
-
 settings: PhysicsSettings = .{ .None = {} },
-runtime_data: PhysicsRuntimeData = .{ .None = {} },
+
 velocity: zm.F32x4 = zm.f32x4s(0.0),
 
-last_frame_data: struct {
-    position: zm.F32x4 = zm.f32x4s(0.0),
-    rotation: zm.F32x4 = zm.qidentity(),
-} = .{},
-
 pub fn deinit(self: *Self) void {
-    self.deinit_runtime_data();
+    _ = self;
 }
 
 pub fn init(alloc: std.mem.Allocator) !Self {
     _ = alloc;
     return .{};
-}
-
-pub fn deinit_runtime_data(self: *Self) void {
-    switch (self.runtime_data) {
-        .None => {},
-        .Body => |body| {
-            const physics_system = &eng.get().physics;
-            physics_system.zphy.getBodyInterfaceMut().removeAndDestroyBody(body.id);
-        },
-        .Character => |character| {
-            character.character.removeFromPhysicsSystem(.{});
-            character.character.destroy();
-        },
-        .CharacterVirtual => |character| {
-            character.virtual.destroy();
-            if (character.character) |c| {
-                c.removeFromPhysicsSystem(.{});
-                c.destroy();
-            }
-        },
-    }
-    self.runtime_data = .{ .None = {} };
 }
 
 pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
@@ -191,7 +152,7 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
         switch (data.settings) {
             .None => {},
             .Body => |*b| {
-                physics_shape_editor_ui(entity, &b.settings, key ++ .{@src()});
+                physics_shape_editor_ui(entity, &b.shape, key ++ .{@src()});
 
                 {
                     _ = imui.push_form_layout_item(key ++ .{@src()});
@@ -321,121 +282,11 @@ fn create_form_number_slider(
 }
 
 pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity) !void {
+    const physics_runtime_component = eng.get().ecs.get_component(eng.ecs.PhysicsRuntimeComponent, entity) orelse blk: {
+        break :blk eng.get().ecs.add_component(eng.ecs.PhysicsRuntimeComponent, entity) catch return error.NoRuntimePhysicsComponent;
+    };
     const entity_transform_component = eng.get().ecs.get_component(eng.ecs.TransformComponent, entity) orelse return error.EntityDoesNotHaveTransform;
     const transform = entity_transform_component.transform;
 
-    const phys = &eng.get().physics;
-
-    self.deinit_runtime_data();
-
-    switch (self.settings) {
-        .None => {
-            self.runtime_data = .{ .None = {} };
-        },
-        .Body => |b| {
-            var settings = b.settings;
-            settings.offset_transform.scale *= transform.scale;
-            const shape = try phys.create_shape(settings);
-            defer shape.release();
-
-            const body = try phys.zphy.getBodyInterfaceMut().createAndAddBody(.{
-                .shape = shape,
-                .object_layer = if (b.is_static) physics.object_layers.non_moving else physics.object_layers.moving,
-                .motion_type = if (b.is_static) .static else .dynamic, // TODO: fix this
-                .is_sensor = b.is_sensor,
-            }, .activate);
-
-            self.runtime_data = .{
-                .Body = .{
-                    .id = body,
-                }
-            };
-        },
-        .Character => |settings| {
-            const zphy_character = try settings.settings.create_character(transform, phys);
-            errdefer zphy_character.destroy();
-
-            zphy_character.addToPhysicsSystem(.{});
-
-            self.runtime_data = .{
-                .Character = .{
-                    .character = zphy_character,
-                }
-            };
-        },
-        .CharacterVirtual => |settings| {
-            const zphy_virtual_character = try settings.settings.create_character_virtual(transform, phys);
-            errdefer zphy_virtual_character.destroy();
-
-            var zphy_character: ?*zphy.Character = null;
-            var body_filter: ?physics.IgnoreIdsBodyFilter = null;
-            if (settings.create_character) {
-                var character_settings = physics.CharacterSettings {
-                    .base = settings.settings.base,
-                    .mass = settings.settings.mass,
-                    .layer = physics.object_layers.moving,
-                    .friction = 0.0,
-                    .gravity_factor = 0.0,
-                };
-                switch (character_settings.base.shape.shape) {
-                    .Capsule => |*c| {
-                        c.half_height /= 2.0;
-                    },
-                    else => {},
-                }
-
-                zphy_character = try character_settings.create_character(transform, phys);
-                zphy_character.?.addToPhysicsSystem(.{});
-
-                body_filter = physics.IgnoreIdsBodyFilter.init(&[1]physics.zphy.BodyId{zphy_character.?.getBodyId()});
-            }
-
-            self.runtime_data = .{
-                .CharacterVirtual = .{
-                    .virtual = zphy_virtual_character,
-                    .character = zphy_character,
-                    .body_filter = body_filter,
-                },
-            };
-        },
-    }
-    errdefer self.deinit_runtime_data();
-
-    try self.set_full_user_data(physics.PhysicsSystem.construct_entity_user_data(entity.idx, 0));
-}
-
-/// Sets the full 64 bit user data for the physics body
-fn set_full_user_data(self: *const Self, data: u64) !void {
-    const body_id: ?physics.zphy.BodyId = switch (self.runtime_data) {
-        .None => null,
-        .Body => |body| body.id,
-        .Character => |character| character.character.getBodyId(),
-        .CharacterVirtual => |character| if (character.character) |c| c.getBodyId() else null,
-    };
-
-    if (body_id) |bid| {
-        const physics_system = &eng.get().physics;
-        var write_lock = try physics_system.init_body_write_lock(bid);
-        defer write_lock.deinit();
-
-        write_lock.body.setUserData(data);
-    }
-}
-
-/// Sets the end user accessable 16 bit user data for the physics body
-pub fn set_user_data(self: *const Self, data: u16) !void {
-    const body_id: ?physics.zphy.BodyId = switch (self.*) {
-        .Body => |body| body.id,
-        .Character => |character| character.getBodyId(),
-        .CharacterVirtual => |character| if (character.character) |c| c.getBodyId() else null,
-    };
-
-    if (body_id) |bid| {
-        const physics_system = &eng.get().physics;
-        var write_lock = try physics_system.init_body_write_lock(bid);
-        defer write_lock.deinit();
-
-        const user_data = write_lock.body.getUserData();
-        write_lock.body.setUserData(physics.PhysicsSystem.construct_entity_user_data_raw(user_data, data));
-    }
+    try physics_runtime_component.update_runtime_data(entity, self.settings, transform);
 }

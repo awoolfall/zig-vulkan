@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) !void {
     if (os == .windows) {
         engine.linkSystemLibrary("user32", .{});
         engine.linkSystemLibrary("ole32", .{});
+        engine.linkSystemLibrary("dwmapi", .{});
         // const zwindows = b.dependency("zwindows", .{
         // });
         // engine.addImport("zwindows", zwindows.module("zwindows"));
