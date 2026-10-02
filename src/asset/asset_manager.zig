@@ -148,8 +148,8 @@ pub fn get_asset_unique_id(self: *Self, asset_uri: []const u8) !u64 {
         errdefer self.alloc.free(owned_uri);
 
         // split asset_uri path gradually to find the base asset id then create ephemeral metadata
-        // i.e. for 'asset:models/character.glb/animations/idle'
-        // has a base asset of asset:models/character.glb
+        // i.e. for 'res:models/character.glb/animations/idle'
+        // has a base asset of res:models/character.glb
         // and a sub asset at location 'animations/idle'
         // this might recurse to i.e. 'res:models/character.glb/animations/idle/variation_1'
 

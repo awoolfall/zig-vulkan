@@ -127,8 +127,10 @@ pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity, settings: @impor
             self.runtime_data = .{ .None = {} };
         },
         .Body => |b| {
-            //b.shape.offset_transform.scale *= transform.scale; // TODO
-            const shape = try phys.create_shape(b.shape);
+            var shape_settings = b.shape;
+            shape_settings.offset_transform.scale *= transform.scale; // TODO: find a better solution for this
+            
+            const shape = try phys.create_shape(shape_settings);
             defer shape.release();
 
             const body = try phys.zphysics.system.getBodyInterfaceMut().createAndAddBody(.{

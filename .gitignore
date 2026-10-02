@@ -4,3 +4,5 @@
 res
 zig-out
 zig-cache
+
+*.otf
