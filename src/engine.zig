@@ -11,7 +11,8 @@ const Self = @This();
 
 const Log = std.log.scoped(.Engine);
 
-window: eng.window.Window,
+os: eng.os.Platform,
+window: ?eng.os.Window = null,
 gfx: eng.gfx.GfxState,
 image: eng.image.ImageLoader,
 physics: eng.physics.PhysicsSystem,
@@ -28,8 +29,6 @@ general_allocator: std.mem.Allocator,
 frame_arena: std.heap.ArenaAllocator,
 frame_allocator: std.mem.Allocator,
 
-core_asset_pack_id: u64,
-
 pub export fn deinit(self: *Self) void {
     self.gfx.flush();
 
@@ -40,7 +39,7 @@ pub export fn deinit(self: *Self) void {
     defer self.time.deinit();
     defer self.input.deinit();
     defer self.image.deinit();
-    defer self.window.deinit();
+    defer self.os.deinit();
     defer self.gfx.deinit();
     defer self.asset_manager.deinit();
     defer self.imui.deinit();
@@ -94,13 +93,25 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.image.deinit();
 
     Log.debug("Calling Window init!", .{});
-    engine.window = try eng.window.Window.init();
-    errdefer engine.window.deinit();
+    engine.os = try eng.os.Platform.init();
+    errdefer engine.os.deinit();
+
+    try engine.os.create_new_window(0, 0);
+    while (true) {
+        const event = try engine.os.pull_event();
+        switch (event) {
+            .WINDOW_CREATED => |wc| {
+                engine.window = wc.window;
+                break;
+            },
+            else => {},
+        }
+    }
 
     Log.debug("Calling GFX init!", .{});
-    engine.gfx = try eng.gfx.GfxState.init(engine.general_allocator, &engine.window);
+    engine.gfx = try eng.gfx.GfxState.init(engine.general_allocator, engine.main_window());
     errdefer engine.gfx.deinit();
-    try engine.gfx.init_late(&engine.window);
+    try engine.gfx.init_late(engine.main_window());
 
     engine.asset_manager = blk: {
         const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "../../res"});
@@ -141,8 +152,32 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     return engine;
 }
 
+pub fn main_window(self: *Self) *eng.os.Window {
+    return &self.window.?;
+    //return &self.windows.items[0].?;
+}
+
 pub export fn run(engine: *Self) void {
-    engine.window.run(engine, &Self.window_event_received);
+    main_loop: while (true) {
+        const event = try engine.os.pull_event();
+        window_event_received(engine, event);
+
+        switch (event) {
+            .WINDOW_REQUESTED_CLOSE => |window_id| {
+                _ = window_id;
+                // @TODO handle multiple windows
+                engine.gfx.platform.valid_swapchain = false; // TEMP FIX disable rendering before destroying window surface
+                engine.main_window().close_window();
+            },
+            .WINDOW_CLOSED => |window_id| {
+                // break main loop if the closed window was the main window
+                if (window_id == 0) {
+                    break :main_loop;
+                }
+            },
+            else => {},
+        }
+    }
 }
 
 fn pre_app_update(self: *Self) !void {
@@ -162,7 +197,7 @@ fn pre_app_update(self: *Self) !void {
     self.physics.update(physics_iter.create_generic_iterator());
 }
 
-fn window_event_received(engine_void_ptr: *anyopaque, event: eng.window.WindowEvent) void {
+fn window_event_received(engine_void_ptr: ?*anyopaque, event: eng.os.WindowEvent) void {
     const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
 
     // Timing needs to be updated at the very beginning of a frame

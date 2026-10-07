@@ -47,7 +47,7 @@ pub const Camera = struct {
 
     pub fn fly_camera_update(
         self: *Self, 
-        window: *eng.window.Window,
+        os: *eng.os.Platform,
         input: *const eng.input.InputState,
         time: *const eng.time.TimeState,
     ) void {
@@ -70,12 +70,12 @@ pub const Camera = struct {
         }
         
         if (input.get_key_down(kc.KeyCode.MouseRight)) {
-            window.show_cursor(false);
-            window.confine_cursor_to_current_pos();
+            os.show_cursor(false);
+            os.confine_cursor_to_current_pos();
         }
         if (input.get_key_up(kc.KeyCode.MouseRight)) {
-            window.show_cursor(true);
-            window.free_confined_cursor();
+            os.show_cursor(true);
+            os.free_confined_cursor();
         }
 
         // Camera rotation
@@ -103,17 +103,17 @@ pub const Camera = struct {
     pub fn orbit_camera_update(
         self: *Self, 
         orbit_target: zm.F32x4, 
-        window: *eng.window.Window,
+        os: *eng.os.Platform,
         input: *const eng.input.InputState,
         time: *const eng.time.TimeState,
     ) void {
         if (input.get_key_down(kc.KeyCode.MouseRight)) {
-            window.show_cursor(false);
-            window.confine_cursor_to_current_pos();
+            os.show_cursor(false);
+            os.confine_cursor_to_current_pos();
         }
         if (input.get_key_up(kc.KeyCode.MouseRight)) {
-            window.show_cursor(true);
-            window.free_confined_cursor();
+            os.show_cursor(true);
+            os.free_confined_cursor();
         }
 
         // translate orbit distance by input

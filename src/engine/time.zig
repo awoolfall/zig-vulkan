@@ -59,7 +59,7 @@ pub const TimeState = struct {
         self.frame_start_time = new_frame_start_time;
     }
 
-    pub fn received_window_event(self: *Self, event: *const eng.window.WindowEvent) void {
+    pub fn received_window_event(self: *Self, event: *const eng.os.WindowEvent) void {
         switch (event.*) {
             .EVENTS_CLEARED => { self.on_update(); },
             .LOST_FOCUS => { self.is_focused = false; },

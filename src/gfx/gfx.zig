@@ -2,7 +2,6 @@ const std = @import("std");
 const eng = @import("self");
 const builtin = @import("builtin");
 const zm = @import("zmath");
-const wb = eng.window;
 const bloom = @import("bloom.zig");
 const gen = eng.util.gen;
 const ToneMappingFilter = @import("tonemapping_filter.zig");
@@ -119,7 +118,7 @@ pub const GfxState = struct {
         self.command_pools.deinit();
     }
 
-    pub fn init(alloc: std.mem.Allocator, window: *wb.Window) !Self {
+    pub fn init(alloc: std.mem.Allocator, window: *eng.os.Window) !Self {
         var shader_manager = try ShaderManager.init();
         errdefer shader_manager.deinit();
 
@@ -188,7 +187,7 @@ pub const GfxState = struct {
         };
     }
 
-    pub fn init_late(self: *Self, window: *wb.Window) !void {
+    pub fn init_late(self: *Self, window: *eng.os.Window) !void {
         try self.platform.init_late(window);
 
         self.default.hdr_image = try Image.init(.{
@@ -367,7 +366,7 @@ pub const GfxState = struct {
         self.platform.resize_swapchain(@max(new_width, 1), @max(new_height, 1)) catch unreachable;
     }
 
-    pub fn received_window_event(self: *Self, event: *const wb.WindowEvent) void {
+    pub fn received_window_event(self: *Self, event: *const eng.os.WindowEvent) void {
         switch (event.*) {
             .RESIZED => |new_size| { 
                 self.window_resized(@intCast(new_size.width), @intCast(new_size.height));

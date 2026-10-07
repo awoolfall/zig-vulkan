@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) !void {
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
     // Standard optimization options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
@@ -46,6 +47,7 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "build_options", .module = options.createModule() },
         },
         .target = target,
+        .optimize = optimize,
     });
     engine.addImport("self", engine);
 
@@ -133,6 +135,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .root_source_file = .{ .cwd_relative = "src/tests.zig" },
             .target = target,
+            .optimize = optimize,
         }),
     });
 

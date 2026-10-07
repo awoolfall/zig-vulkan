@@ -1,12 +1,11 @@
 const std = @import("std");
 const eng = @import("self");
-const builtin = @import("builtin");
-pub const os = builtin.os;
 
-pub const Window = switch (builtin.os.tag) {
-    .windows => @import("platform/windows/windows.zig").Win32Window,
+pub const Platform = switch(@import("builtin").os.tag) {
+    .windows => @import("windows/windows.zig").WindowsPlatform,
     else => @compileError("Unsupported OS"),
 };
+pub const Window = Platform.Window;
 
 pub const WindowEvent = union(enum) {
     RESIZED: WindowSize,
@@ -20,6 +19,12 @@ pub const WindowEvent = union(enum) {
     CURSOR_MOVED: CursorMoveEvent,
     RAW_MOUSE_MOVED: RawMouseMoveEvent,
     DROPPED_FILES: DroppedFilesEvent,
+    WINDOW_REQUESTED_CLOSE: u32,
+    WINDOW_CLOSED: u32,
+    WINDOW_CREATED: struct {
+        id: u32,
+        window: Window,
+    },
 };
 
 pub const Rect = struct {

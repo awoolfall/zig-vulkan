@@ -296,13 +296,13 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
         // Handle copy
         if (input.get_key_down(KeyCode.C) and input.get_key(KeyCode.Control)) {
             if (state.cursor != state.mark) {
-                eng.get().window.copy_string_to_clipboard(state.text.items[@min(state.mark, state.cursor)..@max(state.mark, state.cursor)])
+                eng.get().main_window().copy_string_to_clipboard(state.text.items[@min(state.mark, state.cursor)..@max(state.mark, state.cursor)])
                     catch |err| std.log.err("Failed to copy string to clipboard: {}", .{err});
             }
         }
         // Handle paste
         if (input.get_key_down(KeyCode.V) and input.get_key(KeyCode.Control)) {
-            if (eng.get().window.get_string_from_clipboard(std.heap.page_allocator)) |clipboard_str| {
+            if (eng.get().main_window().get_string_from_clipboard(std.heap.page_allocator)) |clipboard_str| {
                 defer std.heap.page_allocator.free(clipboard_str);
 
                 // sanitize incoming clipboard string

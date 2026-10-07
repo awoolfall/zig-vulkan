@@ -47,7 +47,7 @@ pub const InputState = struct {
         eng.get().general_allocator.free(self.dropped_files);
     }
 
-    pub fn received_window_event_early(self: *Self, event: *const eng.window.WindowEvent) void {
+    pub fn received_window_event_early(self: *Self, event: *const eng.os.WindowEvent) void {
         switch (event.*) {
             .KEY_DOWN => |k| {
                 const e = @intFromEnum(k.keycode);
@@ -108,7 +108,7 @@ pub const InputState = struct {
         }
     }
 
-    pub fn received_window_event_late(self: *Self, event: *const eng.window.WindowEvent) void {
+    pub fn received_window_event_late(self: *Self, event: *const eng.os.WindowEvent) void {
         switch (event.*) {
             .EVENTS_CLEARED => {
                 self.on_update();

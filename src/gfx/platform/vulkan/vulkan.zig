@@ -74,6 +74,7 @@ pub const GfxStateVulkan = struct {
     transfer_command_pool: gf.CommandPool,
 
     swapchain: SwapchainVulkan,
+    valid_swapchain: bool = false,
     pre_present_cmd_buffers: []gf.CommandBuffer,
 
     buffer_updates: std.ArrayList(BufferUpdates),
@@ -121,7 +122,7 @@ pub const GfxStateVulkan = struct {
         c.vkDestroyInstance(self.instance, null);
     }
 
-    pub fn init(alloc: std.mem.Allocator, window: *eng.window.Window) !Self {
+    pub fn init(alloc: std.mem.Allocator, window: *eng.os.Window) !Self {
         // Request vulkan version
         var vk_version: u32 = 0;
         try vkt(c.vkEnumerateInstanceVersion(&vk_version));
@@ -248,7 +249,7 @@ pub const GfxStateVulkan = struct {
                 const surface_create_info = c.VkWin32SurfaceCreateInfoKHR {
                     .sType = c.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
                     .hwnd = @ptrCast(window.hwnd),
-                    .hinstance = @ptrCast(window.hInstance),
+                    .hinstance = @ptrCast(eng.get().os.hInstance),
                 };
 
                 try vkt(c.vkCreateWin32SurfaceKHR(vk_instance, @ptrCast(&surface_create_info), null, &vk_surface));
@@ -647,7 +648,7 @@ pub const GfxStateVulkan = struct {
         };
     }
 
-    pub fn init_late(self: *Self, window: *eng.window.Window) !void {
+    pub fn init_late(self: *Self, window: *eng.os.Window) !void {
         // create buffer updates semaphores
         const buffer_updates_complete_semaphores = try self.alloc.alloc(gf.Semaphore, self.frames_in_flight());
         errdefer self.alloc.free(buffer_updates_complete_semaphores);
@@ -705,6 +706,7 @@ pub const GfxStateVulkan = struct {
             .present_mode = self.swapchain.present_mode,
         });
         errdefer self.swapchain.deinit(self);
+        self.valid_swapchain = true;
     }
 
     pub fn debug_callback (
@@ -789,6 +791,10 @@ pub const GfxStateVulkan = struct {
     }
 
     pub fn begin_frame(self: *Self) !gf.Semaphore {
+        if (!self.valid_swapchain) {
+            return error.InvalidSwapchain;
+        }
+
         self.last_frames_in_flight_index = self.frames_in_flight_index;
         self.frames_in_flight_index = @mod(self.frames_in_flight_index + 1, self.num_frames_in_flight);
 
@@ -798,25 +804,20 @@ pub const GfxStateVulkan = struct {
         try self.swapchain.image_available_fences[self.current_frame_index()].reset();
 
         const __tracy_zone = eng.ztracy.ZoneN(@src(), "acquire next image");
-        while (true) {
-            vkt(c.vkAcquireNextImageKHR(
-                    self.device,
-                    self.swapchain.swapchain,
-                    std.math.maxInt(u64),
-                    image_available_semaphore.platform.vk_semaphore,
-                    null, //c.VK_NULL_HANDLE,
-                    &self.swapchain.current_image_index
-            )) catch |err| {
-                switch (err) {
-                    error.VK_ERROR_OUT_OF_DATE_KHR => {
-                        self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]) catch unreachable;
-                        continue;
-                    },
-                    else => return err,
-                }
-            };
-            break;
-        }
+        const result = vkt(c.vkAcquireNextImageKHR(
+                self.device,
+                self.swapchain.swapchain,
+                std.math.maxInt(u64),
+                image_available_semaphore.platform.vk_semaphore,
+                null, //c.VK_NULL_HANDLE,
+                &self.swapchain.current_image_index
+        ));
+        result catch |err| { switch (err) {
+            error.VK_ERROR_OUT_OF_DATE_KHR => {
+                try self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]);
+            },
+            else => return err,
+        } };
         __tracy_zone.End();
 
         // Update frame in flight resources before continuing to the new frame
@@ -982,7 +983,13 @@ pub const GfxStateVulkan = struct {
             .pWaitSemaphores = @ptrCast(&present_transition_semaphore.platform.vk_semaphore),
         };
 
-        try vkt(c.vkQueuePresentKHR(self.queues.present, &present_info));
+        const result = vkt(c.vkQueuePresentKHR(self.queues.present, &present_info));
+        result catch |err| { switch (err) {
+            error.VK_ERROR_OUT_OF_DATE_KHR => {
+                try self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]);
+            },
+            else => return err,
+        } };
     }
 
     pub fn flush(self: *Self) void {
@@ -1053,6 +1060,23 @@ pub const GfxStateVulkan = struct {
         self.flush();
         defer self.flush();
 
+        var surface_capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
+        try vkt(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface, &surface_capabilities));
+
+        var swapchain_extent = surface_capabilities.currentExtent;
+        if (swapchain_extent.width == std.math.maxInt(u32)) {
+            swapchain_extent = c.VkExtent2D {
+                .width = std.math.clamp(@as(u32, @intCast(new_width)),
+                    surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width),
+                .height = std.math.clamp(@as(u32, @intCast(new_height)),
+                    surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height),
+            };
+        }
+        if (swapchain_extent.width == 0 or swapchain_extent.height == 0) {
+            self.valid_swapchain = false;
+            return;
+        }
+
         self.swapchain.deinit(self);
         self.swapchain = SwapchainVulkan.init(self, .{
             .width = new_width,
@@ -1063,6 +1087,7 @@ pub const GfxStateVulkan = struct {
             std.log.err("Unable to resize swapchain: {}", .{err});
             return err;
         };
+        self.valid_swapchain = true;
 
         self.recreate_swapchain_dependant_gfx_structures() catch |err| {
             std.log.err("Failed to recreate swapchain dependant gfx structures: {}", .{err});

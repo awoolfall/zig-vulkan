@@ -8,6 +8,7 @@ pub const ztracy = @import("ztracy");
 pub const gitrev = @import("build_options").engine_gitrev;
 pub const gitchanged = @import("build_options").engine_gitchanged;
 
+pub const os = @import("os/os.zig");
 pub const gfx = @import("gfx/gfx.zig");
 pub const assets = @import("asset/asset.zig");
 pub const input = @import("input/input.zig");
@@ -35,9 +36,6 @@ pub const util = struct {
 };
 
 pub const Transform = @import("util/transform.zig");
-
-pub const window = @import("window/window.zig");
-
 pub const serialize = @import("serialize/serialize.zig");
 
 const App = @import("app");
