@@ -110,14 +110,11 @@ pub fn create(imui: *Imui, picked_colour_rgb: *?zm.F32x4, key: anytype) Imui.Wid
         };
         
         const image_rect = image_widget.rect();
-        const cursor_pos = [2]f32{
-            @floatFromInt(input.cursor_position[0]),
-            @floatFromInt(input.cursor_position[1]),
-        };
+        const cursor_pos = input.get_cursor_position();
         
         // Calculate normalized position within the picker image (0-1 range)
-        const local_x = (cursor_pos[0] - image_rect.left) / image_rect.width();
-        const local_y = (cursor_pos[1] - image_rect.top) / image_rect.height();
+        const local_x = (@as(f32, @floatFromInt(cursor_pos[0])) - image_rect.left) / image_rect.width();
+        const local_y = (@as(f32, @floatFromInt(cursor_pos[1])) - image_rect.top) / image_rect.height();
         
         // Clamp to valid range
         const normalized_x = @max(0.0, @min(1.0, local_x));

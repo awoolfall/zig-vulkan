@@ -1077,7 +1077,7 @@ pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
     }
 }
 
-pub fn end_frame(self: *Self) void {
+pub fn start_new_frame(self: *Self) void {
     std.debug.assert(self.parent_stack.items.len == 1); // more than just the root widget exists in the parent stack, maybe forgot pop_layout?
     self.parent_stack.clearRetainingCapacity();
 
@@ -1125,9 +1125,10 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
     if (last_frame_widget) |lfw| {
         const input = &eng.get().input;
 
+        const cursor_position = input.get_cursor_position();
         const lfw_contains_cursor = lfw.rect().contains([2]f32{
-            @floatFromInt(input.cursor_position[0]),
-            @floatFromInt(input.cursor_position[1]),
+            @floatFromInt(cursor_position[0]),
+            @floatFromInt(cursor_position[1]),
         });
 
         // hover detection

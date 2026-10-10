@@ -84,14 +84,14 @@ pub const Camera = struct {
                 self.local_transform.rotation,
                 zm.quatFromAxisAngle(
                     zm.f32x4(0.0, 1.0, 0.0, 0.0),
-                    self.mouse_sensitivity * -input.mouse_delta[0]
+                    self.mouse_sensitivity * -input.get_mouse_delta()[0]
                 )
             );
             self.local_transform.rotation = zm.qmul(
                 self.local_transform.rotation,
                 zm.quatFromAxisAngle(
                     self.local_transform.right_direction(),
-                    self.mouse_sensitivity * -input.mouse_delta[1]
+                    self.mouse_sensitivity * -input.get_mouse_delta()[1]
                 )
             );
         }
@@ -124,8 +124,9 @@ pub const Camera = struct {
 
         // camera rotation
         if (input.get_key(kc.KeyCode.MouseRight)) {
-            self.damping_movement[0] = -input.mouse_delta[0] * self.mouse_sensitivity;
-            self.damping_movement[1] = input.mouse_delta[1] * self.mouse_sensitivity;
+            const mouse_delta = input.get_mouse_delta();
+            self.damping_movement[0] = -mouse_delta[0] * self.mouse_sensitivity;
+            self.damping_movement[1] = mouse_delta[1] * self.mouse_sensitivity;
         } else {
             self.damping_movement[0] = std.math.lerp(self.damping_movement[0], 0.0, self.damping_amount * time.delta_time_unscaled_f32());
             self.damping_movement[1] = std.math.lerp(self.damping_movement[1], 0.0, self.damping_amount * time.delta_time_unscaled_f32());

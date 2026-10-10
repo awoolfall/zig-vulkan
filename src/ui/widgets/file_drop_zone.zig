@@ -23,7 +23,7 @@ pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
     var signals = imui.generate_widget_signals(box);
 
     if (signals.hover) {
-        if (eng.get().input.dropped_files.len != 0) {
+        if (eng.get().input.get_dropped_files().len != 0) {
             signals.data_changed = true;
         }
     }

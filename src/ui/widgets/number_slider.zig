@@ -33,7 +33,7 @@ pub fn create(imui: *Imui, value: *f32, settings: NumberSliderSettings, key: any
 
     var background_signals = imui.generate_widget_signals(background);
     if (background_signals.dragged) {
-        value.* += eng.get().input.mouse_delta[0] * settings.scale;
+        value.* += eng.get().input.get_mouse_delta()[0] * settings.scale;
         background_signals.data_changed = true;
     }
 

@@ -30,7 +30,7 @@ pub const TimeState = struct {
         _ = self;
     }
 
-    fn on_update(self: *Self) void {
+    pub fn start_new_frame(self: *Self) void {
         self.frame_number += 1;
 
         // collect frame time difference
@@ -61,7 +61,6 @@ pub const TimeState = struct {
 
     pub fn received_window_event(self: *Self, event: *const eng.os.WindowEvent) void {
         switch (event.*) {
-            .EVENTS_CLEARED => { self.on_update(); },
             .LOST_FOCUS => { self.is_focused = false; },
             .GAINED_FOCUS => { self.is_focused = true; },
             else => {},

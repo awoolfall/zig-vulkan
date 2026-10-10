@@ -152,17 +152,39 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     return engine;
 }
 
-pub fn main_window(self: *Self) *eng.os.Window {
+pub inline fn main_window(self: *Self) *eng.os.Window {
     return &self.window.?;
-    //return &self.windows.items[0].?;
 }
 
 pub export fn run(engine: *Self) void {
     main_loop: while (true) {
         const event = try engine.os.pull_event();
-        window_event_received(engine, event);
 
         switch (event) {
+            .EVENTS_CLEARED => {
+                // new frame
+                eng.ztracy.FrameMark();
+                
+                // Reset the frame allocator
+                if (!engine.frame_arena.reset(.retain_capacity)) {
+                    std.log.err("failed to reset frame arena", .{});
+                    _ = engine.frame_arena.reset(.free_all);
+                }
+
+                engine.time.start_new_frame();
+
+                engine.input.start_new_frame();
+
+                engine.imui.start_new_frame();
+
+                var physics_iter = engine.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent });
+                engine.physics.update(physics_iter.create_generic_iterator());
+
+                engine.app.update() catch |err| {
+                    std.log.err("App failed update: {}", .{err});
+                    engine.main_window().close_window();
+                };
+            },
             .WINDOW_REQUESTED_CLOSE => |window_id| {
                 _ = window_id;
                 // @TODO handle multiple windows
@@ -175,59 +197,19 @@ pub export fn run(engine: *Self) void {
                     break :main_loop;
                 }
             },
+            else => {
+                // run event handlers
+                engine.time.received_window_event(&event);
+                engine.gfx.received_window_event(&event);
+                engine.input.received_window_event(&event);
+            },
+        }
+
+        switch (event) {
+            .DROPPED_FILES => |d| {
+                d.deinit(engine.general_allocator);
+            },
             else => {},
         }
     }
 }
-
-fn pre_app_update(self: *Self) !void {
-    eng.ztracy.FrameMark();
-    
-    // Reset the frame allocator
-    if (!self.frame_arena.reset(.retain_capacity)) {
-        std.log.err("failed to reset frame arena", .{});
-        _ = self.frame_arena.reset(.free_all);
-    }
-
-    // reset imui for next frame
-    self.imui.end_frame();
-
-    // Update physics
-    var physics_iter = self.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent });
-    self.physics.update(physics_iter.create_generic_iterator());
-}
-
-fn window_event_received(engine_void_ptr: ?*anyopaque, event: eng.os.WindowEvent) void {
-    const self: *Self = @ptrCast(@alignCast(engine_void_ptr));
-
-    // Timing needs to be updated at the very beginning of a frame
-    self.time.received_window_event(&event);
-
-    // send event to gfx
-    self.gfx.received_window_event(&event);
-
-    // Update input struct with key events
-    self.input.received_window_event_early(&event);
-
-    switch (event) {
-        .EVENTS_CLEARED => self.pre_app_update() catch |err| {
-            std.log.err("pre app update failed: {}", .{err});
-        },
-        else => {},
-    }
-
-    // Send event to the client app
-    self.app.window_event_received(&event);
-
-    // Run update procedure on inputs after everything has finished their update()
-    self.input.received_window_event_late(&event);
-
-    // deinit events
-    switch (event) {
-        .DROPPED_FILES => |d| {
-            d.deinit(eng.get().general_allocator);
-        },
-        else => {},
-    }
-}
-

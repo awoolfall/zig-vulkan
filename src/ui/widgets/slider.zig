@@ -113,7 +113,7 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
     if (signals.dragged) {
         if (imui.get_widget_from_last_frame(signals.id.background_bar)) |b| {
             const pixel_width: f32 = b.content_rect().width();
-            const percent = (@as(f32, @floatFromInt(eng.get().input.cursor_position[0])) - b.rect().left) / pixel_width;
+            const percent = (@as(f32, @floatFromInt(eng.get().input.get_cursor_position()[0])) - b.rect().left) / pixel_width;
             const a = std.math.round((1.0 / options.step) * percent * (options.max - options.min)) * options.step;
             value.* = std.math.clamp(a + options.min, options.min, options.max);
             signals.data_changed = true;

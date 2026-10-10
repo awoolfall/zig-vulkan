@@ -162,14 +162,11 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
 
     // Handle mouse input, click and drag
     if (box_signals.dragged or text_signals.dragged or box_signals.clicked or text_signals.clicked) {
-        const cursor_pos = [2]f32{
-            @floatFromInt(input.cursor_position[0]), 
-            @floatFromInt(input.cursor_position[1])
-        };
+        const cursor_pos = input.get_cursor_position();
         const text_rel_pos = imui.get_widget_from_last_frame(text_input_widget_id).?.computed_relative_position;
         const cursor_in_box_pos = [2]f32 {
-            cursor_pos[0] - text_rel_pos[0],
-            cursor_pos[1] - text_rel_pos[1]
+            @as(f32, @floatFromInt(cursor_pos[0])) - text_rel_pos[0],
+            @as(f32, @floatFromInt(cursor_pos[1])) - text_rel_pos[1]
         };
 
         // Set cursor to closest character to mouse position
@@ -200,7 +197,7 @@ pub fn create(imui: *Imui, options: LineEditOptions, key: anytype) Imui.WidgetSi
 
     // Handle keyboard input if focused
     if (line_edit_is_focus_widget) {
-        for (input.char_events) |c| {
+        for (input.get_char_events()) |c| {
             if (c != null) {
                 switch (c.?[0]) {
                     // Backspace (word or character)

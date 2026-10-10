@@ -54,8 +54,8 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
         drop_zone.id.get().semantic_size[1].value = 100.0;
         
         if (drop_zone.data_changed) blk: {
-            if (eng.get().input.dropped_files.len == 0) { break :blk; }
-            const file_path = eng.get().input.dropped_files[0];
+            if (eng.get().input.get_dropped_files().len == 0) { break :blk; }
+            const file_path = eng.get().input.get_dropped_files()[0];
 
             if (std.mem.startsWith(u8, file_path, eng.get().asset_manager.resource_directory_str)) {
                 const uri = std.fmt.allocPrint(eng.get().frame_allocator, "res:{s}", .{file_path[eng.get().asset_manager.resource_directory_str.len..]}) catch break :blk;
