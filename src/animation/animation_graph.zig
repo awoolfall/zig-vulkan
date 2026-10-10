@@ -102,7 +102,7 @@ pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !Self {
 /// This function will blend between the base animation and the animation specified in the node.
 fn calculate_bone_transforms_for_node(
     self: *const Self,
-    model: *const eng.mesh.Model,
+    model: *const eng.Model,
     node: *const Node,
     time_seconds: f32,
     data: *const ControlData,
@@ -180,7 +180,7 @@ fn calculate_bone_transforms_for_node(
 pub fn calculate_bone_transforms(
     self: *const Self,
     alloc: std.mem.Allocator,
-    model: *const eng.mesh.Model,
+    model: *const eng.Model,
     data: *const ControlData,
     out_transforms: []zm.Mat
 ) void {
@@ -188,13 +188,13 @@ pub fn calculate_bone_transforms(
     defer __tracy_zone.End();
     
     // calculate the transforms for the current active node
-    var active_node_transforms = [_]Transform{.{}} ** eng.mesh.MAX_BONES;
+    var active_node_transforms = [_]Transform{.{}} ** eng.Model.MAX_BONES;
     self.calculate_bone_transforms_for_node(model, &self.nodes.items[data.active_node], data.active_time, data, active_node_transforms[0..]);
 
     // calculate and blend the transforms for any transitioning nodes based on the transition timings and easing
     if (data.transition) |transition| {
         const transition_time_seconds = data.active_time - transition.transition_start_time;
-        var transition_node_transforms = [_]Transform{.{}} ** eng.mesh.MAX_BONES;
+        var transition_node_transforms = [_]Transform{.{}} ** eng.Model.MAX_BONES;
         self.calculate_bone_transforms_for_node(model, &self.nodes.items[transition.to_node], transition_time_seconds, data, transition_node_transforms[0..]);
 
         for (0..active_node_transforms.len) |i| {

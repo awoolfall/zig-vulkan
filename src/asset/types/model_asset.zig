@@ -1,10 +1,9 @@
 const std = @import("std");
 const eng = @import("self");
-const ms = eng.mesh;
 
 const Self = @This();
 
-pub const BaseType = ms.Model;
+pub const BaseType = eng.Model;
 pub const Loader = Self;
 pub const extensions = [_][]const u8{ ".glb", ".gltf", ".fbx" };
 
@@ -23,7 +22,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseT
     const file_path = try eng.util.uri.resolve_file_uri(alloc, asset_uri);
     defer alloc.free(file_path);
 
-    return try ms.Model.init_from_file_assimp(
+    return try eng.Model.init_from_file_assimp(
         alloc, 
         file_path
     );

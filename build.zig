@@ -96,9 +96,11 @@ pub fn build(b: *std.Build) !void {
         .use_double_precision = false,
         .enable_cross_platform_determinism = true,
         .enable_debug_renderer = true,
+        .shared = true,
     });
     engine.addImport("zphysics", zphysics.module("root"));
     engine.linkLibrary(zphysics.artifact("joltc"));
+    b.installArtifact(zphysics.artifact("joltc"));
 
     const zstbi = b.dependency("zstbi", .{
     });
@@ -114,6 +116,7 @@ pub fn build(b: *std.Build) !void {
     });
     engine.addImport("assimp", assimp_module.module("root"));
     engine.linkLibrary(assimp_module.artifact("assimp"));
+    b.installArtifact(assimp_module.artifact("assimp"));
 
     const slang_module = b.dependency("slang", .{
     });

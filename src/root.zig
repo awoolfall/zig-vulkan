@@ -13,9 +13,9 @@ pub const gfx = @import("gfx/gfx.zig");
 pub const assets = @import("asset/asset.zig");
 pub const input = @import("input/input.zig");
 pub const time = @import("engine/time.zig");
-pub const mesh = @import("asset/model/model.zig");
+pub const Model = @import("asset/model/model.zig");
 pub const physics = @import("physics/physics.zig");
-pub const image = @import("asset/image/image.zig");
+pub const Image = @import("asset/image/image.zig");
 pub const ecs = @import("engine/ecs.zig");
 pub const animation = @import("animation/animation.zig");
 
@@ -42,7 +42,10 @@ const App = @import("app");
 const EntityComponentsTuple = ecs.StandardEntityComponents ++ App.EntityComponents;
 pub const AppEcsSystem = ecs.EcsSystem(EntityComponentsTuple);
 
-pub fn get() *Engine {
+pub inline fn get() *Engine {
     return @import("global_engine.zig").__global_engine;
 }
 
+pub fn set_global_engine_ptr(engine_ptr: *Engine) void {
+    @import("global_engine.zig").__global_engine = engine_ptr;
+}

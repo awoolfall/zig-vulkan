@@ -1,5 +1,6 @@
 const std = @import("std");
 const App = @import("app");
+const AppInterface = @import("app_interface.zig");
 const eng = @import("self");
 const Imui = eng.ui;
 const db = @import("debug/debug.zig");
@@ -12,16 +13,15 @@ const Self = @This();
 const Log = std.log.scoped(.Engine);
 
 os: eng.os.Platform,
-window: ?eng.os.Window = null,
+window: eng.os.Window,
 gfx: eng.gfx.GfxState,
-image: eng.image.ImageLoader,
 physics: eng.physics.PhysicsSystem,
 input: eng.input.InputState,
 time: eng.time.TimeState,
 debug: db.Debug,
 imui: Imui,
 asset_manager: eng.assets.AssetManager,
-app: *App,
+app: ?*anyopaque,
 ecs: eng.AppEcsSystem,
 exe_path: []u8,
 
@@ -29,26 +29,33 @@ general_allocator: std.mem.Allocator,
 frame_arena: std.heap.ArenaAllocator,
 frame_allocator: std.mem.Allocator,
 
+app_dll_filewatcher: eng.assets.FileWatcher,
+app_dll: ?std.DynLib,
+app_interface: AppInterface,
+
 pub export fn deinit(self: *Self) void {
     self.gfx.flush();
 
-    defer self.general_allocator.destroy(self);
-    defer self.frame_arena.deinit();
-    defer self.general_allocator.free(self.exe_path);
-    defer zmesh.deinit();
-    defer self.time.deinit();
-    defer self.input.deinit();
-    defer self.image.deinit();
-    defer self.os.deinit();
-    defer self.gfx.deinit();
-    defer self.asset_manager.deinit();
-    defer self.imui.deinit();
-    defer self.debug.deinit();
-    defer self.physics.deinit();
-    defer self.ecs.deinit();
+    self.app_interface.fn_deinit(self.app);
 
-    defer self.general_allocator.destroy(self.app);
-    defer self.app.deinit();
+    if (self.app_dll) |*app_dll| {
+        app_dll.close();
+    }
+    self.app_dll_filewatcher.deinit();
+
+    self.ecs.deinit();
+    self.physics.deinit();
+    self.debug.deinit();
+    self.imui.deinit();
+    self.asset_manager.deinit();
+    self.gfx.deinit();
+    self.os.deinit();
+    self.input.deinit();
+    self.time.deinit();
+    zmesh.deinit();
+    self.general_allocator.free(self.exe_path);
+    self.frame_arena.deinit();
+    self.general_allocator.destroy(self);
 }
 
 pub export fn init_engine(alloc: *std.mem.Allocator) ?*Self {
@@ -66,7 +73,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer alloc.destroy(engine);
 
     // set the global engine pointer
-    @import("global_engine.zig").__global_engine = engine;
+    eng.set_global_engine_ptr(engine);
 
     engine.general_allocator = alloc;
 
@@ -88,9 +95,6 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     Log.debug("Calling Input init", .{});
     engine.input = try eng.input.InputState.init();
     errdefer engine.input.deinit();
-
-    engine.image = try eng.image.ImageLoader.init(engine.general_allocator);
-    errdefer engine.image.deinit();
 
     Log.debug("Calling Window init!", .{});
     engine.os = try eng.os.Platform.init();
@@ -134,18 +138,24 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.ecs = try eng.AppEcsSystem.init(engine.general_allocator);
     errdefer engine.ecs.deinit();
 
+    const app_dll_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "app.dll"});
+    defer engine.general_allocator.free(app_dll_path);
+
+    engine.app_dll_filewatcher = try eng.assets.FileWatcher.init(engine.general_allocator, app_dll_path, 1000);
+    errdefer engine.app_dll_filewatcher.deinit();
+
+    engine.app_dll = null;
+    try engine.reload_app_dll();
+    errdefer engine.app_dll.?.close();
+
     Log.debug("Engine inited!", .{});
 
     Log.debug("Creating app!", .{});
-    engine.app = try engine.general_allocator.create(App);
-    errdefer engine.general_allocator.destroy(engine.app);
-
-    Log.debug("Calling app init!", .{});
-    engine.app.* = App.init() catch |err| {
-        Log.err("App init failed! Error: {s}", .{@errorName(err)});
-        unreachable;
-    };
-    errdefer engine.app.deinit();
+    engine.app = engine.app_interface.fn_init(engine);
+    if (engine.app == null) {
+        return error.AppInitFailed;
+    }
+    errdefer engine.app_interface.fn_deinit(engine.app);
 
     engine.gfx.flush();
 
@@ -153,7 +163,30 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
 }
 
 pub inline fn main_window(self: *Self) *eng.os.Window {
-    return &self.window.?;
+    return &self.window;
+}
+
+fn reload_app_dll(self: *Self) !void {
+    if (self.app_dll) |*app_dll| {
+        self.app_interface.fn_app_dll_unload(self);
+        app_dll.close();
+        self.app_dll = null;
+    }
+
+    const app_dll_path = try std.fs.path.join(self.general_allocator, &[_][]const u8{self.exe_path, "app.dll"});
+    defer self.general_allocator.free(app_dll_path);
+
+    const running_app_dll_path = try std.fs.path.join(self.general_allocator, &[_][]const u8{self.exe_path, "app.running.dll"});
+    defer self.general_allocator.free(running_app_dll_path);
+
+    try std.fs.copyFileAbsolute(app_dll_path, running_app_dll_path, .{});
+
+    self.app_dll = try std.DynLib.open(running_app_dll_path);
+    errdefer self.app_dll.?.close();
+
+    self.app_interface = try AppInterface.init_interface(&self.app_dll.?);
+
+    self.app_interface.fn_app_dll_load(self);
 }
 
 pub export fn run(engine: *Self) void {
@@ -164,10 +197,23 @@ pub export fn run(engine: *Self) void {
             .EVENTS_CLEARED => {
                 // new frame
                 eng.ztracy.FrameMark();
+
+                if (engine.app_dll_filewatcher.was_modified_since_last_check()) {
+                    engine.reload_app_dll() catch |err| {
+                        std.log.err("Unable to reload app dll: {}", .{err});
+                        engine.main_window().close_window();
+                        break :main_loop;
+                    };
+                    engine.app_interface = AppInterface.init_interface(&engine.app_dll.?) catch |err| {
+                        std.log.err("Unable to reload app dll: {}", .{err});
+                        engine.main_window().close_window();
+                        break :main_loop;
+                    };
+                }
                 
                 // Reset the frame allocator
                 if (!engine.frame_arena.reset(.retain_capacity)) {
-                    std.log.err("failed to reset frame arena", .{});
+                    std.log.warn("failed to reset frame arena while retaining capacity", .{});
                     _ = engine.frame_arena.reset(.free_all);
                 }
 
@@ -180,10 +226,10 @@ pub export fn run(engine: *Self) void {
                 var physics_iter = engine.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent });
                 engine.physics.update(physics_iter.create_generic_iterator());
 
-                engine.app.update() catch |err| {
-                    std.log.err("App failed update: {}", .{err});
+                if (engine.app_interface.fn_update(engine.app, engine) != 0) {
                     engine.main_window().close_window();
-                };
+                    break :main_loop;
+                }
             },
             .WINDOW_REQUESTED_CLOSE => |window_id| {
                 _ = window_id;
@@ -212,4 +258,16 @@ pub export fn run(engine: *Self) void {
             else => {},
         }
     }
+}
+
+pub export fn app_dll_unload(engine_opqaqueptr: ?*anyopaque) void {
+    _ = engine_opqaqueptr;
+    eng.zmesh.deinit();
+}
+
+pub export fn app_dll_load(engine_opqaqueptr: ?*anyopaque) void {
+    const engine_ptr: *eng.Engine = @ptrCast(@alignCast(engine_opqaqueptr));
+    eng.set_global_engine_ptr(engine_ptr);
+
+    eng.zmesh.init(engine_ptr.general_allocator);
 }

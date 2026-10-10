@@ -195,7 +195,7 @@ pub const Font = struct {
         const font_png_path = try eng.util.uri.resolve_file_uri_c(alloc, font_msdf_png_uri);
         defer alloc.free(font_png_path);
 
-        var font_image = try zstbi.Image.loadFromFile(font_png_path, 4);
+        var font_image = try eng.Image.load_from_file(eng.get().general_allocator, font_png_path, .{ .force_channels = 4, });
         defer font_image.deinit();
 
         // create a d3d11 texture from the font png file

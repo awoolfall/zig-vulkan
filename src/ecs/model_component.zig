@@ -77,7 +77,7 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
     if (eng.ui.widgets.badge.create(imui, "print model details", key ++ .{@src()}).clicked) blk: {
         const model_id = component.model orelse break :blk;
         const model_asset_metadata = eng.get().asset_manager.asset_metadata.get(model_id.unique_id) orelse unreachable;
-        const model: *eng.mesh.Model = eng.get().asset_manager.get_asset(eng.assets.ModelAsset, model_id) catch |err| {
+        const model: *eng.Model = eng.get().asset_manager.get_asset(eng.assets.ModelAsset, model_id) catch |err| {
             std.log.err("Failed to get model asset from id: {}", .{err});
             break :blk;
         };

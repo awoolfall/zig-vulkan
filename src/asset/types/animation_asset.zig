@@ -9,7 +9,7 @@ pub const AnimationPointer = struct {
     animation_id: usize,
 
     pub fn get(self: AnimationPointer) !*eng.animation.QuantisedBoneAnimation {
-        const model: *eng.mesh.Model = try eng.get().asset_manager.get_asset(ModelAsset, self.model_id);
+        const model: *eng.Model = try eng.get().asset_manager.get_asset(ModelAsset, self.model_id);
         return &model.animations[self.animation_id];
     }
 };
@@ -54,7 +54,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseT
 
     const model_asset_id = try eng.get().asset_manager.get_asset_id(base_model_uri);
 
-    const model: *eng.mesh.Model = try eng.get().asset_manager.get_asset(ModelAsset, model_asset_id);
+    const model: *eng.Model = try eng.get().asset_manager.get_asset(ModelAsset, model_asset_id);
 
     const animation_idx = for (model.animations, 0..) |animation, idx| {
         if (std.mem.eql(u8, animation.name, animation_name)) {

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSafe });
+    const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
     const options = .{
@@ -44,7 +44,8 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "assimp_options", .module = options_module },
         },
-        .optimize = .ReleaseSafe,
+        .target = target,
+        .optimize = optimize,
     });
     assimp_module.addIncludePath(b.path("libs/assimp/include"));
 
@@ -219,14 +220,16 @@ pub fn build(b: *std.Build) void {
     });
 
     const assimp = b.addLibrary(.{
-        .linkage = .static,
+        .linkage = .dynamic,
         .name = "assimp",
         .root_module = b.createModule(.{
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseSafe,
         }),
     });
     b.installArtifact(assimp);
+    assimp.addIncludePath(b.path("libs/assimp/include"));
+    assimp_module.linkLibrary(assimp);
 
     const assimp_conf_step = b.addConfigHeader(.{ 
         .style = .{ .cmake = b.path("libs/assimp/include/assimp/config.h.in") },
@@ -283,6 +286,7 @@ pub fn build(b: *std.Build) void {
     assimp.root_module.addCMacro("OPENDDLPARSER_BUILD", "1");
     assimp.root_module.addCMacro("STB_USE_HUNTER", "0");
     assimp.root_module.addCMacro("WIN32_LEAN_AND_MEAN", "1");
+    assimp.root_module.addCMacro("ASSIMP_BUILD_DLL_EXPORT", "1");
 
     if (options.no_export) assimp.root_module.addCMacro("ASSIMP_BUILD_NO_EXPORT", "1");
 

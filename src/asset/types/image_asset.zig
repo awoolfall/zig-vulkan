@@ -23,7 +23,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseT
     const file_path = try eng.util.uri.resolve_file_uri(alloc, asset_uri);
     defer alloc.free(file_path);
 
-    var image = try eng.image.ImageLoader.load_from_file(alloc, file_path, .{});
+    var image = try eng.Image.load_from_file(alloc, file_path, .{});
     defer image.deinit();
 
     // @TODO make mip generation optional
@@ -52,7 +52,7 @@ pub fn unload(self: *Self, asset: *BaseType) void {
     asset.deinit();
 }
 
-fn determine_image_format(image: *const eng.image.Image) !eng.gfx.ImageFormat {
+fn determine_image_format(image: *const eng.Image) !eng.gfx.ImageFormat {
     return blk: {
         if (image.is_hdr) {
             switch (image.num_components) {
