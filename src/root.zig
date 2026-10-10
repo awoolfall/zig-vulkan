@@ -38,10 +38,6 @@ pub const util = struct {
 pub const Transform = @import("util/transform.zig");
 pub const serialize = @import("serialize/serialize.zig");
 
-const App = @import("app");
-const EntityComponentsTuple = ecs.StandardEntityComponents ++ App.EntityComponents;
-pub const AppEcsSystem = ecs.EcsSystem(EntityComponentsTuple);
-
 pub inline fn get() *Engine {
     return @import("global_engine.zig").__global_engine;
 }

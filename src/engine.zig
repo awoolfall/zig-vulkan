@@ -1,5 +1,4 @@
 const std = @import("std");
-const App = @import("app");
 const AppInterface = @import("app_interface.zig");
 const eng = @import("self");
 const Imui = eng.ui;
@@ -22,7 +21,7 @@ debug: db.Debug,
 imui: Imui,
 asset_manager: eng.assets.AssetManager,
 app: ?*anyopaque,
-ecs: eng.AppEcsSystem,
+ecs: eng.ecs.GenericEcsSystem,
 exe_path: []u8,
 
 general_allocator: std.mem.Allocator,
@@ -36,14 +35,16 @@ app_interface: AppInterface,
 pub export fn deinit(self: *Self) void {
     self.gfx.flush();
 
-    self.app_interface.fn_deinit(self.app);
+    // deinit ecs before unloading app shared library since it
+    // relies on function pointers that may exist in that lib
+    self.ecs.deinit();
 
+    self.app_interface.fn_deinit(self.app);
     if (self.app_dll) |*app_dll| {
         app_dll.close();
     }
     self.app_dll_filewatcher.deinit();
 
-    self.ecs.deinit();
     self.physics.deinit();
     self.debug.deinit();
     self.imui.deinit();
@@ -135,8 +136,13 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.physics = try eng.physics.PhysicsSystem.init(engine.general_allocator);
     errdefer engine.physics.deinit();
 
-    engine.ecs = try eng.AppEcsSystem.init(engine.general_allocator);
+    engine.ecs = try eng.ecs.GenericEcsSystem.init(engine.general_allocator);
     errdefer engine.ecs.deinit();
+
+    // register standard components
+    inline for (eng.ecs.StandardEntityComponents) |T| {
+        try engine.ecs.register_component(T);
+    }
 
     const app_dll_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "app.dll"});
     defer engine.general_allocator.free(app_dll_path);

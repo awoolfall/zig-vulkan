@@ -51,9 +51,6 @@ pub fn build(b: *std.Build) !void {
     });
     engine.addImport("self", engine);
 
-    // declare app module, this is imported from the super project
-    engine.addImport("app", b.createModule(.{}));
-
     if (os == .windows) {
         engine.linkSystemLibrary("user32", .{});
         engine.linkSystemLibrary("ole32", .{});

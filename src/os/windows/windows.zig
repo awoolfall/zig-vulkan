@@ -57,6 +57,7 @@ pub const WindowsPlatform = struct {
 
     hInstance: w32.HINSTANCE,
     window_thread: std.Thread,
+    window_thread_id: w32.DWORD,
 
     window_thread_hwnd_map: [MAX_WINDOWS]?w32.HWND = [1]?w32.HWND{null} ** MAX_WINDOWS,
 
@@ -86,6 +87,7 @@ pub const WindowsPlatform = struct {
         return WindowsPlatform {
             .hInstance = hInstance,
             .window_thread = window_thread,
+            .window_thread_id = g_window_thread_id,
         };
     }
 
@@ -111,13 +113,11 @@ pub const WindowsPlatform = struct {
     }
 
     pub fn create_new_window(self: *WindowsPlatform, window_id: u32, window_type: u32) !void {
-        _ = self;
-        _ = w32.PostThreadMessageA(g_window_thread_id, WM_USER_REQUEST_CREATE_WINDOW, @intCast(window_type), @intCast(window_id));
+        _ = w32.PostThreadMessageA(self.window_thread_id, WM_USER_REQUEST_CREATE_WINDOW, @intCast(window_type), @intCast(window_id));
     }
 
     pub fn show_cursor(self: *WindowsPlatform, should_show_cursor: bool) void {
-        _ = self;
-        _ = w32.PostThreadMessageA(g_window_thread_id, WM_USER_SHOW_CURSOR, @intFromBool(should_show_cursor), 0);
+        _ = w32.PostThreadMessageA(self.window_thread_id, WM_USER_SHOW_CURSOR, @intFromBool(should_show_cursor), 0);
     }
 
     pub fn free_confined_cursor(self: *WindowsPlatform) void {
@@ -285,7 +285,7 @@ pub const WindowHandle = struct {
     hwnd: w32.HWND,
 
     pub fn close_window(self: *const WindowHandle) void {
-        _ = w32.PostThreadMessageA(g_window_thread_id, WM_USER_REQUEST_DESTROY_WINDOW, @intCast(self.id), 0);
+        _ = w32.PostThreadMessageA(eng.get().os.window_thread_id, WM_USER_REQUEST_DESTROY_WINDOW, @intCast(self.id), 0);
     }
 
     pub fn get_client_size(self: *const WindowHandle) !os.WindowSize {
