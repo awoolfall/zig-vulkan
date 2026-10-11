@@ -61,29 +61,46 @@ pub const GenericEcsSystem = struct {
         }
     };
 
+    fn ComponentList(comptime T: type) type { return gen.GenerationalList(T); }
+
+    const ComponentInfo = struct {
+        name: []const u8, // not owned
+        component_list: *anyopaque,
+        component_functions: ComponentFunctions,
+        entity_ref_list: std.ArrayList(?Entity),
+
+        fn deinit(self: *ComponentInfo, alloc: std.mem.Allocator) void {
+            self.component_functions.fn_component_list_deinit(&alloc, self.component_list);
+            self.entity_ref_list.deinit(alloc);
+        }
+
+        fn get_component_list(self: *ComponentInfo, comptime ComponentType: type) *ComponentList(ComponentType) {
+            std.debug.assert(std.mem.eql(u8, ComponentType.COMPONENT_NAME, self.name));
+            const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(self.component_list));
+            return component_list;
+        }
+    };
+
     const ComponentFunctions = struct {
-        fn_component_list_deinit: *const fn (*const std.mem.Allocator, *anyopaque) callconv(.c) void,
-        fn_remove_component: *const fn (*anyopaque, *const gen.GenerationalIndex) callconv(.c) void,
-        fn_serialize_component: *const fn (*const std.mem.Allocator, *std.json.ObjectMap, *const Entity, *anyopaque, *const gen.GenerationalIndex) callconv(.c) bool,
-        fn_deserialize_component: *const fn (*const std.mem.Allocator, *GenericEcsSystem, *const std.json.ObjectMap, *const Entity) callconv(.c) bool,
+        fn_component_list_deinit: *const fn (*const std.mem.Allocator, *anyopaque) void,
+        fn_add_component: *const fn (*const std.mem.Allocator, *anyopaque, *gen.GenerationalIndex) void,
+        fn_remove_component: *const fn (*anyopaque, *const gen.GenerationalIndex) void,
+        fn_component_list_size: *const fn (*anyopaque) usize,
+        fn_serialize_component: *const fn (*const std.mem.Allocator, *std.json.ObjectMap, *const Entity, *anyopaque, *const gen.GenerationalIndex) bool,
+        fn_deserialize_component: *const fn (*const std.mem.Allocator, *GenericEcsSystem, *const std.json.ObjectMap, *const Entity) bool,
+        fn_component_editor_ui: *const fn (*eng.ui, *const Entity, *anyopaque, *const gen.GenerationalIndex, usize) void,
     };
 
     alloc: std.mem.Allocator,
-    
     entity_data: gen.GenerationalList(EntityInternal),
-    
-    components: std.AutoHashMap(u64, *anyopaque),
-    component_functions: std.AutoHashMap(u64, ComponentFunctions),
+    components: std.AutoHashMap(u64, ComponentInfo),
 
     pub fn deinit(self: *GenericEcsSystem) void {
         var components_iter = self.components.iterator();
         while (components_iter.next()) |pair| {
-            const component_functions = self.component_functions.get(pair.key_ptr.*) orelse unreachable;
-            component_functions.fn_component_list_deinit(&self.alloc, pair.value_ptr.*);
+            pair.value_ptr.deinit(self.alloc);
         }
-
         self.components.deinit();
-        self.component_functions.deinit();
 
         var entity_data_iter = self.entity_data.iterator();
         while (entity_data_iter.next()) |entity_data| {
@@ -93,11 +110,8 @@ pub const GenericEcsSystem = struct {
     }
 
     pub fn init(alloc: std.mem.Allocator) !GenericEcsSystem {
-        const components = std.AutoHashMap(u64, *anyopaque).init(alloc);
+        const components = std.AutoHashMap(u64, ComponentInfo).init(alloc);
         errdefer components.deinit();
-
-        const component_functions = std.AutoHashMap(u64, ComponentFunctions).init(alloc);
-        errdefer component_functions.deinit();
 
         const entity_data = try gen.GenerationalList(EntityInternal).init(alloc);
         errdefer entity_data.deinit();
@@ -106,18 +120,21 @@ pub const GenericEcsSystem = struct {
             .alloc = alloc,
             .entity_data = entity_data,
             .components = components,
-            .component_functions = component_functions,
         };
     }
 
-    inline fn get_component_id(comptime T: type) u64 {
+    pub inline fn get_component_id(comptime T: type) u64 {
         return std.hash_map.hashString(@typeName(T));
     }
 
-    fn get_component_list(self: *GenericEcsSystem, comptime T: type) ?*ComponentList(T) {
+    fn get_component_list(self: *const GenericEcsSystem, comptime T: type) ?*ComponentList(T) {
+        const component = self.get_component_info(T) orelse return null;
+        return component.get_component_list(T);
+    }
+
+    fn get_component_info(self: *const GenericEcsSystem, comptime T: type) ?*ComponentInfo {
         const type_hash = comptime get_component_id(T);
-        const component_array = self.components.get(type_hash) orelse unreachable;
-        return @alignCast(@ptrCast(component_array));
+        return self.components.getPtr(type_hash);
     }
 
     pub fn register_component(self: *GenericEcsSystem, comptime T: type) !void {
@@ -125,30 +142,40 @@ pub const GenericEcsSystem = struct {
         std.log.info("register {s} as {}", .{@typeName(T), type_hash});
         if (self.components.get(type_hash) == null) {
             const ComponentData = struct {
-                pub fn component_list_deinit(alloc: *const std.mem.Allocator, list_ptr: *anyopaque) callconv(.c) void {
+                pub fn component_list_deinit(alloc: *const std.mem.Allocator, list_ptr: *anyopaque) void {
                     const component_list: *ComponentList(T) = @alignCast(@ptrCast(list_ptr));
                     
-                    var component_iter = component_list.component_list.iterator();
+                    var component_iter = component_list.iterator();
                     while (component_iter.next()) |component| {
                         component.deinit();
                     }
 
-                    component_list.deinit(alloc.*);
+                    component_list.deinit();
                     alloc.destroy(component_list);
                 }
 
-                pub fn remove_component(list_ptr: *anyopaque, idx: *const gen.GenerationalIndex) callconv(.c) void {
+                pub fn remove_component(list_ptr: *anyopaque, idx: *const gen.GenerationalIndex) void {
                     const component_list: *ComponentList(T) = @alignCast(@ptrCast(list_ptr));
-
-                    component_list.component_list.remove(idx.*) catch unreachable;
-                    component_list.entity_ref_list.items[idx.index] = null;
+                    component_list.get(idx.*).?.deinit();
+                    component_list.remove(idx.*) catch unreachable;
                 }
 
-                pub fn serialize_component(alloc: *const std.mem.Allocator, object: *std.json.ObjectMap, entity: *const Entity, list_ptr: *anyopaque, component_idx: *const gen.GenerationalIndex) callconv(.c) bool {
+                pub fn add_component(alloc: *const std.mem.Allocator, list_ptr: *anyopaque, idx_out: *gen.GenerationalIndex) void {
+                    const component_list: *ComponentList(T) = @alignCast(@ptrCast(list_ptr));
+                    const component = T.init(alloc.*) catch unreachable;
+                    idx_out.* = component_list.insert(component) catch unreachable;
+                }
+
+                pub fn component_list_size(list_ptr: *anyopaque) usize {
+                    const component_list: *ComponentList(T) = @alignCast(@ptrCast(list_ptr));
+                    return component_list.data.items.len;
+                }
+
+                pub fn serialize_component(alloc: *const std.mem.Allocator, object: *std.json.ObjectMap, entity: *const Entity, list_ptr: *anyopaque, component_idx: *const gen.GenerationalIndex) bool {
                     std.debug.assert(T.COMPONENT_UUID.len != 0);
 
                     const component_list: *ComponentList(T) = @alignCast(@ptrCast(list_ptr));
-                    const component = component_list.component_list.get(component_idx.*).?;
+                    const component = component_list.get(component_idx.*).?;
 
                     var component_object_map = std.json.ObjectMap.init(alloc.*);
                     errdefer component_object_map.deinit();
@@ -162,7 +189,7 @@ pub const GenericEcsSystem = struct {
                     return true;
                 }
 
-                pub fn deserialize_component(alloc: *const std.mem.Allocator, ecs: *GenericEcsSystem, object: *const std.json.ObjectMap, entity: *const Entity) callconv(.c) bool {
+                pub fn deserialize_component(alloc: *const std.mem.Allocator, ecs: *GenericEcsSystem, object: *const std.json.ObjectMap, entity: *const Entity) bool {
                     if (object.get(T.COMPONENT_UUID)) |v| {
                         const component = ecs.add_component(T, entity.*) catch return false;
                         // deinit default component to replace with the deserialized value
@@ -177,24 +204,37 @@ pub const GenericEcsSystem = struct {
                         return false;
                     }
                 }
+
+                pub fn component_editor_ui(imui: *eng.ui, entity: *const Entity, list_ptr: *anyopaque, component_idx: *const gen.GenerationalIndex, key: u64) void {
+                    const component_list: *ComponentList(T) = @alignCast(@ptrCast(list_ptr));
+                    const component = component_list.get(component_idx.*).?;
+                    T.editor_ui(imui, entity.*, component, .{key}) catch unreachable;
+                }
             };
 
             const component_list = try self.alloc.create(ComponentList(T));
             errdefer self.alloc.destroy(component_list);
 
             component_list.* = try ComponentList(T).init(self.alloc);
-            errdefer component_list.deinit(self.alloc);
+            errdefer component_list.deinit();
 
-            try self.components.put(type_hash, component_list);
+            const component_info = ComponentInfo {
+                .name = T.COMPONENT_NAME,
+                .component_list = component_list,
+                .component_functions = ComponentFunctions {
+                    .fn_component_list_deinit = ComponentData.component_list_deinit,
+                    .fn_remove_component = ComponentData.remove_component,
+                    .fn_add_component = ComponentData.add_component,
+                    .fn_component_list_size = ComponentData.component_list_size,
+                    .fn_serialize_component = ComponentData.serialize_component,
+                    .fn_deserialize_component = ComponentData.deserialize_component,
+                    .fn_component_editor_ui = ComponentData.component_editor_ui,
+                },
+                .entity_ref_list = .empty,
+            };
+
+            try self.components.put(type_hash, component_info);
             errdefer _ = self.components.remove(type_hash);
-
-            try self.component_functions.put(type_hash, ComponentFunctions {
-                .fn_component_list_deinit = ComponentData.component_list_deinit,
-                .fn_remove_component = ComponentData.remove_component,
-                .fn_serialize_component = ComponentData.serialize_component,
-                .fn_deserialize_component = ComponentData.deserialize_component,
-            });
-            errdefer self.component_functions.remove(type_hash);
         } else {
             std.log.err("Attempted to add component array that already exists", .{});
             unreachable;
@@ -221,9 +261,11 @@ pub const GenericEcsSystem = struct {
         // remove all entity components
         var component_iter = ent.components.iterator();
         while (component_iter.next()) |pair| {
-            const component_functions = self.component_functions.get(pair.key_ptr.*).?;
-            const component_list = self.components.get(pair.key_ptr.*).?;
-            component_functions.fn_remove_component(component_list, pair.value_ptr);
+            const component_info = self.components.get(pair.key_ptr.*).?;
+            const component_functions = &component_info.component_functions;
+
+            component_functions.fn_remove_component(component_info.component_list, pair.value_ptr);
+            component_info.entity_ref_list.items[pair.value_ptr.index] = null;
         }
         ent.components.deinit();
         
@@ -252,52 +294,59 @@ pub const GenericEcsSystem = struct {
         return null;
     }
 
+    pub fn entity_has_component_generic(self: *GenericEcsSystem, component_type_hash: u64, entity: Entity) bool {
+        const entity_data = self.entity_data.get(entity.idx).?;
+        return entity_data.components.contains(component_type_hash);
+    }
+
     pub fn get_component(self: *GenericEcsSystem, comptime Component: type, entity: Entity) ?*Component {
         const type_hash = comptime get_component_id(Component);
         const component_list = self.get_component_list(Component) orelse unreachable;
         const entity_data = self.entity_data.get(entity.idx) orelse unreachable;
         const component_id = entity_data.components.get(type_hash) orelse return null;
-        return component_list.component_list.get(component_id);
+        return component_list.get(component_id);
     }
 
     pub fn add_component(self: *GenericEcsSystem, comptime Component: type, entity: Entity) !*Component {
         const type_hash = comptime get_component_id(Component);
-        const ent = self.entity_data.get(entity.idx) orelse return error.EntityDoesNotExist;
-        if (ent.components.get(type_hash) == null) {
-            const list = self.get_component_list(Component).?;
-
-            var new_component = try Component.init(self.alloc);
-            errdefer new_component.deinit();
-
-            const component_idx = try list.component_list.insert(new_component);
-            errdefer list.component_list.remove(component_idx) catch unreachable;
-
-            try ent.components.put(type_hash, component_idx);
-            errdefer _ = ent.components.remove(type_hash);
-
-            try list.entity_ref_list.resize(self.alloc, list.component_list.data.items.len);
-            list.entity_ref_list.items[component_idx.index] = entity;
-        }
+        try self.add_component_generic(type_hash, entity);
         return self.get_component(Component, entity) orelse return error.EntityDoesNotHaveComponent;
+    }
+
+    pub fn add_component_generic(self: *GenericEcsSystem, component_type_hash: u64, entity: Entity) !void {
+        const ent = self.entity_data.get(entity.idx) orelse return error.EntityDoesNotExist;
+        if (ent.components.get(component_type_hash) == null) {
+            const info = self.components.getPtr(component_type_hash).?;
+
+            var component_idx: gen.GenerationalIndex = undefined;
+            info.component_functions.fn_add_component(&self.alloc, info.component_list, &component_idx);
+
+            try ent.components.put(component_type_hash, component_idx);
+            errdefer _ = ent.components.remove(component_type_hash);
+
+            const component_list_size = info.component_functions.fn_component_list_size(info.component_list);
+
+            try info.entity_ref_list.resize(self.alloc, component_list_size);
+            info.entity_ref_list.items[component_idx.index] = entity;
+        }
     }
 
     pub fn remove_component(self: *GenericEcsSystem, comptime Component: type, entity: Entity) void {
         const type_hash = comptime get_component_id(Component);
+        self.remove_component_generic(type_hash, entity);
+    }
+
+    pub fn remove_component_generic(self: *GenericEcsSystem, component_type_hash: u64, entity: Entity) void {
         std.debug.assert(self.entity_data.get(entity.idx) != null);
         const ent = self.entity_data.get(entity.idx) orelse return;
-        std.debug.assert(ent.components.get(type_hash) != null);
+        std.debug.assert(ent.components.get(component_type_hash) != null);
 
-        const list = self.get_component_list(Component).?;
-        
-        list.component_list.get(ent.components.get(type_hash).?).?.deinit();
-        list.component_list.remove(ent.components.get(type_hash).?) catch |err| {
-            std.log.err("Unable to remove component from ECS system: {}", .{err});
-            unreachable;
-        };
+        const component_info = self.components.getPtr(component_type_hash).?;
 
-        list.entity_ref_list.items[ent.components.get(type_hash).?.index] = null;
+        component_info.component_functions.fn_remove_component(component_info.component_list, &ent.components.get(component_type_hash).?);
+        component_info.entity_ref_list.items[ent.components.get(component_type_hash).?.index] = null;
 
-        ent.components.remove(type_hash);
+        _ = ent.components.remove(component_type_hash);
     }
 
     pub fn serialize_entity(self: *GenericEcsSystem, alloc: std.mem.Allocator, entity: Entity) !std.json.Value {
@@ -309,9 +358,8 @@ pub const GenericEcsSystem = struct {
 
         var component_iter = ent.components.iterator();
         while (component_iter.next()) |pair| {
-            const component_functions = self.component_functions.get(pair.key_ptr.*).?;
-            const component_list = self.components.get(pair.key_ptr.*).?;
-            _ = component_functions.fn_serialize_component(&alloc, &object, &entity, component_list, pair.value_ptr);
+            const component_info = self.components.getPtr(pair.key_ptr.*).?;
+            _ = component_info.component_functions.fn_serialize_component(&alloc, &object, &entity, component_info.component_list, pair.value_ptr);
         }
 
         return std.json.Value { .object = object };
@@ -328,9 +376,9 @@ pub const GenericEcsSystem = struct {
         const ent = self.entity_data.get(entity.idx) orelse return error.EntityDoesNotExist;
         if (object.get("name")) |v| blk: { ent.name = sr.deserialize_value(?[]const u8, alloc, v) catch break :blk; }
 
-        var component_iter = self.components.keyIterator();
-        while (component_iter.next()) |type_hash| {
-            const component_functions = self.component_functions.get(type_hash.*).?;
+        var component_iter = self.components.iterator();
+        while (component_iter.next()) |pair| {
+            const component_functions = &pair.value_ptr.component_functions;
             _ = component_functions.fn_deserialize_component(&alloc, self, &object, &entity);
         }
 
@@ -338,10 +386,8 @@ pub const GenericEcsSystem = struct {
     }
 
     pub fn get_component_count(self: *const GenericEcsSystem, comptime T: type) usize {
-        const type_hash = comptime get_component_id(T);
-        const list_ptr = self.components.get(type_hash).?;
-        const component_list: *ComponentList(T) = @alignCast(@ptrCast(list_ptr));
-        return component_list.component_list.item_count();
+        const component_list = self.get_component_list(T).?;
+        return component_list.item_count();
     }
 
     pub fn entity_iterator(self: *GenericEcsSystem) EntityIterator {
@@ -403,7 +449,7 @@ pub const GenericEcsSystem = struct {
                     const component_count = ecs.get_component_count(QueryComponents[idx]);
                     if (component_count < shortest_component_count) {
                         shortest_component_count = component_count;
-                        shortest_entity_list = &ecs.get_component_list(QueryComponents[idx]).?.entity_ref_list;
+                        shortest_entity_list = &ecs.get_component_info(QueryComponents[idx]).?.entity_ref_list;
                     }
                 }
 
@@ -455,28 +501,6 @@ pub const GenericEcsSystem = struct {
         };
     }
 };
-
-fn ComponentList(comptime T: type) type {
-    return struct {
-        component_list: gen.GenerationalList(T),
-        entity_ref_list: std.ArrayList(?Entity),
-
-        fn deinit(self: *ComponentList(T), alloc: std.mem.Allocator) void {
-            self.component_list.deinit();
-            self.entity_ref_list.deinit(alloc);
-        }
-
-        fn init(alloc: std.mem.Allocator) !ComponentList(T) {
-            const component_list = try gen.GenerationalList(T).init(alloc);
-            errdefer component_list.deinit();
-
-            return ComponentList(T) {
-                .component_list = component_list,
-                .entity_ref_list = .empty,
-            };
-        }
-    };
-}
 
 fn ComponentValuePointersTuple(comptime ComponentTypes: anytype) type {
     const info = @typeInfo(@TypeOf(ComponentTypes));
