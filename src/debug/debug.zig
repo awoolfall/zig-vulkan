@@ -1,9 +1,8 @@
 const std = @import("std");
 const eng = @import("self");
-const zm = @import("zmath");
-const gfx = @import("../gfx/gfx.zig");
-const Camera = @import("../engine/camera.zig").Camera;
-const engine = @import("../engine.zig");
+const zm = eng.zmath;
+const gfx = eng.gfx;
+const Camera = eng.Camera;
 
 const Self = @This();
 
