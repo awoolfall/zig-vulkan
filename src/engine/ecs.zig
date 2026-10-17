@@ -71,7 +71,7 @@ pub const GenericEcsSystem = struct {
             fn_component_list_size: *const fn (*anyopaque) usize,
             fn_serialize_component: *const fn (*const std.mem.Allocator, *std.json.ObjectMap, *const Entity, *anyopaque, *const gen.GenerationalIndex) bool,
             fn_deserialize_component: *const fn (*const std.mem.Allocator, *GenericEcsSystem, *const std.json.ObjectMap, *const Entity) bool,
-            fn_component_editor_ui: *const fn (*eng.ui, *const Entity, *anyopaque, *const gen.GenerationalIndex, usize) void,
+            fn_component_editor_ui: *const fn (*eng.Imui, *const Entity, *anyopaque, *const gen.GenerationalIndex, usize) void,
         };
 
         name: []const u8, // not owned
@@ -252,7 +252,7 @@ pub const GenericEcsSystem = struct {
                 }
             }
 
-            fn component_editor_ui(imui: *eng.ui, entity: *const Entity, list_ptr: *anyopaque, component_idx: *const gen.GenerationalIndex, key: u64) void {
+            fn component_editor_ui(imui: *eng.Imui, entity: *const Entity, list_ptr: *anyopaque, component_idx: *const gen.GenerationalIndex, key: u64) void {
                 const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(list_ptr));
                 const component = component_list.get(component_idx.*).?;
                 ComponentType.editor_ui(imui, entity.*, component, .{key}) catch unreachable;

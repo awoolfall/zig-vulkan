@@ -41,7 +41,7 @@ pub fn init(alloc: std.mem.Allocator) !Self {
     return .{};
 }
 
-pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
+pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
     _ = imui; _ = entity; _ = component; _ = key;
 }
 

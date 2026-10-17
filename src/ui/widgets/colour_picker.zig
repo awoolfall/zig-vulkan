@@ -1,7 +1,7 @@
 const std = @import("std");
 const eng = @import("self");
 const zm = eng.zmath;
-const Imui = eng.ui;
+const Imui = eng.Imui;
 const gfx = eng.gfx;
 const button = @import("button.zig");
 

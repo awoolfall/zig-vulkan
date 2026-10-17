@@ -2,7 +2,7 @@ const std = @import("std");
 const eng = @import("self");
 const zm = eng.zmath;
 const _gfx = eng.gfx;
-const ui = eng.ui;
+const ui = eng.Imui;
 const RectPixels = eng.util.Rect;
 
 pub const RectEdges = packed struct {

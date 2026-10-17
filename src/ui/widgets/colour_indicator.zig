@@ -1,9 +1,9 @@
 const std = @import("std");
 const eng = @import("self");
-const Imui = eng.ui;
+const Imui = eng.Imui;
 const zm = eng.zmath;
 
-pub fn create(imui: *Imui, colour_rgb: *zm.F32x4, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
+pub fn create(imui: *eng.Imui, colour_rgb: *zm.F32x4, key: anytype) eng.Imui.WidgetSignal(Imui.WidgetId) {
     // Create display color from the raw values, clamped to 0-1 for display
     const clamped_r = @min(colour_rgb[0], 1.0);
     const clamped_g = @min(colour_rgb[1], 1.0);

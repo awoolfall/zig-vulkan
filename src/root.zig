@@ -23,7 +23,7 @@ pub const camera = @import("engine/camera.zig");
 pub const particles = @import("particles/particle_system.zig");
 pub const particles_renderer = @import("particles/particle_renderer.zig");
 pub const AnimationGraph = @import("animation/animation_graph.zig");
-pub const ui = @import("ui/ui.zig");
+pub const Imui = @import("ui/imui.zig");
 pub const Debug = @import("debug/debug.zig");
 
 pub const util = struct {

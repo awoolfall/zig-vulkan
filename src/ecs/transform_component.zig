@@ -33,7 +33,7 @@ pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std
     return component;
 }
 
-pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
+pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
     _ = entity;
 
     const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
@@ -48,20 +48,20 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
         _ = imui.push_form_layout_item(.{@src()});
         defer imui.pop_layout();
 
-        _ = eng.ui.widgets.label.create(imui, "position: ");
-        _ = eng.ui.widgets.number_slider.create(imui, &component.transform.position[0], .{}, key ++ .{@src()});
-        _ = eng.ui.widgets.number_slider.create(imui, &component.transform.position[1], .{}, key ++ .{@src()});
-        _ = eng.ui.widgets.number_slider.create(imui, &component.transform.position[2], .{}, key ++ .{@src()});
+        _ = eng.Imui.widgets.label.create(imui, "position: ");
+        _ = eng.Imui.widgets.number_slider.create(imui, &component.transform.position[0], .{}, key ++ .{@src()});
+        _ = eng.Imui.widgets.number_slider.create(imui, &component.transform.position[1], .{}, key ++ .{@src()});
+        _ = eng.Imui.widgets.number_slider.create(imui, &component.transform.position[2], .{}, key ++ .{@src()});
     }
     {
         _ = imui.push_form_layout_item(.{@src()});
         defer imui.pop_layout();
 
-        _ = eng.ui.widgets.label.create(imui, "rotation: ");
+        _ = eng.Imui.widgets.label.create(imui, "rotation: ");
         var rot = zm.loadArr3(zm.quatToRollPitchYaw(component.transform.rotation)) * zm.f32x4s(180.0 / std.math.pi);
-        const rx = eng.ui.widgets.number_slider.create(imui, &rot[0], .{}, key ++ .{@src()});
-        const ry = eng.ui.widgets.number_slider.create(imui, &rot[1], .{}, key ++ .{@src()});
-        const rz = eng.ui.widgets.number_slider.create(imui, &rot[2], .{}, key ++ .{@src()});
+        const rx = eng.Imui.widgets.number_slider.create(imui, &rot[0], .{}, key ++ .{@src()});
+        const ry = eng.Imui.widgets.number_slider.create(imui, &rot[1], .{}, key ++ .{@src()});
+        const rz = eng.Imui.widgets.number_slider.create(imui, &rot[2], .{}, key ++ .{@src()});
 
         if (rx.data_changed or ry.data_changed or rz.data_changed) {
             rot = rot * zm.f32x4s(std.math.pi / 180.0);
@@ -72,9 +72,9 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
         _ = imui.push_form_layout_item(.{@src()});
         defer imui.pop_layout();
 
-        _ = eng.ui.widgets.label.create(imui, "scale: ");
-        _ = eng.ui.widgets.number_slider.create(imui, &component.transform.scale[0], .{}, key ++ .{@src()});
-        _ = eng.ui.widgets.number_slider.create(imui, &component.transform.scale[1], .{}, key ++ .{@src()});
-        _ = eng.ui.widgets.number_slider.create(imui, &component.transform.scale[2], .{}, key ++ .{@src()});
+        _ = eng.Imui.widgets.label.create(imui, "scale: ");
+        _ = eng.Imui.widgets.number_slider.create(imui, &component.transform.scale[0], .{}, key ++ .{@src()});
+        _ = eng.Imui.widgets.number_slider.create(imui, &component.transform.scale[1], .{}, key ++ .{@src()});
+        _ = eng.Imui.widgets.number_slider.create(imui, &component.transform.scale[2], .{}, key ++ .{@src()});
     }
 }

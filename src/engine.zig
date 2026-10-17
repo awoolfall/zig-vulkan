@@ -130,7 +130,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
 
     Log.debug("Registering standard ECS resources.", .{});
     inline for (.{
-        eng.ui,
+        eng.Imui,
         eng.physics.PhysicsSystem,
         eng.Debug,
     }) |T| {

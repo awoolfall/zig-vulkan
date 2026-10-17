@@ -3,7 +3,7 @@ const zstbi = @import("zstbi");
 const eng = @import("self");
 const _gfx = eng.gfx;
 const zm = eng.zmath;
-const ui = eng.ui;
+const ui = eng.Imui;
 const RectPixels = eng.util.Rect;
 
 pub const AtlasDetails = struct {

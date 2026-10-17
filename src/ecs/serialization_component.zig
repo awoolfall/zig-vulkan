@@ -32,7 +32,7 @@ pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std
     return component;
 }
 
-pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
+pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
     _ = entity;
 
     const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
@@ -46,10 +46,10 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
         _ = imui.push_form_layout_item(key ++ .{@src()});
         defer imui.pop_layout();
 
-        _ = eng.ui.widgets.label.create(imui, "serialization id: ");
+        _ = eng.Imui.widgets.label.create(imui, "serialization id: ");
         const serialization_id_string = if (component.serialize_id) |serialization_id|
             try std.fmt.allocPrint(imui.widget_allocator(), "{}", .{serialization_id})
             else "TBD on next save";
-        _ = eng.ui.widgets.label.create(imui, serialization_id_string);
+        _ = eng.Imui.widgets.label.create(imui, serialization_id_string);
     }
 }

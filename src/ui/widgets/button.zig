@@ -1,5 +1,5 @@
 const eng = @import("self");
-const Imui = eng.ui;
+const Imui = eng.Imui;
 const es = eng.util.easings;
 const label = @import("label.zig");
 

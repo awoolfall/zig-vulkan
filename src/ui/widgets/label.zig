@@ -1,6 +1,6 @@
 const std = @import("std");
 const eng = @import("self");
-const Imui = eng.ui;
+const Imui = eng.Imui;
 
 pub fn create(self: *Imui, text: []const u8) Imui.WidgetSignal(Imui.WidgetId) {
     const widget = Imui.Widget {

@@ -83,7 +83,7 @@ const PhysicsUiData = struct {
     }
 };
 
-pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
+pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
     const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
     defer imui.pop_layout();
 
@@ -92,7 +92,7 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
     }
 
     {
-        const physics_button = eng.ui.widgets.badge.create(imui, "Set Physics", key ++ .{@src()});
+        const physics_button = eng.Imui.widgets.badge.create(imui, "Set Physics", key ++ .{@src()});
         const data, _ = imui.get_widget_data(PhysicsUiData, physics_button.id.box) catch return error.UnableToGetPhysicsUiData;
 
         if (physics_button.clicked) {
@@ -102,8 +102,8 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
             };
         }
         
-        const physics_combobox = eng.ui.widgets.combobox.create(imui, key ++ .{@src()});
-        const physics_combobox_data, _ = imui.get_widget_data(eng.ui.widgets.combobox.ComboBoxState, physics_combobox.id) catch |err| {
+        const physics_combobox = eng.Imui.widgets.combobox.create(imui, key ++ .{@src()});
+        const physics_combobox_data, _ = imui.get_widget_data(eng.Imui.widgets.combobox.ComboBoxState, physics_combobox.id) catch |err| {
             std.log.err("Unable to get physics combobox data: {}", .{err});
             unreachable;
         };
@@ -158,22 +158,22 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
                     _ = imui.push_form_layout_item(key ++ .{@src()});
                     defer imui.pop_layout();
 
-                    _ = eng.ui.widgets.label.create(imui, "is sensor:");
-                    _ = eng.ui.widgets.checkbox.create(imui, &b.is_sensor, "", key ++ .{@src()});
+                    _ = eng.Imui.widgets.label.create(imui, "is sensor:");
+                    _ = eng.Imui.widgets.checkbox.create(imui, &b.is_sensor, "", key ++ .{@src()});
                 }
                 {
                     _ = imui.push_form_layout_item(key ++ .{@src()});
                     defer imui.pop_layout();
                     
-                    _ = eng.ui.widgets.label.create(imui, "is static:");
-                    _ = eng.ui.widgets.checkbox.create(imui, &b.is_static, "", key ++ .{@src()});
+                    _ = eng.Imui.widgets.label.create(imui, "is static:");
+                    _ = eng.Imui.widgets.checkbox.create(imui, &b.is_static, "", key ++ .{@src()});
                 }
             },
             .Character => |_| {
-                _ = eng.ui.widgets.label.create(imui, "is character");
+                _ = eng.Imui.widgets.label.create(imui, "is character");
             },
             .CharacterVirtual => |_| {
-                _ = eng.ui.widgets.label.create(imui, "is virtual character");
+                _ = eng.Imui.widgets.label.create(imui, "is virtual character");
             },
         }
     }
@@ -184,10 +184,10 @@ fn physics_shape_editor_ui(
     shape_settings: *eng.physics.ShapeSettings, 
     key: anytype
 ) void {
-    const imui = eng.get().ecs.get_resource(eng.ui) catch return;
+    const imui = eng.get().ecs.get_resource(eng.Imui) catch return;
 
-    const shape_combobox = eng.ui.widgets.combobox.create(imui, key ++ .{@src()});
-    const shape_combobox_data, _ = imui.get_widget_data(eng.ui.widgets.combobox.ComboBoxState, shape_combobox.id) catch |err| {
+    const shape_combobox = eng.Imui.widgets.combobox.create(imui, key ++ .{@src()});
+    const shape_combobox_data, _ = imui.get_widget_data(eng.Imui.widgets.combobox.ComboBoxState, shape_combobox.id) catch |err| {
         std.log.err("Unable to get combobox widget data: {}", .{ err });
         unreachable;
     };
@@ -268,7 +268,7 @@ fn physics_shape_editor_ui(
 }
 
 fn create_form_number_slider(
-    imui: *eng.ui,
+    imui: *eng.Imui,
     text: []const u8,
     value: *f32, 
     key: anytype
@@ -276,8 +276,8 @@ fn create_form_number_slider(
     _ = imui.push_form_layout_item(key ++ .{@src()});
     defer imui.pop_layout();
 
-    _ = eng.ui.widgets.label.create(imui, text);
-    _ = eng.ui.widgets.number_slider.create(imui, value, .{}, key ++ .{@src()});
+    _ = eng.Imui.widgets.label.create(imui, text);
+    _ = eng.Imui.widgets.number_slider.create(imui, value, .{}, key ++ .{@src()});
 }
 
 pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity) !void {

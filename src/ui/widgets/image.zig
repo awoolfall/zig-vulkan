@@ -1,6 +1,6 @@
 const std = @import("std");
 const eng = @import("self");
-const Imui = eng.ui;
+const Imui = eng.Imui;
 const gfx = eng.gfx;
 
 pub fn create(imui: *Imui, texture_view: gfx.ImageView.Ref, sampler: gfx.Sampler.Ref, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {

@@ -1,6 +1,6 @@
 const std = @import("std");
 const eng = @import("self");
-const Imui = eng.ui;
+const Imui = eng.Imui;
 const KeyCode = eng.input.KeyCode;
 const label = @import("label.zig");
 

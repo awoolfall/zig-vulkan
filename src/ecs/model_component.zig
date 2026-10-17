@@ -33,7 +33,7 @@ pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std
     return component;
 }
 
-pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
+pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
     _ = entity;
     
     const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
@@ -47,8 +47,8 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
         _ = imui.push_form_layout_item(key ++ .{@src()});
         defer imui.pop_layout();
 
-        _ = eng.ui.widgets.label.create(imui, "model: ");
-        const drop_zone = eng.ui.widgets.file_drop_zone.create(imui, key ++ .{@src()});
+        _ = eng.Imui.widgets.label.create(imui, "model: ");
+        const drop_zone = eng.Imui.widgets.file_drop_zone.create(imui, key ++ .{@src()});
 
         drop_zone.id.get().semantic_size[1].kind = .Pixels;
         drop_zone.id.get().semantic_size[1].value = 100.0;
@@ -69,12 +69,12 @@ pub fn editor_ui(imui: *eng.ui, entity: eng.ecs.Entity, component: *Self, key: a
 
     if (component.model) |model_id| {
         const asset_metadata = eng.get().asset_manager.asset_metadata.get(model_id.unique_id) orelse unreachable;
-        _ = eng.ui.widgets.label.create(imui, asset_metadata.uri);
+        _ = eng.Imui.widgets.label.create(imui, asset_metadata.uri);
     } else {
-        _ = eng.ui.widgets.label.create(imui, "none");
+        _ = eng.Imui.widgets.label.create(imui, "none");
     }
 
-    if (eng.ui.widgets.badge.create(imui, "print model details", key ++ .{@src()}).clicked) blk: {
+    if (eng.Imui.widgets.badge.create(imui, "print model details", key ++ .{@src()}).clicked) blk: {
         const model_id = component.model orelse break :blk;
         const model_asset_metadata = eng.get().asset_manager.asset_metadata.get(model_id.unique_id) orelse unreachable;
         const model: *eng.Model = eng.get().asset_manager.get_asset(eng.assets.ModelAsset, model_id) catch |err| {

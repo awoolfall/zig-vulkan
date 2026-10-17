@@ -1,5 +1,5 @@
 const eng = @import("self");
-const Imui = eng.ui;
+const Imui = eng.Imui;
 const zm = eng.zmath;
 
 pub const CheckboxId = struct {

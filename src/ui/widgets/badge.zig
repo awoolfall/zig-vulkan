@@ -1,5 +1,5 @@
 const eng = @import("self");
-const Imui = eng.ui;
+const Imui = eng.Imui;
 const button = @import("button.zig");
 
 pub fn create(imui: *Imui, text: []const u8, key: anytype) Imui.WidgetSignal(button.ButtonId) {
