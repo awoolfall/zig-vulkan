@@ -1,7 +1,6 @@
 const std = @import("std");
 const eng = @import("self");
-const kc = @import("keycode.zig");
-pub const KeyCode = kc.KeyCode;
+pub const KeyCode = @import("keycode.zig").KeyCode;
 
 pub const KeyState = enum {
     RELEASED,
@@ -13,7 +12,7 @@ pub const KeyState = enum {
 
 pub const InputState = struct {
     const Self = @This();
-    const KEY_STATE_LEN = @typeInfo(kc.KeyCode).@"enum".fields.len;
+    const KEY_STATE_LEN = @typeInfo(KeyCode).@"enum".fields.len;
 
     const FrameData = struct {
         key_state: [KEY_STATE_LEN]KeyState = [_]KeyState{KeyState.RELEASED} ** KEY_STATE_LEN,
@@ -147,24 +146,24 @@ pub const InputState = struct {
         }
     }
 
-    pub fn get_key_state(self: *const Self, key: kc.KeyCode) KeyState {
+    pub fn get_key_state(self: *const Self, key: KeyCode) KeyState {
         return self.get_current_frame_data_const().key_state[@intFromEnum(key)];
     }
 
-    pub inline fn get_key(self: *const Self, key: kc.KeyCode) bool {
+    pub inline fn get_key(self: *const Self, key: KeyCode) bool {
         const state = self.get_key_state(key);
         return state == KeyState.DOWN or state == KeyState.HELD or state == KeyState.REPEAT;
     }
 
-    pub inline fn get_key_down(self: *const Self, key: kc.KeyCode) bool {
+    pub inline fn get_key_down(self: *const Self, key: KeyCode) bool {
         return self.get_key_state(key) == KeyState.DOWN;
     }
 
-    pub inline fn get_key_down_repeat(self: *const Self, key: kc.KeyCode) bool {
+    pub inline fn get_key_down_repeat(self: *const Self, key: KeyCode) bool {
         return self.get_key_state(key) == KeyState.DOWN or self.get_key_state(key) == KeyState.REPEAT;
     }
 
-    pub inline fn get_key_up(self: *const Self, key: kc.KeyCode) bool {
+    pub inline fn get_key_up(self: *const Self, key: KeyCode) bool {
         return self.get_key_state(key) == KeyState.UP;
     }
 

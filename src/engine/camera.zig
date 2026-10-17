@@ -49,7 +49,7 @@ pub const Camera = struct {
         self: *Self, 
         os: *eng.os.Platform,
         input: *const eng.input.InputState,
-        time: *const eng.time.TimeState,
+        time: *const eng.TimeState,
     ) void {
         self.local_transform = self.transform;
 
@@ -105,7 +105,7 @@ pub const Camera = struct {
         orbit_target: zm.F32x4, 
         os: *eng.os.Platform,
         input: *const eng.input.InputState,
-        time: *const eng.time.TimeState,
+        time: *const eng.TimeState,
     ) void {
         if (input.get_key_down(kc.KeyCode.MouseRight)) {
             os.show_cursor(false);

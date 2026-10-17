@@ -17,6 +17,8 @@ pub const widgets = @import("widgets.zig");
 
 const Self = @This();
 
+pub const RESOURCE_NAME = "Imui";
+
 pub const FontEnum = enum(usize) {
     GeistMono = 0,
     Geist,
@@ -310,7 +312,8 @@ arenas: [2]std.heap.ArenaAllocator,
 
 deinit_functions: std.ArrayList(*const fn (alloc: std.mem.Allocator) void) = .empty,
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
+    _ = alloc;
     for (self.deinit_functions.items) |func| {
         func(self.alloc);
     }

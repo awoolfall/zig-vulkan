@@ -3,10 +3,8 @@ const zm = @import("zmath");
 const zn = @import("znoise");
 const eng = @import("self");
 const Transform = eng.Transform;
-const tm = eng.time;
 const gf = eng.gfx;
 const es = eng.util.easings;
-const ms = eng.mesh;
 const sr = eng.serialize;
 const Camera = eng.camera.Camera;
 
@@ -133,7 +131,7 @@ pub const ParticleSystem = struct {
         };
     }
 
-    pub fn update(self: *Self, time: *const tm.TimeState) void {
+    pub fn update(self: *Self, time: *const eng.TimeState) void {
         const delta_time = zm.f32x4s(time.delta_time_f32());
         const current_time = zm.f32x4s(@floatCast(time.time_since_start_of_app()));
 

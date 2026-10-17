@@ -1,7 +1,6 @@
 const std = @import("std");
 const AppInterface = @import("app_interface.zig");
 const eng = @import("self");
-const Imui = eng.ui;
 const db = @import("debug/debug.zig");
 
 const znoise = @import("znoise");
@@ -16,9 +15,8 @@ window: eng.os.Window,
 gfx: eng.gfx.GfxState,
 physics: eng.physics.PhysicsSystem,
 input: eng.input.InputState,
-time: eng.time.TimeState,
+time: eng.TimeState,
 debug: db.Debug,
-imui: Imui,
 asset_manager: eng.assets.AssetManager,
 app: ?*anyopaque,
 ecs: eng.ecs.GenericEcsSystem,
@@ -47,7 +45,6 @@ pub export fn deinit(self: *Self) void {
 
     self.physics.deinit();
     self.debug.deinit();
-    self.imui.deinit();
     self.asset_manager.deinit();
     self.gfx.deinit();
     self.os.deinit();
@@ -90,7 +87,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     zmesh.init(engine.general_allocator);
     errdefer zmesh.deinit();
 
-    engine.time = eng.time.TimeState.init();
+    engine.time = eng.TimeState.init();
     errdefer engine.time.deinit();
 
     Log.debug("Calling Input init", .{});
@@ -126,9 +123,6 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     };
     errdefer engine.asset_manager.deinit();
 
-    engine.imui = try Imui.init(engine.general_allocator);
-    errdefer engine.imui.deinit();
-
     engine.debug = try db.Debug.init(engine.general_allocator);
     errdefer engine.debug.deinit();
 
@@ -138,6 +132,13 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
 
     engine.ecs = try eng.ecs.GenericEcsSystem.init(engine.general_allocator);
     errdefer engine.ecs.deinit();
+
+    // register standard resources
+    inline for (.{
+        eng.ui
+    }) |T| {
+        try engine.ecs.register_resource(T);
+    }
 
     // register standard components
     inline for (eng.ecs.StandardEntityComponents) |T| {
@@ -226,8 +227,6 @@ pub export fn run(engine: *Self) void {
                 engine.time.start_new_frame();
 
                 engine.input.start_new_frame();
-
-                engine.imui.start_new_frame();
 
                 var physics_iter = engine.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent });
                 engine.physics.update(physics_iter.create_generic_iterator());

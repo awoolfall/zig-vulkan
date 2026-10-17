@@ -45,6 +45,20 @@ pub fn GenerationalList(comptime T: type) type {
             self.free_list.deinit(self.allocator);
         }
 
+        pub fn clone(self: *const Self, alloc: std.mem.Allocator) !Self {
+            var data = try self.data.clone(alloc);
+            errdefer data.deinit(alloc);
+
+            const free_list = try self.free_list.clone(alloc);
+            errdefer free_list.deinit(alloc);
+
+            return Self {
+                .allocator = alloc,
+                .data = data,
+                .free_list = free_list,
+            };
+        }
+
         /// Finds a free index in the list.
         fn find_free(self: *Self) ?usize {
             return self.free_list.pop();

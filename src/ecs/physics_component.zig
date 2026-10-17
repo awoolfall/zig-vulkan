@@ -184,7 +184,7 @@ fn physics_shape_editor_ui(
     shape_settings: *eng.physics.ShapeSettings, 
     key: anytype
 ) void {
-    const imui = &eng.get().imui;
+    const imui = eng.get().ecs.get_resource(eng.ui) catch return;
 
     const shape_combobox = eng.ui.widgets.combobox.create(imui, key ++ .{@src()});
     const shape_combobox_data, _ = imui.get_widget_data(eng.ui.widgets.combobox.ComboBoxState, shape_combobox.id) catch |err| {
@@ -247,18 +247,18 @@ fn physics_shape_editor_ui(
 
     switch (shape_settings.shape) {
         .Capsule => |*c| {
-            create_form_number_slider("radius:", &c.radius, key ++ .{@src()});
+            create_form_number_slider(imui, "radius:", &c.radius, key ++ .{@src()});
             var height = c.half_height * 2.0;
-            create_form_number_slider("height:", &height, key ++ .{@src()});
+            create_form_number_slider(imui, "height:", &height, key ++ .{@src()});
             c.half_height = height * 0.5;
         },
         .Sphere => |*s| {
-            create_form_number_slider("radius:", &s.radius, key ++ .{@src()});
+            create_form_number_slider(imui, "radius:", &s.radius, key ++ .{@src()});
         },
         .Box => |*b| {
-            create_form_number_slider("width:", &b.width, key ++ .{@src()});
-            create_form_number_slider("height:", &b.height, key ++ .{@src()});
-            create_form_number_slider("depth:", &b.depth, key ++ .{@src()});
+            create_form_number_slider(imui, "width:", &b.width, key ++ .{@src()});
+            create_form_number_slider(imui, "height:", &b.height, key ++ .{@src()});
+            create_form_number_slider(imui, "depth:", &b.depth, key ++ .{@src()});
         },
         .ModelCompoundConvexHull => |_| {
         },
@@ -268,12 +268,11 @@ fn physics_shape_editor_ui(
 }
 
 fn create_form_number_slider(
+    imui: *eng.ui,
     text: []const u8,
     value: *f32, 
     key: anytype
 ) void {
-    const imui = &eng.get().imui;
-
     _ = imui.push_form_layout_item(key ++ .{@src()});
     defer imui.pop_layout();
 
