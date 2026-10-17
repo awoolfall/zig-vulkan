@@ -225,6 +225,8 @@ pub const D3D11DebugRenderer = extern struct {
         projection: zm.Mat,
         view: zm.Mat,
     ) void {
+        const physics = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) catch return;
+
         cmd.cmd_begin_render_pass(.{
             .render_pass = self.data.render_pass,
             .framebuffer = self.data.framebuffer,
@@ -250,7 +252,7 @@ pub const D3D11DebugRenderer = extern struct {
         self.cmd = cmd;
         defer self.cmd = null;
 
-        eng.get().physics.zphysics.system.drawBodies(&.{}, null);
+        physics.zphysics.system.drawBodies(&.{}, null);
     }
 
     pub fn shouldBodyDraw(_: *const zphy.Body) align(zphy.DebugRenderer.BodyDrawFilterFuncAlignment) callconv(.C) bool {

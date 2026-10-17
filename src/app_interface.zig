@@ -2,9 +2,9 @@ const std = @import("std");
 
 const Self = @This();
 
-fn_init: *const fn (engine: ?*anyopaque) callconv(.c) ?*anyopaque,
-fn_deinit: *const fn (ptr: ?*anyopaque) callconv(.c) void,
-fn_update: *const fn (ptr: ?*anyopaque, engine: ?*anyopaque) callconv(.c) i32,
+fn_init: *const fn () callconv(.c) i32,
+fn_deinit: *const fn () callconv(.c) i32,
+fn_update: *const fn () callconv(.c) i32,
 
 fn_app_dll_load: *const fn (engine: ?*anyopaque) callconv(.c) void,
 fn_app_dll_unload: *const fn (engine: ?*anyopaque) callconv(.c) void,

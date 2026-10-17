@@ -62,8 +62,8 @@ pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std
 pub fn deinit_runtime_data(self: *Self) void {
     switch (self.runtime_data) {
         .None => {},
-        .Body => |body| {
-            const physics_system = &eng.get().physics;
+        .Body => |body| blk: {
+            const physics_system = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) catch break :blk;
             physics_system.zphysics.system.getBodyInterfaceMut().removeAndDestroyBody(body.id);
         },
         .Character => |character| {
@@ -78,6 +78,7 @@ pub fn deinit_runtime_data(self: *Self) void {
             }
         },
     }
+
     self.runtime_data = .{ .None = {} };
 }
 
@@ -91,7 +92,7 @@ fn set_full_user_data(self: *const Self, data: u64) !void {
     };
 
     if (body_id) |bid| {
-        const physics_system = &eng.get().physics;
+        const physics_system = try eng.get().ecs.get_resource(eng.physics.PhysicsSystem);
         var write_lock = try physics_system.init_body_write_lock(bid);
         defer write_lock.deinit();
 
@@ -118,7 +119,7 @@ pub fn set_user_data(self: *const Self, data: u16) !void {
 }
 
 pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity, settings: @import("physics_component.zig").PhysicsSettings, transform: eng.Transform) !void {
-    const phys = &eng.get().physics;
+    const phys = try eng.get().ecs.get_resource(eng.physics.PhysicsSystem);
 
     self.deinit_runtime_data();
 

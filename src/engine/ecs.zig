@@ -148,14 +148,14 @@ pub const GenericEcsSystem = struct {
         };
     }
 
-    pub fn clear(self: *GenericEcsSystem, ignore_resources: anytype) void {
-        // remove all entities (and components)
+    pub fn clear_entities(self: *GenericEcsSystem) void {
         var entity_iter = self.entity_iterator();
         while (entity_iter.next()) |entity| {
             self.remove_entity(entity);
         }
+    }
 
-        // remove all resources
+    pub fn clear_resources(self: *GenericEcsSystem, ignore_resources: anytype) void {
         var resource_iter = self.resources.keyIterator();
         resources_while: while (resource_iter.next()) |type_id| {
             inline for (ignore_resources) |T| {
@@ -163,6 +163,11 @@ pub const GenericEcsSystem = struct {
             }
             self.destroy_resource_generic(type_id.*);
         }
+    }
+
+    pub fn clear(self: *GenericEcsSystem, ignore_resources: anytype) void {
+        self.clear_entities();
+        self.clear_resources(ignore_resources);
     }
 
     pub inline fn get_type_id(comptime T: type) u64 {
@@ -295,14 +300,14 @@ pub const GenericEcsSystem = struct {
         const Functions = struct {
             fn init(alloc: *const std.mem.Allocator, out_ptr: *?*anyopaque) i32 {
                 const ptr = alloc.create(ResourceType) catch return -1;
-                ptr.* = ResourceType.init(alloc.*) catch return -2;
+                ptr.* = ResourceType.init() catch return -2;
                 out_ptr.* = ptr;
                 return 0;
             }
 
             fn deinit(alloc: *const std.mem.Allocator, opaque_ptr: *anyopaque) void {
                 const ptr: *ResourceType = @alignCast(@ptrCast(opaque_ptr));
-                ptr.deinit(alloc.*);
+                ptr.deinit();
                 alloc.destroy(ptr);
             }
         };

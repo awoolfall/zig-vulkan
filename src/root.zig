@@ -24,7 +24,7 @@ pub const particles = @import("particles/particle_system.zig");
 pub const particles_renderer = @import("particles/particle_renderer.zig");
 pub const AnimationGraph = @import("animation/animation_graph.zig");
 pub const ui = @import("ui/ui.zig");
-pub const debugg = @import("debug/debug.zig");
+pub const Debug = @import("debug/debug.zig");
 
 pub const util = struct {
     pub const Rect = @import("util/rect.zig");

@@ -7,6 +7,8 @@ const physics = eng.physics;
 
 const Self = @This();
 
+pub const RESOURCE_NAME = "Physics System";
+
 pub const UpdateRateHz = 15;
 pub const UpdateRateS = (1.0 / @as(comptime_float, @floatFromInt(UpdateRateHz)));
 pub const UpdateRateNs = @divFloor(std.time.ns_per_s, UpdateRateHz);
@@ -34,7 +36,9 @@ pub fn deinit(self: *Self) void {
     self.zphysics.deinit();
 }
 
-pub fn init(alloc: std.mem.Allocator) !Self {
+pub fn init() !Self {
+    const alloc = eng.get().general_allocator;
+    
     var zphysics = try ZphysicsInterface.init(alloc);
     errdefer zphysics.deinit();
 

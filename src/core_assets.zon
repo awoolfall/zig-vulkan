@@ -1,6 +1,0 @@
-.{
-    .{
-        .name = "sphere",
-        .path = .{ .Model = .{ .Sphere = .{ .subdivisions = 3, } } },
-    },
-}

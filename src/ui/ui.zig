@@ -312,8 +312,7 @@ arenas: [2]std.heap.ArenaAllocator,
 
 deinit_functions: std.ArrayList(*const fn (alloc: std.mem.Allocator) void) = .empty,
 
-pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
-    _ = alloc;
+pub fn deinit(self: *Self) void {
     for (self.deinit_functions.items) |func| {
         func(self.alloc);
     }
@@ -337,7 +336,9 @@ pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
     }
 }
 
-pub fn init(alloc: std.mem.Allocator) !Self {
+pub fn init() !Self {
+    const alloc = eng.get().general_allocator;
+    
     // Initialize fonts
     var fonts: [@intFromEnum(FontEnum.Count)]font.Font = [_]font.Font{undefined} ** @intFromEnum(FontEnum.Count);
     for (0..@intFromEnum(FontEnum.Count)) |idx| {

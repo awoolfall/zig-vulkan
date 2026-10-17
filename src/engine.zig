@@ -13,14 +13,10 @@ const Log = std.log.scoped(.Engine);
 os: eng.os.Platform,
 window: eng.os.Window,
 gfx: eng.gfx.GfxState,
-physics: eng.physics.PhysicsSystem,
-input: eng.input.InputState,
 time: eng.TimeState,
-debug: db.Debug,
+input: eng.input.InputState,
 asset_manager: eng.assets.AssetManager,
-app: ?*anyopaque,
 ecs: eng.ecs.GenericEcsSystem,
-exe_path: []u8,
 
 general_allocator: std.mem.Allocator,
 frame_arena: std.heap.ArenaAllocator,
@@ -30,21 +26,22 @@ app_dll_filewatcher: eng.assets.FileWatcher,
 app_dll: ?std.DynLib,
 app_interface: AppInterface,
 
+exe_path: []u8,
+
 pub export fn deinit(self: *Self) void {
     self.gfx.flush();
+
+    _ = self.app_interface.fn_deinit();
 
     // deinit ecs before unloading app shared library since it
     // relies on function pointers that may exist in that lib
     self.ecs.deinit();
 
-    self.app_interface.fn_deinit(self.app);
     if (self.app_dll) |*app_dll| {
         app_dll.close();
     }
     self.app_dll_filewatcher.deinit();
 
-    self.physics.deinit();
-    self.debug.deinit();
     self.asset_manager.deinit();
     self.gfx.deinit();
     self.os.deinit();
@@ -64,9 +61,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     const __tracy_zone = eng.ztracy.ZoneN(@src(), "Engine init");
     defer __tracy_zone.End();
 
-    Log.debug("Engine init!", .{});
-    errdefer std.log.debug("Engine deinit!", .{});
-
+    Log.debug("Initialising engine.", .{});
     const engine = try alloc.create(Self);
     errdefer alloc.destroy(engine);
 
@@ -79,25 +74,30 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     errdefer engine.frame_arena.deinit();
     engine.frame_allocator = engine.frame_arena.allocator();
 
+    Log.debug("Determining executable path.", .{});
     engine.exe_path = try std.fs.selfExeDirPathAlloc(engine.general_allocator);
     engine.exe_path = try alloc.realloc(engine.exe_path, engine.exe_path.len + 1);
     engine.exe_path[engine.exe_path.len - 1] = '\\';
+    Log.debug("Executable path is {s}", .{engine.exe_path});
     errdefer engine.general_allocator.free(engine.exe_path);
 
+    Log.debug("Initialising zmesh.", .{});
     zmesh.init(engine.general_allocator);
     errdefer zmesh.deinit();
 
+    Log.debug("Initialising time.", .{});
     engine.time = eng.TimeState.init();
     errdefer engine.time.deinit();
 
-    Log.debug("Calling Input init", .{});
+    Log.debug("Initialising input.", .{});
     engine.input = try eng.input.InputState.init();
     errdefer engine.input.deinit();
 
-    Log.debug("Calling Window init!", .{});
+    Log.debug("Initialising OS Platform.", .{});
     engine.os = try eng.os.Platform.init();
     errdefer engine.os.deinit();
 
+    Log.debug("Creating main window.", .{});
     try engine.os.create_new_window(0, 0);
     while (true) {
         const event = try engine.os.pull_event();
@@ -110,11 +110,12 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
         }
     }
 
-    Log.debug("Calling GFX init!", .{});
+    Log.debug("Initialising GFX.", .{});
     engine.gfx = try eng.gfx.GfxState.init(engine.general_allocator, engine.main_window());
     errdefer engine.gfx.deinit();
     try engine.gfx.init_late(engine.main_window());
 
+    Log.debug("Initialising asset manager.", .{});
     engine.asset_manager = blk: {
         const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "../../res"});
         defer engine.general_allocator.free(resources_path);
@@ -123,28 +124,25 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     };
     errdefer engine.asset_manager.deinit();
 
-    engine.debug = try db.Debug.init(engine.general_allocator);
-    errdefer engine.debug.deinit();
-
-    Log.debug("Calling physics init", .{});
-    engine.physics = try eng.physics.PhysicsSystem.init(engine.general_allocator);
-    errdefer engine.physics.deinit();
-
+    Log.debug("Initialising ECS.", .{});
     engine.ecs = try eng.ecs.GenericEcsSystem.init(engine.general_allocator);
     errdefer engine.ecs.deinit();
 
-    // register standard resources
+    Log.debug("Registering standard ECS resources.", .{});
     inline for (.{
-        eng.ui
+        eng.ui,
+        eng.physics.PhysicsSystem,
+        eng.Debug,
     }) |T| {
         try engine.ecs.register_resource(T);
     }
 
-    // register standard components
+    Log.debug("Registering standard ECS components.", .{});
     inline for (eng.ecs.StandardEntityComponents) |T| {
         try engine.ecs.register_component(T);
     }
 
+    Log.debug("Loading App shared library.", .{});
     const app_dll_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "app.dll"});
     defer engine.general_allocator.free(app_dll_path);
 
@@ -155,17 +153,17 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     try engine.reload_app_dll();
     errdefer engine.app_dll.?.close();
 
-    Log.debug("Engine inited!", .{});
+    Log.debug("Finished initialising engine.", .{});
 
-    Log.debug("Creating app!", .{});
-    engine.app = engine.app_interface.fn_init(engine);
-    if (engine.app == null) {
-        return error.AppInitFailed;
+    Log.debug("Initialising App.", .{});
+    if (engine.app_interface.fn_init() != 0) {
+        return error.AppFailedInit;
     }
-    errdefer engine.app_interface.fn_deinit(engine.app);
+    errdefer engine.app_interface.fn_deinit();
+
+    Log.debug("Finished initialising app.", .{});
 
     engine.gfx.flush();
-
     return engine;
 }
 
@@ -228,10 +226,16 @@ pub export fn run(engine: *Self) void {
 
                 engine.input.start_new_frame();
 
-                var physics_iter = engine.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent });
-                engine.physics.update(physics_iter.create_generic_iterator());
+                if (engine.ecs.resource_exists(eng.physics.PhysicsSystem)) blk: {
+                    const physics_system = engine.ecs.get_resource(eng.physics.PhysicsSystem) catch |err| {
+                        std.log.warn("Failed to get physics system resource: {}", .{err});
+                        break :blk;
+                    };
+                    var physics_iter = engine.ecs.query_iterator(.{eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent});
+                    physics_system.update(physics_iter.create_generic_iterator());
+                }
 
-                if (engine.app_interface.fn_update(engine.app, engine) != 0) {
+                if (engine.app_interface.fn_update() != 0) {
                     engine.main_window().close_window();
                     break :main_loop;
                 }
