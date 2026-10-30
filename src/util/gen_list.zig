@@ -9,7 +9,7 @@ pub const GenerationalIndex = struct {
     }
 
     pub fn invalid() GenerationalIndex {
-        return GenerationalIndex { .index = 0, .generation = 0 };
+        return GenerationalIndex{ .index = 0, .generation = 0 };
     }
 
     pub fn is_invalid(self: GenerationalIndex) bool {
@@ -32,7 +32,7 @@ pub fn GenerationalList(comptime T: type) type {
         free_list: std.ArrayList(usize),
 
         pub fn init(allocator: std.mem.Allocator) !Self {
-            return Self {
+            return Self{
                 .allocator = allocator,
 
                 .data = .empty,
@@ -52,7 +52,7 @@ pub fn GenerationalList(comptime T: type) type {
             const free_list = try self.free_list.clone(alloc);
             errdefer free_list.deinit(alloc);
 
-            return Self {
+            return Self{
                 .allocator = alloc,
                 .data = data,
                 .free_list = free_list,
@@ -70,7 +70,7 @@ pub fn GenerationalList(comptime T: type) type {
             var free_idx = self.find_free();
             // if there are no free index's, then append to list
             if (free_idx == null) {
-                try self.data.append(self.allocator, ItemType {});
+                try self.data.append(self.allocator, ItemType{});
                 free_idx = self.data.items.len - 1;
             }
 
@@ -79,7 +79,7 @@ pub fn GenerationalList(comptime T: type) type {
             // increment generation so that old references are invalidated
             self.data.items[free_idx.?].generation += 1;
 
-            return GenerationalIndex {
+            return GenerationalIndex{
                 .index = free_idx.?,
                 .generation = self.data.items[free_idx.?].generation,
             };
@@ -87,7 +87,9 @@ pub fn GenerationalList(comptime T: type) type {
 
         /// Removes an item from the list provided the supplied handle is valid.
         pub fn remove(self: *Self, idx: GenerationalIndex) !void {
-            if (idx.is_invalid()) { return error.InvalidIndex; }
+            if (idx.is_invalid()) {
+                return error.InvalidIndex;
+            }
             if (idx.index >= self.data.items.len) {
                 return error.OutOfBoundsIndex;
             }
@@ -107,7 +109,9 @@ pub fn GenerationalList(comptime T: type) type {
 
         /// Gets an item from the list by handle.
         pub fn get(self: *const Self, idx: GenerationalIndex) ?*T {
-            if (idx.is_invalid()) { return null; }
+            if (idx.is_invalid()) {
+                return null;
+            }
             if (idx.index >= self.data.items.len) {
                 return null;
             }
@@ -145,7 +149,7 @@ pub fn GenerationalListIterator(comptime T: type) type {
         index: usize,
 
         pub fn init(list: *GenerationalList(T)) Self {
-            return Self {
+            return Self{
                 .list = list,
                 .index = 0,
             };
@@ -244,7 +248,7 @@ test "GenerationalList remove with invalid generation" {
     const one = try list.insert(1);
     const two = try list.insert(2);
     const three = try list.insert(3);
-    
+
     try list.remove(one);
     const one_gen_1 = try list.insert(11);
 
@@ -282,10 +286,10 @@ test "GenerationalList out of bounds" {
     try list.remove(three);
 
     // test out of bounds
-    try testing.expectEqual(null, list.get(GenerationalIndex { .index = 0, .generation = 0 }));
-    try testing.expectEqual(null, list.get(GenerationalIndex { .index = 1, .generation = 0 }));
-    try testing.expectEqual(null, list.get(GenerationalIndex { .index = 0, .generation = 1 }));
-    try testing.expectEqual(null, list.get(GenerationalIndex { .index = 1, .generation = 1 }));
-    try testing.expectEqual(null, list.get(GenerationalIndex { .index = 10000, .generation = 1 }));
-    try testing.expectEqual(null, list.get(GenerationalIndex { .index = 0, .generation = 10000 }));
+    try testing.expectEqual(null, list.get(GenerationalIndex{ .index = 0, .generation = 0 }));
+    try testing.expectEqual(null, list.get(GenerationalIndex{ .index = 1, .generation = 0 }));
+    try testing.expectEqual(null, list.get(GenerationalIndex{ .index = 0, .generation = 1 }));
+    try testing.expectEqual(null, list.get(GenerationalIndex{ .index = 1, .generation = 1 }));
+    try testing.expectEqual(null, list.get(GenerationalIndex{ .index = 10000, .generation = 1 }));
+    try testing.expectEqual(null, list.get(GenerationalIndex{ .index = 0, .generation = 10000 }));
 }

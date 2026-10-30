@@ -27,7 +27,7 @@ pub fn deinit(self: *Self) void {
 pub fn init(alloc: std.mem.Allocator) !Self {
     _ = alloc;
 
-    return Self {};
+    return Self{};
 }
 
 pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseType {
@@ -62,7 +62,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseT
         }
     } else return error.AnimationDoesNotExistInModel;
 
-    return BaseType {
+    return BaseType{
         .model_id = model_asset_id,
         .animation_id = animation_idx,
     };

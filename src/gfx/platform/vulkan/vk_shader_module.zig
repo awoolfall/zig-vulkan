@@ -23,10 +23,10 @@ pub const ShaderModuleVulkan = struct {
         defer alloc.free(aligned_data);
         @memcpy(aligned_data, info.spirv_data);
 
-        const shader_create_info = c.VkShaderModuleCreateInfo {
+        const shader_create_info = c.VkShaderModuleCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
             .codeSize = @intCast(aligned_data.len),
-            .pCode = @ptrCast(aligned_data.ptr),// @ptrCast(@alignCast(shader_data.ptr)),
+            .pCode = @ptrCast(aligned_data.ptr), // @ptrCast(@alignCast(shader_data.ptr)),
         };
 
         var shader_module: c.VkShaderModule = undefined;

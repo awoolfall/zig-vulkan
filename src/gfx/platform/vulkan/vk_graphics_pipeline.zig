@@ -17,7 +17,7 @@ pub const GraphicsPipelineVulkan = struct {
         c.vkDestroyPipeline(device, self.vk_graphics_pipeline, null);
         c.vkDestroyPipelineLayout(device, self.vk_pipeline_layout, null);
     }
-    
+
     pub fn init(info: gf.GraphicsPipelineInfo) !Self {
         const render_pass = try info.render_pass.get();
         std.debug.assert(info.subpass_index < render_pass.platform.subpass_attachment_refs.len);
@@ -26,20 +26,20 @@ pub const GraphicsPipelineVulkan = struct {
         var arena_struct = std.heap.ArenaAllocator.init(alloc);
         defer arena_struct.deinit();
         const arena = arena_struct.allocator();
-        
+
         const dynamic_states: []const c.VkDynamicState = &.{
             c.VK_DYNAMIC_STATE_VIEWPORT,
             c.VK_DYNAMIC_STATE_SCISSOR,
         };
 
-        const dynamic_state_info = c.VkPipelineDynamicStateCreateInfo {
+        const dynamic_state_info = c.VkPipelineDynamicStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
             .pDynamicStates = @ptrCast(dynamic_states.ptr),
             .dynamicStateCount = @intCast(dynamic_states.len),
         };
 
         const vertex_input = &info.vertex_input.platform;
-        const vertex_input_info = c.VkPipelineVertexInputStateCreateInfo {
+        const vertex_input_info = c.VkPipelineVertexInputStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 
             .pVertexBindingDescriptions = @ptrCast(vertex_input.vk_vertex_input_binding_description.ptr),
@@ -49,19 +49,19 @@ pub const GraphicsPipelineVulkan = struct {
             .vertexAttributeDescriptionCount = @intCast(vertex_input.vk_vertex_input_attrib_description.len),
         };
 
-        const input_assembly_info = c.VkPipelineInputAssemblyStateCreateInfo {
+        const input_assembly_info = c.VkPipelineInputAssemblyStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
             .primitiveRestartEnable = c.VK_FALSE,
             .topology = vk.topology_to_vulkan(info.topology),
         };
 
-        const viewport_info = c.VkPipelineViewportStateCreateInfo {
+        const viewport_info = c.VkPipelineViewportStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
             .viewportCount = 1, // @TODO: attachment count?
             .scissorCount = 1,
         };
 
-        const rasterizer_info = c.VkPipelineRasterizationStateCreateInfo {
+        const rasterizer_info = c.VkPipelineRasterizationStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
             .rasterizerDiscardEnable = c.VK_FALSE,
             .cullMode = vk.cullmode_to_vulkan(info.cull_mode),
@@ -75,7 +75,7 @@ pub const GraphicsPipelineVulkan = struct {
             .polygonMode = vk.fillmode_to_vulkan(info.rasterization_fill_mode),
         };
 
-        const multisample_info = c.VkPipelineMultisampleStateCreateInfo {
+        const multisample_info = c.VkPipelineMultisampleStateCreateInfo{
             // @TODO: add multisample support?
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
             .alphaToCoverageEnable = c.VK_FALSE,
@@ -86,7 +86,7 @@ pub const GraphicsPipelineVulkan = struct {
             .sampleShadingEnable = c.VK_FALSE,
         };
 
-        const depth_info = c.VkPipelineDepthStencilStateCreateInfo {
+        const depth_info = c.VkPipelineDepthStencilStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
             .depthTestEnable = vk.bool_to_vulkan(info.depth_test != null),
             .depthCompareOp = if (info.depth_test) |d| vk.compareop_to_vulkan(d.compare_op) else c.VK_COMPARE_OP_ALWAYS,
@@ -106,12 +106,12 @@ pub const GraphicsPipelineVulkan = struct {
             const attachment = render_pass.attachments_info[aidx];
 
             if (!attachment.format.is_depth()) {
-                color_blend_attachments[color_blend_attachments_len] = vk.blendtype_to_vulkan(attachment.blend_type); 
+                color_blend_attachments[color_blend_attachments_len] = vk.blendtype_to_vulkan(attachment.blend_type);
                 color_blend_attachments_len += 1;
             }
         }
 
-        const color_blend_info = c.VkPipelineColorBlendStateCreateInfo {
+        const color_blend_info = c.VkPipelineColorBlendStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .pAttachments = @ptrCast(color_blend_attachments.ptr),
             .attachmentCount = color_blend_attachments_len,
@@ -136,14 +136,14 @@ pub const GraphicsPipelineVulkan = struct {
             std.debug.assert((p.size % 4) == 0);
             std.debug.assert((p.offset + p.size) <= 128);
 
-            vk_push_constant_ranges[idx] = c.VkPushConstantRange {
+            vk_push_constant_ranges[idx] = c.VkPushConstantRange{
                 .stageFlags = vk.shaderstageflags_to_vulkan(p.shader_stages),
                 .offset = p.offset,
                 .size = p.size,
             };
         }
 
-        const pipeline_layout_info = c.VkPipelineLayoutCreateInfo {
+        const pipeline_layout_info = c.VkPipelineLayoutCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .pSetLayouts = @ptrCast(vk_set_layouts.ptr),
             .setLayoutCount = @intCast(vk_set_layouts.len),
@@ -158,22 +158,22 @@ pub const GraphicsPipelineVulkan = struct {
         const vk_shader_stages = try arena.alloc(c.VkPipelineShaderStageCreateInfo, 2); // TODO get other shader stages working
         defer arena.free(vk_shader_stages);
 
-        vk_shader_stages[0] = c.VkPipelineShaderStageCreateInfo {
+        vk_shader_stages[0] = c.VkPipelineShaderStageCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
             .module = info.vertex_shader.module.platform.vk_shader_module,
             .pName = @ptrCast(info.vertex_shader.entry_point.ptr),
             .pSpecializationInfo = null,
         };
-        vk_shader_stages[1] = c.VkPipelineShaderStageCreateInfo {
+        vk_shader_stages[1] = c.VkPipelineShaderStageCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
             .module = info.pixel_shader.module.platform.vk_shader_module,
             .pName = @ptrCast(info.pixel_shader.entry_point.ptr),
             .pSpecializationInfo = null,
         };
-        
-        const graphics_pipeline_info = c.VkGraphicsPipelineCreateInfo {
+
+        const graphics_pipeline_info = c.VkGraphicsPipelineCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 
             .pStages = @ptrCast(vk_shader_stages.ptr),
@@ -201,7 +201,7 @@ pub const GraphicsPipelineVulkan = struct {
         try vkt(c.vkCreateGraphicsPipelines(eng.get().gfx.platform.device, @ptrCast(c.VK_NULL_HANDLE), 1, &graphics_pipeline_info, null, &vk_graphics_pipeline));
         errdefer c.vkDestroyPipeline(eng.get().gfx.platform.device, vk_graphics_pipeline, null);
 
-        return Self {
+        return Self{
             .vk_pipeline_layout = vk_pipeline_layout,
             .vk_graphics_pipeline = vk_graphics_pipeline,
         };

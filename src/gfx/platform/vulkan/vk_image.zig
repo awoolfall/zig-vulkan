@@ -46,9 +46,8 @@ pub const ImageVulkan = struct {
 
         const vk_format = vk.textureformat_to_vulkan(info.format);
 
-        const image_count = 
-            if (usage_flags_plus.RenderTarget or usage_flags_plus.DepthStencil) GfxStateVulkan.get().frames_in_flight()
-            else 1;
+        const image_count =
+            if (usage_flags_plus.RenderTarget or usage_flags_plus.DepthStencil) GfxStateVulkan.get().frames_in_flight() else 1;
 
         const images = try alloc.alloc(ImageData, image_count);
         errdefer alloc.free(images);
@@ -59,15 +58,15 @@ pub const ImageVulkan = struct {
             c.vkDestroyImage(GfxStateVulkan.get().device, i.vk_image, null);
         };
 
-        const vk_image_type: c.VkImageType = if (info.depth <= 1) c.VK_IMAGE_TYPE_2D else c.VK_IMAGE_TYPE_3D; 
+        const vk_image_type: c.VkImageType = if (info.depth <= 1) c.VK_IMAGE_TYPE_2D else c.VK_IMAGE_TYPE_3D;
 
         for (0..image_count) |_| {
-            const image_info = c.VkImageCreateInfo {
+            const image_info = c.VkImageCreateInfo{
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                 .flags = if (info.is_cube) c.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT else 0,
                 .format = vk_format,
                 .imageType = vk_image_type,
-                .extent = c.VkExtent3D {
+                .extent = c.VkExtent3D{
                     .width = info.width,
                     .height = info.height,
                     .depth = @max(info.depth, 1),
@@ -88,7 +87,7 @@ pub const ImageVulkan = struct {
             var memory_requirements: c.VkMemoryRequirements = undefined;
             c.vkGetImageMemoryRequirements(GfxStateVulkan.get().device, vk_image, &memory_requirements);
 
-            const alloc_info = c.VkMemoryAllocateInfo {
+            const alloc_info = c.VkMemoryAllocateInfo{
                 .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                 .allocationSize = memory_requirements.size,
                 .memoryTypeIndex = try vk.find_vulkan_memory_type(memory_requirements.memoryTypeBits, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
@@ -107,7 +106,7 @@ pub const ImageVulkan = struct {
             });
         }
 
-        var self = Self {
+        var self = Self{
             .images = images,
             .vk_format = vk_format,
             .format = info.format,
@@ -119,7 +118,7 @@ pub const ImageVulkan = struct {
             defer staging_buffer.deinit();
 
             {
-                var mapped_buffer = try staging_buffer.map(.{ .write = .Infrequent, });
+                var mapped_buffer = try staging_buffer.map(.{ .write = .Infrequent });
                 defer mapped_buffer.unmap();
 
                 const mapped_slice = mapped_buffer.data_array(u8, buffer_length);
@@ -133,43 +132,32 @@ pub const ImageVulkan = struct {
                     var command_buffer = try vk.begin_single_time_command_buffer(&GfxStateVulkan.get().all_command_pool);
                     defer vk.end_single_time_command_buffer(&command_buffer, null);
 
-                    const region = c.VkBufferImageCopy {
+                    const region = c.VkBufferImageCopy{
                         .bufferOffset = 0,
                         .bufferRowLength = 0,
                         .bufferImageHeight = 0,
-
                         .imageSubresource = .{
-                            .aspectMask = 
-                                if (self.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT
-                                else c.VK_IMAGE_ASPECT_COLOR_BIT,
+                            .aspectMask = if (self.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT,
                             .mipLevel = 0,
                             .baseArrayLayer = 0,
                             .layerCount = 1,
                         },
-
-                        .imageOffset = .{ .x = 0, .y = 0, .z = 0, },
+                        .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
                         .imageExtent = .{
                             .width = info.width,
                             .height = info.height,
                             .depth = info.depth,
-                        }
+                        },
                     };
 
-                    c.vkCmdCopyBufferToImage(
-                        command_buffer.platform.vk_command_buffer,
-                        staging_buffer.get_frame_vk_buffer(),
-                        images[image_idx].vk_image,
-                        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        1,
-                        &region
-                    );
+                    c.vkCmdCopyBufferToImage(command_buffer.platform.vk_command_buffer, staging_buffer.get_frame_vk_buffer(), images[image_idx].vk_image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
                     // generate mipmaps
                     var mip_width: i32 = @intCast(info.width);
                     var mip_height: i32 = @intCast(info.height);
 
                     for (1..info.mip_levels) |mip_level| {
-                        const barrier0_info = c.VkImageMemoryBarrier {
+                        const barrier0_info = c.VkImageMemoryBarrier{
                             .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                             .image = images[image_idx].vk_image,
                             .oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -184,20 +172,25 @@ pub const ImageVulkan = struct {
                                 .layerCount = 1,
                                 .baseMipLevel = @intCast(mip_level - 1),
                                 .levelCount = 1,
-                            }
+                            },
                         };
 
                         c.vkCmdPipelineBarrier(
                             command_buffer.platform.vk_command_buffer,
-                            c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                            0, null,
-                            0, null,
-                            1, @ptrCast(&barrier0_info)
+                            c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            0,
+                            0,
+                            null,
+                            0,
+                            null,
+                            1,
+                            @ptrCast(&barrier0_info),
                         );
 
-                        const blit = c.VkImageBlit {
+                        const blit = c.VkImageBlit{
                             .srcOffsets = .{
-                                .{ .x = 0, .y = 0, .z = 0, },
+                                .{ .x = 0, .y = 0, .z = 0 },
                                 .{ .x = mip_width, .y = mip_height, .z = 1 },
                             },
                             .dstOffsets = .{
@@ -215,18 +208,21 @@ pub const ImageVulkan = struct {
                                 .baseArrayLayer = 0,
                                 .layerCount = 1,
                                 .mipLevel = @intCast(mip_level),
-                            }
+                            },
                         };
 
                         c.vkCmdBlitImage(
                             command_buffer.platform.vk_command_buffer,
-                            images[image_idx].vk_image, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                            images[image_idx].vk_image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                            1, &blit,
-                            c.VK_FILTER_LINEAR
+                            images[image_idx].vk_image,
+                            c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            images[image_idx].vk_image,
+                            c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            1,
+                            &blit,
+                            c.VK_FILTER_LINEAR,
                         );
 
-                        const barrier1_info = c.VkImageMemoryBarrier {
+                        const barrier1_info = c.VkImageMemoryBarrier{
                             .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                             .image = images[image_idx].vk_image,
                             .oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -241,19 +237,28 @@ pub const ImageVulkan = struct {
                                 .layerCount = 1,
                                 .baseMipLevel = @intCast(mip_level - 1),
                                 .levelCount = 1,
-                            }
+                            },
                         };
 
                         c.vkCmdPipelineBarrier(
                             command_buffer.platform.vk_command_buffer,
-                            c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0,
-                            0, null,
-                            0, null,
-                            1, @ptrCast(&barrier1_info)
+                            c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            c.VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+                            0,
+                            0,
+                            null,
+                            0,
+                            null,
+                            1,
+                            @ptrCast(&barrier1_info),
                         );
 
-                        if (mip_width > 1) { mip_width = @divTrunc(mip_width, 2); }
-                        if (mip_height > 1) { mip_height = @divTrunc(mip_height, 2); }
+                        if (mip_width > 1) {
+                            mip_width = @divTrunc(mip_width, 2);
+                        }
+                        if (mip_height > 1) {
+                            mip_height = @divTrunc(mip_height, 2);
+                        }
                     }
                 }
             }
@@ -263,7 +268,7 @@ pub const ImageVulkan = struct {
             try self.transition_layout(
                 image_idx,
                 if (data) |_| .TransferDstOptimal else .Undefined,
-                info.dst_layout
+                info.dst_layout,
             );
         }
 
@@ -282,21 +287,20 @@ pub const ImageVulkan = struct {
     }
 
     pub const MappedImage = struct {
-
         pub fn unmap(self: *const MappedImage) void {
             _ = self;
         }
 
-        pub fn data(self: *const MappedImage, comptime Type: type) [*]align(16)Type {
+        pub fn data(self: *const MappedImage, comptime Type: type) [*]align(16) Type {
             _ = self;
             unreachable;
         }
     };
 
     fn transition_layout(
-        self: *Self, 
+        self: *Self,
         image_index: usize,
-        old_layout: gf.ImageLayout, 
+        old_layout: gf.ImageLayout,
         new_layout: gf.ImageLayout,
     ) !void {
         var cmd = try vk.begin_single_time_command_buffer(&GfxStateVulkan.get().all_command_pool);
@@ -352,7 +356,7 @@ pub const ImageVulkan = struct {
             else => unreachable,
         }
 
-        const image_barrier = c.VkImageMemoryBarrier {
+        const image_barrier = c.VkImageMemoryBarrier{
             .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .image = self.images[image_index].vk_image,
             .oldLayout = vk.imagelayout_to_vulkan(old_layout),
@@ -362,9 +366,7 @@ pub const ImageVulkan = struct {
             .srcAccessMask = src_access,
             .dstAccessMask = dst_access,
             .subresourceRange = .{
-                .aspectMask = 
-                    if (self.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT
-                    else c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .aspectMask = if (self.format.is_depth()) c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT,
                 .baseMipLevel = 0,
                 .levelCount = c.VK_REMAINING_MIP_LEVELS,
                 .baseArrayLayer = 0,
@@ -372,13 +374,16 @@ pub const ImageVulkan = struct {
             },
         };
         c.vkCmdPipelineBarrier(
-            cmd.platform.vk_command_buffer, 
-            src_stage, 
-            dst_stage, 
-            0, 
-            0, null,
-            0, null,
-            1, &image_barrier
+            cmd.platform.vk_command_buffer,
+            src_stage,
+            dst_stage,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &image_barrier,
         );
     }
 };

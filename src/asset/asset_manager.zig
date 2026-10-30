@@ -43,7 +43,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn init(alloc: std.mem.Allocator, resource_directory_path: []const u8) !Self {
-    var dir = try std.fs.openDirAbsolute(resource_directory_path, .{ .iterate = true, });
+    var dir = try std.fs.openDirAbsolute(resource_directory_path, .{ .iterate = true });
     errdefer dir.close();
 
     const owned_resource_directory_str = try std.fs.cwd().realpathAlloc(alloc, resource_directory_path);
@@ -62,7 +62,7 @@ pub fn init(alloc: std.mem.Allocator, resource_directory_path: []const u8) !Self
         }
     }
 
-    return Self {
+    return Self{
         .alloc = alloc,
         .resource_directory = dir,
         .resource_directory_str = owned_resource_directory_str,
@@ -127,7 +127,9 @@ pub fn generate_unique_id() u64 {
 
 pub fn get_asset_type_index(comptime T: type) comptime_int {
     inline for (AssetTypeInfo.@"struct".fields, 0..) |_, idx| {
-        if (T == StandardAssets[idx]) { return idx; }
+        if (T == StandardAssets[idx]) {
+            return idx;
+        }
     }
     @compileError(std.fmt.comptimePrint("The type '{s}' is not an asset type.", .{@typeName(T)}));
 }
@@ -135,7 +137,7 @@ pub fn get_asset_type_index(comptime T: type) comptime_int {
 pub fn get_asset_unique_id(self: *Self, asset_uri: []const u8) !u64 {
     var arena = std.heap.ArenaAllocator.init(self.alloc);
     defer arena.deinit();
-    
+
     const uri = try std.Uri.parse(asset_uri);
 
     const path = try uri.path.toRawMaybeAlloc(arena.allocator());
@@ -177,7 +179,7 @@ pub fn get_asset_unique_id(self: *Self, asset_uri: []const u8) !u64 {
 
         const new_asset_id = generate_unique_id();
 
-        const new_asset_metadata = AssetMetadata {
+        const new_asset_metadata = AssetMetadata{
             .uri = owned_uri,
             .type_index = std.math.maxInt(usize),
             .last_modify_time = last_modify_time,
@@ -207,7 +209,7 @@ pub fn get_asset_id(self: *Self, asset_uri: []const u8) !GenericAssetId {
 fn load_asset(self: *Self, comptime AssetType: type, asset_id: GenericAssetId) !void {
     const __tracy_zone = eng.ztracy.ZoneN(@src(), "load asset");
     defer __tracy_zone.End();
-    
+
     const asset_type_index = get_asset_type_index(AssetType);
     const asset_metadata = self.asset_metadata.getPtr(asset_id.unique_id) orelse return error.AssetMetadataDoesNotExist;
 
@@ -233,7 +235,7 @@ fn unload_asset(self: *Self, comptime AssetType: type, asset_id: GenericAssetId)
     }
 }
 
-const ReloadAssetError = error {
+const ReloadAssetError = error{
     AssetHasNoMetadata,
     FailedToResolveUri,
     FailedToStatFile,
@@ -243,10 +245,10 @@ const ReloadAssetError = error {
 
 fn reload_asset_if_required(self: *Self, asset_id: GenericAssetId) ReloadAssetError!void {
     // TODO: disable this function in release
-    
+
     const __tracy_zone = eng.ztracy.ZoneN(@src(), "asset reload if required");
     defer __tracy_zone.End();
-    
+
     const asset_metadata = self.asset_metadata.getPtr(asset_id.unique_id) orelse return error.AssetHasNoMetadata;
 
     const last_modify_time = if (asset_metadata.base_asset_id) |base_asset_id| blk: {
@@ -278,7 +280,7 @@ fn reload_asset_if_required(self: *Self, asset_id: GenericAssetId) ReloadAssetEr
                 }
             }
         }
-        
+
         asset_metadata.last_modify_time = last_modify_time;
     }
 }
@@ -352,14 +354,14 @@ fn AssetTypesTuple(comptime AssetTypes: anytype) type {
                 const loader = try AssetTypes[idx].Loader.init(alloc);
                 errdefer loader.deinit();
 
-                return Self_AssetType {
+                return Self_AssetType{
                     .loader = loader,
                     .map = map,
                 };
             }
         };
 
-        type_fields[idx] = std.builtin.Type.StructField {
+        type_fields[idx] = std.builtin.Type.StructField{
             .name = std.fmt.comptimePrint("{d}", .{idx}),
             .type = AssetData,
             .default_value_ptr = null,
@@ -374,6 +376,6 @@ fn AssetTypesTuple(comptime AssetTypes: anytype) type {
             .fields = &type_fields,
             .decls = &.{},
             .layout = .auto,
-        }
+        },
     });
 }

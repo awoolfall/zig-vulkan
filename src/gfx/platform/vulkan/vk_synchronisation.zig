@@ -18,7 +18,7 @@ pub const SemaphoreVulkan = struct {
     pub inline fn init(info: gf.SemaphoreCreateInfo) !Self {
         _ = info;
 
-        const semaphore_info = c.VkSemaphoreCreateInfo {
+        const semaphore_info = c.VkSemaphoreCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         };
 
@@ -26,7 +26,7 @@ pub const SemaphoreVulkan = struct {
         try vkt(c.vkCreateSemaphore(GfxStateVulkan.get().device, &semaphore_info, null, &vk_semaphore));
         errdefer c.vkDestroySemaphore(GfxStateVulkan.get().device, vk_semaphore, null);
 
-        return Self {
+        return Self{
             .vk_semaphore = vk_semaphore,
         };
     }
@@ -42,7 +42,7 @@ pub const FenceVulkan = struct {
     }
 
     pub inline fn init(info: gf.FenceCreateInfo) !Self {
-        const fence_info = c.VkFenceCreateInfo {
+        const fence_info = c.VkFenceCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .flags = if (info.create_signalled) c.VK_FENCE_CREATE_SIGNALED_BIT else 0,
         };
@@ -51,18 +51,18 @@ pub const FenceVulkan = struct {
         try vkt(c.vkCreateFence(GfxStateVulkan.get().device, &fence_info, null, &vk_fence));
         errdefer c.vkDestroyFence(GfxStateVulkan.get().device, vk_fence, null);
 
-        return Self {
+        return Self{
             .vk_fence = vk_fence,
         };
     }
 
     pub inline fn wait(self: *Self) !void {
         try vkt(c.vkWaitForFences(
-                GfxStateVulkan.get().device,
-                1,
-                @ptrCast(&self.vk_fence),
-                vk.bool_to_vulkan(true),
-                std.math.maxInt(u64)
+            GfxStateVulkan.get().device,
+            1,
+            @ptrCast(&self.vk_fence),
+            vk.bool_to_vulkan(true),
+            std.math.maxInt(u64),
         ));
     }
 
@@ -76,14 +76,14 @@ pub const FenceVulkan = struct {
         }
 
         try vkt(c.vkWaitForFences(
-                GfxStateVulkan.get().device,
-                @intCast(fences.len),
-                @ptrCast(vk_fences[0..].ptr),
-                vk.bool_to_vulkan(true),
-                std.math.maxInt(u64)
+            GfxStateVulkan.get().device,
+            @intCast(fences.len),
+            @ptrCast(vk_fences[0..].ptr),
+            vk.bool_to_vulkan(true),
+            std.math.maxInt(u64),
         ));
     }
-    
+
     pub inline fn wait_any(fences: []const *Self) !void {
         const MAX_FENCES = 16;
         std.debug.assert(fences.len < MAX_FENCES);
@@ -94,11 +94,11 @@ pub const FenceVulkan = struct {
         }
 
         try vkt(c.vkWaitForFences(
-                GfxStateVulkan.get().device,
-                @intCast(fences.len),
-                @ptrCast(vk_fences[0..].ptr),
-                vk.bool_to_vulkan(false),
-                std.math.maxInt(u64)
+            GfxStateVulkan.get().device,
+            @intCast(fences.len),
+            @ptrCast(vk_fences[0..].ptr),
+            vk.bool_to_vulkan(false),
+            std.math.maxInt(u64),
         ));
     }
 

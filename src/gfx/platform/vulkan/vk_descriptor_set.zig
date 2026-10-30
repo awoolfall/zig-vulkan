@@ -31,7 +31,7 @@ pub const DescriptorSetVulkan = struct {
             };
         }
         alloc.free(self.vk_sets);
-        
+
         var write_infos_iter = self.write_infos.valueIterator();
         while (write_infos_iter.next()) |write_info| {
             deinit_update_write_info(&write_info.write);
@@ -57,11 +57,21 @@ pub const DescriptorSetVulkan = struct {
         const alloc = GfxStateVulkan.get().alloc;
 
         switch (info.data) {
-            .UniformBufferArray => |a| { alloc.free(a); },
-            .StorageBufferArray => |a| { alloc.free(a); },
-            .ImageViewArray => |a| { alloc.free(a); },
-            .SamplerArray => |a| { alloc.free(a); },
-            .ImageViewAndSamplerArray => |a| { alloc.free(a); },
+            .UniformBufferArray => |a| {
+                alloc.free(a);
+            },
+            .StorageBufferArray => |a| {
+                alloc.free(a);
+            },
+            .ImageViewArray => |a| {
+                alloc.free(a);
+            },
+            .SamplerArray => |a| {
+                alloc.free(a);
+            },
+            .ImageViewAndSamplerArray => |a| {
+                alloc.free(a);
+            },
             else => {},
         }
     }
@@ -73,19 +83,19 @@ pub const DescriptorSetVulkan = struct {
 
         switch (info.data) {
             .UniformBufferArray => |a| {
-                duped_info.data = .{ .UniformBufferArray = try alloc.dupe(gf.DescriptorSetWriteBufferInfo, a), };
+                duped_info.data = .{ .UniformBufferArray = try alloc.dupe(gf.DescriptorSetWriteBufferInfo, a) };
             },
             .StorageBufferArray => |a| {
-                duped_info.data = .{ .StorageBufferArray = try alloc.dupe(gf.DescriptorSetWriteBufferInfo, a), };
+                duped_info.data = .{ .StorageBufferArray = try alloc.dupe(gf.DescriptorSetWriteBufferInfo, a) };
             },
             .ImageViewArray => |a| {
-                duped_info.data = .{ .ImageViewArray = try alloc.dupe(gf.ImageView.Ref, a), };
+                duped_info.data = .{ .ImageViewArray = try alloc.dupe(gf.ImageView.Ref, a) };
             },
             .SamplerArray => |a| {
-                duped_info.data = .{ .SamplerArray = try alloc.dupe(gf.Sampler.Ref, a), };
+                duped_info.data = .{ .SamplerArray = try alloc.dupe(gf.Sampler.Ref, a) };
             },
             .ImageViewAndSamplerArray => |a| {
-                duped_info.data = .{ .ImageViewAndSamplerArray = try alloc.dupe(gf.ImageViewAndSampler, a), };
+                duped_info.data = .{ .ImageViewAndSamplerArray = try alloc.dupe(gf.ImageViewAndSampler, a) };
             },
             else => {},
         }
@@ -104,10 +114,7 @@ pub const DescriptorSetVulkan = struct {
                 continue;
             };
 
-            const maybe_fetched_write_info = self.write_infos.fetchPut(
-                duped_write.binding,
-                UpdateWriteInfo { .write = duped_write, }
-            ) catch |err| {
+            const maybe_fetched_write_info = self.write_infos.fetchPut(duped_write.binding, UpdateWriteInfo{ .write = duped_write }) catch |err| {
                 std.log.warn("Unable to put new write info into descriptor set: {}", .{err});
                 continue;
             };
@@ -172,7 +179,7 @@ pub const DescriptorSetVulkan = struct {
         for (writes_needed_list.items, 0..) |write, idx| {
             const vk_write_info = &vk_write_infos[idx];
 
-            vk_write_info.* = c.VkWriteDescriptorSet {
+            vk_write_info.* = c.VkWriteDescriptorSet{
                 .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = self.vk_sets[cfi],
                 .dstBinding = write.binding,
@@ -196,7 +203,7 @@ pub const DescriptorSetVulkan = struct {
                     const buffer = try bw.buffer.get();
 
                     const buffer_data = try arena.create(c.VkDescriptorBufferInfo);
-                    buffer_data.* = c.VkDescriptorBufferInfo {
+                    buffer_data.* = c.VkDescriptorBufferInfo{
                         .buffer = buffer.platform.get_frame_vk_buffer(), // TODO frames in flight is a pain in the ass
                         .offset = bw.offset,
                         .range = bw.range,
@@ -209,7 +216,7 @@ pub const DescriptorSetVulkan = struct {
                     const view = try iw.get();
 
                     const view_data = try arena.create(c.VkDescriptorImageInfo);
-                    view_data.* = c.VkDescriptorImageInfo {
+                    view_data.* = c.VkDescriptorImageInfo{
                         .sampler = null,
                         .imageView = view.platform.get_frame_view(),
                         .imageLayout = switch (write.data) {
@@ -218,7 +225,7 @@ pub const DescriptorSetVulkan = struct {
                             else => unreachable,
                         },
                     };
-                    
+
                     vk_write_info.descriptorCount = 1;
                     vk_write_info.pImageInfo = view_data;
                 },
@@ -226,7 +233,7 @@ pub const DescriptorSetVulkan = struct {
                     const sampler = try sw.get();
 
                     const view_data = try arena.create(c.VkDescriptorImageInfo);
-                    view_data.* = c.VkDescriptorImageInfo {
+                    view_data.* = c.VkDescriptorImageInfo{
                         .sampler = sampler.platform.vk_sampler,
                         .imageView = null,
                         .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -240,7 +247,7 @@ pub const DescriptorSetVulkan = struct {
                     const sampler = try iw.sampler.get();
 
                     const view_data = try arena.create(c.VkDescriptorImageInfo);
-                    view_data.* = c.VkDescriptorImageInfo {
+                    view_data.* = c.VkDescriptorImageInfo{
                         .imageView = view.platform.get_frame_view(),
                         .sampler = sampler.platform.vk_sampler,
                         .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -255,7 +262,7 @@ pub const DescriptorSetVulkan = struct {
                     for (buffer_writes, 0..) |bw, bw_idx| {
                         const buffer = try bw.buffer.get();
 
-                        buffer_data_array[bw_idx] = c.VkDescriptorBufferInfo {
+                        buffer_data_array[bw_idx] = c.VkDescriptorBufferInfo{
                             .buffer = buffer.platform.get_frame_vk_buffer(),
                             .offset = bw.offset,
                             .range = bw.range,
@@ -271,7 +278,7 @@ pub const DescriptorSetVulkan = struct {
                     for (image_writes, 0..) |iw, iw_idx| {
                         const view = try iw.get();
 
-                        data_array[iw_idx] = c.VkDescriptorImageInfo {
+                        data_array[iw_idx] = c.VkDescriptorImageInfo{
                             .sampler = null,
                             .imageView = view.platform.get_frame_view(),
                             .imageLayout = switch (write.data) {
@@ -291,7 +298,7 @@ pub const DescriptorSetVulkan = struct {
                     for (sampler_writes, 0..) |sw, sw_idx| {
                         const sampler = try sw.get();
 
-                        data_array[sw_idx] = c.VkDescriptorImageInfo {
+                        data_array[sw_idx] = c.VkDescriptorImageInfo{
                             .sampler = sampler.platform.vk_sampler,
                             .imageView = null,
                             .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -308,16 +315,16 @@ pub const DescriptorSetVulkan = struct {
                         const view = try iw.view.get();
                         const sampler = try iw.sampler.get();
 
-                        data_array[iw_idx] = c.VkDescriptorImageInfo {
+                        data_array[iw_idx] = c.VkDescriptorImageInfo{
                             .imageView = view.platform.get_frame_view(),
                             .sampler = sampler.platform.vk_sampler,
                             .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         };
                     }
-                    
+
                     vk_write_info.descriptorCount = @intCast(data_array.len);
                     vk_write_info.pImageInfo = data_array.ptr;
-                }
+                },
             }
         }
 
@@ -326,7 +333,7 @@ pub const DescriptorSetVulkan = struct {
             @intCast(vk_write_infos.len),
             @ptrCast(vk_write_infos.ptr),
             0,
-            null
+            null,
         );
     }
 };

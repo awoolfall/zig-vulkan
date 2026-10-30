@@ -14,7 +14,7 @@ pub const GfxStateVulkan = struct {
 
     pub const ShaderModule = @import("vk_shader_module.zig").ShaderModuleVulkan;
     pub const VertexInput = @import("vk_vertex_input.zig").VertexInputVulkan;
-    
+
     pub const Buffer = @import("vk_buffer.zig").BufferVulkan;
     pub const Image = @import("vk_image.zig").ImageVulkan;
     pub const ImageView = @import("vk_image_view.zig").ImageViewVulkan;
@@ -47,7 +47,7 @@ pub const GfxStateVulkan = struct {
             return (self.all_family_index != self.cpu_gpu_transfer_family_index);
         }
     };
-    
+
     pub const BufferUpdates = struct {
         vk_buffers: []const c.VkBuffer,
         size: u64,
@@ -103,7 +103,7 @@ pub const GfxStateVulkan = struct {
             cmd.deinit();
         }
         self.alloc.free(self.pre_present_cmd_buffers);
-        
+
         self.swapchain.deinit(self);
 
         self.all_command_pool.deinit();
@@ -114,7 +114,7 @@ pub const GfxStateVulkan = struct {
         if (self.debug_messenger) |m| blk: {
             const vkDestroyDebugUtilsMessengerEXT = @as(
                 c.PFN_vkDestroyDebugUtilsMessengerEXT,
-                @ptrCast(c.vkGetInstanceProcAddr(self.instance, "vkDestroyDebugUtilsMessengerEXT"))
+                @ptrCast(c.vkGetInstanceProcAddr(self.instance, "vkDestroyDebugUtilsMessengerEXT")),
             ) orelse break :blk;
 
             vkDestroyDebugUtilsMessengerEXT(self.instance, m, null);
@@ -181,24 +181,24 @@ pub const GfxStateVulkan = struct {
         try device_extensions.append(alloc, c.VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
         // Declare required physical device features
-        const required_physical_device_features_info = c.VkPhysicalDeviceFeatures {
+        const required_physical_device_features_info = c.VkPhysicalDeviceFeatures{
             .independentBlend = bool_to_vulkan(true),
             .fillModeNonSolid = bool_to_vulkan(true),
         };
-        const required_physical_device_features_info_11 = c.VkPhysicalDeviceVulkan11Features {
+        const required_physical_device_features_info_11 = c.VkPhysicalDeviceVulkan11Features{
             .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
             .pNext = null,
             .shaderDrawParameters = bool_to_vulkan(true),
         };
 
         // Create vulkan instance
-        const create_instance_info = c.VkInstanceCreateInfo {
+        const create_instance_info = c.VkInstanceCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .enabledLayerCount = @intCast(required_instance_layers.items.len),
             .ppEnabledLayerNames = @ptrCast(required_instance_layers.items.ptr),
             .enabledExtensionCount = @intCast(instance_extensions.items.len),
             .ppEnabledExtensionNames = @ptrCast(instance_extensions.items.ptr),
-            .flags = 0,// | c.VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+            .flags = 0, // | c.VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
             .pApplicationInfo = null,
             .pNext = null,
         };
@@ -210,14 +210,12 @@ pub const GfxStateVulkan = struct {
         // Create vulkan debug messenger
         var debug_messenger: ?c.VkDebugUtilsMessengerEXT = null;
         if (Self.ENABLE_VALIDATION_LAYERS) {
-            const debug_messenger_create_info = c.VkDebugUtilsMessengerCreateInfoEXT {
+            const debug_messenger_create_info = c.VkDebugUtilsMessengerCreateInfoEXT{
                 .sType = c.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-                .messageSeverity = 
-                    c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                .messageSeverity = c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
                     c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
                     c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-                .messageType = 
-                    c.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                .messageType = c.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                     c.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                     c.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
                 .pfnUserCallback = &Self.debug_callback,
@@ -225,7 +223,7 @@ pub const GfxStateVulkan = struct {
 
             const vkCreateDebugUtilsMessengerEXT = @as(
                 c.PFN_vkCreateDebugUtilsMessengerEXT,
-                @ptrCast(c.vkGetInstanceProcAddr(vk_instance, "vkCreateDebugUtilsMessengerEXT"))
+                @ptrCast(c.vkGetInstanceProcAddr(vk_instance, "vkCreateDebugUtilsMessengerEXT")),
             ) orelse return error.ExtensionNotPresent;
 
             var vk_debug_messenger: c.VkDebugUtilsMessengerEXT = undefined;
@@ -235,7 +233,7 @@ pub const GfxStateVulkan = struct {
         errdefer if (debug_messenger) |m| blk: {
             const vkDestroyDebugUtilsMessengerEXT = @as(
                 c.PFN_vkDestroyDebugUtilsMessengerEXT,
-                @ptrCast(c.vkGetInstanceProcAddr(vk_instance, "vkDestroyDebugUtilsMessengerEXT"))
+                @ptrCast(c.vkGetInstanceProcAddr(vk_instance, "vkDestroyDebugUtilsMessengerEXT")),
             ) orelse break :blk;
 
             vkDestroyDebugUtilsMessengerEXT(vk_instance, m, null);
@@ -246,7 +244,7 @@ pub const GfxStateVulkan = struct {
         var vk_surface: c.VkSurfaceKHR = undefined;
         switch (@import("builtin").os.tag) {
             .windows => {
-                const surface_create_info = c.VkWin32SurfaceCreateInfoKHR {
+                const surface_create_info = c.VkWin32SurfaceCreateInfoKHR{
                     .sType = c.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
                     .hwnd = @ptrCast(window.hwnd),
                     .hinstance = @ptrCast(eng.get().os.hInstance),
@@ -276,19 +274,17 @@ pub const GfxStateVulkan = struct {
             std.log.info("- {s}", .{std.mem.sliceTo(&prop.deviceName, 0)});
 
             var physical_device_extension_count: u32 = undefined;
-            vkt(c.vkEnumerateDeviceExtensionProperties(physical_device, null, &physical_device_extension_count, null))
-                catch continue;
+            vkt(c.vkEnumerateDeviceExtensionProperties(physical_device, null, &physical_device_extension_count, null)) catch continue;
 
             const physical_device_extension_storage = try alloc.alloc(c.VkExtensionProperties, physical_device_extension_count);
             defer alloc.free(physical_device_extension_storage);
-            vkt(c.vkEnumerateDeviceExtensionProperties(physical_device, null, &physical_device_extension_count, physical_device_extension_storage.ptr))
-                catch continue;
+            vkt(c.vkEnumerateDeviceExtensionProperties(physical_device, null, &physical_device_extension_count, physical_device_extension_storage.ptr)) catch continue;
 
-            var vk_physical_device_features_vulkan_11 = c.VkPhysicalDeviceVulkan11Features {
+            var vk_physical_device_features_vulkan_11 = c.VkPhysicalDeviceVulkan11Features{
                 .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                 .pNext = null,
             };
-            var vk_physical_device_features_2 = c.VkPhysicalDeviceFeatures2 {
+            var vk_physical_device_features_2 = c.VkPhysicalDeviceFeatures2{
                 .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
                 .pNext = @ptrCast(&vk_physical_device_features_vulkan_11),
             };
@@ -336,26 +332,24 @@ pub const GfxStateVulkan = struct {
                     }
                 }
             }
-            if (!supports_all_features) { continue; }
+            if (!supports_all_features) {
+                continue;
+            }
 
             // Retrieve physical device surface properties
             var surface_fomats_count: u32 = 0;
-            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, vk_surface, &surface_fomats_count, null))
-                catch continue;
+            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, vk_surface, &surface_fomats_count, null)) catch continue;
 
             const surface_formats = try alloc.alloc(c.VkSurfaceFormatKHR, surface_fomats_count);
             defer alloc.free(surface_formats);
-            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, vk_surface, &surface_fomats_count, surface_formats.ptr))
-                catch continue;
+            vkt(c.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, vk_surface, &surface_fomats_count, surface_formats.ptr)) catch continue;
 
             var surface_present_modes_count: u32 = 0;
-            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, vk_surface, &surface_present_modes_count, null))
-                catch continue;
+            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, vk_surface, &surface_present_modes_count, null)) catch continue;
 
             const surface_present_modes = try alloc.alloc(c.VkPresentModeKHR, surface_present_modes_count);
             defer alloc.free(surface_present_modes);
-            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, vk_surface, &surface_present_modes_count, surface_present_modes.ptr))
-                catch continue;
+            vkt(c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, vk_surface, &surface_present_modes_count, surface_present_modes.ptr)) catch continue;
 
             // Check physical device supports the required surface properties
             if (surface_fomats_count == 0 or surface_present_modes_count == 0) {
@@ -457,9 +451,9 @@ pub const GfxStateVulkan = struct {
         const queue_family_properties_storage = try alloc.alloc(c.VkQueueFamilyProperties, queue_family_properties_count);
         defer alloc.free(queue_family_properties_storage);
         c.vkGetPhysicalDeviceQueueFamilyProperties(
-            vk_physical_device, 
-            &queue_family_properties_count, 
-            queue_family_properties_storage.ptr
+            vk_physical_device,
+            &queue_family_properties_count,
+            queue_family_properties_storage.ptr,
         );
 
         // Select queue family indices
@@ -477,7 +471,11 @@ pub const GfxStateVulkan = struct {
             };
 
             std.log.info("queue {}: present {}, graphics {}, compute {}, transfer {}", .{
-                idx, (supports_present == c.VK_TRUE), is_graphics, is_compute, is_transfer
+                idx,
+                (supports_present == c.VK_TRUE),
+                is_graphics,
+                is_compute,
+                is_transfer,
             });
 
             if (supports_present == c.VK_TRUE) {
@@ -530,7 +528,7 @@ pub const GfxStateVulkan = struct {
         }
 
         // Create vulkan device
-        const create_device_info = c.VkDeviceCreateInfo {
+        const create_device_info = c.VkDeviceCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
             .pNext = &required_physical_device_features_info_11,
             .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
@@ -542,12 +540,7 @@ pub const GfxStateVulkan = struct {
         };
 
         var vk_device: c.VkDevice = undefined;
-        try vkt(c.vkCreateDevice(
-                vk_physical_device, 
-                &create_device_info,
-                null,
-                &vk_device
-        ));
+        try vkt(c.vkCreateDevice(vk_physical_device, &create_device_info, null, &vk_device));
         errdefer c.vkDestroyDevice(vk_device, null);
         errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
 
@@ -571,7 +564,7 @@ pub const GfxStateVulkan = struct {
             vk_cpu_gpu_transfer_queue = vk_transfer_queue_temp;
         }
 
-        const queues = VkQueues {
+        const queues = VkQueues{
             .all = vk_all_queue,
             .all_family_index = all_queue_idx,
             .present = vk_present_queue,
@@ -582,7 +575,7 @@ pub const GfxStateVulkan = struct {
         };
 
         // Create common command pools for queues
-        const transfer_command_pool_create_info = c.VkCommandPoolCreateInfo {
+        const transfer_command_pool_create_info = c.VkCommandPoolCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .queueFamilyIndex = queues.cpu_gpu_transfer_family_index,
         };
@@ -590,11 +583,13 @@ pub const GfxStateVulkan = struct {
         var vk_transfer_command_pool: c.VkCommandPool = undefined;
         try vkt(c.vkCreateCommandPool(vk_device, &transfer_command_pool_create_info, null, &vk_transfer_command_pool));
 
-        const transfer_command_pool = gf.CommandPool { .platform = CommandPool { .vk_pool = vk_transfer_command_pool, } };
+        const transfer_command_pool = gf.CommandPool{ .platform = CommandPool{
+            .vk_pool = vk_transfer_command_pool,
+        } };
         errdefer transfer_command_pool.deinit();
         errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
 
-        const all_command_pool_create_info = c.VkCommandPoolCreateInfo {
+        const all_command_pool_create_info = c.VkCommandPoolCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .queueFamilyIndex = queues.all_family_index,
             .flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, // TODO: maybe this shouldnt be the default? idk
@@ -603,7 +598,9 @@ pub const GfxStateVulkan = struct {
         var vk_all_command_pool: c.VkCommandPool = undefined;
         try vkt(c.vkCreateCommandPool(vk_device, &all_command_pool_create_info, null, &vk_all_command_pool));
 
-        const all_command_pool = gf.CommandPool { .platform = CommandPool { .vk_pool = vk_all_command_pool, } };
+        const all_command_pool = gf.CommandPool{ .platform = CommandPool{
+            .vk_pool = vk_all_command_pool,
+        } };
         errdefer all_command_pool.deinit();
         errdefer vkt(c.vkDeviceWaitIdle(vk_device)) catch unreachable;
 
@@ -611,7 +608,7 @@ pub const GfxStateVulkan = struct {
         var buffer_updates = try std.ArrayList(BufferUpdates).initCapacity(alloc, 32);
         errdefer buffer_updates.deinit(alloc);
 
-        return Self {
+        return Self{
             .alloc = alloc,
 
             .vk_version = vk_version,
@@ -629,7 +626,7 @@ pub const GfxStateVulkan = struct {
             .all_command_pool = all_command_pool,
             .transfer_command_pool = transfer_command_pool,
 
-            .swapchain = SwapchainVulkan {
+            .swapchain = SwapchainVulkan{
                 .surface_format = surface_format,
                 .present_mode = present_mode,
                 .swapchain = undefined,
@@ -654,7 +651,9 @@ pub const GfxStateVulkan = struct {
         errdefer self.alloc.free(buffer_updates_complete_semaphores);
 
         var buffer_updates_complete_semaphores_list = std.ArrayList(gf.Semaphore).initBuffer(buffer_updates_complete_semaphores);
-        errdefer for (buffer_updates_complete_semaphores_list.items) |s| { s.deinit(); };
+        errdefer for (buffer_updates_complete_semaphores_list.items) |s| {
+            s.deinit();
+        };
 
         for (0..self.frames_in_flight()) |_| {
             const semaphore = try gf.Semaphore.init(.{});
@@ -662,7 +661,7 @@ pub const GfxStateVulkan = struct {
 
             try buffer_updates_complete_semaphores_list.appendBounded(semaphore);
         }
-        
+
         self.buffer_updates_complete_semaphores = buffer_updates_complete_semaphores;
 
         // buffer updates command buffers
@@ -670,15 +669,17 @@ pub const GfxStateVulkan = struct {
         errdefer self.alloc.free(buffer_updates_cmd_buffers);
 
         var buffer_updates_cmd_buffers_list = std.ArrayList(gf.CommandBuffer).initBuffer(buffer_updates_cmd_buffers);
-        errdefer for (buffer_updates_cmd_buffers_list.items) |cmd| { cmd.deinit(); };
+        errdefer for (buffer_updates_cmd_buffers_list.items) |cmd| {
+            cmd.deinit();
+        };
 
         for (0..self.frames_in_flight()) |_| {
-            const cmd = try self.all_command_pool.allocate_command_buffer(.{ .level = .Primary, });
+            const cmd = try self.all_command_pool.allocate_command_buffer(.{ .level = .Primary });
             errdefer cmd.deinit();
 
             try buffer_updates_cmd_buffers_list.appendBounded(cmd);
         }
-        
+
         self.buffer_updates_cmd_buffers = buffer_updates_cmd_buffers;
 
         // pre present command buffers
@@ -686,15 +687,17 @@ pub const GfxStateVulkan = struct {
         errdefer self.alloc.free(pre_present_cmd_buffers);
 
         var pre_present_cmd_buffers_list = std.ArrayList(gf.CommandBuffer).initBuffer(pre_present_cmd_buffers);
-        errdefer for (pre_present_cmd_buffers_list.items) |cmd| { cmd.deinit(); };
+        errdefer for (pre_present_cmd_buffers_list.items) |cmd| {
+            cmd.deinit();
+        };
 
         for (0..self.frames_in_flight()) |_| {
-            const cmd = try self.all_command_pool.allocate_command_buffer(.{ .level = .Primary, });
+            const cmd = try self.all_command_pool.allocate_command_buffer(.{ .level = .Primary });
             errdefer cmd.deinit();
 
             try pre_present_cmd_buffers_list.appendBounded(cmd);
         }
-        
+
         self.pre_present_cmd_buffers = pre_present_cmd_buffers;
 
         // Create swap chain
@@ -709,7 +712,7 @@ pub const GfxStateVulkan = struct {
         self.valid_swapchain = true;
     }
 
-    pub fn debug_callback (
+    pub fn debug_callback(
         severity: c.VkDebugUtilsMessageSeverityFlagBitsEXT,
         messageType: c.VkDebugUtilsMessageTypeFlagsEXT,
         pCallbackData: ?*const c.VkDebugUtilsMessengerCallbackDataEXT,
@@ -737,7 +740,7 @@ pub const GfxStateVulkan = struct {
         });
 
         var addresses: [32]usize = undefined;
-        var stack_trace = std.builtin.StackTrace { .index = 0, .instruction_addresses = &addresses, };
+        var stack_trace = std.builtin.StackTrace{ .index = 0, .instruction_addresses = &addresses };
         std.debug.captureStackTrace(null, &stack_trace);
 
         std.debug.print("stack trace:\n", .{});
@@ -757,7 +760,7 @@ pub const GfxStateVulkan = struct {
                 continue;
             };
 
-            const source_location = symbol_info.source_location orelse std.debug.SourceLocation {
+            const source_location = symbol_info.source_location orelse std.debug.SourceLocation{
                 .file_name = "unknown",
                 .column = 0,
                 .line = 0,
@@ -805,19 +808,21 @@ pub const GfxStateVulkan = struct {
 
         const __tracy_zone = eng.ztracy.ZoneN(@src(), "acquire next image");
         const result = vkt(c.vkAcquireNextImageKHR(
-                self.device,
-                self.swapchain.swapchain,
-                std.math.maxInt(u64),
-                image_available_semaphore.platform.vk_semaphore,
-                null, //c.VK_NULL_HANDLE,
-                &self.swapchain.current_image_index
+            self.device,
+            self.swapchain.swapchain,
+            std.math.maxInt(u64),
+            image_available_semaphore.platform.vk_semaphore,
+            null, //c.VK_NULL_HANDLE,
+            &self.swapchain.current_image_index,
         ));
-        result catch |err| { switch (err) {
-            error.VK_ERROR_OUT_OF_DATE_KHR => {
-                try self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]);
-            },
-            else => return err,
-        } };
+        result catch |err| {
+            switch (err) {
+                error.VK_ERROR_OUT_OF_DATE_KHR => {
+                    try self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]);
+                },
+                else => return err,
+            }
+        };
         __tracy_zone.End();
 
         // Update frame in flight resources before continuing to the new frame
@@ -836,13 +841,13 @@ pub const GfxStateVulkan = struct {
         const cmd = &self.buffer_updates_cmd_buffers[self.current_frame_index()];
         try cmd.reset();
 
-        try cmd.cmd_begin(.{ .one_time_submit = true, });
+        try cmd.cmd_begin(.{ .one_time_submit = true });
 
         // std.log.info("fif update count is {}", .{self.buffer_updates.items.len});
 
         var iter = std.mem.reverseIterator(self.buffer_updates.items);
         while (iter.nextPtr()) |update| {
-            const buffer_copy_region = c.VkBufferCopy {
+            const buffer_copy_region = c.VkBufferCopy{
                 .size = update.size,
                 .dstOffset = 0,
                 .srcOffset = 0,
@@ -852,7 +857,7 @@ pub const GfxStateVulkan = struct {
                 update.vk_buffers[self.last_frames_in_flight_index],
                 update.vk_buffers[self.frames_in_flight_index],
                 1,
-                &buffer_copy_region
+                &buffer_copy_region,
             );
             update.count += 1;
 
@@ -866,14 +871,14 @@ pub const GfxStateVulkan = struct {
         const buffer_updates_complete_semaphore = self.buffer_updates_complete_semaphores[self.current_frame_index()];
 
         try self.submit_command_buffer(.{
-            .command_buffers = &.{ cmd },
+            .command_buffers = &.{cmd},
             .wait_semaphores = &.{
-                eng.gfx.GfxState.SubmitWaitSemaphoreInfo {
-                    .dst_stage = .{ .transfer = true, },
+                eng.gfx.GfxState.SubmitWaitSemaphoreInfo{
+                    .dst_stage = .{ .transfer = true },
                     .semaphore = image_available_semaphore,
-                }
+                },
             },
-            .signal_semaphores = &.{ &buffer_updates_complete_semaphore },
+            .signal_semaphores = &.{&buffer_updates_complete_semaphore},
         });
 
         return buffer_updates_complete_semaphore;
@@ -904,7 +909,7 @@ pub const GfxStateVulkan = struct {
             vk_wait_dst_stages[idx] = pipelinestageflags_to_vulkan(s.dst_stage);
         }
 
-        const submit_info = c.VkSubmitInfo {
+        const submit_info = c.VkSubmitInfo{
             .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .pCommandBuffers = @ptrCast(vk_command_buffers[0..].ptr),
             .commandBufferCount = @intCast(info.command_buffers.len),
@@ -923,8 +928,8 @@ pub const GfxStateVulkan = struct {
         defer eng.get().frame_allocator.free(wait_semaphores_infos);
 
         for (wait_semaphores, 0..) |s, idx| {
-            wait_semaphores_infos[idx] = eng.gfx.GfxState.SubmitWaitSemaphoreInfo {
-                .dst_stage = .{ .all_commands = true, }, // TODO: is this the correct stage?
+            wait_semaphores_infos[idx] = eng.gfx.GfxState.SubmitWaitSemaphoreInfo{
+                .dst_stage = .{ .all_commands = true }, // TODO: is this the correct stage?
                 .semaphore = s,
             };
         }
@@ -934,17 +939,17 @@ pub const GfxStateVulkan = struct {
             const cmd = &self.pre_present_cmd_buffers[self.current_frame_index()];
             try cmd.reset();
 
-            try cmd.cmd_begin(.{ .one_time_submit = true, });
+            try cmd.cmd_begin(.{ .one_time_submit = true });
 
-            const image_barrier = c.VkImageMemoryBarrier {
+            const image_barrier = c.VkImageMemoryBarrier{
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .image = self.swapchain.swapchain_images[self.swapchain.current_image_index],
                 .oldLayout = imagelayout_to_vulkan(.ColorAttachmentOptimal),
                 .newLayout = imagelayout_to_vulkan(.PresentSrc),
                 .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
-                .srcAccessMask = accessflags_to_vulkan(.{ .color_attachment_write = true, }),
-                .dstAccessMask = accessflags_to_vulkan(.{ .color_attachment_read = true, }),
+                .srcAccessMask = accessflags_to_vulkan(.{ .color_attachment_write = true }),
+                .dstAccessMask = accessflags_to_vulkan(.{ .color_attachment_read = true }),
                 .subresourceRange = .{
                     .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
                     .baseMipLevel = 0,
@@ -954,26 +959,29 @@ pub const GfxStateVulkan = struct {
                 },
             };
             c.vkCmdPipelineBarrier(
-                cmd.platform.vk_command_buffer, 
-                pipelinestageflags_to_vulkan(.{ .color_attachment_output = true, }), 
-                pipelinestageflags_to_vulkan(.{ .all_commands = true, }), 
-                0, 
-                0, null,
-                0, null,
-                1, &image_barrier
+                cmd.platform.vk_command_buffer,
+                pipelinestageflags_to_vulkan(.{ .color_attachment_output = true }),
+                pipelinestageflags_to_vulkan(.{ .all_commands = true }),
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &image_barrier,
             );
 
             try cmd.cmd_end();
 
             try self.submit_command_buffer(eng.gfx.GfxState.SubmitInfo{
-                .command_buffers = &.{ cmd },
+                .command_buffers = &.{cmd},
                 .wait_semaphores = wait_semaphores_infos[0..],
-                .signal_semaphores = &.{ &present_transition_semaphore },
+                .signal_semaphores = &.{&present_transition_semaphore},
                 .fence = self.swapchain.image_available_fences[self.current_frame_index()],
             });
         }
 
-        const present_info = c.VkPresentInfoKHR {
+        const present_info = c.VkPresentInfoKHR{
             .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .swapchainCount = 1,
             .pSwapchains = @ptrCast(&self.swapchain.swapchain),
@@ -984,12 +992,14 @@ pub const GfxStateVulkan = struct {
         };
 
         const result = vkt(c.vkQueuePresentKHR(self.queues.present, &present_info));
-        result catch |err| { switch (err) {
-            error.VK_ERROR_OUT_OF_DATE_KHR => {
-                try self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]);
-            },
-            else => return err,
-        } };
+        result catch |err| {
+            switch (err) {
+                error.VK_ERROR_OUT_OF_DATE_KHR => {
+                    try self.resize_swapchain(self.swapchain_size()[0], self.swapchain_size()[1]);
+                },
+                else => return err,
+            }
+        };
     }
 
     pub fn flush(self: *Self) void {
@@ -1065,11 +1075,17 @@ pub const GfxStateVulkan = struct {
 
         var swapchain_extent = surface_capabilities.currentExtent;
         if (swapchain_extent.width == std.math.maxInt(u32)) {
-            swapchain_extent = c.VkExtent2D {
-                .width = std.math.clamp(@as(u32, @intCast(new_width)),
-                    surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width),
-                .height = std.math.clamp(@as(u32, @intCast(new_height)),
-                    surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height),
+            swapchain_extent = c.VkExtent2D{
+                .width = std.math.clamp(
+                    @as(u32, @intCast(new_width)),
+                    surface_capabilities.minImageExtent.width,
+                    surface_capabilities.maxImageExtent.width,
+                ),
+                .height = std.math.clamp(
+                    @as(u32, @intCast(new_height)),
+                    surface_capabilities.minImageExtent.height,
+                    surface_capabilities.maxImageExtent.height,
+                ),
             };
         }
         if (swapchain_extent.width == 0 or swapchain_extent.height == 0) {
@@ -1105,45 +1121,45 @@ pub const GfxStateVulkan = struct {
 
 pub fn pipelinestageflags_to_vulkan(p: gf.PipelineStageFlags) c.VkPipelineStageFlagBits {
     var flags: c.VkPipelineStageFlagBits = 0;
-    if (p.top_of_pipe) { flags |= c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT; }
-    if (p.draw_indirect) { flags |= c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT; }
-    if (p.vertex_input) { flags |= c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT; }
-    if (p.vertex_shader) { flags |= c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT; }
-    if (p.tessellation_control_shader) { flags |= c.VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT; }
-    if (p.tessellation_evaluation_shader) { flags |= c.VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT; }
-    if (p.geometry_shader) { flags |= c.VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT; }
-    if (p.fragment_shader) { flags |= c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; }
-    if (p.early_fragment_tests) { flags |= c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT; }
-    if (p.late_fragment_tests) { flags |= c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT; }
-    if (p.color_attachment_output) { flags |= c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT; }
-    if (p.compute_shader) { flags |= c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT; }
-    if (p.transfer) { flags |= c.VK_PIPELINE_STAGE_TRANSFER_BIT; }
-    if (p.bottom_of_pipe) { flags |= c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT; }
-    if (p.host) { flags |= c.VK_PIPELINE_STAGE_HOST_BIT; }
-    if (p.all_graphics) { flags |= c.VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT; }
-    if (p.all_commands) { flags |= c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT; }
+    if (p.top_of_pipe) flags |= c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    if (p.draw_indirect) flags |= c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
+    if (p.vertex_input) flags |= c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+    if (p.vertex_shader) flags |= c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+    if (p.tessellation_control_shader) flags |= c.VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
+    if (p.tessellation_evaluation_shader) flags |= c.VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
+    if (p.geometry_shader) flags |= c.VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+    if (p.fragment_shader) flags |= c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    if (p.early_fragment_tests) flags |= c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    if (p.late_fragment_tests) flags |= c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    if (p.color_attachment_output) flags |= c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    if (p.compute_shader) flags |= c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    if (p.transfer) flags |= c.VK_PIPELINE_STAGE_TRANSFER_BIT;
+    if (p.bottom_of_pipe) flags |= c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    if (p.host) flags |= c.VK_PIPELINE_STAGE_HOST_BIT;
+    if (p.all_graphics) flags |= c.VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
+    if (p.all_commands) flags |= c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     return flags;
 }
 
 pub fn accessflags_to_vulkan(p: gf.AccessMaskFlags) c.VkAccessFlagBits {
     var flags: c.VkAccessFlagBits = 0;
-    if (p.indirect_command_read) { flags |= c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT; }
-    if (p.index_read) { flags |= c.VK_ACCESS_INDEX_READ_BIT; }
-    if (p.vertex_attribute_read) { flags |= c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT; }
-    if (p.uniform_read) { flags |= c.VK_ACCESS_UNIFORM_READ_BIT; }
-    if (p.input_attachment_read) { flags |= c.VK_ACCESS_INPUT_ATTACHMENT_READ_BIT; }
-    if (p.shader_read) { flags |= c.VK_ACCESS_SHADER_READ_BIT; }
-    if (p.shader_write) { flags |= c.VK_ACCESS_SHADER_WRITE_BIT; }
-    if (p.color_attachment_read) { flags |= c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT; }
-    if (p.color_attachment_write) { flags |= c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; }
-    if (p.depth_stencil_attachment_read) { flags |= c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT; }
-    if (p.depth_stencil_attachment_write) { flags |= c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT; }
-    if (p.transfer_read) { flags |= c.VK_ACCESS_TRANSFER_READ_BIT; }
-    if (p.transfer_write) { flags |= c.VK_ACCESS_TRANSFER_WRITE_BIT; }
-    if (p.host_read) { flags |= c.VK_ACCESS_HOST_READ_BIT; }
-    if (p.host_write) { flags |= c.VK_ACCESS_HOST_WRITE_BIT; }
-    if (p.memory_read) { flags |= c.VK_ACCESS_MEMORY_READ_BIT; }
-    if (p.memory_write) { flags |= c.VK_ACCESS_MEMORY_WRITE_BIT; }
+    if (p.indirect_command_read) flags |= c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    if (p.index_read) flags |= c.VK_ACCESS_INDEX_READ_BIT;
+    if (p.vertex_attribute_read) flags |= c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+    if (p.uniform_read) flags |= c.VK_ACCESS_UNIFORM_READ_BIT;
+    if (p.input_attachment_read) flags |= c.VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+    if (p.shader_read) flags |= c.VK_ACCESS_SHADER_READ_BIT;
+    if (p.shader_write) flags |= c.VK_ACCESS_SHADER_WRITE_BIT;
+    if (p.color_attachment_read) flags |= c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+    if (p.color_attachment_write) flags |= c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    if (p.depth_stencil_attachment_read) flags |= c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    if (p.depth_stencil_attachment_write) flags |= c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    if (p.transfer_read) flags |= c.VK_ACCESS_TRANSFER_READ_BIT;
+    if (p.transfer_write) flags |= c.VK_ACCESS_TRANSFER_WRITE_BIT;
+    if (p.host_read) flags |= c.VK_ACCESS_HOST_READ_BIT;
+    if (p.host_write) flags |= c.VK_ACCESS_HOST_WRITE_BIT;
+    if (p.memory_read) flags |= c.VK_ACCESS_MEMORY_READ_BIT;
+    if (p.memory_write) flags |= c.VK_ACCESS_MEMORY_WRITE_BIT;
     return flags;
 }
 
@@ -1163,7 +1179,7 @@ pub fn imagelayout_to_vulkan(p: gf.ImageLayout) c.VkImageLayout {
 }
 
 pub fn rect_to_vulkan(rect: Rect) c.VkRect2D {
-    return c.VkRect2D {
+    return c.VkRect2D{
         .offset = .{
             .x = @intFromFloat(@round(rect.left)),
             .y = @intFromFloat(@round(rect.top)),
@@ -1250,7 +1266,7 @@ pub fn begin_single_time_command_buffer(command_pool: *gf.CommandPool) !gf.Comma
     var cmd = try command_pool.allocate_command_buffer(.{ .level = .Primary });
     errdefer cmd.deinit();
 
-    try cmd.cmd_begin(.{ .one_time_submit = true, });
+    try cmd.cmd_begin(.{ .one_time_submit = true });
     errdefer cmd.cmd_end() catch {};
 
     return cmd;
@@ -1264,11 +1280,13 @@ pub fn end_single_time_command_buffer(cmd: *gf.CommandBuffer, signal_semaphore: 
             fence_exists = false;
             break :blk undefined;
         };
-        defer if (fence_exists) { fence.deinit(); };
+        defer if (fence_exists) {
+            fence.deinit();
+        };
 
         GfxStateVulkan.get().submit_command_buffer(.{
-            .command_buffers = &.{ cmd },
-            .signal_semaphores = if (signal_semaphore) |s| &.{ &s } else &.{},
+            .command_buffers = &.{cmd},
+            .signal_semaphores = if (signal_semaphore) |s| &.{&s} else &.{},
             .fence = fence,
         }) catch |err| {
             std.log.warn("Unable to submit one time command buffer: {}", .{err});
@@ -1298,9 +1316,9 @@ pub fn lcm(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
 
 pub fn imageaspect_to_vulkan(aspect: gf.ImageAspect) c.VkImageAspectFlags {
     var vk_aspect: c.VkImageAspectFlags = 0;
-    if (aspect.colour) { vk_aspect |= c.VK_IMAGE_ASPECT_COLOR_BIT; }
-    if (aspect.depth) { vk_aspect |= c.VK_IMAGE_ASPECT_DEPTH_BIT; }
-    if (aspect.stencil) { vk_aspect |= c.VK_IMAGE_ASPECT_STENCIL_BIT; }
+    if (aspect.colour) vk_aspect |= c.VK_IMAGE_ASPECT_COLOR_BIT;
+    if (aspect.depth) vk_aspect |= c.VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (aspect.stencil) vk_aspect |= c.VK_IMAGE_ASPECT_STENCIL_BIT;
     return vk_aspect;
 }
 
@@ -1329,34 +1347,16 @@ pub fn samplerbordermode_to_vulkan(bordermode: gf.SamplerBorderMode) c.VkSampler
 
 pub fn formatclearvalue_to_vulkan(format: gf.ImageFormat, clear_value: gf.ClearValue) c.VkClearValue {
     if (format.is_depth()) {
-        return c.VkClearValue {
+        return c.VkClearValue{
             .depthStencil = .{
                 .depth = clear_value.depth_stencil.depth,
                 .stencil = clear_value.depth_stencil.stencil,
-            }
+            },
         };
     } else {
         return switch (format) {
-            .Rgba8_Unorm_Srgb,
-            .Rgba8_Unorm,
-            .Bgra8_Unorm,
-            .Bgra8_Srgb,
-            .R24X8_Unorm_Uint,
-            .D24S8_Unorm_Uint,
-            .D16S8_Unorm_Uint,
-            .R32_Uint => c.VkClearValue {
-                .color = .{ .uint32 = clear_value.u32x4, }
-            },
-            .Unknown,
-            .R32_Float,
-            .Rg32_Float,
-            .Rgb32_Float,
-            .Rgba16_Float,
-            .Rgba32_Float,
-            .D32S8_Sfloat_Uint,
-            .Rg11b10_Float =>  c.VkClearValue {
-                .color = .{ .float32 = zm.vecToArr4(clear_value.f32x4), }
-            },
+            .Rgba8_Unorm_Srgb, .Rgba8_Unorm, .Bgra8_Unorm, .Bgra8_Srgb, .R24X8_Unorm_Uint, .D24S8_Unorm_Uint, .D16S8_Unorm_Uint, .R32_Uint => c.VkClearValue{ .color = .{ .uint32 = clear_value.u32x4 } },
+            .Unknown, .R32_Float, .Rg32_Float, .Rgb32_Float, .Rgba16_Float, .Rgba32_Float, .D32S8_Sfloat_Uint, .Rg11b10_Float => c.VkClearValue{ .color = .{ .float32 = zm.vecToArr4(clear_value.f32x4) } },
         };
     }
 }
@@ -1435,9 +1435,9 @@ pub fn compareop_to_vulkan(compareop: gf.CompareOp) c.VkCompareOp {
 
 pub fn blendtype_to_vulkan(blendtype: gf.BlendType) c.VkPipelineColorBlendAttachmentState {
     return switch (blendtype) {
-        .None => c.VkPipelineColorBlendAttachmentState {
+        .None => c.VkPipelineColorBlendAttachmentState{
             .blendEnable = c.VK_FALSE,
-            .colorWriteMask =   c.VK_COLOR_COMPONENT_R_BIT |
+            .colorWriteMask = c.VK_COLOR_COMPONENT_R_BIT |
                 c.VK_COLOR_COMPONENT_G_BIT |
                 c.VK_COLOR_COMPONENT_B_BIT |
                 c.VK_COLOR_COMPONENT_A_BIT,
@@ -1448,9 +1448,9 @@ pub fn blendtype_to_vulkan(blendtype: gf.BlendType) c.VkPipelineColorBlendAttach
             .dstAlphaBlendFactor = c.VK_BLEND_FACTOR_ZERO,
             .alphaBlendOp = c.VK_BLEND_OP_ADD,
         },
-        .Simple => c.VkPipelineColorBlendAttachmentState {
+        .Simple => c.VkPipelineColorBlendAttachmentState{
             .blendEnable = c.VK_TRUE,
-            .colorWriteMask =   c.VK_COLOR_COMPONENT_R_BIT |
+            .colorWriteMask = c.VK_COLOR_COMPONENT_R_BIT |
                 c.VK_COLOR_COMPONENT_G_BIT |
                 c.VK_COLOR_COMPONENT_B_BIT |
                 c.VK_COLOR_COMPONENT_A_BIT,
@@ -1461,9 +1461,9 @@ pub fn blendtype_to_vulkan(blendtype: gf.BlendType) c.VkPipelineColorBlendAttach
             .dstAlphaBlendFactor = c.VK_BLEND_FACTOR_DST_ALPHA,
             .alphaBlendOp = c.VK_BLEND_OP_ADD,
         },
-        .PremultipliedAlpha => c.VkPipelineColorBlendAttachmentState {
+        .PremultipliedAlpha => c.VkPipelineColorBlendAttachmentState{
             .blendEnable = c.VK_TRUE,
-            .colorWriteMask =   c.VK_COLOR_COMPONENT_R_BIT |
+            .colorWriteMask = c.VK_COLOR_COMPONENT_R_BIT |
                 c.VK_COLOR_COMPONENT_G_BIT |
                 c.VK_COLOR_COMPONENT_B_BIT |
                 c.VK_COLOR_COMPONENT_A_BIT,
@@ -1498,8 +1498,7 @@ pub const FrameBufferAttachmentExtent = struct {
     layers: u32,
 
     pub fn eql(self: *const FrameBufferAttachmentExtent, oth: FrameBufferAttachmentExtent) bool {
-        return 
-            self.width == oth.width and
+        return self.width == oth.width and
             self.height == oth.height and
             self.layers == oth.layers;
     }

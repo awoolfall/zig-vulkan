@@ -10,7 +10,7 @@ pub const ImageViewVulkan = struct {
     const Self = @This();
 
     vk_image_views: []c.VkImageView,
-    
+
     pub fn deinit(self: *const ImageViewVulkan) void {
         for (self.vk_image_views) |v| {
             c.vkDestroyImageView(GfxStateVulkan.get().device, v, null);
@@ -34,14 +34,16 @@ pub const ImageViewVulkan = struct {
         errdefer alloc.free(image_views);
 
         var image_views_list = std.ArrayList(c.VkImageView).initBuffer(image_views);
-        errdefer for (image_views_list.items) |v| { c.vkDestroyImageView(GfxStateVulkan.get().device, v, null); };
+        errdefer for (image_views_list.items) |v| {
+            c.vkDestroyImageView(GfxStateVulkan.get().device, v, null);
+        };
 
         const aspect_mask = if (info.aspect_mask) |am| vk.imageaspect_to_vulkan(am) else unreachable;
 
         for (img.platform.images) |i| {
-            const image_view_info = c.VkImageViewCreateInfo {
+            const image_view_info = c.VkImageViewCreateInfo{
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = i.vk_image, 
+                .image = i.vk_image,
                 .viewType = view_type,
                 .format = img.platform.vk_format,
                 .subresourceRange = .{
@@ -60,7 +62,7 @@ pub const ImageViewVulkan = struct {
             try image_views_list.append(alloc, vk_image_view);
         }
 
-        return ImageViewVulkan {
+        return ImageViewVulkan{
             .vk_image_views = image_views,
         };
     }

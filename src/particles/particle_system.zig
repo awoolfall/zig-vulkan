@@ -50,18 +50,18 @@ pub fn deinit(self: *Self) void {
 pub fn init(alloc: std.mem.Allocator, settings: ParticleSystemSettings) !Self {
     const particles_extra_data = try alloc.alloc(ParticleExtraData, settings.max_particles);
     errdefer alloc.free(particles_extra_data);
-    @memset(particles_extra_data, ParticleExtraData {
+    @memset(particles_extra_data, ParticleExtraData{
         .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
     });
 
     const particles_render_data = try alloc.alloc(ParticleRenderData, settings.max_particles);
     errdefer alloc.free(particles_render_data);
-    @memset(particles_render_data, ParticleRenderData {});
+    @memset(particles_render_data, ParticleRenderData{});
 
     const owned_settings = try settings.clone(alloc);
     errdefer owned_settings.deinit(alloc);
 
-    return Self {
+    return Self{
         .settings = owned_settings,
         .particles_extra_data = particles_extra_data,
         .particles_render_data = particles_render_data,
@@ -109,18 +109,18 @@ fn emit_particle(self: *Self) void {
     }
 
     const spawn_direction = zm.normalize3(random_v(self.rand.random()) * zm.f32x4s(2.0) - zm.f32x4s(1.0));
-    const initial_position = 
+    const initial_position =
         self.settings.spawn_origin +
         self.settings.spawn_offset +
         spawn_direction * zm.f32x4s(self.settings.spawn_radius * self.rand.random().float(f32));
 
-    self.particles_render_data[self.next_particle_index] = ParticleRenderData {
+    self.particles_render_data[self.next_particle_index] = ParticleRenderData{
         .position = initial_position,
         .scale = KeyFrame(zm.F32x4).calc(self.settings.scale.items, 0.0),
         .velocity = self.settings.initial_velocity,
         .colour = KeyFrame(zm.F32x4).calc(self.settings.colour.items, 0.0),
     };
-    self.particles_extra_data[self.next_particle_index] = ParticleExtraData {
+    self.particles_extra_data[self.next_particle_index] = ParticleExtraData{
         .rand = std.Random.DefaultPrng.init(@intCast(std.time.microTimestamp())),
         .rand_vec = random_v(self.rand.random()),
         .alive_time = 0.0,
@@ -147,15 +147,17 @@ pub fn update(self: *Self, time: *const eng.TimeState) void {
 
         for (self.settings.forces.items) |fo| {
             switch (fo) {
-                .Constant => |v| { p_render.velocity += (v * delta_time); },
-                .ConstantRand => |force| { 
+                .Constant => |v| {
+                    p_render.velocity += (v * delta_time);
+                },
+                .ConstantRand => |force| {
                     const noise_vec = zm.f32x4(
-                        self.noise.noise2(current_time[0]*100.0, p_extra.rand_vec[0]*1000.0),
-                        self.noise.noise2(current_time[0]*100.0, p_extra.rand_vec[1]*1000.0),
-                        self.noise.noise2(current_time[0]*100.0, p_extra.rand_vec[2]*1000.0),
-                        self.noise.noise2(current_time[0]*100.0, p_extra.rand_vec[3]*1000.0),
+                        self.noise.noise2(current_time[0] * 100.0, p_extra.rand_vec[0] * 1000.0),
+                        self.noise.noise2(current_time[0] * 100.0, p_extra.rand_vec[1] * 1000.0),
+                        self.noise.noise2(current_time[0] * 100.0, p_extra.rand_vec[2] * 1000.0),
+                        self.noise.noise2(current_time[0] * 100.0, p_extra.rand_vec[3] * 1000.0),
                     );
-                    p_render.velocity += ((noise_vec - zm.f32x4s(0.5)) * zm.f32x4s(force) * delta_time); 
+                    p_render.velocity += ((noise_vec - zm.f32x4s(0.5)) * zm.f32x4s(force) * delta_time);
                 },
                 .Curl => |force| {
                     p_render.velocity += self.compute_curl_frame(p_render, p_extra) * zm.f32x4s(force) * delta_time;
@@ -180,7 +182,6 @@ pub fn update(self: *Self, time: *const eng.TimeState) void {
         p_render.position += p_render.velocity * zm.f32x4(1.0, 1.0, 1.0, 0.0) * delta_time;
     }
 
-
     self.seconds_to_next_particle -= delta_time[0];
     if (self.settings.spawn_rate != 0.0) {
         while (self.seconds_to_next_particle <= 0.0) {
@@ -195,7 +196,7 @@ fn noise3(self: *Self, pos: zm.F32x4) zm.F32x4 {
         self.noise.noise3(pos[0], pos[1], pos[2]),
         self.noise.noise3(pos[1] - 42.8, pos[2] + 77.3, pos[0] + 91.2),
         self.noise.noise3(pos[2] + 97.3, pos[0] - 149.5, pos[1] + 129.4),
-        0.0//self.noise.noise3(pos[0] - 82.1, pos[1] + 32.8, pos[2] - 17.1),
+        0.0, //self.noise.noise3(pos[0] - 82.1, pos[1] + 32.8, pos[2] - 17.1),
     );
 }
 
@@ -214,7 +215,7 @@ fn compute_curl_frame(self: *Self, p_render: *ParticleRenderData, p_extra: *Part
         p_extra.last_curl[2] - x1[2] - p_extra.last_curl[1] - x1[1],
         p_extra.last_curl[0] - x1[0] - p_extra.last_curl[2] - x1[2],
         p_extra.last_curl[1] - x1[1] - p_extra.last_curl[0] - x1[0],
-        0.0
+        0.0,
     );
 
     p_extra.last_curl = x1;
@@ -225,12 +226,7 @@ fn compute_curl_frame(self: *Self, p_render: *ParticleRenderData, p_extra: *Part
 }
 
 fn random_v(rand: std.Random) zm.F32x4 {
-    return zm.f32x4(
-        rand.float(f32),
-        rand.float(f32),
-        rand.float(f32),
-        rand.float(f32)
-    );
+    return zm.f32x4(rand.float(f32), rand.float(f32), rand.float(f32), rand.float(f32));
 }
 
 fn f32_variance(self: *Self, value: f32, variance: f32) f32 {
@@ -311,29 +307,56 @@ pub const ParticleSystemSettings = struct {
         try object.put("colour_keys", try sr.serialize_value([]ColourKeyFrame, alloc, value.colour.items));
         try object.put("forces", try sr.serialize_value([]ForceEnum, alloc, value.forces.items));
 
-        return std.json.Value { .object = object };
+        return std.json.Value{ .object = object };
     }
 
     pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !ParticleSystemSettings {
         var settings = ParticleSystemSettings{};
-        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
+        const object = switch (value) {
+            .object => |obj| obj,
+            else => return error.InvalidType,
+        };
 
-        if (object.get("max_particles")) |v| blk: { settings.max_particles = sr.deserialize_value(u32, alloc, v) catch break :blk; }
+        if (object.get("max_particles")) |v| blk: {
+            settings.max_particles = sr.deserialize_value(u32, alloc, v) catch break :blk;
+        }
 
-        if (object.get("alignment")) |v| blk: { settings.alignment = sr.deserialize_value(ParticleAlignment, alloc, v) catch break :blk; }
-        if (object.get("shape")) |v| blk: { settings.shape = sr.deserialize_value(ParticleShape, alloc, v) catch break :blk; }
+        if (object.get("alignment")) |v| blk: {
+            settings.alignment = sr.deserialize_value(ParticleAlignment, alloc, v) catch break :blk;
+        }
+        if (object.get("shape")) |v| blk: {
+            settings.shape = sr.deserialize_value(ParticleShape, alloc, v) catch break :blk;
+        }
 
-        if (object.get("spawn_origin")) |v| blk: { settings.spawn_origin = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk; }
-        if (object.get("spawn_offset")) |v| blk: { settings.spawn_offset = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk; }
-        if (object.get("spawn_radius")) |v| blk: { settings.spawn_radius = sr.deserialize_value(f32, alloc, v) catch break :blk; }
-        if (object.get("spawn_rate")) |v| blk: { settings.spawn_rate = sr.deserialize_value(f32, alloc, v) catch break :blk; }
-        if (object.get("spawn_rate_variance")) |v| blk: { settings.spawn_rate_variance = sr.deserialize_value(f32, alloc, v) catch break :blk; }
-        if (object.get("burst_count")) |v| blk: { settings.burst_count = sr.deserialize_value(u32, alloc, v) catch break :blk; }
+        if (object.get("spawn_origin")) |v| blk: {
+            settings.spawn_origin = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk;
+        }
+        if (object.get("spawn_offset")) |v| blk: {
+            settings.spawn_offset = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk;
+        }
+        if (object.get("spawn_radius")) |v| blk: {
+            settings.spawn_radius = sr.deserialize_value(f32, alloc, v) catch break :blk;
+        }
+        if (object.get("spawn_rate")) |v| blk: {
+            settings.spawn_rate = sr.deserialize_value(f32, alloc, v) catch break :blk;
+        }
+        if (object.get("spawn_rate_variance")) |v| blk: {
+            settings.spawn_rate_variance = sr.deserialize_value(f32, alloc, v) catch break :blk;
+        }
+        if (object.get("burst_count")) |v| blk: {
+            settings.burst_count = sr.deserialize_value(u32, alloc, v) catch break :blk;
+        }
 
-        if (object.get("particle_lifetime")) |v| blk: { settings.particle_lifetime = sr.deserialize_value(f32, alloc, v) catch break :blk; }
-        if (object.get("particle_lifetime_variance")) |v| blk: { settings.particle_lifetime_variance = sr.deserialize_value(f32, alloc, v) catch break :blk; }
+        if (object.get("particle_lifetime")) |v| blk: {
+            settings.particle_lifetime = sr.deserialize_value(f32, alloc, v) catch break :blk;
+        }
+        if (object.get("particle_lifetime_variance")) |v| blk: {
+            settings.particle_lifetime_variance = sr.deserialize_value(f32, alloc, v) catch break :blk;
+        }
 
-        if (object.get("initial_velocity")) |v| blk: { settings.initial_velocity = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk; }
+        if (object.get("initial_velocity")) |v| blk: {
+            settings.initial_velocity = sr.deserialize_value(zm.F32x4, alloc, v) catch break :blk;
+        }
 
         if (object.get("scale_keys")) |v| blk: {
             const scale_slice = sr.deserialize_value([]ScaleKeyFrame, alloc, v) catch break :blk;
@@ -401,10 +424,10 @@ pub fn KeyFrame(comptime T: type) type {
             if (arr.len == 1) return arr[0].value;
             for (1..arr.len) |i| {
                 if (arr[i].key_time >= t) {
-                    if (i == 0) { 
+                    if (i == 0) {
                         return arr[i].value;
                     } else {
-                        return arr[i].calc_(&arr[i-1], t);
+                        return arr[i].calc_(&arr[i - 1], t);
                     }
                 }
             }
@@ -416,12 +439,12 @@ pub fn KeyFrame(comptime T: type) type {
             if (arr.len == 1) return arr[0].value;
             for (1..arr.len) |i| {
                 if (arr[i].key_time >= t) {
-                    if (i == 0) { 
+                    if (i == 0) {
                         return arr[i].value;
                     } else {
                         var s = arr[i];
                         s.value = zm.rgbToHsv(s.value);
-                        var p = arr[i-1];
+                        var p = arr[i - 1];
                         p.value = zm.rgbToHsv(p.value);
                         return zm.hsvToRgb(s.calc_(&p, t));
                     }
@@ -470,30 +493,30 @@ pub const StatelessPRNG = struct {
     pub fn random_u64(seed: u64) u64 {
         return std.Random.SplitMix64.init(seed).next();
     }
-    
+
     /// Generates a pseudo-random u32 from a seed
     pub fn random_u32(seed: u64) u32 {
         return @truncate(random_u64(seed));
     }
-    
+
     /// Generates a pseudo-random f64 in range [0.0, 1.0) from a seed
     pub fn random_f64(seed: u64) f64 {
         const max_u64 = @as(f64, @floatFromInt(std.math.maxInt(u64)));
         return @as(f64, @floatFromInt(random_u64(seed))) / max_u64;
     }
-    
+
     /// Generates a pseudo-random f32 in range [0.0, 1.0) from a seed
     pub fn random_f32(seed: u64) f32 {
         const max_u32 = @as(f32, @floatFromInt(std.math.maxInt(u32)));
         return @as(f32, @floatFromInt(random_u32(seed))) / max_u32;
     }
-    
+
     /// Generates a pseudo-random integer in range [0, max) from a seed
     pub fn random_range(seed: u64, max: u64) u64 {
         if (max == 0) return 0;
         return random_u64(seed) % max;
     }
-    
+
     /// Generates a pseudo-random integer in range [min, max] from a seed
     pub fn random_range_inclusive(seed: u64, min: u64, max: u64) u64 {
         if (max <= min) return min;

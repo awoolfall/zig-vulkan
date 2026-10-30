@@ -12,8 +12,8 @@ pub fn create(imui: *Imui, value: *f32, settings: NumberSliderSettings, key: any
     defer imui.pop_layout();
     if (imui.get_widget(background)) |background_widget| {
         background_widget.semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false },
         };
         background_widget.flags.render = true;
         background_widget.flags.hover_effect = false;
@@ -24,7 +24,7 @@ pub fn create(imui: *Imui, value: *f32, settings: NumberSliderSettings, key: any
         background_widget.corner_radii_px = .all(4);
         background_widget.padding_px = .all(4);
     }
-    
+
     var text_buffer: [32]u8 = undefined;
     const text = label.create(imui, std.fmt.bufPrint(&text_buffer, "{d:.2}", .{value.*}) catch unreachable);
     if (imui.get_widget(text.id)) |text_widget| {

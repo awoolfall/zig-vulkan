@@ -4,7 +4,7 @@ const Imui = eng.Imui;
 const zm = eng.zmath;
 
 pub const SliderId = struct {
-    filled_bar: Imui.WidgetId, 
+    filled_bar: Imui.WidgetId,
     background_bar: Imui.WidgetId,
     middle_dot: Imui.WidgetId,
 };
@@ -28,11 +28,11 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
         bw.pivot = .{ 0.0, 0.0 };
     }
 
-    const filled_bar_widget = Imui.Widget {
+    const filled_bar_widget = Imui.Widget{
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = complete_percent, .shrinkable = false, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = complete_percent, .shrinkable = false },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable = false },
         },
         .background_colour = imui.palette().primary,
         .border_colour = imui.palette().primary,
@@ -42,8 +42,8 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
             .clickable = true,
             .hover_effect = false,
         },
-        .anchor = .{0.0, 0.5},
-        .pivot = .{0.0, 0.5},
+        .anchor = .{ 0.0, 0.5 },
+        .pivot = .{ 0.0, 0.5 },
     };
     const filled_bar_widget_id = imui.add_widget(filled_bar_widget, null);
 
@@ -57,11 +57,11 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
         lw.layout_axis = null;
     }
 
-    const empty_bar_widget = Imui.Widget {
+    const empty_bar_widget = Imui.Widget{
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 8.0, .shrinkable = false },
         },
         .flags = .{
             .render = true,
@@ -72,16 +72,16 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
         .border_colour = imui.palette().border,
         .border_width_px = .all(1),
         .corner_radii_px = .all(4),
-        .anchor = .{0.0, 0.5},
-        .pivot = .{0.0, 0.5},
+        .anchor = .{ 0.0, 0.5 },
+        .pivot = .{ 0.0, 0.5 },
     };
     const empty_bar_widget_id = imui.add_widget(empty_bar_widget, null);
 
-    const middle_dot_widget = Imui.Widget {
+    const middle_dot_widget = Imui.Widget{
         .key = Imui.gen_key(key ++ .{@src().line}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false },
         },
         .flags = .{
             .render = true,
@@ -93,22 +93,23 @@ pub fn create(imui: *Imui, value: *f32, options: SliderOptions, key: anytype) Im
         .border_colour = imui.palette().primary,
         .border_width_px = .all(1),
         .corner_radii_px = .all(8),
-        .anchor = .{0.0, 0.5},
-        .pivot = .{0.5, 0.5},
+        .anchor = .{ 0.0, 0.5 },
+        .pivot = .{ 0.5, 0.5 },
     };
     const middle_dot_widget_id = imui.add_widget(middle_dot_widget, null);
 
     imui.pop_layout(); // l1
     imui.pop_layout();
 
-    var signals = Imui.combine_signals(
-        .{
-            imui.generate_widget_signals(filled_bar_widget_id),
-            imui.generate_widget_signals(empty_bar_widget_id),
-            imui.generate_widget_signals(middle_dot_widget_id),
-        },
-        SliderId{ .filled_bar = filled_bar_widget_id, .background_bar = box, .middle_dot = middle_dot_widget_id, }
-    );
+    var signals = Imui.combine_signals(.{
+        imui.generate_widget_signals(filled_bar_widget_id),
+        imui.generate_widget_signals(empty_bar_widget_id),
+        imui.generate_widget_signals(middle_dot_widget_id),
+    }, SliderId{
+        .filled_bar = filled_bar_widget_id,
+        .background_bar = box,
+        .middle_dot = middle_dot_widget_id,
+    });
 
     if (signals.dragged) {
         if (imui.get_widget_from_last_frame(signals.id.background_bar)) |b| {

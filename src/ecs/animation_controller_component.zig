@@ -33,10 +33,10 @@ pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std
         .graph = undefined,
         .control_data = try .init(alloc),
     };
-    
+
     _ = entity;
     _ = object;
-    
+
     return component;
 }
 

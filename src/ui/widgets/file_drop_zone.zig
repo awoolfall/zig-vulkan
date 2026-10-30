@@ -5,11 +5,11 @@ const Imui = eng.Imui;
 const gfx = eng.gfx;
 
 pub fn create(imui: *Imui, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
-    const box_widget = Imui.Widget {
+    const box_widget = Imui.Widget{
         .key = Imui.gen_key(key ++ .{@src()}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true },
         },
         .border_width_px = .all(4.0),
         .corner_radii_px = .all(20.0),

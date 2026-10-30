@@ -8,15 +8,30 @@ right: f32 = 0.0,
 bottom: f32 = 0.0,
 
 pub inline fn all(v: f32) Self {
-    return .{ .left = v, .right = v, .top = v, .bottom = v, };
+    return .{
+        .left = v,
+        .right = v,
+        .top = v,
+        .bottom = v,
+    };
 }
 
 pub inline fn lr_tb(lr: f32, tb: f32) Self {
-    return .{ .left = lr, .right = lr, .top = tb, .bottom = tb, };
+    return .{
+        .left = lr,
+        .right = lr,
+        .top = tb,
+        .bottom = tb,
+    };
 }
 
 pub inline fn lt_rb(lt: f32, rb: f32) Self {
-    return .{ .left = lt, .top = lt, .right = rb, .bottom = rb, };
+    return .{
+        .left = lt,
+        .top = lt,
+        .right = rb,
+        .bottom = rb,
+    };
 }
 
 pub inline fn full_screen_pixels() Self {
@@ -34,7 +49,7 @@ pub inline fn full_screen_pixels_mip(mip_level: usize) Self {
 }
 
 pub inline fn translate(self: *const Self, x: i32, y: i32) Self {
-    return Self {
+    return Self{
         .left = self.left + x,
         .top = self.top + y,
         .right = self.right,
@@ -43,7 +58,7 @@ pub inline fn translate(self: *const Self, x: i32, y: i32) Self {
 }
 
 pub inline fn resize(self: *const Self, x: i32, y: i32) Self {
-    return Self {
+    return Self{
         .left = self.left,
         .top = self.top,
         .right = self.right + x,
@@ -52,7 +67,7 @@ pub inline fn resize(self: *const Self, x: i32, y: i32) Self {
 }
 
 pub inline fn adjust(self: *const Self, adjustment_rect: Self) Self {
-    return Self {
+    return Self{
         .left = self.left + adjustment_rect.left,
         .right = self.right + adjustment_rect.right,
         .top = self.top + adjustment_rect.top,
@@ -61,7 +76,7 @@ pub inline fn adjust(self: *const Self, adjustment_rect: Self) Self {
 }
 
 pub fn contains(self: *const Self, coord: [2]f32) bool {
-    return  coord[0] >= self.left and
+    return coord[0] >= self.left and
         coord[0] <= self.right and
         coord[1] >= self.top and
         coord[1] <= self.bottom;

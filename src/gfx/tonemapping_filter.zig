@@ -77,14 +77,14 @@ pub fn init() !Self {
 
     const images_descriptor_layout = try gf.DescriptorLayout.init(.{
         .bindings = &.{
-            gf.DescriptorBindingInfo {
+            gf.DescriptorBindingInfo{
                 .binding = 0,
-                .shader_stages = .{ .Pixel = true, },
+                .shader_stages = .{ .Pixel = true },
                 .binding_type = .ImageView,
             },
-            gf.DescriptorBindingInfo {
+            gf.DescriptorBindingInfo{
                 .binding = 1,
-                .shader_stages = .{ .Pixel = true, },
+                .shader_stages = .{ .Pixel = true },
                 .binding_type = .Sampler,
             },
         },
@@ -93,32 +93,28 @@ pub fn init() !Self {
 
     const images_descriptor_pool = try gf.DescriptorPool.init(.{
         .max_sets = gf.GfxState.get().frames_in_flight(),
-        .strategy = .{ .Layout = images_descriptor_layout, },
+        .strategy = .{ .Layout = images_descriptor_layout },
     });
     errdefer images_descriptor_pool.deinit();
 
-    const images_descriptor_set = try (try images_descriptor_pool.get()).allocate_set(.{ .layout = images_descriptor_layout, });
+    const images_descriptor_set = try (try images_descriptor_pool.get()).allocate_set(.{
+        .layout = images_descriptor_layout,
+    });
     errdefer images_descriptor_set.deinit();
 
     try (try images_descriptor_set.get()).update(.{
         .writes = &.{
-            gf.DescriptorSetUpdateWriteInfo {
-                .binding = 0,
-                .data = .{ .ImageView = gf.GfxState.get().default.hdr_image_view, },
-            },
-            gf.DescriptorSetUpdateWriteInfo {
-                .binding = 1,
-                .data = .{ .Sampler = sampler, },
-            },
+            gf.DescriptorSetUpdateWriteInfo{ .binding = 0, .data = .{ .ImageView = gf.GfxState.get().default.hdr_image_view } },
+            gf.DescriptorSetUpdateWriteInfo{ .binding = 1, .data = .{ .Sampler = sampler } },
         },
     });
 
-    const attachments = &[_]gf.AttachmentInfo {
-        gf.AttachmentInfo {
+    const attachments = &[_]gf.AttachmentInfo{
+        gf.AttachmentInfo{
             .name = "ldr_colour",
             .format = gf.GfxState.ldr_format,
             .load_op = .Clear,
-            .clear_value = gf.ClearValue { .u32x4 = [4]u32 { 0, 0, 0, 255 } },
+            .clear_value = gf.ClearValue{ .u32x4 = [4]u32{ 0, 0, 0, 255 } },
             .initial_layout = .Undefined,
             .final_layout = .ColorAttachmentOptimal,
         },
@@ -127,7 +123,7 @@ pub fn init() !Self {
     const render_pass = try gf.RenderPass.init(.{
         .attachments = attachments,
         .subpasses = &.{
-            gf.SubpassInfo {
+            gf.SubpassInfo{
                 .attachments = &.{
                     "ldr_colour",
                 },
@@ -135,13 +131,13 @@ pub fn init() !Self {
             },
         },
         .dependencies = &.{
-            gf.SubpassDependencyInfo {
+            gf.SubpassDependencyInfo{
                 .src_subpass = null,
                 .dst_subpass = 0,
                 .src_access_mask = .{},
-                .dst_access_mask = .{ .color_attachment_write = true, },
-                .src_stage_mask = .{ .color_attachment_output = true, },
-                .dst_stage_mask = .{ .color_attachment_output = true, },
+                .dst_access_mask = .{ .color_attachment_write = true },
+                .src_stage_mask = .{ .color_attachment_output = true },
+                .dst_stage_mask = .{ .color_attachment_output = true },
             },
         },
     });
@@ -174,7 +170,7 @@ pub fn init() !Self {
     });
     errdefer framebuffer.deinit();
 
-    return Self {
+    return Self{
         .sampler = sampler,
 
         .images_descriptor_layout = images_descriptor_layout,
@@ -201,18 +197,15 @@ pub fn apply_filter(
     cmd.cmd_bind_graphics_pipeline(self.pipeline);
 
     cmd.cmd_set_viewports(.{
-        .viewports = &.{ .full_screen_viewport(), },
+        .viewports = &.{.full_screen_viewport()},
     });
     cmd.cmd_set_scissors(.{
-        .scissors = &.{ .full_screen_pixels(), },
+        .scissors = &.{.full_screen_pixels()},
     });
 
     cmd.cmd_bind_descriptor_sets(.{
-        .descriptor_sets = &.{
-            self.images_descriptor_set
-        },
+        .descriptor_sets = &.{self.images_descriptor_set},
     });
 
-    cmd.cmd_draw(.{ .vertex_count = 6, });
+    cmd.cmd_draw(.{ .vertex_count = 6 });
 }
-

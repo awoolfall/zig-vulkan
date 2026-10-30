@@ -25,7 +25,7 @@ fn hsl(str: []const u8) !zm.F32x4 {
     var sat_str = tokens.next() orelse return error.InvalidString;
     var sat_scale: f32 = 1.0;
     if (sat_str[sat_str.len - 1] == '%') {
-        sat_str = sat_str[0..(sat_str.len-1)];
+        sat_str = sat_str[0..(sat_str.len - 1)];
         sat_scale = 100.0;
     }
     const saturation = (try std.fmt.parseFloat(f32, sat_str)) / sat_scale;
@@ -33,7 +33,7 @@ fn hsl(str: []const u8) !zm.F32x4 {
     var val_str = tokens.next() orelse return error.InvalidString;
     var val_scale: f32 = 1.0;
     if (val_str[val_str.len - 1] == '%') {
-        val_str = val_str[0..(val_str.len-1)];
+        val_str = val_str[0..(val_str.len - 1)];
         val_scale = 100.0;
     }
     const value = (try std.fmt.parseFloat(f32, val_str)) / val_scale;
@@ -43,9 +43,9 @@ fn hsl(str: []const u8) !zm.F32x4 {
 
 pub fn slate() Self {
     @setEvalBranchQuota(10000);
-    return Self {
-        .text_light = zm.srgbToRgb(zm.f32x4(248.0/255.0, 250.0/255.0, 252.0/255.0, 1.0)), 
-        .text_dark = zm.srgbToRgb(zm.f32x4(15.0/255.0, 23.0/255.0, 42.0/255.0, 1.0)),
+    return Self{
+        .text_light = zm.srgbToRgb(zm.f32x4(248.0 / 255.0, 250.0 / 255.0, 252.0 / 255.0, 1.0)),
+        .text_dark = zm.srgbToRgb(zm.f32x4(15.0 / 255.0, 23.0 / 255.0, 42.0 / 255.0, 1.0)),
         .primary = hsl("222.2 47.4% 11.2%") catch unreachable,
         .border = hsl("214.3 31.8% 91.4%") catch unreachable,
         .background = hsl("0 0% 100%") catch unreachable,
@@ -58,19 +58,18 @@ pub fn slate() Self {
 
 pub fn dark() Self {
     @setEvalBranchQuota(10000);
-    return Self {
+    return Self{
         .background = hsl("222 20% 12%") catch unreachable,
         .foreground = hsl("222 14% 18%") catch unreachable,
         .primary = hsl("214 90% 62%") catch unreachable,
         .secondary = hsl("215 18% 24%") catch unreachable,
         .accent = hsl("200 90% 55%") catch unreachable,
-        .text_dark = zm.srgbToRgb(zm.f32x4(220.0/255.0, 225.0/255.0, 230.0/255.0, 1.0)),
-        .text_light = zm.srgbToRgb(zm.f32x4(250.0/255.0, 251.0/255.0, 252.0/255.0, 1.0)),
+        .text_dark = zm.srgbToRgb(zm.f32x4(220.0 / 255.0, 225.0 / 255.0, 230.0 / 255.0, 1.0)),
+        .text_light = zm.srgbToRgb(zm.f32x4(250.0 / 255.0, 251.0 / 255.0, 252.0 / 255.0, 1.0)),
         .border = hsl("215 10% 28%") catch unreachable,
         .muted = hsl("220 10% 20%") catch unreachable,
     };
 }
-
 
 //      :root {
 //    --radius: 0.65rem;
@@ -128,7 +127,7 @@ pub fn dark() Self {
 
 pub fn light_primary(primary_colour: zm.F32x4) Self {
     @setEvalBranchQuota(10000);
-    return Self {
+    return Self{
         .background = hsl("0 0% 100%") catch unreachable,
         .foreground = hsl("224 71.4% 4.1%") catch unreachable,
         .primary = primary_colour,
@@ -143,7 +142,7 @@ pub fn light_primary(primary_colour: zm.F32x4) Self {
 
 pub fn dark_primary(primary_colour: zm.F32x4) Self {
     @setEvalBranchQuota(10000);
-    return Self {
+    return Self{
         .background = hsl("224 71.4% 4.1%") catch unreachable,
         .foreground = hsl("210 20% 98%") catch unreachable,
         .primary = primary_colour,

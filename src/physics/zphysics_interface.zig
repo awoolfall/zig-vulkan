@@ -25,9 +25,7 @@ pub fn deinit(self: *Self) void {
     zphys.deinit();
 }
 
-pub fn init(
-    alloc: std.mem.Allocator
-) !Self {
+pub fn init(alloc: std.mem.Allocator) !Self {
     try zphys.init(alloc, .{});
     errdefer zphys.deinit();
 
@@ -37,11 +35,11 @@ pub fn init(
 
     const object_vs_broad_phase_layer_filter = try alloc.create(ObjectVsBroadPhaseLayerFilter);
     errdefer alloc.destroy(object_vs_broad_phase_layer_filter);
-    object_vs_broad_phase_layer_filter.* = ObjectVsBroadPhaseLayerFilter {};
+    object_vs_broad_phase_layer_filter.* = ObjectVsBroadPhaseLayerFilter{};
 
     const object_layer_pair_filter = try alloc.create(ObjectLayerPairFilter);
     errdefer alloc.destroy(object_layer_pair_filter);
-    object_layer_pair_filter.* = ObjectLayerPairFilter {};
+    object_layer_pair_filter.* = ObjectLayerPairFilter{};
 
     const system = try zphys.PhysicsSystem.create(
         @as(*const zphys.BroadPhaseLayerInterface, @ptrCast(broad_phase_layer_interface)),
@@ -56,7 +54,7 @@ pub fn init(
     );
     errdefer system.destroy();
 
-    return Self {
+    return Self{
         .alloc = alloc,
         .broad_phase_layer_interface = broad_phase_layer_interface,
         .object_vs_broad_phase_layer_filter = object_vs_broad_phase_layer_filter,

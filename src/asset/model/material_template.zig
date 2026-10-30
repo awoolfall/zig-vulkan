@@ -23,9 +23,9 @@ pub fn init_from_assimp(
     alloc: std.mem.Allocator,
     textures_names_map: *const std.StringHashMap(usize),
     textures: []eng.gfx.Image.Ref,
-    assimp_material: assimp.Material.Ptr
+    assimp_material: assimp.Material.Ptr,
 ) !Self {
-    var material = Self {};
+    var material = Self{};
 
     var material_property_map = std.StringHashMap(assimp.MaterialProperty.Ptr).init(alloc);
     defer material_property_map.deinit();
@@ -82,13 +82,11 @@ pub const MaterialTextureMap = struct {
         assimp_material: assimp.Material.Ptr,
         texture_type: assimp.TextureType,
     ) !?MaterialTextureMap {
-        const texture_props = assimp_material.get_texture_properties(texture_type, 0)
-            orelse return null;
+        const texture_props = assimp_material.get_texture_properties(texture_type, 0) orelse return null;
 
-        const texture_index =   if (assimp.index_from_embedded_texture_path(texture_props.path())) |idx| idx
-                                else textures_names_map.get(texture_props.path()) orelse return null;
+        const texture_index = if (assimp.index_from_embedded_texture_path(texture_props.path())) |idx| idx else textures_names_map.get(texture_props.path()) orelse return null;
 
-        return MaterialTextureMap {
+        return MaterialTextureMap{
             .map = try eng.gfx.ImageView.init(.{
                 .image = textures[texture_index],
                 .view_type = .ImageView2D,

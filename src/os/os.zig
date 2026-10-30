@@ -1,7 +1,7 @@
 const std = @import("std");
 const eng = @import("self");
 
-pub const Platform = switch(@import("builtin").os.tag) {
+pub const Platform = switch (@import("builtin").os.tag) {
     .windows => @import("windows/windows.zig").WindowsPlatform,
     else => @compileError("Unsupported OS"),
 };

@@ -27,7 +27,7 @@ pub const CommandBufferVulkan = struct {
     }
 
     pub fn cmd_begin(self: *Self, info: gf.CommandBuffer.BeginInfo) !void {
-        const begin_info = c.VkCommandBufferBeginInfo {
+        const begin_info = c.VkCommandBufferBeginInfo{
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .flags = vk.commandbufferbeginflags_to_vulkan(info),
         };
@@ -49,8 +49,8 @@ pub const CommandBufferVulkan = struct {
     pub fn cmd_begin_render_pass(self: *Self, info: gf.CommandBuffer.BeginRenderPassInfo) void {
         const render_pass = info.render_pass.get() catch return;
         const framebuffer = info.framebuffer.get() catch return;
-        
-        const begin_info = c.VkRenderPassBeginInfo {
+
+        const begin_info = c.VkRenderPassBeginInfo{
             .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .renderPass = render_pass.platform.vk_render_pass,
             .framebuffer = framebuffer.platform.get_frame_framebuffer(),
@@ -80,7 +80,7 @@ pub const CommandBufferVulkan = struct {
     pub fn cmd_bind_compute_pipeline(self: *Self, pipeline: gf.ComputePipeline.Ref) void {
         const p = pipeline.get() catch return;
 
-        self.bound_pipeline = .{ .Compute = pipeline, };
+        self.bound_pipeline = .{ .Compute = pipeline };
         c.vkCmdBindPipeline(self.vk_command_buffer, c.VK_PIPELINE_BIND_POINT_COMPUTE, p.platform.vk_compute_pipeline);
     }
 
@@ -90,7 +90,7 @@ pub const CommandBufferVulkan = struct {
 
         var vk_viewports: [max_vk_viewports]c.VkViewport = undefined;
         for (info.viewports, 0..) |v, idx| {
-            vk_viewports[idx] = c.VkViewport {
+            vk_viewports[idx] = c.VkViewport{
                 .x = v.top_left_x,
                 .y = v.top_left_y,
                 .width = v.width,
@@ -101,10 +101,10 @@ pub const CommandBufferVulkan = struct {
         }
 
         c.vkCmdSetViewport(
-            self.vk_command_buffer, 
-            info.first_viewport, 
+            self.vk_command_buffer,
+            info.first_viewport,
             @intCast(info.viewports.len),
-            @ptrCast(vk_viewports[0..].ptr)
+            @ptrCast(vk_viewports[0..].ptr),
         );
     }
 
@@ -119,7 +119,7 @@ pub const CommandBufferVulkan = struct {
             self.vk_command_buffer,
             info.first_scissor,
             @intCast(info.scissors.len),
-            @ptrCast(vk_scissors[0..].ptr)
+            @ptrCast(vk_scissors[0..].ptr),
         );
     }
 
@@ -139,7 +139,7 @@ pub const CommandBufferVulkan = struct {
             info.first_binding,
             @intCast(info.buffers.len),
             @ptrCast(vk_buffers[0..].ptr),
-            @ptrCast(vk_device_sizes[0..].ptr)
+            @ptrCast(vk_device_sizes[0..].ptr),
         );
     }
 
@@ -149,7 +149,7 @@ pub const CommandBufferVulkan = struct {
             self.vk_command_buffer,
             buffer.platform.get_frame_vk_buffer(),
             info.offset,
-            vk.indexformat_to_vulkan(info.index_format)
+            vk.indexformat_to_vulkan(info.index_format),
         );
     }
 
@@ -184,7 +184,7 @@ pub const CommandBufferVulkan = struct {
             @intCast(info.descriptor_sets.len),
             @ptrCast(vk_descriptor_sets[0..].ptr),
             @intCast(info.dynamic_offsets.len),
-            @ptrCast(info.dynamic_offsets.ptr)
+            @ptrCast(info.dynamic_offsets.ptr),
         );
     }
 
@@ -204,7 +204,7 @@ pub const CommandBufferVulkan = struct {
             vk.shaderstageflags_to_vulkan(info.shader_stages),
             info.offset,
             @intCast(info.data.len),
-            @ptrCast(info.data.ptr)
+            @ptrCast(info.data.ptr),
         );
     }
 
@@ -214,7 +214,7 @@ pub const CommandBufferVulkan = struct {
             info.vertex_count,
             info.instance_count,
             info.first_vertex,
-            info.first_instance
+            info.first_instance,
         );
     }
 
@@ -225,7 +225,7 @@ pub const CommandBufferVulkan = struct {
             info.instance_count,
             info.first_index,
             info.vertex_offset,
-            info.first_instance
+            info.first_instance,
         );
     }
 
@@ -240,7 +240,7 @@ pub const CommandBufferVulkan = struct {
         var vk_image_barriers: [max_barriers_per_type]c.VkImageMemoryBarrier = undefined;
 
         for (info.memory_barriers, 0..) |b, idx| {
-            vk_memory_barriers[idx] = c.VkMemoryBarrier {
+            vk_memory_barriers[idx] = c.VkMemoryBarrier{
                 .sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                 .srcAccessMask = vk.accessflags_to_vulkan(b.src_access_mask),
                 .dstAccessMask = vk.accessflags_to_vulkan(b.dst_access_mask),
@@ -249,7 +249,7 @@ pub const CommandBufferVulkan = struct {
 
         for (info.buffer_barriers, 0..) |b, idx| {
             const buffer = b.buffer.get() catch unreachable;
-            vk_buffer_barriers[idx] = c.VkBufferMemoryBarrier {
+            vk_buffer_barriers[idx] = c.VkBufferMemoryBarrier{
                 .sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
                 .buffer = buffer.platform.get_frame_vk_buffer(),
                 .offset = b.offset,
@@ -263,7 +263,7 @@ pub const CommandBufferVulkan = struct {
 
         for (info.image_barriers, 0..) |b, idx| {
             const image = b.image.get() catch unreachable;
-            vk_image_barriers[idx] = c.VkImageMemoryBarrier {
+            vk_image_barriers[idx] = c.VkImageMemoryBarrier{
                 .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .image = image.platform.get_frame_image().vk_image, // TODO allow selecting inner image?
                 .oldLayout = if (b.old_layout) |l| vk.imagelayout_to_vulkan(l) else c.VK_IMAGE_LAYOUT_UNDEFINED,
@@ -273,40 +273,37 @@ pub const CommandBufferVulkan = struct {
                 .srcQueueFamilyIndex = if (b.src_queue) |q| GfxStateVulkan.get().get_queue_family_index(q) else c.VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = if (b.dst_queue) |q| GfxStateVulkan.get().get_queue_family_index(q) else c.VK_QUEUE_FAMILY_IGNORED,
                 .subresourceRange = .{
-                    .aspectMask =   if (!image.info.format.is_depth()) c.VK_IMAGE_ASPECT_COLOR_BIT
-                                    else c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
+                    .aspectMask = if (!image.info.format.is_depth()) c.VK_IMAGE_ASPECT_COLOR_BIT else c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
                     .baseMipLevel = b.subresource_range.base_mip_level,
-                    .levelCount = 
-                        if (b.subresource_range.mip_level_count >= image.info.mip_levels - b.subresource_range.base_mip_level) c.VK_REMAINING_MIP_LEVELS
-                        else b.subresource_range.mip_level_count,
+                    .levelCount = if (b.subresource_range.mip_level_count >= image.info.mip_levels - b.subresource_range.base_mip_level) c.VK_REMAINING_MIP_LEVELS else b.subresource_range.mip_level_count,
                     .baseArrayLayer = b.subresource_range.base_array_layer,
-                    .layerCount =
-                        if (b.subresource_range.array_layer_count >= image.info.array_length - b.subresource_range.base_array_layer) c.VK_REMAINING_ARRAY_LAYERS
-                        else b.subresource_range.array_layer_count,
+                    .layerCount = if (b.subresource_range.array_layer_count >= image.info.array_length - b.subresource_range.base_array_layer) c.VK_REMAINING_ARRAY_LAYERS else b.subresource_range.array_layer_count,
                 },
             };
         }
 
         c.vkCmdPipelineBarrier(
-            self.vk_command_buffer, 
-            vk.pipelinestageflags_to_vulkan(info.src_stage), 
-            vk.pipelinestageflags_to_vulkan(info.dst_stage), 
-            0, 
-            @intCast(info.memory_barriers.len), @ptrCast(vk_memory_barriers[0..].ptr),
-            @intCast(info.buffer_barriers.len), @ptrCast(vk_buffer_barriers[0..].ptr),
-            @intCast(info.image_barriers.len), @ptrCast(vk_image_barriers[0..].ptr),
+            self.vk_command_buffer,
+            vk.pipelinestageflags_to_vulkan(info.src_stage),
+            vk.pipelinestageflags_to_vulkan(info.dst_stage),
+            0,
+            @intCast(info.memory_barriers.len),
+            @ptrCast(vk_memory_barriers[0..].ptr),
+            @intCast(info.buffer_barriers.len),
+            @ptrCast(vk_buffer_barriers[0..].ptr),
+            @intCast(info.image_barriers.len),
+            @ptrCast(vk_image_barriers[0..].ptr),
         );
     }
 
     pub fn cmd_copy_image_to_buffer(self: *Self, info: gf.CommandBuffer.CopyImageToBufferInfo) void {
         const alloc = eng.get().frame_allocator;
 
-        var vk_copy_regions = std.ArrayList(c.VkBufferImageCopy).initCapacity(alloc, 16)
-            catch unreachable;
+        var vk_copy_regions = std.ArrayList(c.VkBufferImageCopy).initCapacity(alloc, 16) catch unreachable;
         defer vk_copy_regions.deinit(alloc);
 
         for (info.copy_regions) |copy_region| {
-            vk_copy_regions.append(alloc, c.VkBufferImageCopy {
+            vk_copy_regions.append(alloc, c.VkBufferImageCopy{
                 .bufferOffset = copy_region.buffer_offset,
                 .bufferRowLength = copy_region.buffer_row_length,
                 .bufferImageHeight = copy_region.buffer_image_height,
@@ -340,19 +337,18 @@ pub const CommandBufferVulkan = struct {
             c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             buffer.platform.get_frame_vk_buffer(),
             @intCast(vk_copy_regions.items.len),
-            @ptrCast(vk_copy_regions.items.ptr)
+            @ptrCast(vk_copy_regions.items.ptr),
         );
     }
 
     pub fn cmd_copy_buffer_to_image(self: *Self, info: gf.CommandBuffer.CopyBufferToImageInfo) void {
         const alloc = eng.get().frame_allocator;
 
-        var vk_copy_regions = std.ArrayList(c.VkBufferImageCopy).initCapacity(alloc, 16)
-            catch unreachable;
+        var vk_copy_regions = std.ArrayList(c.VkBufferImageCopy).initCapacity(alloc, 16) catch unreachable;
         defer vk_copy_regions.deinit(alloc);
 
         for (info.copy_regions) |copy_region| {
-            vk_copy_regions.append(alloc, c.VkBufferImageCopy {
+            vk_copy_regions.append(alloc, c.VkBufferImageCopy{
                 .bufferOffset = copy_region.buffer_offset,
                 .bufferRowLength = copy_region.buffer_row_length,
                 .bufferImageHeight = copy_region.buffer_image_height,
@@ -386,7 +382,7 @@ pub const CommandBufferVulkan = struct {
             image.platform.get_frame_image().vk_image, // TODO allow selection of specific internal image. fix? using frame image should be recent enough (and prevent stalls, maybe)
             c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             @intCast(vk_copy_regions.items.len),
-            @ptrCast(vk_copy_regions.items.ptr)
+            @ptrCast(vk_copy_regions.items.ptr),
         );
     }
 
@@ -397,22 +393,34 @@ pub const CommandBufferVulkan = struct {
         defer vk_copy_regions.deinit(alloc);
 
         for (info.copy_regions) |copy_region| {
-            vk_copy_regions.append(alloc, c.VkImageCopy {
+            vk_copy_regions.append(alloc, c.VkImageCopy{
                 .srcSubresource = .{
                     .aspectMask = vk.imageaspect_to_vulkan(copy_region.src_subresource.aspect_mask),
                     .baseArrayLayer = copy_region.src_subresource.base_array_layer,
                     .layerCount = copy_region.src_subresource.array_layer_count,
                     .mipLevel = copy_region.src_subresource.mip_level,
                 },
-                .srcOffset = .{ .x = copy_region.src_offset[0], .y = copy_region.src_offset[1], .z = copy_region.src_offset[2], },
+                .srcOffset = .{
+                    .x = copy_region.src_offset[0],
+                    .y = copy_region.src_offset[1],
+                    .z = copy_region.src_offset[2],
+                },
                 .dstSubresource = .{
                     .aspectMask = vk.imageaspect_to_vulkan(copy_region.dst_subresource.aspect_mask),
                     .baseArrayLayer = copy_region.dst_subresource.base_array_layer,
                     .layerCount = copy_region.dst_subresource.array_layer_count,
                     .mipLevel = copy_region.dst_subresource.mip_level,
                 },
-                .dstOffset = .{ .x = copy_region.dst_offset[0], .y = copy_region.dst_offset[1], .z = copy_region.dst_offset[2], },
-                .extent = .{ .width = copy_region.extent[0], .height = copy_region.extent[1], .depth = copy_region.extent[2], },
+                .dstOffset = .{
+                    .x = copy_region.dst_offset[0],
+                    .y = copy_region.dst_offset[1],
+                    .z = copy_region.dst_offset[2],
+                },
+                .extent = .{
+                    .width = copy_region.extent[0],
+                    .height = copy_region.extent[1],
+                    .depth = copy_region.extent[2],
+                },
             }) catch |err| {
                 std.debug.panic("Unable to append copy region: {}", .{err});
             };
@@ -428,16 +436,16 @@ pub const CommandBufferVulkan = struct {
             dst_image.platform.get_frame_image().vk_image,
             vk.imagelayout_to_vulkan(info.dst_image_layout),
             @intCast(vk_copy_regions.items.len),
-            @ptrCast(vk_copy_regions.items.ptr)
+            @ptrCast(vk_copy_regions.items.ptr),
         );
     }
 
     pub fn cmd_dispatch(self: *Self, info: gf.CommandBuffer.DispatchInfo) void {
         c.vkCmdDispatch(
-            self.vk_command_buffer, 
-            info.group_count_x, 
-            info.group_count_y, 
-            info.group_count_z
+            self.vk_command_buffer,
+            info.group_count_x,
+            info.group_count_y,
+            info.group_count_z,
         );
     }
 };

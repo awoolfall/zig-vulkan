@@ -10,9 +10,9 @@ pub inline fn generate_model_matrix(self: *const Self) zm.Mat {
     return zm.mul(
         zm.scaling(self.scale[0], self.scale[1], self.scale[2]),
         zm.mul(
-            zm.matFromQuat(self.rotation), 
-            zm.translationV(self.position)
-        )
+            zm.matFromQuat(self.rotation),
+            zm.translationV(self.position),
+        ),
     );
 }
 
@@ -33,7 +33,7 @@ pub inline fn forward_direction(self: *const Self) zm.F32x4 {
 }
 
 pub inline fn lerp(self: Self, other: Self, t: f32) Self {
-    return Self {
+    return Self{
         .position = zm.lerp(self.position, other.position, t),
         .rotation = zm.slerp(self.rotation, other.rotation, t),
         .scale = zm.lerp(self.scale, other.scale, t),

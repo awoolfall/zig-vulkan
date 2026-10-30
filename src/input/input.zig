@@ -17,9 +17,9 @@ pub const InputState = struct {
     const FrameData = struct {
         key_state: [KEY_STATE_LEN]KeyState = [_]KeyState{KeyState.RELEASED} ** KEY_STATE_LEN,
         char_events: [8]?[2:0]u8 = [_]?[2:0]u8{null} ** 8,
-        
-        cursor_position: [2]i32 = [2]i32{0, 0},
-        mouse_delta: [2]f32 = [2]f32{0.0, 0.0},
+
+        cursor_position: [2]i32 = [2]i32{ 0, 0 },
+        mouse_delta: [2]f32 = [2]f32{ 0.0, 0.0 },
 
         dropped_files: [][]u8,
     };
@@ -30,12 +30,10 @@ pub const InputState = struct {
     pub fn init() !Self {
         comptime std.debug.assert(KEY_STATE_LEN < 0xff);
 
-        return Self {
-            .frame_data = .{
-                .{ .dropped_files = try eng.get().general_allocator.alloc([]u8, 0), },
-                .{ .dropped_files = try eng.get().general_allocator.alloc([]u8, 0), },
-            }
-        };
+        return Self{ .frame_data = .{
+            .{ .dropped_files = try eng.get().general_allocator.alloc([]u8, 0) },
+            .{ .dropped_files = try eng.get().general_allocator.alloc([]u8, 0) },
+        } };
     }
 
     pub fn deinit(self: *Self) void {
@@ -99,7 +97,7 @@ pub const InputState = struct {
                 // Force all held or pressed keys to UP. Next frame this will transition to RELEASED
                 for (&next_frame_data.key_state) |*ks| {
                     switch (ks.*) {
-                        .DOWN, .HELD => { ks.* = KeyState.UP; },
+                        .DOWN, .HELD => ks.* = KeyState.UP,
                         else => {},
                     }
                 }
@@ -128,14 +126,14 @@ pub const InputState = struct {
 
         for (&next_frame_data.key_state) |*ks| {
             switch (ks.*) {
-                .DOWN => { ks.* = KeyState.HELD; },
-                .REPEAT => { ks.* = KeyState.HELD; },
-                .UP => { ks.* = KeyState.RELEASED; },
+                .DOWN => ks.* = KeyState.HELD,
+                .REPEAT => ks.* = KeyState.HELD,
+                .UP => ks.* = KeyState.RELEASED,
                 else => {},
             }
         }
 
-        next_frame_data.mouse_delta = .{0.0, 0.0};
+        next_frame_data.mouse_delta = .{ 0.0, 0.0 };
         @memset(&next_frame_data.char_events, null);
 
         if (next_frame_data.dropped_files.len != 0) {

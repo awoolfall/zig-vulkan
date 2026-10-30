@@ -39,8 +39,8 @@ pub const Easing = enum {
     OutElastic,
     OutExpo,
 
-    pub fn func(self: Easing) *const fn(f32) f32 {
-        switch(self) {
+    pub fn func(self: Easing) *const fn (f32) f32 {
+        switch (self) {
             .Constant => return ease_constant,
             .OutLinear => return ease_out_linear,
             .OutQuart => return ease_out_quart,

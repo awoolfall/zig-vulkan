@@ -33,7 +33,7 @@ pub const DescriptorPoolVulkan = struct {
 
                 for (descriptor_counts[0..], 0..) |desc, idx| {
                     if (desc > 0) {
-                        try vk_pool_sizes_list.append(alloc, c.VkDescriptorPoolSize {
+                        try vk_pool_sizes_list.append(alloc, c.VkDescriptorPoolSize{
                             .type = vk.bindingtype_to_vulkan(@enumFromInt(idx)),
                             .descriptorCount = desc,
                         });
@@ -47,7 +47,7 @@ pub const DescriptorPoolVulkan = struct {
                 const vk_pool_sizes = try alloc.alloc(c.VkDescriptorPoolSize, pool_sizes.len);
 
                 for (pool_sizes, 0..) |size, idx| {
-                    vk_pool_sizes[idx] = c.VkDescriptorPoolSize {
+                    vk_pool_sizes[idx] = c.VkDescriptorPoolSize{
                         .type = vk.bindingtype_to_vulkan(size.binding_type),
                         .descriptorCount = size.count,
                     };
@@ -63,7 +63,7 @@ pub const DescriptorPoolVulkan = struct {
             pool_size.descriptorCount *= info.max_sets * GfxStateVulkan.get().frames_in_flight();
         }
 
-        const pool_info = c.VkDescriptorPoolCreateInfo {
+        const pool_info = c.VkDescriptorPoolCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .maxSets = info.max_sets * GfxStateVulkan.get().frames_in_flight(),
             .pPoolSizes = @ptrCast(vk_pool_sizes.ptr),
@@ -74,7 +74,7 @@ pub const DescriptorPoolVulkan = struct {
         try vkt(c.vkCreateDescriptorPool(GfxStateVulkan.get().device, &pool_info, null, &vk_pool));
         errdefer c.vkDestroyDescriptorPool(GfxStateVulkan.get().device, vk_pool, null);
 
-        return DescriptorPoolVulkan {
+        return DescriptorPoolVulkan{
             .vk_pool = vk_pool,
         };
     }
@@ -83,7 +83,7 @@ pub const DescriptorPoolVulkan = struct {
         self: *const DescriptorPoolVulkan,
         alloc: std.mem.Allocator,
         info: gf.DescriptorSetInfo,
-        number_of_sets: u32
+        number_of_sets: u32,
     ) ![]gf.DescriptorSet {
         const fif = GfxStateVulkan.get().frames_in_flight();
         const number_of_vk_sets = number_of_sets * fif;
@@ -98,7 +98,7 @@ pub const DescriptorPoolVulkan = struct {
             l.* = layout.platform.vk_layout;
         }
 
-        const alloc_info = c.VkDescriptorSetAllocateInfo {
+        const alloc_info = c.VkDescriptorSetAllocateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool = self.vk_pool,
             .pSetLayouts = @ptrCast(layouts.ptr),
@@ -123,7 +123,7 @@ pub const DescriptorPoolVulkan = struct {
         var vk_sets_window_iter = std.mem.window(c.VkDescriptorSet, vk_sets, fif, fif);
         var idx: usize = 0;
         while (vk_sets_window_iter.next()) |vk_set_chunk| {
-            sets[idx] = gf.DescriptorSet {
+            sets[idx] = gf.DescriptorSet{
                 .platform = try DescriptorSetVulkan.init(self.vk_pool, vk_set_chunk, false),
             };
             idx += 1;

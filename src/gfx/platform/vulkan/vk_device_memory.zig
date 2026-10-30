@@ -31,7 +31,7 @@ pub const VkDeviceMemoryAllocator = struct {
         const memory_groups = try std.ArrayList(MemoryGroup).initCapacity(alloc, 8);
         errdefer memory_groups.deinit(alloc);
 
-        return VkDeviceMemoryAllocator {
+        return VkDeviceMemoryAllocator{
             .alloc = alloc,
             .vk_device = vk_device,
             .memory_groups = memory_groups,
@@ -39,19 +39,23 @@ pub const VkDeviceMemoryAllocator = struct {
     }
 
     pub fn allocate(self: *VkDeviceMemoryAllocator, allocation_size: u32, memory_type_index: u32) !AllocationHandle {
-        if (allocation_size == 0) { return error.AllocationSizeMustNotBeZero; }
+        if (allocation_size == 0) {
+            return error.AllocationSizeMustNotBeZero;
+        }
 
         for (self.memory_groups.items, 0..) |*group, group_idx| {
             if (group.vk_memory_type_index == memory_type_index) {
-                const allocation_path = group.allocate(allocation_size) catch { continue; };
-                return AllocationHandle {
+                const allocation_path = group.allocate(allocation_size) catch {
+                    continue;
+                };
+                return AllocationHandle{
                     .memory_group_id = group_idx,
                     .binary_path = allocation_path,
                     .allocation_size = allocation_size,
                 };
             }
         }
-        
+
         const memory_group_size = std.math.pow(2, 24);
         std.debug.assert(allocation_size < memory_group_size);
 
@@ -62,7 +66,7 @@ pub const VkDeviceMemoryAllocator = struct {
 
         try self.memory_groups.append(eng.get().general_allocator, new_memory_group);
 
-        return AllocationHandle {
+        return AllocationHandle{
             .memory_group_id = self.memory_groups.items.len - 1,
             .binary_path = path,
             .allocation_size = allocation_size,
@@ -70,13 +74,15 @@ pub const VkDeviceMemoryAllocator = struct {
     }
 
     pub fn deallocate(self: *VkDeviceMemoryAllocator, allocation: AllocationHandle) !void {
-        if (allocation.memory_group_id >= self.memory_groups.items.len) { error.MemoryGroupIdxDoesNotExist; }
+        if (allocation.memory_group_id >= self.memory_groups.items.len) {
+            error.MemoryGroupIdxDoesNotExist;
+        }
         try self.memory_groups.items[allocation.memory_group_id].deallocate(allocation);
     }
 };
 
 const BTree = struct {
-    pub const Path = packed struct (u32) {
+    pub const Path = packed struct(u32) {
         const max_len = 24;
         path: u24,
         len: u8,
@@ -87,7 +93,7 @@ const BTree = struct {
     };
 
     pub const Node = struct {
-        pub const Direction = enum (u1) { Left = 0, Right = 1 };
+        pub const Direction = enum(u1) { Left = 0, Right = 1 };
 
         left: ?*Node = null,
         right: ?*Node = null,
@@ -101,7 +107,9 @@ const BTree = struct {
         }
 
         pub fn create_child(self: *BTree.Node, alloc: std.mem.Allocator, dir: Direction) !void {
-            if ((if (dir == .Left) self.left else self.right) != null) { return error.NodeIsNotNull; }
+            if ((if (dir == .Left) self.left else self.right) != null) {
+                return error.NodeIsNotNull;
+            }
             const new_node = try alloc.create(BTree.Node);
             new_node.* = .{};
             (if (dir == .Left) self.left else self.right) = new_node;
@@ -148,8 +156,8 @@ const BTree = struct {
 
         var node: *BTree.Node = &self.root_node;
         for (0..leaf_path.len) |bit| {
-            const navigate_node, const branch_test_node, const navigate_direction: BTree.Node.Direction = if (leaf_path.bit_is_set(bit)) .{node.right, node.left, .Right} else .{node.left, node.right, .Left};
-            
+            const navigate_node, const branch_test_node, const navigate_direction: BTree.Node.Direction = if (leaf_path.bit_is_set(bit)) .{ node.right, node.left, .Right } else .{ node.left, node.right, .Left };
+
             if (branch_test_node) |_| {
                 branch_root_node = node;
                 branch_direction = navigate_direction;
@@ -169,14 +177,20 @@ const BTree = struct {
         // if creating a node fails somewhere in the chain we want to return the b-tree to the state it was previously.
         // store the 'root' of the new branch and deinit this if a error occurs.
         var new_node_root: ?struct { *BTree.Node, BTree.Node.Direction } = null;
-        errdefer if (new_node_root) |pair| { pair.@"0".destroy_child(self.alloc, pair.@"1"); };
+        errdefer if (new_node_root) |pair| {
+            pair.@"0".destroy_child(self.alloc, pair.@"1");
+        };
 
         // handle path.len == 0 case by checking if an allocation exists in the root node
-        if (self.root_node.allocation != null) { return error.AllocationBlocksPath; }
+        if (self.root_node.allocation != null) {
+            return error.AllocationBlocksPath;
+        }
 
         var node: *BTree.Node = &self.root_node;
         for (0..path.len) |bit| {
-            if (node.allocation != null) { return error.AllocationBlocksPath; }
+            if (node.allocation != null) {
+                return error.AllocationBlocksPath;
+            }
 
             if (if (path.bit_is_set(bit)) node.right else node.left) |next_node| {
                 node = next_node;
@@ -185,7 +199,9 @@ const BTree = struct {
                 new_node.* = .{};
 
                 (if (path.bit_is_set(bit)) node.right else node.left) = new_node;
-                if (new_node_root == null) { new_node_root = .{ node, if (path.bit_is_set(bit)) .Right else .Left }; }
+                if (new_node_root == null) {
+                    new_node_root = .{ node, if (path.bit_is_set(bit)) .Right else .Left };
+                }
                 node = new_node;
             }
         }
@@ -195,10 +211,10 @@ const BTree = struct {
 
 test BTree {
     const alloc = std.heap.page_allocator;
-    
+
     var btree = try BTree.init(alloc);
     defer btree.deinit();
-    
+
     try std.testing.expect(btree.root_node.allocation == null);
     try std.testing.expect(btree.root_node.left == null);
     try std.testing.expect(btree.root_node.right == null);
@@ -206,22 +222,25 @@ test BTree {
     // test create at root node
     _ = try btree.create_node_at_path(.{ .path = 0b0, .len = 0 });
     btree.root_node.allocation = 1;
-    try std.testing.expectError(error.AllocationBlocksPath, btree.create_node_at_path(.{ .path = 0, .len = 0, }));
+    try std.testing.expectError(error.AllocationBlocksPath, btree.create_node_at_path(.{
+        .path = 0,
+        .len = 0,
+    }));
     btree.root_node.allocation = null;
 
     {
-        const node_a = try btree.create_node_at_path(.{ .path = 0b000, .len = 3, });
-        const node_b = try btree.create_node_at_path(.{ .path = 0b010, .len = 3, });
-        try std.testing.expectEqual(node_a, try btree.navigate_to_path(.{ .path = 0b000, .len = 3, }));
-        try std.testing.expectEqual(node_b, try btree.navigate_to_path(.{ .path = 0b010, .len = 3, }));
-        const branch_parent_node = try btree.navigate_to_path(.{ .path = 0b0, .len = 1, });
+        const node_a = try btree.create_node_at_path(.{ .path = 0b000, .len = 3 });
+        const node_b = try btree.create_node_at_path(.{ .path = 0b010, .len = 3 });
+        try std.testing.expectEqual(node_a, try btree.navigate_to_path(.{ .path = 0b000, .len = 3 }));
+        try std.testing.expectEqual(node_b, try btree.navigate_to_path(.{ .path = 0b010, .len = 3 }));
+        const branch_parent_node = try btree.navigate_to_path(.{ .path = 0b0, .len = 1 });
         {
-            const branch_root_pair = try btree.find_branch_root(.{ .path = 0b000, .len = 3, });
+            const branch_root_pair = try btree.find_branch_root(.{ .path = 0b000, .len = 3 });
             try std.testing.expectEqual(branch_parent_node, branch_root_pair.@"0");
             try std.testing.expectEqual(BTree.Node.Direction.Left, branch_root_pair.@"1");
         }
         {
-            const branch_root_pair = try btree.find_branch_root(.{ .path = 0b010, .len = 3, });
+            const branch_root_pair = try btree.find_branch_root(.{ .path = 0b010, .len = 3 });
             try std.testing.expectEqual(branch_parent_node, branch_root_pair.@"0");
             try std.testing.expectEqual(BTree.Node.Direction.Right, branch_root_pair.@"1");
         }
@@ -240,12 +259,14 @@ pub const MemoryGroup = struct {
     }
 
     pub fn init(vk_device: c.VkDevice, memory_group_size: u32, memory_type_index: u32) !MemoryGroup {
-        if (!std.math.isPowerOfTwo(memory_group_size)) { return error.MemoryGroupSizeMustBePowerOfTwo; }
+        if (!std.math.isPowerOfTwo(memory_group_size)) {
+            return error.MemoryGroupSizeMustBePowerOfTwo;
+        }
 
         const b_tree = try BTree.init();
         errdefer b_tree.deinit();
 
-        const memory_allocate_info = c.VkMemoryAllocateInfo {
+        const memory_allocate_info = c.VkMemoryAllocateInfo{
             .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .allocationSize = memory_group_size,
             .memoryTypeIndex = memory_type_index,
@@ -255,7 +276,7 @@ pub const MemoryGroup = struct {
         try vkt(c.vkAllocateMemory(vk_device, &memory_allocate_info, null, &vk_device_memory));
         errdefer c.vkFreeMemory(vk_device, vk_device_memory, null);
 
-        return MemoryGroup {
+        return MemoryGroup{
             .vk_device_memory = vk_device_memory,
             .vk_memory_type_index = memory_type_index,
             .memory_group_size = memory_group_size,
@@ -279,10 +300,13 @@ pub const MemoryGroup = struct {
         const level = try self.find_allocation_level(allocation_size);
 
         for (0..std.math.pow(2, level)) |i| {
-            const path = BTree.Path{ .path = @intCast(i), .len = level, };
+            const path = BTree.Path{ .path = @intCast(i), .len = level };
             const node = self.b_tree.create_node_at_path(path) catch |err| {
-                if (err == error.AllocationBlocksPath) { continue; }
-                else { return err; }
+                if (err == error.AllocationBlocksPath) {
+                    continue;
+                } else {
+                    return err;
+                }
             };
             node.allocation = allocation_size;
             return path;
@@ -292,11 +316,15 @@ pub const MemoryGroup = struct {
 
     pub fn deallocate(self: *MemoryGroup, allocation: AllocationHandle) !void {
         if (allocation.binary_path.len == 0) {
-            if (self.b_tree.root_node.allocation == null) { error.NoAllocationExistsAtNode; }
+            if (self.b_tree.root_node.allocation == null) {
+                error.NoAllocationExistsAtNode;
+            }
             self.b_tree.root_node.allocation = null;
         } else {
             const node = try self.b_tree.navigate_to_path(allocation.binary_path);
-            if (node.allocation == null) { error.NoAllocationExistsAtNode; }
+            if (node.allocation == null) {
+                error.NoAllocationExistsAtNode;
+            }
 
             const branch_root_node, const branch_direction = try self.b_tree.find_branch_root(allocation.binary_path);
             branch_root_node.destroy_child(self.b_tree.alloc, branch_direction);

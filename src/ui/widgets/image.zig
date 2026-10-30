@@ -4,13 +4,13 @@ const Imui = eng.Imui;
 const gfx = eng.gfx;
 
 pub fn create(imui: *Imui, texture_view: gfx.ImageView.Ref, sampler: gfx.Sampler.Ref, key: anytype) Imui.WidgetSignal(Imui.WidgetId) {
-    var image_widget = Imui.Widget {
+    var image_widget = Imui.Widget{
         .key = Imui.gen_key(key ++ .{@src()}),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .Pixels, .value = 100.0, .shrinkable = false, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 100.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 100.0, .shrinkable = false },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 100.0, .shrinkable = false },
         },
-        .texture =  .{
+        .texture = .{
             .texture_view = texture_view,
             .sampler = sampler,
         },
@@ -39,7 +39,7 @@ pub fn create(imui: *Imui, texture_view: gfx.ImageView.Ref, sampler: gfx.Sampler
                         image_widget.semantic_size[0].value = 1.0;
                         image_widget.semantic_size[1].kind = .Pixels;
                         image_widget.semantic_size[1].value = parent.content_rect().width() / aspect_ratio;
-                                                image_widget.semantic_size[1].kind = .ParentPercentage;
+                        image_widget.semantic_size[1].kind = .ParentPercentage;
                         image_widget.semantic_size[1].value = 1.0;
                     },
                 }

@@ -88,33 +88,30 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
     _ = try shader_file.readAll(slang_shader);
 
-    const spirv_shader = try gf.GfxState.get().shader_manager.generate_spirv(alloc, .{
-        .shader_data = slang_shader,
-        .shader_entry_points = &.{
-            "vs_main",
-            "ps_main",
-        }
-    });
+    const spirv_shader = try gf.GfxState.get().shader_manager.generate_spirv(alloc, .{ .shader_data = slang_shader, .shader_entry_points = &.{
+        "vs_main",
+        "ps_main",
+    } });
     defer alloc.free(spirv_shader);
 
     const shader_module = try gf.ShaderModule.init(.{ .spirv_data = spirv_shader });
     defer shader_module.deinit();
 
-    const stride: u32 = 
-        @sizeOf([4]f32) +   // position
-        @sizeOf([4]f32) +   // colour
-        @sizeOf([4]f32) +   // velocity
-        @sizeOf([4]f32);    // scale
+    const stride: u32 =
+        @sizeOf([4]f32) + // position
+        @sizeOf([4]f32) + // colour
+        @sizeOf([4]f32) + // velocity
+        @sizeOf([4]f32); // scale
 
     const vertex_input = try gf.VertexInput.init(.{
         .bindings = &.{
             .{ .binding = 0, .stride = stride, .input_rate = .Instance },
         },
         .attributes = &.{
-            .{ .name = "Position",  .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
-            .{ .name = "Colour",    .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
-            .{ .name = "Velocity",  .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
-            .{ .name = "Scale",     .location = 3, .binding = 0, .offset = 3 * @sizeOf([4]f32), .format = .F32x4, },
+            .{ .name = "Position", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4 },
+            .{ .name = "Colour", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4 },
+            .{ .name = "Velocity", .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4 },
+            .{ .name = "Scale", .location = 3, .binding = 0, .offset = 3 * @sizeOf([4]f32), .format = .F32x4 },
         },
     });
     defer vertex_input.deinit();
@@ -124,16 +121,16 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
     const camera_constant_buffer = try gf.Buffer.init(
         @sizeOf(ConstantBuffer),
-        .{ .ConstantBuffer = true, },
-        .{ .CpuWrite = true, },
+        .{ .ConstantBuffer = true },
+        .{ .CpuWrite = true },
     );
     errdefer camera_constant_buffer.deinit();
 
     const camera_descriptor_layout = try gf.DescriptorLayout.init(.{
         .bindings = &.{
-            gf.DescriptorBindingInfo {
+            gf.DescriptorBindingInfo{
                 .binding = 0,
-                .shader_stages = .{ .Vertex = true, .Pixel = true, },
+                .shader_stages = .{ .Vertex = true, .Pixel = true },
                 .binding_type = .UniformBuffer,
             },
         },
@@ -142,7 +139,7 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
     const camera_descriptor_pool = try gf.DescriptorPool.init(.{
         .max_sets = 1,
-        .strategy = .{ .Layout = camera_descriptor_layout, },
+        .strategy = .{ .Layout = camera_descriptor_layout },
     });
     errdefer camera_descriptor_pool.deinit();
 
@@ -153,7 +150,7 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
     try (try camera_descriptor_set.get()).update(.{
         .writes = &.{
-            gf.DescriptorSetUpdateWriteInfo {
+            gf.DescriptorSetUpdateWriteInfo{
                 .binding = 0,
                 .data = .{ .UniformBuffer = .{
                     .buffer = camera_constant_buffer,
@@ -161,8 +158,8 @@ pub fn init(alloc: std.mem.Allocator) !Self {
             },
         },
     });
-    
-    const attachments = [_]gf.AttachmentInfo {
+
+    const attachments = [_]gf.AttachmentInfo{
         .{
             .name = "colour",
             .format = gf.GfxState.hdr_format,
@@ -181,7 +178,7 @@ pub fn init(alloc: std.mem.Allocator) !Self {
     var render_pass = try gf.RenderPass.init(.{
         .attachments = attachments[0..],
         .subpasses = &.{
-            gf.SubpassInfo {
+            gf.SubpassInfo{
                 .attachments = &.{
                     "colour",
                 },
@@ -189,13 +186,13 @@ pub fn init(alloc: std.mem.Allocator) !Self {
             },
         },
         .dependencies = &.{
-            gf.SubpassDependencyInfo {
+            gf.SubpassDependencyInfo{
                 .src_subpass = null,
                 .dst_subpass = 0,
-                .src_stage_mask = .{ .color_attachment_output = true, },
+                .src_stage_mask = .{ .color_attachment_output = true },
                 .src_access_mask = .{},
-                .dst_stage_mask = .{ .color_attachment_output = true, },
-                .dst_access_mask = .{ .color_attachment_write = true, },
+                .dst_stage_mask = .{ .color_attachment_output = true },
+                .dst_access_mask = .{ .color_attachment_write = true },
             },
         },
     });
@@ -211,14 +208,14 @@ pub fn init(alloc: std.mem.Allocator) !Self {
             .module = &shader_module,
             .entry_point = "ps_main",
         },
-        .depth_test = .{ .write = false, },
+        .depth_test = .{ .write = false },
         .render_pass = render_pass,
         .descriptor_set_layouts = &.{
             camera_descriptor_layout,
         },
         .push_constants = &.{
-            gf.PushConstantLayoutInfo {
-                .shader_stages = .{ .Vertex = true, .Pixel = true, },
+            gf.PushConstantLayoutInfo{
+                .shader_stages = .{ .Vertex = true, .Pixel = true },
                 .offset = 0,
                 .size = @sizeOf(PushConstants),
             },
@@ -235,7 +232,7 @@ pub fn init(alloc: std.mem.Allocator) !Self {
     });
     errdefer framebuffer.deinit();
 
-    return Self {
+    return Self{
         .staged_particle_sets = try std.ArrayList(StagedParticleSet).initCapacity(eng.get().general_allocator, 32),
 
         .shader_watcher = shader_watcher,
@@ -261,8 +258,8 @@ pub fn clear(self: *Self) void {
 fn push_new_instance_buffer(self: *Self) !void {
     const instance_buffer = try gf.Buffer.init(
         @sizeOf(eng.ParticleSystem.ParticleRenderData) * Self.MAX_PARTICLES_PER_BUFFER,
-        .{ .VertexBuffer = true, },
-        .{ .CpuWrite = true, },
+        .{ .VertexBuffer = true },
+        .{ .CpuWrite = true },
     );
     errdefer instance_buffer.deinit();
 
@@ -275,14 +272,14 @@ pub fn push_particle_system(self: *Self, particle_system: *const eng.ParticleSys
         std.log.info("creating new paticle instance buffer", .{});
         try self.push_new_instance_buffer();
     }
-    
+
     var staged_particles: usize = 0;
     while (staged_particles < particle_system.particles_render_data.len) {
         const buffer_idx = @divFloor(self.staged_particle_count, Self.MAX_PARTICLES_PER_BUFFER);
         const buffer_ref = self.instaces_data_buffers.items[buffer_idx];
         const buffer = try buffer_ref.get();
 
-        const mapped_buffer = try buffer.map(.{ .write = .EveryFrame, });
+        const mapped_buffer = try buffer.map(.{ .write = .EveryFrame });
         defer mapped_buffer.unmap();
 
         const data = mapped_buffer.data_array(eng.ParticleSystem.ParticleRenderData, Self.MAX_PARTICLES_PER_BUFFER);
@@ -292,11 +289,11 @@ pub fn push_particle_system(self: *Self, particle_system: *const eng.ParticleSys
 
         @memcpy(data[start_idx..end_idx], particle_system.particles_render_data[staged_particles..(staged_particles + copy_amount)]);
 
-        const particle_set = StagedParticleSet {
+        const particle_set = StagedParticleSet{
             .push_constant_data = .{
-                .flags = @bitCast(ParticleSystemFlags {
+                .flags = @bitCast(ParticleSystemFlags{
                     .circle_shader = (particle_system.settings.shape == .Circle),
-                    .velocity_aligned = (particle_system.settings.alignment == .VelocityAligned) 
+                    .velocity_aligned = (particle_system.settings.alignment == .VelocityAligned),
                 }),
             },
             .instances_buffer = buffer_ref,
@@ -336,13 +333,13 @@ pub fn render(
             break :blk;
         };
 
-        const mapped_buffer = camera_buffer.map(.{ .write = .EveryFrame, }) catch |err| {
+        const mapped_buffer = camera_buffer.map(.{ .write = .EveryFrame }) catch |err| {
             std.log.warn("Unable to map camera buffer: {}", .{err});
             break :blk;
         };
         defer mapped_buffer.unmap();
 
-        mapped_buffer.data(ConstantBuffer).* = ConstantBuffer {
+        mapped_buffer.data(ConstantBuffer).* = ConstantBuffer{
             .view_matrix = camera.transform.generate_view_matrix(),
             .proj_matrix = camera.generate_perspective_matrix(gf.GfxState.get().swapchain_aspect()),
         };
@@ -356,10 +353,10 @@ pub fn render(
     defer cmd.cmd_end_render_pass();
 
     cmd.cmd_set_viewports(.{
-        .viewports = &.{ .full_screen_viewport(), },
+        .viewports = &.{.full_screen_viewport()},
     });
     cmd.cmd_set_scissors(.{
-        .scissors = &.{ .full_screen_pixels(), },
+        .scissors = &.{.full_screen_pixels()},
     });
 
     cmd.cmd_bind_graphics_pipeline(self.pipeline);
@@ -373,15 +370,15 @@ pub fn render(
     for (self.staged_particle_sets.items) |s| {
         cmd.cmd_bind_vertex_buffers(.{
             .buffers = &.{
-                gf.VertexBufferInput {
+                gf.VertexBufferInput{
                     .buffer = s.instances_buffer,
                     .offset = @intCast(s.instances_buffer_offset),
                 },
             },
         });
 
-        cmd.cmd_push_constants(gf.CommandBuffer.PushConstantsInfo {
-            .shader_stages = .{ .Vertex = true, .Pixel = true, },
+        cmd.cmd_push_constants(gf.CommandBuffer.PushConstantsInfo{
+            .shader_stages = .{ .Vertex = true, .Pixel = true },
             .offset = 0,
             .data = std.mem.asBytes(&s.push_constant_data),
         });

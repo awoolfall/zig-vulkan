@@ -8,7 +8,7 @@ const GfxStateVulkan = vk.GfxStateVulkan;
 
 pub const FrameBufferVulkan = struct {
     vk_framebuffers: []c.VkFramebuffer,
-    
+
     pub fn deinit(self: *const FrameBufferVulkan) void {
         const alloc = GfxStateVulkan.get().alloc;
         for (self.vk_framebuffers) |f| {
@@ -18,7 +18,9 @@ pub const FrameBufferVulkan = struct {
     }
 
     pub fn init(info: gf.FrameBufferInfo) !FrameBufferVulkan {
-        if (info.attachments.len == 0) { return error.NoAttachmentsProvided; }
+        if (info.attachments.len == 0) {
+            return error.NoAttachmentsProvided;
+        }
         const render_pass = try info.render_pass.get();
 
         const alloc = GfxStateVulkan.get().alloc;
@@ -75,7 +77,7 @@ pub const FrameBufferVulkan = struct {
                 }
             }
 
-            const framebuffer_info = c.VkFramebufferCreateInfo {
+            const framebuffer_info = c.VkFramebufferCreateInfo{
                 .sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                 .renderPass = render_pass.platform.vk_render_pass,
                 .pAttachments = @ptrCast(attachments.ptr),
@@ -98,7 +100,7 @@ pub const FrameBufferVulkan = struct {
             }
         }
 
-        return FrameBufferVulkan {
+        return FrameBufferVulkan{
             .vk_framebuffers = framebuffers,
         };
     }

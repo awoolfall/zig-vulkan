@@ -43,7 +43,7 @@ const ContactListener = extern struct {
     }
 };
 
-pub const IgnoreIdsBodyFilter = extern struct { 
+pub const IgnoreIdsBodyFilter = extern struct {
     __v: *const zphy.BodyFilter.VTable = &vtable,
 
     body_ids_to_ignore: [IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE]zphy.BodyId,
@@ -59,7 +59,7 @@ pub const IgnoreIdsBodyFilter = extern struct {
         std.debug.assert(body_ids_to_ignore.len <= IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE);
         var biti = [_]zphy.BodyId{zphy.BodyId.invalid} ** IgnoreIdsBodyFilter.MAX_BODY_IDS_TO_IGNORE;
         @memcpy(biti[0..body_ids_to_ignore.len], body_ids_to_ignore[0..]);
-        return IgnoreIdsBodyFilter {
+        return IgnoreIdsBodyFilter{
             .body_ids_to_ignore = biti,
             .length = body_ids_to_ignore.len,
         };
@@ -68,7 +68,9 @@ pub const IgnoreIdsBodyFilter = extern struct {
     fn _shouldCollide(self: *const zphy.BodyFilter, body_id: *const BodyId) callconv(.c) bool {
         const pself: *const IgnoreIdsBodyFilter = @ptrCast(self);
         for (0..pself.length) |i| {
-            if (body_id.* == pself.body_ids_to_ignore[i]) { return false; }
+            if (body_id.* == pself.body_ids_to_ignore[i]) {
+                return false;
+            }
         }
         return true;
     }
@@ -116,7 +118,7 @@ pub const CharacterSettings = struct {
             zm.vecToArr3(transform.position),
             transform.rotation,
             0,
-            phys.zphysics.system
+            phys.zphysics.system,
         );
     }
 };
@@ -166,7 +168,7 @@ pub const CharacterVirtualSettings = struct {
             settings,
             zm.vecToArr3(transform.position),
             transform.rotation,
-            phys.zphysics.system
+            phys.zphysics.system,
         );
     }
 };

@@ -17,7 +17,7 @@ pub const CommandPoolVulkan = struct {
     pub fn init(info: gf.CommandPoolInfo) !CommandPoolVulkan {
         //std.debug.assert(poolflags_to_vulkan(info) != 0);
 
-        const pool_info = c.VkCommandPoolCreateInfo {
+        const pool_info = c.VkCommandPoolCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .flags = vk.poolflags_to_vulkan(info),
             .queueFamilyIndex = GfxStateVulkan.get().get_queue_family_index(info.queue_family),
@@ -27,13 +27,13 @@ pub const CommandPoolVulkan = struct {
         try vkt(c.vkCreateCommandPool(GfxStateVulkan.get().device, &pool_info, null, &vk_pool));
         errdefer c.vkDestroyCommandPool(GfxStateVulkan.get().device, vk_pool, null);
 
-        return CommandPoolVulkan {
+        return CommandPoolVulkan{
             .vk_pool = vk_pool,
         };
     }
 
     pub fn allocate_command_buffers(self: *CommandPoolVulkan, info: gf.CommandBufferInfo, comptime count: usize) ![count]CommandBufferVulkan {
-        const alloc_info = c.VkCommandBufferAllocateInfo {
+        const alloc_info = c.VkCommandBufferAllocateInfo{
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandBufferCount = count,
             .commandPool = self.vk_pool,
@@ -46,7 +46,7 @@ pub const CommandPoolVulkan = struct {
 
         var buffers: [count]CommandBufferVulkan = undefined;
         inline for (vk_command_buffers, 0..) |vk_b, idx| {
-            buffers[idx] = CommandBufferVulkan {
+            buffers[idx] = CommandBufferVulkan{
                 .vk_pool = self.vk_pool,
                 .vk_command_buffer = vk_b,
             };

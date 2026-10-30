@@ -37,7 +37,9 @@ pub fn generate_perspective_matrix(self: *const Self, aspect_ratio: f32) zm.Mat 
 
     switch (@import("build_options").graphics_backend) {
         // flip Y to match Vulkan coordinate system of [+Y down, -Z forward, +X right]
-        .Vulkan => { perspective[1][1] *= -1.0; },
+        .Vulkan => {
+            perspective[1][1] *= -1.0;
+        },
         else => {},
     }
 
@@ -45,7 +47,7 @@ pub fn generate_perspective_matrix(self: *const Self, aspect_ratio: f32) zm.Mat 
 }
 
 pub fn fly_camera_update(
-    self: *Self, 
+    self: *Self,
     os: *eng.os.Platform,
     input: *const eng.input.InputState,
     time: *const eng.TimeState,
@@ -57,17 +59,17 @@ pub fn fly_camera_update(
         if (input.get_key(kc.KeyCode.Shift)) {
             move_amount *= 0.01;
         }
-        const cam_x = 
-            float_from_bool(input.get_key(kc.KeyCode.A)) * -move_amount + 
+        const cam_x =
+            float_from_bool(input.get_key(kc.KeyCode.A)) * -move_amount +
             float_from_bool(input.get_key(kc.KeyCode.D)) * move_amount;
-        const cam_z = 
-            float_from_bool(input.get_key(kc.KeyCode.S)) * -move_amount + 
+        const cam_z =
+            float_from_bool(input.get_key(kc.KeyCode.S)) * -move_amount +
             float_from_bool(input.get_key(kc.KeyCode.W)) * move_amount;
 
         self.local_transform.position += self.local_transform.forward_direction() * zm.f32x4s(cam_z);
         self.local_transform.position += self.local_transform.right_direction() * zm.f32x4s(cam_x);
     }
-    
+
     if (input.get_key_down(kc.KeyCode.MouseRight)) {
         os.show_cursor(false);
         os.confine_cursor_to_current_pos();
@@ -81,17 +83,11 @@ pub fn fly_camera_update(
     if (input.get_key(kc.KeyCode.MouseRight)) {
         self.local_transform.rotation = zm.qmul(
             self.local_transform.rotation,
-            zm.quatFromAxisAngle(
-                zm.f32x4(0.0, 1.0, 0.0, 0.0),
-                self.mouse_sensitivity * -input.get_mouse_delta()[0]
-            )
+            zm.quatFromAxisAngle(zm.f32x4(0.0, 1.0, 0.0, 0.0), self.mouse_sensitivity * -input.get_mouse_delta()[0]),
         );
         self.local_transform.rotation = zm.qmul(
             self.local_transform.rotation,
-            zm.quatFromAxisAngle(
-                self.local_transform.right_direction(),
-                self.mouse_sensitivity * -input.get_mouse_delta()[1]
-            )
+            zm.quatFromAxisAngle(self.local_transform.right_direction(), self.mouse_sensitivity * -input.get_mouse_delta()[1]),
         );
     }
 
@@ -100,8 +96,8 @@ pub fn fly_camera_update(
 }
 
 pub fn orbit_camera_update(
-    self: *Self, 
-    orbit_target: zm.F32x4, 
+    self: *Self,
+    orbit_target: zm.F32x4,
     os: *eng.os.Platform,
     input: *const eng.input.InputState,
     time: *const eng.TimeState,
@@ -116,8 +112,7 @@ pub fn orbit_camera_update(
     }
 
     // translate orbit distance by input
-    const orbit_distance_change = float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) 
-        - float_from_bool(input.get_key(kc.KeyCode.ArrowUp));
+    const orbit_distance_change = float_from_bool(input.get_key(kc.KeyCode.ArrowDown)) - float_from_bool(input.get_key(kc.KeyCode.ArrowUp));
     self.orbit_distance = self.orbit_distance + self.orbit_distance * (orbit_distance_change * 0.5 * time.delta_time_unscaled_f32());
     self.orbit_distance = @max(@min(self.orbit_distance, self.max_orbit_distance), self.min_orbit_distance);
 
@@ -142,14 +137,14 @@ pub fn orbit_camera_update(
     }
 
     target_offset = self.local_transform.position;
-    target_offset = zm.rotate(zm.quatFromAxisAngle(
-            zm.cross3(target_offset, zm.f32x4(0.0, 1.0, 0.0, 0.0)),
-            self.damping_movement[1]
-        ), target_offset);
-    target_offset = zm.rotate(zm.quatFromAxisAngle(
-            zm.f32x4(0.0, 1.0, 0.0, 0.0),
-            self.damping_movement[0]
-        ), target_offset);
+    target_offset = zm.rotate(
+        zm.quatFromAxisAngle(zm.cross3(target_offset, zm.f32x4(0.0, 1.0, 0.0, 0.0)), self.damping_movement[1]),
+        target_offset,
+    );
+    target_offset = zm.rotate(
+        zm.quatFromAxisAngle(zm.f32x4(0.0, 1.0, 0.0, 0.0), self.damping_movement[0]),
+        target_offset,
+    );
 
     self.local_transform.position = target_offset;
     self.local_transform.position[3] = 0.0;

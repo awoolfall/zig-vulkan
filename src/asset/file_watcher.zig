@@ -43,12 +43,11 @@ pub fn init(alloc: std.mem.Allocator, path: []const u8, check_interval_ms: u64) 
 
     const is_file = file_stat != null;
 
-    var dir = 
-        if (is_file) try std.fs.openDirAbsolute(dirstr, .{ .iterate = true, })
-        else try std.fs.openDirAbsolute(path_copy, .{ .iterate = true, });
+    var dir =
+        if (is_file) try std.fs.openDirAbsolute(dirstr, .{ .iterate = true }) else try std.fs.openDirAbsolute(path_copy, .{ .iterate = true });
     errdefer dir.close();
 
-    var self = Self {
+    var self = Self{
         .arena = arena,
         .dir = dir,
         .dirstr = if (is_file) dirstr else path_copy,
@@ -62,7 +61,7 @@ pub fn init(alloc: std.mem.Allocator, path: []const u8, check_interval_ms: u64) 
         std.log.err("Failed to get stat in file watch '{s}|{s}': {}", .{
             self.dirstr,
             self.filename orelse "<null>",
-            err
+            err,
         });
         return err;
     };
@@ -95,7 +94,9 @@ fn stat_latest_modify_time(self: *const Self) !i128 {
 }
 
 pub fn was_modified_since_last_check(self: *Self) bool {
-    const now = std.time.Instant.now() catch { return false; };
+    const now = std.time.Instant.now() catch {
+        return false;
+    };
     if (now.since(self.last_check_time) < self.check_interval_ns) {
         return false;
     }
@@ -105,7 +106,7 @@ pub fn was_modified_since_last_check(self: *Self) bool {
         std.log.err("Failed to get stat in file watch '{s}|{s}': {}", .{
             self.dirstr,
             self.filename orelse "<null>",
-            err
+            err,
         });
         return false;
     };
@@ -113,10 +114,12 @@ pub fn was_modified_since_last_check(self: *Self) bool {
     const modified = new_mtime > self.last_modified;
     self.last_modified = new_mtime;
 
-    if (modified) { std.log.info("{s}|{s} was modified!", .{
+    if (modified) {
+        std.log.info("{s}|{s} was modified!", .{
             self.dirstr,
             self.filename orelse "<null>",
-    }); }
+        });
+    }
     return modified;
 }
 

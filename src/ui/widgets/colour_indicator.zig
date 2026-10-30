@@ -9,7 +9,7 @@ pub fn create(imui: *eng.Imui, colour_rgb: *zm.F32x4, key: anytype) eng.Imui.Wid
     const clamped_g = @min(colour_rgb[1], 1.0);
     const clamped_b = @min(colour_rgb[2], 1.0);
     const colour_display = zm.f32x4(clamped_r, clamped_g, clamped_b, 1.0);
-    
+
     // Calculate intensity as the max component (brightness excess)
     const intensity = @max(@max(colour_rgb[0], colour_rgb[1]), colour_rgb[2]);
     const alpha = colour_rgb[3];
@@ -20,18 +20,18 @@ pub fn create(imui: *eng.Imui, colour_rgb: *zm.F32x4, key: anytype) eng.Imui.Wid
 
     if (imui.get_widget(container)) |container_widget| {
         container_widget.semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, },
-            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 16.0, .shrinkable = false },
         };
         container_widget.children_gap = 5;
     }
 
     // Color swatch indicator
     const swatch_widget = Imui.Widget{
-        .key = Imui.gen_key(key ++ .{@src().line, 0}),
+        .key = Imui.gen_key(key ++ .{ @src().line, 0 }),
         .semantic_size = [2]Imui.SemanticSize{
-            Imui.SemanticSize{ .kind = .Pixels, .value = 20.0, .shrinkable = false, },
-            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false, },
+            Imui.SemanticSize{ .kind = .Pixels, .value = 20.0, .shrinkable = false },
+            Imui.SemanticSize{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = false },
         },
         .background_colour = colour_display,
         .border_colour = imui.palette().border,

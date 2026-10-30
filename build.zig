@@ -30,13 +30,12 @@ pub fn build(b: *std.Build) !void {
         .windows => .Vulkan,
         else => .Noop,
     };
-    const graphics_backend = b.option(GraphicsBackend, "graphics_backend", "Graphics backend to use")
-        orelse default_backend;
+    const graphics_backend = b.option(GraphicsBackend, "graphics_backend", "Graphics backend to use") orelse default_backend;
     std.log.info("Graphics backend is {}", .{graphics_backend});
 
     const options = b.addOptions();
-    options.addOption(u32, "engine_gitrev", find_git_revision((std.Build.LazyPath { .cwd_relative = ".", }).getPath(b)));
-    options.addOption(bool, "engine_gitchanged", find_git_changed((std.Build.LazyPath { .cwd_relative = ".", }).getPath(b)));
+    options.addOption(u32, "engine_gitrev", find_git_revision((std.Build.LazyPath{ .cwd_relative = "." }).getPath(b)));
+    options.addOption(bool, "engine_gitchanged", find_git_changed((std.Build.LazyPath{ .cwd_relative = "." }).getPath(b)));
     options.addOption(GraphicsBackend, "graphics_backend", graphics_backend);
     // TODO: remove this in a distribution build
     options.addOption([]const u8, "engine_src_path", b.pathFromRoot("src"));
@@ -58,7 +57,7 @@ pub fn build(b: *std.Build) !void {
         // const zwindows = b.dependency("zwindows", .{
         // });
         // engine.addImport("zwindows", zwindows.module("zwindows"));
-        
+
         // const zwin32_path = zwin32.path("").getPath(b);
         // try @import("zwin32").install_xaudio2(&tests.step, .bin, zwin32_path);
         // try @import("zwin32").install_d3d12(&tests.step, .bin, zwin32_path);
@@ -69,23 +68,20 @@ pub fn build(b: *std.Build) !void {
         .Vulkan => {
             const env_map = try std.process.getEnvMap(b.allocator);
             if (env_map.get("VK_SDK_PATH")) |path| {
-                engine.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Lib", .{ path }) catch @panic("OOM") });
-                engine.addIncludePath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Include", .{ path }) catch @panic("OOM") });
+                engine.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Lib", .{path}) catch @panic("OOM") });
+                engine.addIncludePath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/Include", .{path}) catch @panic("OOM") });
             }
 
             engine.linkSystemLibrary("vulkan-1", .{});
         },
-        .WebGPU => {
-        },
+        .WebGPU => {},
         else => {},
     }
 
-    const zmath = b.dependency("zmath", .{
-    });
+    const zmath = b.dependency("zmath", .{});
     engine.addImport("zmath", zmath.module("root"));
 
-    const zmesh = b.dependency("zmesh", .{
-    });
+    const zmesh = b.dependency("zmesh", .{});
     engine.addImport("zmesh", zmesh.module("root"));
     engine.linkLibrary(zmesh.artifact("zmesh"));
 
@@ -99,12 +95,10 @@ pub fn build(b: *std.Build) !void {
     engine.linkLibrary(zphysics.artifact("joltc"));
     b.installArtifact(zphysics.artifact("joltc"));
 
-    const zstbi = b.dependency("zstbi", .{
-    });
+    const zstbi = b.dependency("zstbi", .{});
     engine.addImport("zstbi", zstbi.module("root"));
 
-    const znoise = b.dependency("znoise", .{
-    });
+    const znoise = b.dependency("znoise", .{});
     engine.addImport("znoise", znoise.module("root"));
     engine.linkLibrary(znoise.artifact("FastNoiseLite"));
 
@@ -115,8 +109,7 @@ pub fn build(b: *std.Build) !void {
     engine.linkLibrary(assimp_module.artifact("assimp"));
     b.installArtifact(assimp_module.artifact("assimp"));
 
-    const slang_module = b.dependency("slang", .{
-    });
+    const slang_module = b.dependency("slang", .{});
     engine.addImport("slang", slang_module.module("root"));
     engine.linkLibrary(slang_module.artifact("slang"));
 
@@ -167,7 +160,9 @@ fn find_git_revision(cwd: []const u8) u32 {
     var gitrev: u32 = 0;
     if (std.fmt.parseUnsigned(u32, gitrev_s[0..7], 16)) |g| {
         gitrev = g;
-    } else |e| {std.log.err("e {}", .{e});}
+    } else |e| {
+        std.log.err("e {}", .{e});
+    }
 
     return gitrev;
 }
@@ -181,8 +176,8 @@ fn find_git_changed(cwd: []const u8) bool {
         .cwd = cwd,
     })) |res| {
         switch (res.term) {
-            .Exited => |v| { return v == 1; },
-            else => { return true; },
+            .Exited => |v| return v == 1,
+            else => return true,
         }
     } else |_| {
         std.log.warn("unable to read git changed", .{});

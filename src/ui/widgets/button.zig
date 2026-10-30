@@ -42,8 +42,8 @@ pub fn create(imui: *Imui, text: []const u8, key: anytype) Imui.WidgetSignal(But
 
     const label_id = label.create(imui, text);
     if (imui.get_widget(label_id.id)) |text_widget| {
-        text_widget.anchor = .{0.5, 0.5};
-        text_widget.pivot = .{0.5, 0.5};
+        text_widget.anchor = .{ 0.5, 0.5 };
+        text_widget.pivot = .{ 0.5, 0.5 };
     }
 
     const signals = Imui.combine_signals(
@@ -51,7 +51,7 @@ pub fn create(imui: *Imui, text: []const u8, key: anytype) Imui.WidgetSignal(But
             imui.generate_widget_signals(box_layout),
             label_id,
         },
-        ButtonId{ .box = box_layout, .text = label_id.id, }
+        ButtonId{ .box = box_layout, .text = label_id.id },
     );
 
     return signals;

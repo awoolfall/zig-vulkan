@@ -9,7 +9,7 @@ pub const CollideShapeCollector = extern struct {
     alloc: *std.mem.Allocator,
     hits: *std.ArrayList(zphy.CollideShapeResult),
 
-    const vtable = zphy.CollideShapeCollector.VTable{ 
+    const vtable = zphy.CollideShapeCollector.VTable{
         .reset = _Reset,
         .onBody = _OnBody,
         .onBodyEnd = _OnBodyEnd,
@@ -19,13 +19,13 @@ pub const CollideShapeCollector = extern struct {
 
     fn _Reset(
         self: *zphy.CollideShapeCollector,
-    ) callconv(.c) void { 
+    ) callconv(.c) void {
         _ = self;
     }
     fn _OnBody(
         self: *zphy.CollideShapeCollector,
         in_body: *const zphy.Body,
-    ) callconv(.c) void { 
+    ) callconv(.c) void {
         _ = self;
         _ = in_body;
     }
@@ -65,7 +65,7 @@ pub const CollideShapeCollector = extern struct {
         errdefer alloc.destroy(hits);
         hits.* = std.ArrayList(zphy.CollideShapeResult).empty;
 
-        return CollideShapeCollector {
+        return CollideShapeCollector{
             .alloc = alloc_ptr,
             .hits = hits,
         };

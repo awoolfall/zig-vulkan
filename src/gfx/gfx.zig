@@ -73,7 +73,7 @@ pub const GfxState = struct {
     },
 
     pub const hdr_format = ImageFormat.Rgba16_Float;
-    pub const ldr_format = ImageFormat.Bgra8_Srgb;// ImageFormat.Rgba8_Unorm;
+    pub const ldr_format = ImageFormat.Bgra8_Srgb; // ImageFormat.Rgba8_Unorm;
     pub const depth_format = ImageFormat.D32S8_Sfloat_Uint;
 
     pub fn deinit(self: *Self) void {
@@ -134,23 +134,21 @@ pub const GfxState = struct {
         var samplers = try gen.GenerationalList(Sampler).init(alloc);
         errdefer samplers.deinit();
 
-
         var render_passes = try gen.GenerationalList(RenderPass).init(alloc);
         errdefer render_passes.deinit();
 
         var graphics_pipelines = try gen.GenerationalList(GraphicsPipeline).init(alloc);
         errdefer graphics_pipelines.deinit();
-        
+
         var compute_pipelines = try gen.GenerationalList(ComputePipeline).init(alloc);
         errdefer compute_pipelines.deinit();
 
         var framebuffers = try gen.GenerationalList(FrameBuffer).init(alloc);
         errdefer framebuffers.deinit();
 
-
         var descriptor_layouts = try gen.GenerationalList(DescriptorLayout).init(alloc);
         errdefer descriptor_layouts.deinit();
-        
+
         var descriptor_pools = try gen.GenerationalList(DescriptorPool).init(alloc);
         errdefer descriptor_pools.deinit();
 
@@ -160,14 +158,13 @@ pub const GfxState = struct {
         var command_pools = try gen.GenerationalList(CommandPool).init(alloc);
         errdefer command_pools.deinit();
 
-
         const platform = try Self.Platform.init(alloc, window);
         errdefer platform.deinit();
 
-        return Self {
+        return Self{
             .platform = platform,
             .shader_manager = shader_manager,
-            
+
             .buffers = buffers,
             .images = images,
             .image_views = image_views,
@@ -180,7 +177,7 @@ pub const GfxState = struct {
             .descriptor_pools = descriptor_pools,
             .descriptor_sets = descriptor_sets,
             .command_pools = command_pools,
-            
+
             .default = undefined,
             .tone_mapping_filter = undefined,
             .bloom_filter = undefined,
@@ -194,8 +191,13 @@ pub const GfxState = struct {
             .format = GfxState.hdr_format,
             .match_swapchain_extent = true,
 
-            .usage_flags = .{ .RenderTarget = true, .TransferSrc = true, .ShaderResource = true, .StorageResource = true, },
-            .access_flags = .{ .GpuWrite = true, },
+            .usage_flags = .{
+                .RenderTarget = true,
+                .TransferSrc = true,
+                .ShaderResource = true,
+                .StorageResource = true,
+            },
+            .access_flags = .{ .GpuWrite = true },
             .dst_layout = .ColorAttachmentOptimal,
         }, null);
         errdefer self.default.hdr_image.deinit();
@@ -210,8 +212,12 @@ pub const GfxState = struct {
             .format = Self.depth_format,
             .match_swapchain_extent = true,
 
-            .usage_flags = .{ .DepthStencil = true, .TransferSrc = true, .ShaderResource = true, },
-            .access_flags = .{ .GpuWrite = true, },
+            .usage_flags = .{
+                .DepthStencil = true,
+                .TransferSrc = true,
+                .ShaderResource = true,
+            },
+            .access_flags = .{ .GpuWrite = true },
             .dst_layout = .DepthStencilAttachmentOptimal,
         }, null);
         errdefer self.default.depth_image.deinit();
@@ -219,7 +225,7 @@ pub const GfxState = struct {
         self.default.depth_view = try ImageView.init(.{
             .image = self.default.depth_image,
             .view_type = .ImageView2D,
-            .aspect_mask = .{ .depth = true, },
+            .aspect_mask = .{ .depth = true },
         });
         errdefer self.default.depth_view.deinit();
 
@@ -252,7 +258,7 @@ pub const GfxState = struct {
             .view_type = .ImageView2D,
         });
         errdefer self.default.metallic_roughness_view.deinit();
-        
+
         self.default.ambient_occlusion = try init_single_pixel_texture(zm.f32x4s(1.0));
         errdefer self.default.ambient_occlusion.deinit();
 
@@ -270,7 +276,6 @@ pub const GfxState = struct {
             .view_type = .ImageView2D,
         });
         errdefer self.default.emission_view.deinit();
-
 
         self.tone_mapping_filter = try ToneMappingFilter.init();
         errdefer self.tone_mapping_filter.deinit();
@@ -307,7 +312,7 @@ pub const GfxState = struct {
                 .height = 1,
                 .format = .Rgba8_Unorm,
 
-                .usage_flags = .{ .ShaderResource = true, },
+                .usage_flags = .{ .ShaderResource = true },
                 .access_flags = .{},
                 .dst_layout = .ShaderReadOnlyOptimal,
             },
@@ -337,7 +342,7 @@ pub const GfxState = struct {
     pub fn submit_command_buffer(self: *Self, info: SubmitInfo) !void {
         const __tracy_zone = eng.ztracy.ZoneN(@src(), "gfx submit");
         defer __tracy_zone.End();
-        
+
         try self.platform.submit_command_buffer(info);
     }
 
@@ -368,7 +373,7 @@ pub const GfxState = struct {
 
     pub fn received_window_event(self: *Self, event: *const eng.os.WindowEvent) void {
         switch (event.*) {
-            .RESIZED => |new_size| { 
+            .RESIZED => |new_size| {
                 self.window_resized(@intCast(new_size.width), @intCast(new_size.height));
             },
             else => {},
@@ -429,7 +434,7 @@ pub const Viewport = struct {
 
     pub inline fn full_screen_viewport_mip(mip_level: usize) Viewport {
         const size = GfxState.get().swapchain_size();
-        return Viewport {
+        return Viewport{
             .width = @floatFromInt(@max(size[0] >> @intCast(mip_level), 1)),
             .height = @floatFromInt(@max(size[1] >> @intCast(mip_level), 1)),
         };
@@ -480,7 +485,7 @@ pub const ShaderModule = struct {
             std.log.err("Failed to initialise shader module: {}", .{err});
             return err;
         };
-        return ShaderModule {
+        return ShaderModule{
             .platform = platform,
         };
     }
@@ -508,7 +513,7 @@ pub const VertexInput = struct {
             std.log.err("Failed to initialise vertex input: {}", .{err});
             return err;
         };
-        return VertexInput {
+        return VertexInput{
             .platform = platform,
         };
     }
@@ -527,7 +532,7 @@ pub fn Reference(comptime T: type) type {
                 std.log.warn("Unable to retrieve {s} asset", .{@typeName(T)});
             }
             gfxstate_list().remove(self.id) catch |err| {
-                std.log.warn("Unable to remove {s} asset: {}", .{@typeName(T), err});
+                std.log.warn("Unable to remove {s} asset: {}", .{ @typeName(T), err });
             };
         }
 
@@ -540,7 +545,7 @@ pub fn Reference(comptime T: type) type {
             if (list.data.items.len < idx) {
                 return error.IndexOutOfBounds;
             }
-            return Self {
+            return Self{
                 .id = .{
                     .index = idx,
                     .generation = list.data.items[idx].generation,
@@ -589,15 +594,15 @@ pub const Buffer = struct {
         const platform = try GfxPlatform.Buffer.init(byte_size, usage_flags, access_flags);
         errdefer platform.deinit();
 
-        const buffer = Buffer {
+        const buffer = Buffer{
             .platform = platform,
         };
 
-        return Buffer.Ref {
+        return Buffer.Ref{
             .id = try GfxState.get().buffers.insert(buffer),
         };
     }
-    
+
     pub fn init_with_data(
         data: []const u8,
         usage_flags: BufferUsageFlags,
@@ -606,11 +611,11 @@ pub const Buffer = struct {
         const platform = try GfxPlatform.Buffer.init_with_data(data, usage_flags, access_flags);
         errdefer platform.deinit();
 
-        const buffer = Buffer {
+        const buffer = Buffer{
             .platform = platform,
         };
 
-        return Buffer.Ref {
+        return Buffer.Ref{
             .id = try GfxState.get().buffers.insert(buffer),
         };
     }
@@ -626,7 +631,7 @@ pub const Buffer = struct {
     };
 
     pub fn map(self: *const Buffer, options: MapOptions) !MappedBuffer {
-        return MappedBuffer {
+        return MappedBuffer{
             .platform = try self.platform.map(options),
         };
     }
@@ -689,15 +694,21 @@ pub const Image = struct {
 
     pub fn init(info: ImageInfo, data: ?[]const u8) !Image.Ref {
         const image = try Image.init_standalone(info, data);
-        return Image.Ref {
+        return Image.Ref{
             .id = try GfxState.get().images.insert(image),
         };
     }
 
     pub fn init_colour(info: ImageInfo, colour: zm.F32x4) !Image.Ref {
-        if (info.format.byte_width() != 4) { return error.FormatByteWidthMustBe4; }
-        if (info.array_length != 1) { return error.CannotSetColourOnImageArray; }
-        if (info.mip_levels != 1) { return error.CannotSetColourOnMippedImage; }
+        if (info.format.byte_width() != 4) {
+            return error.FormatByteWidthMustBe4;
+        }
+        if (info.array_length != 1) {
+            return error.CannotSetColourOnImageArray;
+        }
+        if (info.mip_levels != 1) {
+            return error.CannotSetColourOnMippedImage;
+        }
 
         var modified_info = info;
         if (modified_info.match_swapchain_extent) {
@@ -710,7 +721,7 @@ pub const Image = struct {
         const data = try alloc.alloc(u8, modified_info.width * modified_info.height * modified_info.depth * 4);
         defer alloc.free(data);
 
-        const data_u32: *const align(1) []u32 = @ptrCast(&data);
+        const data_u32: *align(1) const []u32 = @ptrCast(&data);
         const clamped_colour = zm.clamp(colour, zm.f32x4s(0.0), zm.f32x4s(1.0));
         const colour_u8: [4]u8 = .{
             @intFromFloat(clamped_colour[0] * 255),
@@ -718,7 +729,7 @@ pub const Image = struct {
             @intFromFloat(clamped_colour[2] * 255),
             @intFromFloat(clamped_colour[3] * 255),
         };
-        const colour_u32: *const align(1) u32 = @ptrCast(&colour_u8);
+        const colour_u32: *align(1) const u32 = @ptrCast(&colour_u8);
 
         @memset(data_u32.*[0..(data.len / 4)], colour_u32.*);
 
@@ -735,7 +746,7 @@ pub const Image = struct {
         const platform = try GfxState.Platform.Image.init(modified_info, data);
         errdefer platform.deinit();
 
-        return Image {
+        return Image{
             .platform = platform,
             .info = modified_info,
         };
@@ -768,7 +779,7 @@ pub const Image = struct {
     };
 
     pub fn map(self: *const Image, options: MapOptions) !MappedImage {
-        return MappedImage {
+        return MappedImage{
             .platform = try self.platform.map(options),
         };
     }
@@ -780,7 +791,7 @@ pub const Image = struct {
             self.platform.unmap();
         }
 
-        pub fn data(self: *const MappedImage, comptime Type: type) [*]align(16)Type {
+        pub fn data(self: *const MappedImage, comptime Type: type) [*]align(16) Type {
             return self.platform.data(Type);
         }
     };
@@ -819,7 +830,7 @@ pub const ImageView = struct {
 
     platform: GfxState.Platform.ImageView,
     info: ImageViewInfo,
-    size: struct { width: u32, height: u32, },
+    size: struct { width: u32, height: u32 },
 
     pub fn deinit(self: *ImageView) void {
         self.platform.deinit();
@@ -828,14 +839,14 @@ pub const ImageView = struct {
     pub fn init(info: ImageViewInfo) !ImageView.Ref {
         const view = try ImageView.init_standalone(info);
 
-        const view_ref = ImageView.Ref {
+        const view_ref = ImageView.Ref{
             .id = try GfxState.get().image_views.insert(view),
         };
         errdefer GfxState.get().image_views.remove(view_ref.id) catch {};
 
         return view_ref;
     }
-    
+
     pub fn init_standalone(info: ImageViewInfo) !ImageView {
         const image = try info.image.get();
 
@@ -867,7 +878,7 @@ pub const ImageView = struct {
         const platform = try GfxState.Platform.ImageView.init(adjusted_info);
         errdefer platform.deinit();
 
-        return ImageView {
+        return ImageView{
             .platform = platform,
             .info = adjusted_info,
             .size = .{
@@ -921,18 +932,14 @@ pub const ImageFormat = enum {
 
     pub fn is_depth(self: ImageFormat) bool {
         switch (self) {
-            .D16S8_Unorm_Uint,
-            .D32S8_Sfloat_Uint,
-            .D24S8_Unorm_Uint => return true,
+            .D16S8_Unorm_Uint, .D32S8_Sfloat_Uint, .D24S8_Unorm_Uint => return true,
             else => return false,
         }
     }
 
     pub fn has_stencil(self: ImageFormat) bool {
         switch (self) {
-            .D16S8_Unorm_Uint,
-            .D32S8_Sfloat_Uint,
-            .D24S8_Unorm_Uint => return true,
+            .D16S8_Unorm_Uint, .D32S8_Sfloat_Uint, .D24S8_Unorm_Uint => return true,
             else => return false,
         }
     }
@@ -973,7 +980,7 @@ pub const SamplerInfo = struct {
     filter_min_mag: SamplerFilter = .Point,
     filter_mip: SamplerFilter = .Point,
     border_mode: SamplerBorderMode = .Clamp,
-    border_colour: [4]f32 = [4]f32{0.0, 0.0, 0.0, 0.0},
+    border_colour: [4]f32 = [4]f32{ 0.0, 0.0, 0.0, 0.0 },
     min_lod: f32 = 0.0,
     max_lod: f32 = 0.0,
 };
@@ -1004,12 +1011,12 @@ pub const Sampler = struct {
         const platform = try GfxPlatform.Sampler.init(info);
         errdefer platform.deinit();
 
-        const sampler = Sampler {
+        const sampler = Sampler{
             .platform = platform,
             .info = info,
         };
 
-        return Sampler.Ref {
+        return Sampler.Ref{
             .id = try GfxState.get().samplers.insert(sampler),
         };
     }
@@ -1169,12 +1176,12 @@ pub const RenderPass = struct {
         const owned_attachments = try eng.get().general_allocator.dupe(AttachmentInfo, info.attachments);
         errdefer eng.get().general_allocator.free(owned_attachments);
 
-        const render_pass = RenderPass {
+        const render_pass = RenderPass{
             .platform = platform,
             .attachments_info = owned_attachments,
         };
 
-        return Self.Ref {
+        return Self.Ref{
             .id = try GfxState.get().render_passes.insert(render_pass),
         };
     }
@@ -1232,17 +1239,17 @@ pub const GraphicsPipeline = struct {
     pub fn deinit(self: *const GraphicsPipeline) void {
         self.platform.deinit();
     }
-    
+
     pub fn init(info: GraphicsPipelineInfo) !GraphicsPipeline.Ref {
         const platform = try GfxPlatform.GraphicsPipeline.init(info);
         errdefer platform.deinit();
 
-        const graphics_pipeline = GraphicsPipeline {
+        const graphics_pipeline = GraphicsPipeline{
             .platform = platform,
             .info = info,
         };
 
-        return GraphicsPipeline.Ref {
+        return GraphicsPipeline.Ref{
             .id = try GfxState.get().graphics_pipelines.insert(graphics_pipeline),
         };
     }
@@ -1264,17 +1271,17 @@ pub const ComputePipeline = struct {
     pub fn deinit(self: *const ComputePipeline) void {
         self.platform.deinit();
     }
-    
+
     pub fn init(info: ComputePipelineInfo) !ComputePipeline.Ref {
         const platform = try GfxPlatform.ComputePipeline.init(info);
         errdefer platform.deinit();
 
-        const compute_pipeline = ComputePipeline {
+        const compute_pipeline = ComputePipeline{
             .platform = platform,
             .info = info,
         };
 
-        return ComputePipeline.Ref {
+        return ComputePipeline.Ref{
             .id = try GfxState.get().compute_pipelines.insert(compute_pipeline),
         };
     }
@@ -1306,7 +1313,7 @@ pub const FrameBuffer = struct {
     pub fn init(info: FrameBufferInfo) !FrameBuffer.Ref {
         const framebuffer = try FrameBuffer.init_standalone(info);
 
-        return FrameBuffer.Ref {
+        return FrameBuffer.Ref{
             .id = try GfxState.get().framebuffers.insert(framebuffer),
         };
     }
@@ -1319,7 +1326,7 @@ pub const FrameBuffer = struct {
         owned_info.attachments = try eng.get().general_allocator.dupe(FrameBufferAttachmentInfo, info.attachments);
         errdefer eng.get().general_allocator.free(owned_info.attachments);
 
-        return FrameBuffer {
+        return FrameBuffer{
             .platform = platform,
             .info = owned_info,
         };
@@ -1366,12 +1373,12 @@ pub const DescriptorLayout = struct {
         const platform = try GfxState.Platform.DescriptorLayout.init(info);
         errdefer platform.deinit();
 
-        const layout = DescriptorLayout {
+        const layout = DescriptorLayout{
             .platform = platform,
             .info = info,
         };
 
-        return DescriptorLayout.Ref {
+        return DescriptorLayout.Ref{
             .id = try GfxState.get().descriptor_layouts.insert(layout),
         };
     }
@@ -1403,11 +1410,11 @@ pub const DescriptorPool = struct {
         const platform = try GfxState.Platform.DescriptorPool.init(info);
         errdefer platform.deinit();
 
-        const pool = DescriptorPool {
+        const pool = DescriptorPool{
             .platform = platform,
         };
 
-        return DescriptorPool.Ref {
+        return DescriptorPool.Ref{
             .id = try GfxState.get().descriptor_pools.insert(pool),
         };
     }
@@ -1424,19 +1431,18 @@ pub const DescriptorPool = struct {
         return sets[0];
     }
 
-    pub fn allocate_sets(
-        self: *const DescriptorPool,
-        alloc: std.mem.Allocator,
-        info: DescriptorSetInfo,
-        number_of_sets: u32
-    ) ![]DescriptorSet.Ref {
+    pub fn allocate_sets(self: *const DescriptorPool, alloc: std.mem.Allocator, info: DescriptorSetInfo, number_of_sets: u32) ![]DescriptorSet.Ref {
         const set_refs = try alloc.alloc(DescriptorSet.Ref, number_of_sets);
         errdefer alloc.free(set_refs);
 
         // TODO track resources
         const sets = try self.platform.allocate_sets(alloc, info, number_of_sets);
         defer alloc.free(sets);
-        errdefer { for (sets) |*s| { s.deinit(); } }
+        errdefer {
+            for (sets) |*s| {
+                s.deinit();
+            }
+        }
 
         for (sets, 0..) |set, idx| {
             set_refs[idx] = .{
@@ -1471,7 +1477,7 @@ pub const DescriptorSetUpdateWriteInfo = struct {
         StorageBuffer: DescriptorSetWriteBufferInfo,
         ImageView: ImageView.Ref,
         Sampler: Sampler.Ref,
-        ImageViewAndSampler: struct{ view: ImageView.Ref, sampler: Sampler.Ref, },
+        ImageViewAndSampler: struct { view: ImageView.Ref, sampler: Sampler.Ref },
         StorageImage: ImageView.Ref,
 
         UniformBufferArray: []const DescriptorSetWriteBufferInfo,
@@ -1510,7 +1516,7 @@ pub const CommandPoolInfo = struct {
 pub const CommandPool = struct {
     const Self = @This();
     pub const Ref = Reference(CommandPool);
-    
+
     platform: GfxState.Platform.CommandPool,
 
     pub fn deinit(self: *const Self) void {
@@ -1521,11 +1527,11 @@ pub const CommandPool = struct {
         const platform = try GfxState.Platform.CommandPool.init(info);
         errdefer platform.deinit();
 
-        const pool = CommandPool {
+        const pool = CommandPool{
             .platform = platform,
         };
 
-        return Self.Ref {
+        return Self.Ref{
             .id = try GfxState.get().command_pools.insert(pool),
         };
     }
@@ -1539,7 +1545,7 @@ pub const CommandPool = struct {
 
         var buffers: [count]CommandBuffer = undefined;
         inline for (platform, 0..) |b, idx| {
-            buffers[idx] = CommandBuffer {
+            buffers[idx] = CommandBuffer{
                 .platform = b,
             };
         }
@@ -1814,8 +1820,7 @@ pub const CommandBuffer = struct {
     }
 };
 
-pub const SemaphoreCreateInfo = struct {
-};
+pub const SemaphoreCreateInfo = struct {};
 
 pub const Semaphore = struct {
     const Self = @This();
@@ -1827,7 +1832,7 @@ pub const Semaphore = struct {
     }
 
     pub fn init(info: SemaphoreCreateInfo) !Self {
-        return Semaphore {
+        return Semaphore{
             .platform = try GfxState.Platform.Semaphore.init(info),
         };
     }
@@ -1847,7 +1852,7 @@ pub const Fence = struct {
     }
 
     pub fn init(info: FenceCreateInfo) !Self {
-        return Self {
+        return Self{
             .platform = try GfxState.Platform.Fence.init(info),
         };
     }

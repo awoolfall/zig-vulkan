@@ -13,7 +13,7 @@ pub fn deinit(self: *Self) void {
 
 pub fn init(alloc: std.mem.Allocator) !Self {
     _ = alloc;
-    return Self {};
+    return Self{};
 }
 
 pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseType {
@@ -22,10 +22,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseT
     const file_path = try eng.util.uri.resolve_file_uri(alloc, asset_uri);
     defer alloc.free(file_path);
 
-    return try eng.Model.init_from_file_assimp(
-        alloc, 
-        file_path
-    );
+    return try eng.Model.init_from_file_assimp(alloc, file_path);
 }
 
 pub fn unload(self: *Self, asset: *BaseType) void {

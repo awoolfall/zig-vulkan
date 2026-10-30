@@ -13,7 +13,7 @@ pub const RenderPassVulkan = struct {
         attachment_refs: []usize,
         depth_ref: ?usize,
     };
-    
+
     vk_render_pass: c.VkRenderPass,
     vk_clear_values: []c.VkClearValue,
 
@@ -43,7 +43,9 @@ pub const RenderPassVulkan = struct {
         errdefer alloc.free(subpass_refs);
         {
             var subpass_refs_list = std.ArrayList(SubpassRefInfo).initBuffer(subpass_refs);
-            errdefer for (subpass_refs_list.items) |s| { alloc.free(s.attachment_refs); };
+            errdefer for (subpass_refs_list.items) |s| {
+                alloc.free(s.attachment_refs);
+            };
 
             for (info.subpasses) |subpass| {
                 const subpass_attachment_refs = try alloc.alloc(usize, subpass.attachments.len);
@@ -63,7 +65,7 @@ pub const RenderPassVulkan = struct {
                     break :depth_blk attachment_idx;
                 } else null;
 
-                try subpass_refs_list.appendBounded(SubpassRefInfo {
+                try subpass_refs_list.appendBounded(SubpassRefInfo{
                     .attachment_refs = subpass_attachment_refs,
                     .depth_ref = depth_ref,
                 });
@@ -78,7 +80,7 @@ pub const RenderPassVulkan = struct {
         for (subpass_refs, 0..) |ref, idx| {
             var attachment_refs = try arena.alloc(c.VkAttachmentReference, ref.attachment_refs.len);
             // freed by arena allocator
-            
+
             for (ref.attachment_refs, 0..) |aidx, ridx| {
                 attachment_refs[ridx] = .{
                     .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // @TODO: depth? other layouts?
@@ -86,7 +88,7 @@ pub const RenderPassVulkan = struct {
                 };
             }
 
-            var depth_attachment_ref = if (ref.depth_ref) |r| c.VkAttachmentReference {
+            var depth_attachment_ref = if (ref.depth_ref) |r| c.VkAttachmentReference{
                 .layout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 .attachment = @intCast(r),
             } else null;
@@ -107,7 +109,7 @@ pub const RenderPassVulkan = struct {
         errdefer alloc.free(vk_clear_values);
 
         for (info.attachments, 0..) |*a, idx| {
-            attachment_descriptions[idx] = c.VkAttachmentDescription {
+            attachment_descriptions[idx] = c.VkAttachmentDescription{
                 .format = vk.textureformat_to_vulkan(a.format),
                 .initialLayout = vk.imagelayout_to_vulkan(a.initial_layout),
                 .finalLayout = vk.imagelayout_to_vulkan(a.final_layout),
@@ -127,7 +129,7 @@ pub const RenderPassVulkan = struct {
         defer alloc.free(vk_dependencies);
 
         for (info.dependencies, 0..) |d, idx| {
-            vk_dependencies[idx] = c.VkSubpassDependency {
+            vk_dependencies[idx] = c.VkSubpassDependency{
                 .srcSubpass = if (d.src_subpass) |s| s else c.VK_SUBPASS_EXTERNAL,
                 .dstSubpass = d.dst_subpass,
                 .srcStageMask = vk.pipelinestageflags_to_vulkan(d.src_stage_mask),
@@ -137,7 +139,7 @@ pub const RenderPassVulkan = struct {
             };
         }
 
-        const render_pass_info = c.VkRenderPassCreateInfo {
+        const render_pass_info = c.VkRenderPassCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 
             .pAttachments = @ptrCast(attachment_descriptions.ptr),
@@ -154,7 +156,7 @@ pub const RenderPassVulkan = struct {
         try vkt(c.vkCreateRenderPass(eng.get().gfx.platform.device, &render_pass_info, null, &vk_render_pass));
         errdefer c.vkDestroyRenderPass(eng.get().gfx.platform.device, vk_render_pass, null);
 
-        return RenderPassVulkan {
+        return RenderPassVulkan{
             .vk_render_pass = vk_render_pass,
             .vk_clear_values = vk_clear_values,
             .subpass_attachment_refs = subpass_refs,

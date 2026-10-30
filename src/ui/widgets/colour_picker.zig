@@ -47,19 +47,21 @@ fn colour_picker_global_init(alloc: std.mem.Allocator) !void {
             .{
                 .format = .Rgba8_Unorm,
                 .access_flags = .{},
-                .usage_flags = .{ .ShaderResource = true, },
+                .usage_flags = .{ .ShaderResource = true },
                 .dst_layout = .ShaderReadOnlyOptimal,
                 .width = picker_image_size,
                 .height = picker_image_size,
-            }, 
-            std.mem.sliceAsBytes(picker_image_data)
+            },
+            std.mem.sliceAsBytes(picker_image_data),
         );
         errdefer __global_colour_picker_data.?.colour_image.deinit();
 
         __global_colour_picker_data.?.colour_image_view = try gfx.ImageView.init(.{ .image = __global_colour_picker_data.?.colour_image, .view_type = .ImageView2D });
         errdefer __global_colour_picker_data.?.colour_image_view.deinit();
 
-        __global_colour_picker_data.?.sampler = try gfx.Sampler.init(.{ .filter_min_mag = .Linear, });
+        __global_colour_picker_data.?.sampler = try gfx.Sampler.init(.{
+            .filter_min_mag = .Linear,
+        });
         errdefer __global_colour_picker_data.?.sampler.deinit();
     }
 }
@@ -101,32 +103,32 @@ pub fn create(imui: *Imui, picked_colour_rgb: *?zm.F32x4, key: anytype) Imui.Wid
         w.flags.clickable = true;
     }
     picker_image_signals = imui.generate_widget_signals(picker_image_signals.id);
-    
+
     // Handle color picking on click
     if (picker_image_signals.clicked or picker_image_signals.dragged) {
         const input = &eng.get().input;
         const image_widget = imui.get_widget_from_last_frame(picker_image_signals.id) orelse {
             return picker_image_signals;
         };
-        
+
         const image_rect = image_widget.rect();
         const cursor_pos = input.get_cursor_position();
-        
+
         // Calculate normalized position within the picker image (0-1 range)
         const local_x = (@as(f32, @floatFromInt(cursor_pos[0])) - image_rect.left) / image_rect.width();
         const local_y = (@as(f32, @floatFromInt(cursor_pos[1])) - image_rect.top) / image_rect.height();
-        
+
         // Clamp to valid range
         const normalized_x = @max(0.0, @min(1.0, local_x));
         const normalized_y = 1.0 - @max(0.0, @min(1.0, local_y));
-        
+
         // Convert from HSL picker coordinates to RGB color
         const rgb = uv_to_rgb(.{ normalized_x, normalized_y });
-        
+
         picked_colour_rgb.* = rgb;
 
         picker_image_signals.data_changed = true;
     }
-    
+
     return picker_image_signals;
 }

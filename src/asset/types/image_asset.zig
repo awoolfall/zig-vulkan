@@ -14,7 +14,7 @@ pub fn deinit(self: *Self) void {
 
 pub fn init(alloc: std.mem.Allocator) !Self {
     _ = alloc;
-    return Self {};
+    return Self{};
 }
 
 pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseType {
@@ -39,7 +39,7 @@ pub fn load(self: *Self, alloc: std.mem.Allocator, asset_uri: []const u8) !BaseT
             .array_length = 1,
             .mip_levels = mip_levels,
 
-            .usage_flags = .{ .ShaderResource = true, },
+            .usage_flags = .{ .ShaderResource = true },
             .access_flags = .{},
             .dst_layout = .ShaderReadOnlyOptimal,
         },

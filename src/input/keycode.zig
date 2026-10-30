@@ -1,4 +1,3 @@
-
 pub const KeyCode = enum {
     MouseLeft,
     MouseRight,

@@ -27,7 +27,7 @@ pub const ControlData = struct {
     pub fn init(alloc: std.mem.Allocator) !ControlData {
         const variable_map = std.AutoHashMap(u32, f32).init(alloc);
 
-        return ControlData {
+        return ControlData{
             .variable_map = variable_map,
         };
     }
@@ -52,7 +52,9 @@ pub fn clear_nodes(self: *Self) void {
 pub fn init(alloc: std.mem.Allocator, nodes: []const Node) !Self {
     var nodes_list = try std.ArrayList(Node).initCapacity(alloc, nodes.len);
     errdefer nodes_list.deinit(alloc);
-    errdefer for (nodes_list.items) |n| { n.deinit(alloc); };
+    errdefer for (nodes_list.items) |n| {
+        n.deinit(alloc);
+    };
 
     for (nodes) |n| {
         var owned_node = n;
@@ -63,7 +65,7 @@ pub fn init(alloc: std.mem.Allocator, nodes: []const Node) !Self {
         try nodes_list.append(alloc, owned_node);
     }
 
-    return Self {
+    return Self{
         .alloc = alloc,
         .nodes = nodes_list,
     };
@@ -76,14 +78,17 @@ pub fn serialize(alloc: std.mem.Allocator, value: Self) !std.json.Value {
     try object.put("nodes", try sr.serialize_value([]const Node, alloc, value.nodes.items));
     try object.put("base_animation", try sr.serialize_value(?eng.assets.AnimationAssetId, alloc, value.base_animation));
 
-    return std.json.Value { .object = object };
+    return std.json.Value{ .object = object };
 }
 
 pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !Self {
     var anim_controller = try Self.init(alloc);
     errdefer anim_controller.deinit();
 
-    const object = switch (value) { .object => |obj| obj, else => return error.InvalidType };
+    const object = switch (value) {
+        .object => |obj| obj,
+        else => return error.InvalidType,
+    };
 
     anim_controller.nodes.clearRetainingCapacity();
     if (object.get("nodes")) |v| blk: {
@@ -93,29 +98,22 @@ pub fn deserialize(alloc: std.mem.Allocator, value: std.json.Value) !Self {
         try anim_controller.nodes.appendSlice(eng.get().general_allocator, nodes);
     }
 
-    if (object.get("base_animation")) |v| blk: { anim_controller.base_animation = sr.deserialize_value(?eng.assets.AnimationAssetId, alloc, v) catch break :blk; }
+    if (object.get("base_animation")) |v| blk: {
+        anim_controller.base_animation = sr.deserialize_value(?eng.assets.AnimationAssetId, alloc, v) catch break :blk;
+    }
 
     return anim_controller;
 }
 
 /// Calculates the bone transforms for a given node.
 /// This function will blend between the base animation and the animation specified in the node.
-fn calculate_bone_transforms_for_node(
-    self: *const Self,
-    model: *const eng.Model,
-    node: *const Node,
-    time_seconds: f32,
-    data: *const ControlData,
-    out_transforms: []Transform
-) void {
+fn calculate_bone_transforms_for_node(self: *const Self, model: *const eng.Model, node: *const Node, time_seconds: f32, data: *const ControlData, out_transforms: []Transform) void {
     @memset(out_transforms[0..], Transform{});
 
     switch (node.node) {
         .Basic => |basic| blk: {
-            const animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, basic.animation)
-                catch break :blk;
-            const animation: *eng.animation.QuantisedBoneAnimation = animation_asset.get()
-                catch break :blk;
+            const animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, basic.animation) catch break :blk;
+            const animation: *eng.animation.QuantisedBoneAnimation = animation_asset.get() catch break :blk;
 
             for (model.bones_info, 0..) |bone_info, i| {
                 const channel = animation.find_node_anim(bone_info.bone_name) orelse continue;
@@ -131,10 +129,8 @@ fn calculate_bone_transforms_for_node(
             std.debug.assert(blend.left_value <= blend.right_value);
             const blend_value = std.math.clamp((blend_variable - blend.left_value) / (blend.right_value - blend.left_value), 0.0, 1.0);
 
-            const left_animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, blend.left_animation)
-                catch break :blk;
-            const left_animation: *eng.animation.QuantisedBoneAnimation = left_animation_asset.get()
-                catch break :blk;
+            const left_animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, blend.left_animation) catch break :blk;
+            const left_animation: *eng.animation.QuantisedBoneAnimation = left_animation_asset.get() catch break :blk;
 
             var strength: f32 = 1.0;
             if (blend.left_strength_variable) |strength_variable| {
@@ -142,10 +138,8 @@ fn calculate_bone_transforms_for_node(
             }
 
             // blend in right animation based on blend variable
-            const right_animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, blend.right_animation)
-                catch break :blk;
-            const right_animation: *eng.animation.QuantisedBoneAnimation = right_animation_asset.get()
-                catch break :blk;
+            const right_animation_asset = eng.get().asset_manager.get_asset(eng.assets.AnimationAsset, blend.right_animation) catch break :blk;
+            const right_animation: *eng.animation.QuantisedBoneAnimation = right_animation_asset.get() catch break :blk;
 
             strength = 1.0;
             if (blend.right_strength_variable) |strength_variable| {
@@ -169,7 +163,7 @@ fn calculate_bone_transforms_for_node(
                 } else if (left_transform != null and right_transform == null) {
                     out_transforms[i] = left_transform.?;
                 } else {
-                    out_transforms[i] = Transform {};
+                    out_transforms[i] = Transform{};
                 }
             }
         },
@@ -182,11 +176,11 @@ pub fn calculate_bone_transforms(
     alloc: std.mem.Allocator,
     model: *const eng.Model,
     data: *const ControlData,
-    out_transforms: []zm.Mat
+    out_transforms: []zm.Mat,
 ) void {
     const __tracy_zone = eng.ztracy.ZoneN(@src(), "animation graph calculate bone transforms");
     defer __tracy_zone.End();
-    
+
     // calculate the transforms for the current active node
     var active_node_transforms = [_]Transform{.{}} ** eng.Model.MAX_BONES;
     self.calculate_bone_transforms_for_node(model, &self.nodes.items[data.active_node], data.active_time, data, active_node_transforms[0..]);
@@ -203,7 +197,7 @@ pub fn calculate_bone_transforms(
             active_node_transforms[i] = Transform.lerp(active_node_transforms[i], transition_node_transforms[i], eased_t);
         }
     }
-    
+
     // generate and return the final bone transforms
     @memset(out_transforms[0..], zm.identity());
     model.generate_bone_transforms_for_pose(alloc, active_node_transforms[0..], out_transforms[0..]);
@@ -249,7 +243,7 @@ pub fn trigger_event_by_id(self: *Self, event_id: u32, data: *ControlData) void 
                     break :outer;
                 }
             },
-            else => {}
+            else => {},
         }
     }
 }
@@ -356,7 +350,7 @@ pub const TransitionCondition = union(enum) {
     },
 };
 
-/// A basic node in the animation controller state machine which runs a single 
+/// A basic node in the animation controller state machine which runs a single
 /// animation with optional strength value.
 pub const BasicNode = struct {
     animation: eng.assets.AnimationAssetId,

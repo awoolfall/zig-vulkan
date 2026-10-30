@@ -45,16 +45,19 @@ pub const MeshSet = struct {
         }
 
         // Construct physics shape for the mesh taking into account all its primitives
-        self.physics_shape_settings = @ptrCast(try zphy.ConvexHullShapeSettings.create(
-                @ptrCast(mesh_set_positions.items.ptr), 
-                @intCast(mesh_set_positions.items.len), 
-                @sizeOf([3]f32)));
+        self.physics_shape_settings = @ptrCast(
+            try zphy.ConvexHullShapeSettings.create(
+                @ptrCast(mesh_set_positions.items.ptr),
+                @intCast(mesh_set_positions.items.len),
+                @sizeOf([3]f32),
+            ),
+        );
     }
 };
 
 pub const ModelNode = struct {
     name: ?[]u8 = null,
-    transform: Transform = Transform {},
+    transform: Transform = Transform{},
     mesh_set: ?MeshSet = null,
     parent: ?usize = null,
 
@@ -148,8 +151,7 @@ pub fn deinit(self: *Self) void {
 }
 
 fn create_gfx_texture_from_assimp_texture(tex: assimp.Texture.Ptr, format: gf.ImageFormat) !gf.Image.Ref {
-    const data = if (tex.compressed_data()) |compressed_data| compressed_data
-                    else tex.data_u8_bgra().?;
+    const data = if (tex.compressed_data()) |compressed_data| compressed_data else tex.data_u8_bgra().?;
 
     var image = try eng.Image.load_from_memory(eng.get().general_allocator, data, .{ .force_channels = 4 });
     defer image.deinit();
@@ -162,7 +164,7 @@ fn create_gfx_texture_from_assimp_texture(tex: assimp.Texture.Ptr, format: gf.Im
             .mip_levels = 1,
             .array_length = 1,
 
-            .usage_flags = .{ .ShaderResource = true, },
+            .usage_flags = .{ .ShaderResource = true },
             .access_flags = .{},
             .dst_layout = .ShaderReadOnlyOptimal,
         },
@@ -172,7 +174,7 @@ fn create_gfx_texture_from_assimp_texture(tex: assimp.Texture.Ptr, format: gf.Im
 
 fn assimp_write_mesh_vertex_data(
     model_alloc: std.mem.Allocator,
-    writer: *std.io.Writer, 
+    writer: *std.io.Writer,
     assimp_mesh: assimp.Mesh.Ptr,
     bones_data: struct {
         alloc: std.mem.Allocator,
@@ -188,12 +190,12 @@ fn assimp_write_mesh_vertex_data(
 
     for (assimp_mesh.vertices().?, 0..) |av, idx| {
         var bones_found_for_vertex: usize = 0;
-        var affecting_bones_buffer: [4]BoneInsertionNode = [_]BoneInsertionNode{ .{ .idx = 0, .weight = 0.0, } } ** 4;
+        var affecting_bones_buffer: [4]BoneInsertionNode = [_]BoneInsertionNode{.{ .idx = 0, .weight = 0.0 }} ** 4;
 
         for (assimp_mesh.bones()) |b| {
             const bone_idx = bones_data.names_map.get(b.name()) orelse blk: {
                 const bone_idx: i32 = @intCast(bones_data.infos.items.len);
-                const bone_info = BoneInfo {
+                const bone_info = BoneInfo{
                     .bone_name = model_alloc.dupe(u8, b.name()) catch unreachable,
                     .bone_offset_matrix = b.offset_matrix(),
                 };
@@ -211,7 +213,7 @@ fn assimp_write_mesh_vertex_data(
 
             for (b.weights()) |bw| {
                 if (bw.mVertexId == idx and bw.mWeight != 0.0) {
-                    bone_insertion_sort(affecting_bones_buffer[0..], BoneInsertionNode {
+                    bone_insertion_sort(affecting_bones_buffer[0..], BoneInsertionNode{
                         .idx = bone_idx,
                         .weight = bw.mWeight,
                     });
@@ -223,19 +225,13 @@ fn assimp_write_mesh_vertex_data(
         const afb = if (vertex_has_a_bone(&affecting_bones_buffer)) affecting_bones_buffer else null;
 
         const vertex_data = .{
-            .position = [3]f32 { av.x, av.y, av.z },
-            .normal =   if (assimp_mesh.normals()) |n| [3]f32 { n[idx].x, n[idx].y, n[idx].z }
-                        else [3]f32 { 0.0, 0.0, 1.0 },
-            .tangent =  if (assimp_mesh.tangents()) |t| [3]f32 { t[idx].x, t[idx].y, t[idx].z }
-                        else [3]f32 { 0.0, 1.0, 0.0 },
-            .bitangent =    if (assimp_mesh.bitangents()) |b| [3]f32 { b[idx].x, b[idx].y, b[idx].z }
-                            else [3]f32 { 1.0, 0.0, 0.0 },
-            .tex_coord =    if (assimp_mesh.texcoords(0)) |t| [2]f32 { t[idx].x, t[idx].y }
-                            else [2]f32 { 0.0, 0.0 },
-            .bone_ids =     if (afb) |b| [4]i32 { @intCast(b[0].idx), @intCast(b[1].idx), @intCast(b[2].idx), @intCast(b[3].idx) }
-                            else [4]i32{ 0, 0, 0, 0 },
-            .bone_weights = if (afb) |b| [4]f32 { b[0].weight, b[1].weight, b[2].weight, b[3].weight, }
-                            else [4]f32 { 1.0, 0.0, 0.0, 0.0 },
+            .position = [3]f32{ av.x, av.y, av.z },
+            .normal = if (assimp_mesh.normals()) |n| [3]f32{ n[idx].x, n[idx].y, n[idx].z } else [3]f32{ 0.0, 0.0, 1.0 },
+            .tangent = if (assimp_mesh.tangents()) |t| [3]f32{ t[idx].x, t[idx].y, t[idx].z } else [3]f32{ 0.0, 1.0, 0.0 },
+            .bitangent = if (assimp_mesh.bitangents()) |b| [3]f32{ b[idx].x, b[idx].y, b[idx].z } else [3]f32{ 1.0, 0.0, 0.0 },
+            .tex_coord = if (assimp_mesh.texcoords(0)) |t| [2]f32{ t[idx].x, t[idx].y } else [2]f32{ 0.0, 0.0 },
+            .bone_ids = if (afb) |b| [4]i32{ @intCast(b[0].idx), @intCast(b[1].idx), @intCast(b[2].idx), @intCast(b[3].idx) } else [4]i32{ 0, 0, 0, 0 },
+            .bone_weights = if (afb) |b| [4]f32{ b[0].weight, b[1].weight, b[2].weight, b[3].weight } else [4]f32{ 1.0, 0.0, 0.0, 0.0 },
         };
 
         try writer.writeAll(std.mem.asBytes(&vertex_data));
@@ -246,7 +242,7 @@ fn assimp_write_mesh_vertex_data(
     if (highest_number_of_bones_used_for_vertex > 4) {
         std.log.warn("Bone influences have been truncated in mesh '{s}' from {} to 4", .{
             assimp_mesh.name(),
-            highest_number_of_bones_used_for_vertex
+            highest_number_of_bones_used_for_vertex,
         });
     }
 }
@@ -255,7 +251,7 @@ fn assimp_write_mesh_index_data(writer: *std.io.Writer, assimp_mesh: assimp.Mesh
     if (assimp_mesh.faces()) |assimp_mesh_faces| {
         for (assimp_mesh_faces) |face| {
             if (face.indices()) |fi| {
-                const indices = [3]u32 { fi[0], fi[1], fi[2] };
+                const indices = [3]u32{ fi[0], fi[1], fi[2] };
                 try writer.writeAll(std.mem.sliceAsBytes(&indices));
             }
         }
@@ -284,9 +280,11 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
 
     prop_store.set_fbx_preserve_pivots(false);
 
-    const scene = try assimp.aiImportFileWithProps(file_path_c, 
+    const scene = try assimp.aiImportFileWithProps(
+        file_path_c,
         calc_tangents_flag | triangulate_flag | global_scale_flag | optimize_mesh_flag | armature_data_flag,
-        &prop_store);
+        &prop_store,
+    );
     defer assimp.aiReleaseImport(scene);
 
     // Bones //
@@ -317,14 +315,14 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
         const mesh_index_count = if (assimp_mesh.faces()) |faces| (faces.len * 3) else 0;
 
         try assimp_write_mesh_vertex_data(
-            model_arena.allocator(), 
-            &mesh_vertex_data_writer.writer, 
-            assimp_mesh, 
+            model_arena.allocator(),
+            &mesh_vertex_data_writer.writer,
+            assimp_mesh,
             .{
                 .alloc = alloc,
                 .names_map = &bones_names_map,
                 .infos = &bones_info_list,
-            }
+            },
         );
         try assimp_write_mesh_index_data(&mesh_index_data_writer.writer, assimp_mesh);
 
@@ -336,7 +334,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
         var max_bounds = zm.f32x4s(std.math.floatMin(f32));
 
         for (assimp_mesh.vertices().?, 0..) |vertex, vertex_index| {
-            positions[vertex_index] = [3]f32 { vertex.x, vertex.y, vertex.z };
+            positions[vertex_index] = [3]f32{ vertex.x, vertex.y, vertex.z };
 
             const position = zm.loadArr3(positions[vertex_index]);
             min_bounds = zm.min(min_bounds, position);
@@ -345,7 +343,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
 
         // TODO create physics shapes for meshes using positions array
 
-        meshes[mesh_idx] = MeshPrimitive {
+        meshes[mesh_idx] = MeshPrimitive{
             .vertex_count = mesh_vertex_count,
             .index_count = mesh_index_count,
 
@@ -369,18 +367,18 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
 
     const vertices_buffer = try gf.Buffer.init_with_data(
         mesh_vertex_data_writer.written(),
-        .{ .VertexBuffer = true, },
+        .{ .VertexBuffer = true },
         .{},
     );
     errdefer vertices_buffer.deinit();
 
     const indices_buffer = try gf.Buffer.init_with_data(
         mesh_index_data_writer.written(),
-        .{ .IndexBuffer = true, },
+        .{ .IndexBuffer = true },
         .{},
     );
     errdefer indices_buffer.deinit();
-    
+
     // solidify bones info array
     const bones_info = try model_arena.allocator().dupe(BoneInfo, bones_info_list.items);
     errdefer model_arena.allocator().free(bones_info);
@@ -390,7 +388,9 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
     errdefer model_arena.allocator().free(textures);
 
     var textures_list = std.ArrayList(gf.Image.Ref).initBuffer(textures);
-    errdefer for (textures_list.items) |t| { t.deinit(); };
+    errdefer for (textures_list.items) |t| {
+        t.deinit();
+    };
 
     for (scene.textures()) |assimp_texture| {
         const texture = try create_gfx_texture_from_assimp_texture(assimp_texture, .Rgba8_Unorm_Srgb);
@@ -411,7 +411,9 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
     errdefer model_arena.allocator().free(materials);
 
     var materials_list = std.ArrayList(MaterialTemplate).initBuffer(materials);
-    errdefer for (materials_list.items) |*m| { m.deinit(); };
+    errdefer for (materials_list.items) |*m| {
+        m.deinit();
+    };
 
     {
         var material_property_map_arena = std.heap.ArenaAllocator.init(local_arena.allocator());
@@ -427,7 +429,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
                 material_property_map_arena.allocator(),
                 &texture_names_map,
                 textures,
-                assimp_material
+                assimp_material,
             );
             errdefer material_template.deinit();
 
@@ -459,7 +461,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
             } else null;
 
             const mesh_set = if (assimp_node.meshes().len > 0) blk: {
-                var mesh_set = MeshSet {
+                var mesh_set = MeshSet{
                     .num_primitives = 0,
                     .primitives = [1]usize{0} ** MeshSet.MAX_PRIMITIVES_PER_SET,
                     .physics_shape_settings = null, // will be generated on demand
@@ -496,7 +498,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
             const transform = assimp_node.transformation_decompose();
 
             // append node to flat nodes list
-            try nodes_list.append(alloc, ModelNode {
+            try nodes_list.append(alloc, ModelNode{
                 .name = node_name,
                 .parent = parent_index,
                 .transform = .{
@@ -528,7 +530,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
         const seconds_per_tick = 1.0 / anim.ticks_per_second();
         const duration_seconds = anim.duration() * seconds_per_tick;
 
-        const bone_animation = eng.animation.BoneAnimation {
+        const bone_animation = eng.animation.BoneAnimation{
             .name = try local_arena.allocator().dupe(u8, anim.name()),
             .duration_seconds = duration_seconds,
             .channels = try local_arena.allocator().alloc(eng.animation.BoneAnimationChannel, anim.channels().len),
@@ -540,7 +542,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
                 continue;
             };
 
-            bone_animation.channels[ch_id] = eng.animation.BoneAnimationChannel {
+            bone_animation.channels[ch_id] = eng.animation.BoneAnimationChannel{
                 .node_name = model_nodes[node_id].name.?,
                 .position_keys = try local_arena.allocator().alloc(eng.animation.AnimationKey, ch.position_keys().len),
                 .rotation_keys = try local_arena.allocator().alloc(eng.animation.AnimationKey, ch.rotation_keys().len),
@@ -548,21 +550,21 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
             };
 
             for (ch.position_keys(), 0..) |pk, pk_id| {
-                bone_animation.channels[ch_id].position_keys[pk_id] = eng.animation.AnimationKey {
+                bone_animation.channels[ch_id].position_keys[pk_id] = eng.animation.AnimationKey{
                     .time = pk.time() * seconds_per_tick,
                     .value = pk.value(),
                 };
             }
 
             for (ch.rotation_keys(), 0..) |rk, rk_id| {
-                bone_animation.channels[ch_id].rotation_keys[rk_id] = eng.animation.AnimationKey {
+                bone_animation.channels[ch_id].rotation_keys[rk_id] = eng.animation.AnimationKey{
                     .time = rk.time() * seconds_per_tick,
                     .value = rk.value(),
                 };
             }
 
             for (ch.scale_keys(), 0..) |sk, sk_id| {
-                bone_animation.channels[ch_id].scale_keys[sk_id] = eng.animation.AnimationKey {
+                bone_animation.channels[ch_id].scale_keys[sk_id] = eng.animation.AnimationKey{
                     .time = sk.time() * seconds_per_tick,
                     .value = sk.value(),
                 };
@@ -583,7 +585,7 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
     }
 
     // Create Model //
-    return Self {
+    return Self{
         .arena_allocator = model_arena,
 
         .vertices_buffer = vertices_buffer,
@@ -606,18 +608,16 @@ pub fn init_from_file_assimp(alloc: std.mem.Allocator, absolute_file_path: []con
 
 fn print_material_properties(mat: assimp.Material.Ptr, mat_idx: usize, scene: assimp.Scene.Ptr) void {
     for (mat.properties()) |prop| {
-        std.log.info("mat {d} - prop [{s}] is {}", .{mat_idx, prop.key(), prop.property_type()});
+        std.log.info("mat {d} - prop [{s}] is {}", .{ mat_idx, prop.key(), prop.property_type() });
         switch (prop.property_type()) {
             .Float => std.log.info("\t= {d}", .{prop.data_f32()}),
             .Double => std.log.info("\t= {d}", .{prop.data_f64()}),
             .String => std.log.info("\t= \"{s}\"", .{prop.data_bytes()}),
             .Integer => std.log.info("\t= {}", .{prop.data_i32()}),
-            .Buffer => std.log.info("\t= [data, len={}, {any}]", .{prop.data_bytes().len, prop.data_bytes()}),
+            .Buffer => std.log.info("\t= [data, len={}, {any}]", .{ prop.data_bytes().len, prop.data_bytes() }),
         }
     }
-    std.log.info("material diffuse count is {d}", .{
-        mat.get_texture_count(assimp.TextureType.Diffuse)
-    });
+    std.log.info("material diffuse count is {d}", .{mat.get_texture_count(assimp.TextureType.Diffuse)});
     const props = mat.get_texture_properties(assimp.TextureType.Diffuse, 0);
     if (props) |p| {
         std.log.info("material diffuse path is {s}", .{p.path()});
@@ -625,12 +625,12 @@ fn print_material_properties(mat: assimp.Material.Ptr, mat_idx: usize, scene: as
         if (assimp.index_from_embedded_texture_path(p.path())) |tex_index| {
             const texture = scene.textures()[tex_index];
             std.log.info("is texture compressed: {}", .{texture.is_compressed_data()});
-            std.log.info("texture width and height: {}, {}", .{texture.width(), texture.height()});
+            std.log.info("texture width and height: {}, {}", .{ texture.width(), texture.height() });
 
             var image = zstbi.Image.loadFromMemory(texture.compressed_data().?, 4) catch unreachable;
             defer image.deinit();
 
-            std.log.info("texture width and height: {}, {}", .{image.width, image.height});
+            std.log.info("texture width and height: {}, {}", .{ image.width, image.height });
         } else {
             std.log.info("texture is not embedded...", .{});
         }
@@ -761,11 +761,9 @@ fn generate_tangents_and_binormals(
         var binormal = binormals[j];
 
         // Normalize tangent
-        const tangent_length = std.math.sqrt(
-            tangent[0] * tangent[0] + 
-            tangent[1] * tangent[1] + 
-            tangent[2] * tangent[2]
-        );
+        const tangent_length = std.math.sqrt(tangent[0] * tangent[0] +
+            tangent[1] * tangent[1] +
+            tangent[2] * tangent[2]);
 
         if (tangent_length > 0.0001) {
             tangent[0] /= tangent_length;
@@ -773,30 +771,26 @@ fn generate_tangents_and_binormals(
             tangent[2] /= tangent_length;
         } else {
             // Set to arbitrary tangent if unable to compute
-            tangent = if (@abs(normal[0]) < 0.9) 
-                [3]f32{ 1, 0, 0 } 
-            else 
+            tangent = if (@abs(normal[0]) < 0.9)
+                [3]f32{ 1, 0, 0 }
+            else
                 [3]f32{ 0, 1, 0 };
         }
 
         // Make tangent orthogonal to normal
         // Gram-Schmidt process
-        const dot = (
-            tangent[0] * normal[0] + 
-            tangent[1] * normal[1] + 
-            tangent[2] * normal[2]
-        );
+        const dot = (tangent[0] * normal[0] +
+            tangent[1] * normal[1] +
+            tangent[2] * normal[2]);
 
         tangent[0] -= normal[0] * dot;
         tangent[1] -= normal[1] * dot;
         tangent[2] -= normal[2] * dot;
 
         // Normalize orthogonalized tangent
-        const ortho_length = std.math.sqrt(
-            tangent[0] * tangent[0] + 
-            tangent[1] * tangent[1] + 
-            tangent[2] * tangent[2]
-        );
+        const ortho_length = std.math.sqrt(tangent[0] * tangent[0] +
+            tangent[1] * tangent[1] +
+            tangent[2] * tangent[2]);
 
         if (ortho_length > 0.0001) {
             tangent[0] /= ortho_length;
@@ -825,11 +819,11 @@ pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Self {
 
     const bitangents = try alloc.alloc([3]f32, shape.positions.len);
     defer alloc.free(bitangents);
-    @memset(bitangents, [3]f32{0.0, 0.0, 0.0});
+    @memset(bitangents, [3]f32{ 0.0, 0.0, 0.0 });
 
     const tangents = try alloc.alloc([3]f32, shape.positions.len);
     defer alloc.free(tangents);
-    @memset(tangents, [3]f32{0.0, 0.0, 0.0});
+    @memset(tangents, [3]f32{ 0.0, 0.0, 0.0 });
 
     // Compute tangents and bitangents
     if (shape.normals) |normals| {
@@ -865,7 +859,7 @@ pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Self {
         }
     }
 
-    var bounding_box = BoundingBox {
+    var bounding_box = BoundingBox{
         .min = zm.f32x4s(std.math.floatMax(f32)),
         .max = zm.f32x4s(std.math.floatMin(f32)),
     };
@@ -874,14 +868,14 @@ pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Self {
     defer mesh_vertex_data_writer.deinit();
 
     for (shape.positions, 0..) |position, idx| {
-        const vertex_data = VertexData {
+        const vertex_data = VertexData{
             .position = position,
-            .normal = if (shape.normals) |normals| normals[idx] else [3]f32 { 0.0, 0.0, 1.0 },
+            .normal = if (shape.normals) |normals| normals[idx] else [3]f32{ 0.0, 0.0, 1.0 },
             .tangent = tangents[idx],
             .bitangent = bitangents[idx],
-            .tex_coord = if (shape.texcoords) |texcoords| texcoords[idx] else [2]f32 { 0.0, 0.0 },
-            .bone_ids = [4]i32 { 0, 0, 0, 0 },
-            .bone_weights = [4]f32 { 0.0, 0.0, 0.0, 0.0 },
+            .tex_coord = if (shape.texcoords) |texcoords| texcoords[idx] else [2]f32{ 0.0, 0.0 },
+            .bone_ids = [4]i32{ 0, 0, 0, 0 },
+            .bone_weights = [4]f32{ 0.0, 0.0, 0.0, 0.0 },
         };
 
         try mesh_vertex_data_writer.writer.writeAll(std.mem.asBytes(&vertex_data));
@@ -889,17 +883,17 @@ pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Self {
         bounding_box.min = zm.min(bounding_box.min, zm.loadArr3(position));
         bounding_box.max = zm.max(bounding_box.max, zm.loadArr3(position));
     }
-    
+
     const vertices_buffer = try gf.Buffer.init_with_data(
         mesh_vertex_data_writer.written(),
-        .{ .VertexBuffer = true, },
+        .{ .VertexBuffer = true },
         .{},
     );
     errdefer vertices_buffer.deinit();
 
     const indices_buffer = try gf.Buffer.init_with_data(
         std.mem.sliceAsBytes(shape.indices),
-        .{ .IndexBuffer = true, },
+        .{ .IndexBuffer = true },
         .{},
     );
     errdefer indices_buffer.deinit();
@@ -908,7 +902,7 @@ pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Self {
     const mp = try model_arena.alloc(MeshPrimitive, 1);
     errdefer model_arena.free(mp);
 
-    mp[0] = MeshPrimitive {
+    mp[0] = MeshPrimitive{
         .topology = .Triangles,
         .indices_offset = 0,
         .vertices_offset = 0,
@@ -921,8 +915,8 @@ pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Self {
     const mn = try model_arena.alloc(ModelNode, 1);
     errdefer model_arena.free(mn);
 
-    mn[0] = ModelNode {
-        .mesh_set = MeshSet {
+    mn[0] = ModelNode{
+        .mesh_set = MeshSet{
             .primitives = .{0} ** MeshSet.MAX_PRIMITIVES_PER_SET,
             .num_primitives = 1,
             .physics_shape_settings = null, // will be generated on demand
@@ -934,7 +928,7 @@ pub fn init_from_shape(alloc: std.mem.Allocator, shape: *zmesh.Shape) !Self {
 
     rn[0] = 0;
 
-    return Self {
+    return Self{
         .arena_allocator = model_arena_allocator,
 
         .vertices_buffer = vertices_buffer,
@@ -1014,18 +1008,17 @@ pub const Heightmap = struct {
         var h = @as(usize, @intFromFloat(std.math.floor(y)));
 
         // sample mirror w and h if they are out of bounds
-        w = @mod(w, height_map.width); 
-        if (w >= height_map.width) { 
+        w = @mod(w, height_map.width);
+        if (w >= height_map.width) {
             w = height_map.width - (w - height_map.width);
         }
-        h = @mod(h, height_map.height); 
-        if (h >= height_map.height) { 
+        h = @mod(h, height_map.height);
+        if (h >= height_map.height) {
             h = height_map.height - (h - height_map.height);
         }
 
         return height_map.data[w + h * height_map.width];
     }
-
 
     pub fn sample_heightmap(height_map: *const Heightmap, x: f32, y: f32) f32 {
         const px = x * @as(f32, @floatFromInt(height_map.width));
@@ -1043,8 +1036,7 @@ pub const Heightmap = struct {
 
         const x_frac = @mod(x, 1.0);
         const y_frac = @mod(y, 1.0);
-        return 
-            (h0 * (1.0 - x_frac) * (1.0 - y_frac)) +
+        return (h0 * (1.0 - x_frac) * (1.0 - y_frac)) +
             (h1 * x_frac * (1.0 - y_frac)) +
             (h2 * (1.0 - x_frac) * y_frac) +
             (h3 * x_frac * y_frac);
@@ -1052,8 +1044,8 @@ pub const Heightmap = struct {
 };
 
 pub fn heightmap_plane_on_sphere(
-    alloc: std.mem.Allocator, 
-    height_map: *const Heightmap, 
+    alloc: std.mem.Allocator,
+    height_map: *const Heightmap,
     options: struct {
         slices: i32 = 32,
         stacks: i32 = 32,
@@ -1134,7 +1126,7 @@ pub fn generate_bone_transforms_for_pose(self: *const Self, alloc: std.mem.Alloc
         const parent_mat = if (node.parent) |parent_node_index| blk: {
             std.debug.assert(parent_node_index < node_index);
             break :blk node_matrix_list[parent_node_index];
-            } else zm.identity();
+        } else zm.identity();
 
         const node_name = node.name.?;
         const maybe_bone_id = self.bones_names_map.get(node_name);
@@ -1164,7 +1156,7 @@ pub fn gen_static_compound_physics_shape(self: *const Self) !*zphy.CompoundShape
 
             var scaled_shape_settings = try zphy.DecoratedShapeSettings.createScaled(
                 physics_shape_settings,
-                .{node.transform.scale[0], node.transform.scale[1], node.transform.scale[2]}
+                .{ node.transform.scale[0], node.transform.scale[1], node.transform.scale[2] },
             );
             defer scaled_shape_settings.asShapeSettings().release();
 
@@ -1172,7 +1164,7 @@ pub fn gen_static_compound_physics_shape(self: *const Self) !*zphy.CompoundShape
                 zm.vecToArr3(node.transform.position),
                 zm.vecToArr4(node.transform.rotation),
                 scaled_shape_settings.asShapeSettings(),
-                0
+                0,
             );
         }
     }

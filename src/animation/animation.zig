@@ -33,7 +33,7 @@ pub const QuantisedBoneAnimationChannel = struct {
     }
 
     pub fn transform_at_time(self: *const QuantisedBoneAnimationChannel, frame_tick: f32) Transform {
-        return Transform {
+        return Transform{
             .position = if (self.position_keys.len == 0) zm.f32x4s(0.0) else lerp_between_frames(self.position_keys, frame_tick),
             .rotation = if (self.rotation_keys.len == 0) zm.qidentity() else slerp_between_frames(self.rotation_keys, frame_tick),
             .scale = if (self.scale_keys.len == 0) zm.f32x4s(1.0) else lerp_between_frames(self.scale_keys, frame_tick),
@@ -91,7 +91,7 @@ pub const BoneAnimationChannel = struct {
     pub fn quantise(self: *const BoneAnimationChannel, alloc: std.mem.Allocator, out_tick_duration_seconds: f32, out_animation_duration_ticks: usize) !QuantisedBoneAnimationChannel {
         const owned_node_name = try alloc.dupe(u8, self.node_name);
         errdefer alloc.free(owned_node_name);
-        
+
         const position_keys = try alloc.alloc(zm.F32x4, out_animation_duration_ticks);
         errdefer alloc.free(position_keys);
 
@@ -108,7 +108,7 @@ pub const BoneAnimationChannel = struct {
             scale_keys[tick_idx] = selected_transform.scale;
         }
 
-        return QuantisedBoneAnimationChannel {
+        return QuantisedBoneAnimationChannel{
             .node_name = owned_node_name,
             .position_keys = position_keys,
             .rotation_keys = rotation_keys,
@@ -180,7 +180,7 @@ pub const BoneAnimationChannel = struct {
             }
         }
 
-        return Transform {
+        return Transform{
             .position = position,
             .rotation = rotation,
             .scale = scale,
@@ -211,7 +211,9 @@ pub const BoneAnimation = struct {
         errdefer alloc.free(quantised_channels);
 
         var quantised_channels_list = std.ArrayList(QuantisedBoneAnimationChannel).initBuffer(quantised_channels);
-        errdefer for (quantised_channels_list.items) |c| { c.deinit(alloc); };
+        errdefer for (quantised_channels_list.items) |c| {
+            c.deinit(alloc);
+        };
 
         for (self.channels) |channel| {
             const quantised_channel = try channel.quantise(alloc, out_tick_duration_seconds, num_ticks);
@@ -220,7 +222,7 @@ pub const BoneAnimation = struct {
             try quantised_channels_list.appendBounded(quantised_channel);
         }
 
-        return QuantisedBoneAnimation {
+        return QuantisedBoneAnimation{
             .name = owned_name,
             .channels = quantised_channels,
             .duration_ticks = num_ticks,

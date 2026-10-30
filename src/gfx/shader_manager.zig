@@ -29,7 +29,7 @@ pub fn init() !Self {
 
     const alloc = eng.get().general_allocator;
 
-    return Self {
+    return Self{
         .alloc = alloc,
         .slang_global = slang_global.?,
         .standard_modules = try std.ArrayList(?*slang.c.Module).initCapacity(alloc, 4),
@@ -55,7 +55,7 @@ pub fn add_standard_module(self: *Self, info: StandardModuleInfo) !void {
         preprocessor_macros[idx].value = try macro_alloc.dupeZ(u8, m[1]);
     }
 
-    const session_create_info = slang.SessionCreateInfo {
+    const session_create_info = slang.SessionCreateInfo{
         .compile_target = slang.c.TARGET_SPIRV,
         .profile = "spirv_1_3",
         .preprocessor_macros = preprocessor_macros,
@@ -63,7 +63,7 @@ pub fn add_standard_module(self: *Self, info: StandardModuleInfo) !void {
             //.{ .name = slang.c.VulkanUseEntryPointName, .value = .{ .kind = slang.c.Int, .intValue0 = 1, }, },
         },
         .search_paths = &.{
-            "libs/engine/src/" // TODO integrate with asset manager, cant use relative throguh app /libs/engine/...
+            "libs/engine/src/", // TODO integrate with asset manager, cant use relative throguh app /libs/engine/...
         },
     };
 
@@ -79,7 +79,7 @@ pub fn add_standard_module(self: *Self, info: StandardModuleInfo) !void {
     const module_name_z = try self.alloc.dupeZ(u8, info.module_name);
     defer self.alloc.free(module_name_z);
 
-    const module_create_info = slang.c.ModuleCreateInfo {
+    const module_create_info = slang.c.ModuleCreateInfo{
         .module_name = @ptrCast(module_name_z.ptr),
         .module_path = "",
         .shader_source = @ptrCast(shader_data_z.ptr),
@@ -117,15 +117,15 @@ pub fn generate_spirv(self: *const Self, alloc: std.mem.Allocator, info: Generat
         preprocessor_macros[idx].value = try macro_alloc.dupeZ(u8, m[1]);
     }
 
-    const session_create_info = slang.SessionCreateInfo {
+    const session_create_info = slang.SessionCreateInfo{
         .compile_target = slang.c.TARGET_SPIRV,
         .profile = "spirv_1_3",
         .preprocessor_macros = preprocessor_macros,
         .compile_options = &.{
-            .{ .name = slang.c.VulkanUseEntryPointName, .value = .{ .kind = slang.c.Int, .intValue0 = 1, }, },
+            .{ .name = slang.c.VulkanUseEntryPointName, .value = .{ .kind = slang.c.Int, .intValue0 = 1 } },
         },
         .search_paths = &.{
-            "libs/engine/src/" // TODO integrate with asset manager, cant use relative throguh app /libs/engine/...
+            "libs/engine/src/", // TODO integrate with asset manager, cant use relative throguh app /libs/engine/...
         },
     };
 
@@ -138,7 +138,7 @@ pub fn generate_spirv(self: *const Self, alloc: std.mem.Allocator, info: Generat
     const shader_data_z = try self.alloc.dupeZ(u8, info.shader_data);
     defer self.alloc.free(shader_data_z);
 
-    const module_create_info = slang.c.ModuleCreateInfo {
+    const module_create_info = slang.c.ModuleCreateInfo{
         .module_name = "shader",
         .module_path = "",
         .shader_source = @ptrCast(shader_data_z.ptr),
@@ -155,19 +155,21 @@ pub fn generate_spirv(self: *const Self, alloc: std.mem.Allocator, info: Generat
     defer alloc.free(entry_points);
 
     var entry_points_list = std.ArrayList(?*slang.c.struct_EntryPoint).initBuffer(entry_points);
-    defer for (entry_points_list.items) |ep| { slang.c.destroy_entry_point(ep); };
+    defer for (entry_points_list.items) |ep| {
+        slang.c.destroy_entry_point(ep);
+    };
 
     for (info.shader_entry_points) |ep| {
         const entry_point_z = try self.alloc.dupeZ(u8, ep);
         defer self.alloc.free(entry_point_z);
 
-        const entry_point_create_info = slang.c.EntryPointCreateInfo {
+        const entry_point_create_info = slang.c.EntryPointCreateInfo{
             .entry_point_name = @ptrCast(entry_point_z.ptr),
             .diagnostics_blob = diagnostics_blob,
         };
 
         const slang_entry_point = slang.check(slang.c.find_and_create_entry_point(slang_module, entry_point_create_info)) catch {
-            std.log.info("slang error creating entrypoint \"{s}\": {s}", .{ep, slang.blob_str(diagnostics_blob)});
+            std.log.info("slang error creating entrypoint \"{s}\": {s}", .{ ep, slang.blob_str(diagnostics_blob) });
             return error.UnableToCreateSlangEntryPoint;
         };
         errdefer slang.c.destroy_entry_point(slang_entry_point);
@@ -183,7 +185,7 @@ pub fn generate_spirv(self: *const Self, alloc: std.mem.Allocator, info: Generat
         modules[idx] = module;
     }
 
-    const composed_create_info = slang.ComposedProgramCreateInfo {
+    const composed_create_info = slang.ComposedProgramCreateInfo{
         .diagnostics_blob = diagnostics_blob,
         .modules = modules,
         .entry_points = entry_points_list.items[0..],
@@ -192,7 +194,7 @@ pub fn generate_spirv(self: *const Self, alloc: std.mem.Allocator, info: Generat
     const composed_program = try slang.check(slang.c.create_composed_program(slang_session, composed_create_info.to_slang()));
     defer slang.c.destroy_composed_program(composed_program);
 
-    const link_program_create_info = slang.c.LinkedProgramCreateInfo {
+    const link_program_create_info = slang.c.LinkedProgramCreateInfo{
         .diagnostics_blob = diagnostics_blob,
     };
 
@@ -205,7 +207,7 @@ pub fn generate_spirv(self: *const Self, alloc: std.mem.Allocator, info: Generat
     const output_blob = slang.c.create_blob();
     defer slang.c.destroy_blob(output_blob);
 
-    const get_target_create_info = slang.c.GetTargetCodeCreateInfo {
+    const get_target_create_info = slang.c.GetTargetCodeCreateInfo{
         .output_blob = output_blob,
         .diagnostics_blob = diagnostics_blob,
     };

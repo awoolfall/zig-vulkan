@@ -45,12 +45,11 @@ pub const BufferVulkan = struct {
 
         // @TODO: use the dedicated transfer queue
         const use_shared = false; // gfx.platform.queues.has_distinct_transfer_queue() and
-            // (access_flags.CpuRead or access_flags.CpuWrite);
+        // (access_flags.CpuRead or access_flags.CpuWrite);
         const family_indices: []const u32 = &.{
             GfxStateVulkan.get().queues.all_family_index,
-            GfxStateVulkan.get().queues.cpu_gpu_transfer_family_index
+            GfxStateVulkan.get().queues.cpu_gpu_transfer_family_index,
         };
-
 
         const buffer_is_immutable = (access_flags.CpuWrite == false and access_flags.GpuWrite == false);
         const vk_buffer_count = if (buffer_is_immutable) 1 else fif;
@@ -62,7 +61,7 @@ pub const BufferVulkan = struct {
             usage_flags_plus.TransferDst = true;
         }
 
-        const buffer_create_info = c.VkBufferCreateInfo {
+        const buffer_create_info = c.VkBufferCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .sharingMode = if (use_shared) c.VK_SHARING_MODE_CONCURRENT else c.VK_SHARING_MODE_EXCLUSIVE,
             .pQueueFamilyIndices = @ptrCast(family_indices.ptr),
@@ -76,7 +75,9 @@ pub const BufferVulkan = struct {
         errdefer alloc.free(vk_buffers);
 
         var vk_buffers_list = std.ArrayList(c.VkBuffer).initBuffer(vk_buffers);
-        errdefer for (vk_buffers_list.items) |b| { c.vkDestroyBuffer(GfxStateVulkan.get().device, b, null); };
+        errdefer for (vk_buffers_list.items) |b| {
+            c.vkDestroyBuffer(GfxStateVulkan.get().device, b, null);
+        };
 
         for (0..vk_buffer_count) |_| {
             var vk_buffer: c.VkBuffer = undefined;
@@ -91,7 +92,8 @@ pub const BufferVulkan = struct {
 
         const memory_properties: c.VkMemoryPropertyFlags = if (access_flags.CpuRead or access_flags.CpuWrite)
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-            else c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        else
+            c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
         const vk_limits = GfxStateVulkan.get().physical_device_properties.limits;
 
@@ -108,7 +110,7 @@ pub const BufferVulkan = struct {
         // }
         const vk_buffer_size_aligned = vk.align_up(vk_memory_requirements.size, lcm_alignment);
 
-        const memory_allocate_info = c.VkMemoryAllocateInfo {
+        const memory_allocate_info = c.VkMemoryAllocateInfo{
             .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .allocationSize = vk_buffer_size_aligned * vk_buffer_count,
             .memoryTypeIndex = try vk.find_vulkan_memory_type(
@@ -133,7 +135,7 @@ pub const BufferVulkan = struct {
             .vk_device_memory = vk_device_memory,
         };
     }
-    
+
     pub fn init_with_data(
         data: []const u8,
         usage_flags: gf.BufferUsageFlags,
@@ -158,7 +160,7 @@ pub const BufferVulkan = struct {
         var command_buffer = try vk.begin_single_time_command_buffer(&GfxStateVulkan.get().all_command_pool);
 
         for (self.vk_buffers) |vk_buffer| {
-            const buffer_copy_region = c.VkBufferCopy {
+            const buffer_copy_region = c.VkBufferCopy{
                 .size = data.len,
                 .dstOffset = 0,
                 .srcOffset = 0,
@@ -178,19 +180,19 @@ pub const BufferVulkan = struct {
 
         // @TODO: use the dedicated transfer queue
         const use_shared = false; // gfx.platform.queues.has_distinct_transfer_queue() and
-            // (access_flags.CpuRead or access_flags.CpuWrite);
+        // (access_flags.CpuRead or access_flags.CpuWrite);
         const family_indices: []const u32 = &.{
             GfxStateVulkan.get().queues.all_family_index,
-            GfxStateVulkan.get().queues.cpu_gpu_transfer_family_index
+            GfxStateVulkan.get().queues.cpu_gpu_transfer_family_index,
         };
 
-        const buffer_create_info = c.VkBufferCreateInfo {
+        const buffer_create_info = c.VkBufferCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .sharingMode = if (use_shared) c.VK_SHARING_MODE_CONCURRENT else c.VK_SHARING_MODE_EXCLUSIVE,
             .pQueueFamilyIndices = @ptrCast(family_indices.ptr),
             .queueFamilyIndexCount = if (use_shared) @intCast(family_indices.len) else 1,
             .size = @intCast(byte_size),
-            .usage = vk.convert_buffer_usage_flags_to_vulkan(.{ .TransferSrc = true, }),
+            .usage = vk.convert_buffer_usage_flags_to_vulkan(.{ .TransferSrc = true }),
         };
         std.debug.assert(buffer_create_info.usage != 0);
 
@@ -201,7 +203,7 @@ pub const BufferVulkan = struct {
         var vk_memory_requirements: c.VkMemoryRequirements = undefined;
         c.vkGetBufferMemoryRequirements(GfxStateVulkan.get().device, vk_buffer, &vk_memory_requirements);
 
-        const memory_properties: c.VkMemoryPropertyFlags = 
+        const memory_properties: c.VkMemoryPropertyFlags =
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
         const vk_limits = GfxStateVulkan.get().physical_device_properties.limits;
@@ -211,7 +213,7 @@ pub const BufferVulkan = struct {
         lcm_alignment = vk.lcm(lcm_alignment, vk_limits.optimalBufferCopyOffsetAlignment);
         const vk_buffer_size_aligned = vk.align_up(vk_memory_requirements.size, lcm_alignment);
 
-        const memory_allocate_info = c.VkMemoryAllocateInfo {
+        const memory_allocate_info = c.VkMemoryAllocateInfo{
             .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .allocationSize = vk_buffer_size_aligned,
             .memoryTypeIndex = try vk.find_vulkan_memory_type(
@@ -245,12 +247,12 @@ pub const BufferVulkan = struct {
 
         var data_ptr: ?*anyopaque = undefined;
         try vkt(c.vkMapMemory(
-                GfxStateVulkan.get().device,
-                self.vk_device_memory,
-                @as(u64, @intCast(buffer_index)) * self.aligned_buffer_size,
-                self.buffer_size,
-                0,
-                &data_ptr
+            GfxStateVulkan.get().device,
+            self.vk_device_memory,
+            @as(u64, @intCast(buffer_index)) * self.aligned_buffer_size,
+            self.buffer_size,
+            0,
+            &data_ptr,
         ));
 
         if (options.write == .Infrequent and self.vk_buffers.len > 1) {
@@ -260,7 +262,7 @@ pub const BufferVulkan = struct {
                     break;
                 }
             } else {
-                try GfxStateVulkan.get().buffer_updates.append(GfxStateVulkan.get().alloc, GfxStateVulkan.BufferUpdates {
+                try GfxStateVulkan.get().buffer_updates.append(GfxStateVulkan.get().alloc, GfxStateVulkan.BufferUpdates{
                     .vk_buffers = self.vk_buffers,
                     .size = self.buffer_size,
                     .count = 0,
@@ -268,7 +270,7 @@ pub const BufferVulkan = struct {
             }
         }
 
-        return MappedBuffer {
+        return MappedBuffer{
             .data_ptr = data_ptr,
             .device_memory = self.vk_device_memory,
         };
@@ -283,11 +285,11 @@ pub const BufferVulkan = struct {
         }
 
         pub inline fn data(self: *const MappedBuffer, comptime Type: type) *Type {
-            return @alignCast(@ptrCast(self.data_ptr));
+            return @ptrCast(@alignCast(self.data_ptr));
         }
 
         pub inline fn data_array(self: *const MappedBuffer, comptime Type: type, length: usize) []Type {
-            return @as([*]Type, @alignCast(@ptrCast(self.data_ptr)))[0..(length)];
+            return @as([*]Type, @ptrCast(@alignCast(self.data_ptr)))[0..(length)];
         }
     };
 

@@ -29,10 +29,10 @@ pub fn to_zstbi(self: *const Self) !stbi.Image {
         .{
             .bytes_per_component = self.bytes_per_component,
             .bytes_per_row = self.bytes_per_row,
-        }
+        },
     );
     errdefer zstbi_image.deinit();
-    
+
     @memcpy(zstbi_image.data[0..], self.data[0..]);
 
     return zstbi_image;
@@ -67,7 +67,7 @@ pub fn load_from_file(alloc: std.mem.Allocator, file_path: []const u8, options: 
         const row_len: u32 = @intCast(std.math.sqrt(components_in_file));
         const bytes_per_row: u32 = row_len * bytes_per_component;
 
-        return Self {
+        return Self{
             .alloc = alloc,
             .data = buf,
             .width = row_len,
@@ -84,7 +84,7 @@ pub fn load_from_file(alloc: std.mem.Allocator, file_path: []const u8, options: 
         const owned_data = try alloc.dupe(u8, stbi_image.data);
         errdefer alloc.free(owned_data);
 
-        return Self {
+        return Self{
             .alloc = alloc,
             .data = owned_data,
             .width = stbi_image.width,
@@ -107,7 +107,7 @@ pub fn load_from_memory(alloc: std.mem.Allocator, data: []const u8, options: Loa
     const owned_data = try alloc.dupe(u8, stbi_image.data);
     errdefer alloc.free(owned_data);
 
-    return Self {
+    return Self{
         .alloc = alloc,
         .data = owned_data,
         .width = stbi_image.width,

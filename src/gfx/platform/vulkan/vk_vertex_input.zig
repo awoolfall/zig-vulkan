@@ -14,7 +14,7 @@ pub const VertexInputVulkan = struct {
 
     pub fn deinit(self: *const Self) void {
         const alloc = eng.get().gfx.platform.alloc;
-        
+
         alloc.free(self.vk_vertex_input_attrib_description);
         alloc.free(self.vk_vertex_input_binding_description);
     }
@@ -30,7 +30,7 @@ pub const VertexInputVulkan = struct {
         errdefer alloc.free(vertex_input_attrib_descriptions);
 
         for (info.bindings, 0..) |binding, idx| {
-            vertex_input_bindings[idx] = c.VkVertexInputBindingDescription {
+            vertex_input_bindings[idx] = c.VkVertexInputBindingDescription{
                 .binding = binding.binding,
                 .stride = binding.stride,
                 .inputRate = switch (binding.input_rate) {
@@ -41,7 +41,7 @@ pub const VertexInputVulkan = struct {
         }
 
         for (info.attributes, 0..) |attrib, idx| {
-            vertex_input_attrib_descriptions[idx] = c.VkVertexInputAttributeDescription {
+            vertex_input_attrib_descriptions[idx] = c.VkVertexInputAttributeDescription{
                 .binding = attrib.binding,
                 .location = attrib.location,
                 .offset = attrib.offset,

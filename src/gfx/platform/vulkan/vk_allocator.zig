@@ -17,17 +17,17 @@ pub const VkAllocator = struct {
         const user_data = try alloc.create(VkAllocator.UserData);
         errdefer alloc.destroy(user_data);
 
-        user_data.* = UserData {
+        user_data.* = UserData{
             .alloc = alloc,
         };
 
-        return VkAllocator {
+        return VkAllocator{
             .user_data = user_data,
         };
     }
 
     pub fn vk_callbacks(self: *const VkAllocator) c.VkAllocationCallbacks {
-        return c.VkAllocationCallbacks {
+        return c.VkAllocationCallbacks{
             .pUserData = @ptrCast(self.user_data),
             .pfnAllocation = VkAllocator.alloc_fn,
             .pfnReallocation = VkAllocator.realloc_fn,
@@ -45,7 +45,9 @@ pub const VkAllocator = struct {
         _ = allocationScope;
 
         const user_data = cast_user_data(pUserData) orelse return null;
-        if (!std.math.isPowerOfTwo(alignment)) { return null; }
+        if (!std.math.isPowerOfTwo(alignment)) {
+            return null;
+        }
 
         const allocation = user_data.alloc.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(alignment), size) catch |err| {
             std.log.err("VkAllocator: Unable to allocate memory: {}", .{err});
@@ -56,7 +58,9 @@ pub const VkAllocator = struct {
 
     pub fn realloc_fn(pUserData: ?*anyopaque, pOriginal: ?*anyopaque, size: usize, alignment: usize, allocationScope: c.VkSystemAllocationScope) callconv(.c) ?*anyopaque {
         const user_data = cast_user_data(pUserData) orelse return null;
-        if (!std.math.isPowerOfTwo(alignment)) { return null; }
+        if (!std.math.isPowerOfTwo(alignment)) {
+            return null;
+        }
 
         if (pOriginal == null) {
             return alloc_fn(pUserData, size, alignment, allocationScope);
@@ -71,7 +75,9 @@ pub const VkAllocator = struct {
 
     pub fn free_fn(pUserData: ?*anyopaque, pMemory: ?*anyopaque) callconv(.c) void {
         const user_data = cast_user_data(pUserData) orelse return;
-        if (pMemory == null) { return; }
+        if (pMemory == null) {
+            return;
+        }
         user_data.alloc.free(@as([*]u8, @ptrCast(pMemory.?)));
     }
 
