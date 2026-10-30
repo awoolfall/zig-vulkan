@@ -21,21 +21,21 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
 pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
     _ = entity;
-    try object.put("model", try sr.serialize_value(?as.ModelAssetId, alloc, self.model));
+    try sr.serialize_object_value(alloc, object, ?as.ModelAssetId, "model", self.model);
 }
 
 pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std.json.ObjectMap) !Self {
     _ = entity;
     var component: Self = .{};
 
-    if (object.get("model")) |v| blk: { component.model = sr.deserialize_value(?as.ModelAssetId, alloc, v) catch break :blk; }
+    component.model = try sr.deserialize_object_value(alloc, &object, ?as.ModelAssetId, "model") orelse null;
 
     return component;
 }
 
 pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
     _ = entity;
-    
+
     const outer_layout = imui.push_layout(.Y, key ++ .{@src()});
     defer imui.pop_layout();
 
@@ -52,9 +52,11 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
 
         drop_zone.id.get().semantic_size[1].kind = .Pixels;
         drop_zone.id.get().semantic_size[1].value = 100.0;
-        
+
         if (drop_zone.data_changed) blk: {
-            if (eng.get().input.get_dropped_files().len == 0) { break :blk; }
+            if (eng.get().input.get_dropped_files().len == 0) {
+                break :blk;
+            }
             const file_path = eng.get().input.get_dropped_files()[0];
 
             if (std.mem.startsWith(u8, file_path, eng.get().asset_manager.resource_directory_str)) {
@@ -85,17 +87,17 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
         std.log.info("model: {s}", .{model_asset_metadata.uri});
         std.log.info("num meshes: {}", .{model.meshes.len});
         for (model.meshes, 0..) |mesh, mesh_idx| {
-            std.log.info("{} - num vertices: {}", .{mesh_idx, mesh.vertex_count});
-            std.log.info("{} - num indices: {}", .{mesh_idx, mesh.index_count});
+            std.log.info("{} - num vertices: {}", .{ mesh_idx, mesh.vertex_count });
+            std.log.info("{} - num indices: {}", .{ mesh_idx, mesh.index_count });
         }
         std.log.info("num bones: {}", .{model.bones_info.len});
         std.log.info("num animations: {}", .{model.animations.len});
         for (model.animations, 0..) |anim, anim_idx| {
-            std.log.info("{} - animation: {s}", .{anim_idx, anim.name});
+            std.log.info("{} - animation: {s}", .{ anim_idx, anim.name });
         }
         std.log.info("nodes: {}", .{model.nodes.len});
         for (model.nodes, 0..) |node, node_idx| {
-            std.log.info("{} - {s}, parent: {}", .{node_idx, node.name orelse "unnamed", node.parent orelse 0});
+            std.log.info("{} - {s}, parent: {}", .{ node_idx, node.name orelse "unnamed", node.parent orelse 0 });
         }
     }
 }

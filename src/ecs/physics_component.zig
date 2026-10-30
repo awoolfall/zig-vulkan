@@ -52,15 +52,13 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
 pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
     _ = entity;
-    try object.put("settings", try sr.serialize_value(PhysicsSettings, alloc, self.settings));
+    try sr.serialize_object_value(alloc, object, PhysicsSettings, "settings", self.settings);
 }
 
 pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std.json.ObjectMap) !Self {
     var component: Self = .{};
 
-    if (object.get("settings")) |v| blk: {
-        component.settings = sr.deserialize_value(PhysicsSettings, alloc, v) catch break :blk;
-    }
+    component.settings = try sr.deserialize_object_value(alloc, &object, PhysicsSettings, "settings") orelse component.settings;
 
     try component.update_runtime_data(entity);
     return component;

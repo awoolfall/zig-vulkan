@@ -195,8 +195,8 @@ const DeserializeError = error{
     ValueDoesNotExist,
 };
 
-pub inline fn deserialize_object_value(alloc: std.mem.Allocator, obj: *const std.json.ObjectMap, comptime T: type, name: []const u8) !T {
-    const v = obj.get(name) orelse return DeserializeError.ValueDoesNotExist;
+pub inline fn deserialize_object_value(alloc: std.mem.Allocator, obj: *const std.json.ObjectMap, comptime T: type, name: []const u8) !?T {
+    const v = obj.get(name) orelse return null;
     return try deserialize_value(T, alloc, v);
 }
 

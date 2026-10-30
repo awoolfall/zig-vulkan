@@ -20,14 +20,14 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
 pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
     _ = entity;
-    try object.put("serialize_id", try sr.serialize_value(?u32, alloc, self.serialize_id));
+    try sr.serialize_object_value(alloc, object, ?u32, "serialize_id", self.serialize_id);
 }
 
 pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std.json.ObjectMap) !Self {
     _ = entity;
     var component: Self = .{};
 
-    if (object.get("serialize_id")) |v| blk: { component.serialize_id = sr.deserialize_value(?u32, alloc, v) catch break :blk; }
+    component.serialize_id = try sr.deserialize_object_value(alloc, &object, ?u32, "serialize_id") orelse null;
 
     return component;
 }
@@ -49,7 +49,8 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
         _ = eng.Imui.widgets.label.create(imui, "serialization id: ");
         const serialization_id_string = if (component.serialize_id) |serialization_id|
             try std.fmt.allocPrint(imui.widget_allocator(), "{}", .{serialization_id})
-            else "TBD on next save";
+        else
+            "TBD on next save";
         _ = eng.Imui.widgets.label.create(imui, serialization_id_string);
     }
 }

@@ -21,14 +21,14 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 
 pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
     _ = entity;
-    try object.put("transform", try sr.serialize_value(eng.Transform, alloc, self.transform));
+    try sr.serialize_object_value(alloc, object, eng.Transform, "transform", self.transform);
 }
 
 pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std.json.ObjectMap) !Self {
     _ = entity;
     var component: Self = .{};
 
-    if (object.get("transform")) |v| blk: { component.transform = sr.deserialize_value(eng.Transform, alloc, v) catch break :blk; }
+    component.transform = try sr.deserialize_object_value(alloc, &object, eng.Transform, "transform") orelse component.transform;
 
     return component;
 }
