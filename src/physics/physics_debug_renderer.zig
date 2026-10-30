@@ -49,7 +49,7 @@ pub const D3D11DebugRenderer = extern struct {
                 prim.deinit();
                 self.alloc.destroy(prim);
             }
-            
+
             self.framebuffer.deinit();
             self.pipeline.deinit();
             self.render_pass.deinit();
@@ -63,7 +63,7 @@ pub const D3D11DebugRenderer = extern struct {
         color: [4]f32,
 
         pub fn from_zphy(vertex: *const zphy.DebugRenderer.Vertex) Vertex {
-            return Vertex {
+            return Vertex{
                 .position = vertex.position,
                 .normal = vertex.normal,
                 .uv = vertex.uv,
@@ -108,7 +108,7 @@ pub const D3D11DebugRenderer = extern struct {
             .shader_entry_points = &.{
                 "vs_main",
                 "ps_main",
-            }
+            },
         });
         defer alloc.free(spirv);
 
@@ -119,9 +119,7 @@ pub const D3D11DebugRenderer = extern struct {
 
         const vertex_input = try gfx.VertexInput.init(.{
             .bindings = &.{
-                gfx.VertexInputBinding {
-                    .binding = 0, .input_rate = .Vertex, .stride = 12 + 12 + 8 + 16,
-                },
+                gfx.VertexInputBinding{ .binding = 0, .input_rate = .Vertex, .stride = 12 + 12 + 8 + 16 },
             },
             .attributes = &.{
                 .{ .location = 0, .binding = 0, .name = "POS", .format = .F32x3, .offset = 0 },
@@ -132,15 +130,15 @@ pub const D3D11DebugRenderer = extern struct {
         });
         defer vertex_input.deinit();
 
-        const attachments = &[_]gfx.AttachmentInfo {
-            gfx.AttachmentInfo {
+        const attachments = &[_]gfx.AttachmentInfo{
+            gfx.AttachmentInfo{
                 .name = "colour",
                 .format = gfx.GfxState.ldr_format,
                 .initial_layout = .ColorAttachmentOptimal,
                 .final_layout = .ColorAttachmentOptimal,
                 .blend_type = .Simple,
             },
-            gfx.AttachmentInfo {
+            gfx.AttachmentInfo{
                 .name = "depth",
                 .format = gfx.GfxState.depth_format,
                 .initial_layout = .DepthStencilAttachmentOptimal,
@@ -151,19 +149,19 @@ pub const D3D11DebugRenderer = extern struct {
         const render_pass = try gfx.RenderPass.init(.{
             .attachments = attachments,
             .subpasses = &.{
-                gfx.SubpassInfo {
-                    .attachments = &.{ "colour" },
+                gfx.SubpassInfo{
+                    .attachments = &.{"colour"},
                     .depth_attachment = "depth",
                 },
             },
             .dependencies = &.{
-                gfx.SubpassDependencyInfo {
+                gfx.SubpassDependencyInfo{
                     .src_subpass = null,
                     .dst_subpass = 0,
-                    .src_stage_mask = .{ .color_attachment_output = true, },
+                    .src_stage_mask = .{ .color_attachment_output = true },
                     .src_access_mask = .{},
-                    .dst_stage_mask = .{ .color_attachment_output = true, },
-                    .dst_access_mask = .{ .color_attachment_write = true, },
+                    .dst_stage_mask = .{ .color_attachment_output = true },
+                    .dst_access_mask = .{ .color_attachment_write = true },
                 },
             },
         });
@@ -184,8 +182,8 @@ pub const D3D11DebugRenderer = extern struct {
             .rasterization_fill_mode = .Line,
             .cull_mode = .CullNone,
             .push_constants = &.{
-                gfx.PushConstantLayoutInfo {
-                    .shader_stages = .{ .Vertex = true, },
+                gfx.PushConstantLayoutInfo{
+                    .shader_stages = .{ .Vertex = true },
                     .offset = 0,
                     .size = @sizeOf(PushConstantCamera) + @sizeOf(PushConstantsBody),
                 },
@@ -196,7 +194,7 @@ pub const D3D11DebugRenderer = extern struct {
 
         const framebuffer = try gfx.FrameBuffer.init(.{
             .render_pass = render_pass,
-            .attachments = &[_]gfx.FrameBufferAttachmentInfo {
+            .attachments = &[_]gfx.FrameBufferAttachmentInfo{
                 .SwapchainLDR,
                 .SwapchainDepth,
             },
@@ -214,18 +212,18 @@ pub const D3D11DebugRenderer = extern struct {
             .framebuffer = framebuffer,
         };
 
-        return D3D11DebugRenderer {
+        return D3D11DebugRenderer{
             .data = data,
         };
     }
 
     pub fn draw_bodies(
-        self: *D3D11DebugRenderer, 
+        self: *D3D11DebugRenderer,
         cmd: *gfx.CommandBuffer,
         projection: zm.Mat,
         view: zm.Mat,
     ) void {
-        const physics = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) catch return;
+        const physics = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) orelse return;
 
         cmd.cmd_begin_render_pass(.{
             .render_pass = self.data.render_pass,
@@ -236,15 +234,15 @@ pub const D3D11DebugRenderer = extern struct {
 
         cmd.cmd_bind_graphics_pipeline(self.data.pipeline);
 
-        cmd.cmd_set_viewports(.{ .viewports = &.{ .full_screen_viewport() } });
-        cmd.cmd_set_scissors(.{ .scissors = &.{ .full_screen_pixels() } });
+        cmd.cmd_set_viewports(.{ .viewports = &.{.full_screen_viewport()} });
+        cmd.cmd_set_scissors(.{ .scissors = &.{.full_screen_pixels()} });
 
-        const camera_push_constants = PushConstantCamera {
+        const camera_push_constants = PushConstantCamera{
             .vp = zm.mul(view, projection),
         };
 
         cmd.cmd_push_constants(.{
-            .shader_stages = .{ .Vertex = true, },
+            .shader_stages = .{ .Vertex = true },
             .offset = 0,
             .data = std.mem.asBytes(&camera_push_constants),
         });
@@ -310,15 +308,15 @@ pub const D3D11DebugRenderer = extern struct {
 
         const buffer = gfx.Buffer.init_with_data(
             std.mem.sliceAsBytes(buffer_data),
-            .{ .VertexBuffer = true, },
-            .{}
+            .{ .VertexBuffer = true },
+            .{},
         ) catch |err| {
             std.log.err("Unable to create buffer for physics debug renderer: {}", .{err});
             unreachable;
         };
         errdefer buffer.deinit();
 
-        prim.* = MyRenderPrimitive {
+        prim.* = MyRenderPrimitive{
             .linked_list_node = undefined,
             .buffer = buffer,
             .num_vertices = triangle_count * 3,
@@ -362,15 +360,15 @@ pub const D3D11DebugRenderer = extern struct {
 
         const buffer = gfx.Buffer.init_with_data(
             buffer_data,
-            .{ .VertexBuffer = true, .IndexBuffer = true, },
-            .{}
+            .{ .VertexBuffer = true, .IndexBuffer = true },
+            .{},
         ) catch |err| {
             std.log.err("Unable to create buffer for physics debug renderer: {}", .{err});
             unreachable;
         };
         errdefer buffer.deinit();
 
-        prim.* = MyRenderPrimitive {
+        prim.* = MyRenderPrimitive{
             .linked_list_node = undefined,
             .buffer = buffer,
             .num_vertices = vertex_count,
@@ -414,12 +412,12 @@ pub const D3D11DebugRenderer = extern struct {
             return;
         };
 
-        if (geometry.num_LODs < 1) { 
+        if (geometry.num_LODs < 1) {
             std.log.warn("Unable to draw physics debug geometry, num LODs is less than 1", .{});
-            return; 
+            return;
         }
 
-        var packed_model = zm.Mat {
+        var packed_model = zm.Mat{
             zm.loadArr4(model_matrix.column_0),
             zm.loadArr4(model_matrix.column_1),
             zm.loadArr4(model_matrix.column_2),
@@ -429,7 +427,7 @@ pub const D3D11DebugRenderer = extern struct {
         packed_model[1][3] = @as(f32, @floatFromInt(color.comp.g)) / 255.0;
         packed_model[2][3] = @as(f32, @floatFromInt(color.comp.b)) / 255.0;
 
-        const object_push_constants = PushConstantsBody {
+        const object_push_constants = PushConstantsBody{
             .model_colour_pack = packed_model,
         };
 
@@ -442,7 +440,7 @@ pub const D3D11DebugRenderer = extern struct {
         const render_data: *const MyRenderPrimitive = @ptrCast(@alignCast(zphy.DebugRenderer.getPrimitiveFromBatch(geometry.LODs[0].batch)));
 
         cmd.cmd_bind_vertex_buffers(.{
-            .buffers = &.{ .{ .buffer = render_data.buffer } },
+            .buffers = &.{.{ .buffer = render_data.buffer }},
         });
 
         if (render_data.has_indices()) {

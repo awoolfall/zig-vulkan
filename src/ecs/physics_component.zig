@@ -58,7 +58,9 @@ pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, 
 pub fn deserialize(alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: std.json.ObjectMap) !Self {
     var component: Self = .{};
 
-    if (object.get("settings")) |v| blk: { component.settings = sr.deserialize_value(PhysicsSettings, alloc, v) catch break :blk; }
+    if (object.get("settings")) |v| blk: {
+        component.settings = sr.deserialize_value(PhysicsSettings, alloc, v) catch break :blk;
+    }
 
     try component.update_runtime_data(entity);
     return component;
@@ -74,7 +76,7 @@ const PhysicsUiData = struct {
 
     pub fn init(alloc: std.mem.Allocator) !PhysicsUiData {
         _ = alloc;
-        return PhysicsUiData { .settings = .{ .None = {} } };
+        return PhysicsUiData{ .settings = .{ .None = {} } };
     }
 
     pub fn clone(self: *PhysicsUiData, alloc: std.mem.Allocator) !PhysicsUiData {
@@ -101,7 +103,7 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
                 std.log.err("Unable to update selected entity physics: {}", .{err});
             };
         }
-        
+
         const physics_combobox = eng.Imui.widgets.combobox.create(imui, key ++ .{@src()});
         const physics_combobox_data, _ = imui.get_widget_data(eng.Imui.widgets.combobox.ComboBoxState, physics_combobox.id) catch |err| {
             std.log.err("Unable to get physics combobox data: {}", .{err});
@@ -113,7 +115,7 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
                 unreachable;
             };
             physics_combobox_data.can_be_default = false;
-        
+
             // generate physics option names from enum
             const physics_options_fields = @typeInfo(PhysicsOptionsEnum).@"enum".fields;
             inline for (physics_options_fields) |field| {
@@ -122,7 +124,7 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
                     unreachable;
                 };
             }
-        
+
             // set physics descriptor
             data.settings = component.settings;
             physics_combobox_data.selected_index = @intFromEnum(data.settings);
@@ -148,7 +150,7 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
             };
         }
         defer imui.pop_layout();
-    
+
         switch (data.settings) {
             .None => {},
             .Body => |*b| {
@@ -164,7 +166,7 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
                 {
                     _ = imui.push_form_layout_item(key ++ .{@src()});
                     defer imui.pop_layout();
-                    
+
                     _ = eng.Imui.widgets.label.create(imui, "is static:");
                     _ = eng.Imui.widgets.checkbox.create(imui, &b.is_static, "", key ++ .{@src()});
                 }
@@ -179,16 +181,12 @@ pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key:
     }
 }
 
-fn physics_shape_editor_ui(
-    entity: eng.ecs.Entity,
-    shape_settings: *eng.physics.ShapeSettings, 
-    key: anytype
-) void {
-    const imui = eng.get().ecs.get_resource(eng.Imui) catch return;
+fn physics_shape_editor_ui(entity: eng.ecs.Entity, shape_settings: *eng.physics.ShapeSettings, key: anytype) void {
+    const imui = eng.get().ecs.get_resource(eng.Imui) orelse return;
 
     const shape_combobox = eng.Imui.widgets.combobox.create(imui, key ++ .{@src()});
     const shape_combobox_data, _ = imui.get_widget_data(eng.Imui.widgets.combobox.ComboBoxState, shape_combobox.id) catch |err| {
-        std.log.err("Unable to get combobox widget data: {}", .{ err });
+        std.log.err("Unable to get combobox widget data: {}", .{err});
         unreachable;
     };
     if (shape_combobox.init) {
@@ -223,12 +221,12 @@ fn physics_shape_editor_ui(
                         } else {
                             std.log.warn("Cannot set physics to model convex hull as the entity's model component has no assigned model", .{});
                             shape_combobox_data.selected_index = null;
-                            shape_settings.shape = .{ .Sphere = .{ .radius = 0.5, } };
+                            shape_settings.shape = .{ .Sphere = .{ .radius = 0.5 } };
                         }
                     } else {
                         std.log.warn("Cannot set physics to model convex hull as entity does not have a model component", .{});
                         shape_combobox_data.selected_index = null;
-                        shape_settings.shape = .{ .Sphere = .{ .radius = 0.5, } };
+                        shape_settings.shape = .{ .Sphere = .{ .radius = 0.5 } };
                     }
                 },
             }
@@ -260,19 +258,13 @@ fn physics_shape_editor_ui(
             create_form_number_slider(imui, "height:", &b.height, key ++ .{@src()});
             create_form_number_slider(imui, "depth:", &b.depth, key ++ .{@src()});
         },
-        .ModelCompoundConvexHull => |_| {
-        },
+        .ModelCompoundConvexHull => |_| {},
     }
 
     imui.pop_layout(); // sl
 }
 
-fn create_form_number_slider(
-    imui: *eng.Imui,
-    text: []const u8,
-    value: *f32, 
-    key: anytype
-) void {
+fn create_form_number_slider(imui: *eng.Imui, text: []const u8, value: *f32, key: anytype) void {
     _ = imui.push_form_layout_item(key ++ .{@src()});
     defer imui.pop_layout();
 

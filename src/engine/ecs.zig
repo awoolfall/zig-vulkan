@@ -43,7 +43,7 @@ pub const GenericEcsSystem = struct {
             const components = try std.AutoHashMap(u64, void).init(alloc);
             errdefer components.deinit();
 
-            return EntityInternal {
+            return EntityInternal{
                 .name = null,
                 .components = components,
             };
@@ -51,7 +51,7 @@ pub const GenericEcsSystem = struct {
 
         fn set_name(self: *EntityInternal, alloc: std.mem.Allocator, name: ?[]const u8) !void {
             const new_name = if (name) |n| try alloc.dupe(u8, n) else null;
-            errdefer if (new_name) |n| { alloc.free(n); };
+            errdefer if (new_name) |n| alloc.free(n);
 
             if (self.name) |old_name| {
                 alloc.free(old_name);
@@ -61,7 +61,9 @@ pub const GenericEcsSystem = struct {
         }
     };
 
-    fn ComponentList(comptime T: type) type { return gen.GenerationalList(T); }
+    fn ComponentList(comptime T: type) type {
+        return gen.GenerationalList(T);
+    }
 
     const ComponentInfo = struct {
         const Functions = struct {
@@ -75,6 +77,7 @@ pub const GenericEcsSystem = struct {
         };
 
         name: []const u8, // not owned
+        uuid: []const u8, // not owned
         component_list: *anyopaque,
         entity_ref_list: std.ArrayList(?Entity),
         functions: Functions,
@@ -86,7 +89,7 @@ pub const GenericEcsSystem = struct {
 
         fn get_component_list(self: *ComponentInfo, comptime ComponentType: type) *ComponentList(ComponentType) {
             std.debug.assert(std.mem.eql(u8, ComponentType.COMPONENT_NAME, self.name));
-            const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(self.component_list));
+            const component_list: *ComponentList(ComponentType) = @ptrCast(@alignCast(self.component_list));
             return component_list;
         }
     };
@@ -95,9 +98,12 @@ pub const GenericEcsSystem = struct {
         const Functions = struct {
             fn_deinit: *const fn (*const std.mem.Allocator, *anyopaque) void,
             fn_init: *const fn (*const std.mem.Allocator, *?*anyopaque) i32,
+            fn_serialize: *const fn (*const std.mem.Allocator, *std.json.ObjectMap, *anyopaque) bool,
+            fn_deserialize: *const fn (*GenericEcsSystem, *const std.json.ObjectMap) bool,
         };
 
-        name: []const u8,
+        name: []const u8, // not owned
+        uuid: []const u8, // not owned
         data: ?*anyopaque,
         functions: Functions,
     };
@@ -140,7 +146,7 @@ pub const GenericEcsSystem = struct {
         const resources = std.AutoHashMap(u64, ResourceInfo).init(alloc);
         errdefer resources.deinit();
 
-        return GenericEcsSystem {
+        return GenericEcsSystem{
             .alloc = alloc,
             .entity_data = entity_data,
             .components = components,
@@ -187,8 +193,8 @@ pub const GenericEcsSystem = struct {
     fn generate_component_functions(comptime ComponentType: type) ComponentInfo.Functions {
         const Functions = struct {
             fn component_list_deinit(alloc: *const std.mem.Allocator, list_ptr: *anyopaque) void {
-                const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(list_ptr));
-                
+                const component_list: *ComponentList(ComponentType) = @ptrCast(@alignCast(list_ptr));
+
                 var component_iter = component_list.iterator();
                 while (component_iter.next()) |component| {
                     component.deinit();
@@ -199,19 +205,19 @@ pub const GenericEcsSystem = struct {
             }
 
             fn remove_component(list_ptr: *anyopaque, idx: *const gen.GenerationalIndex) void {
-                const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(list_ptr));
+                const component_list: *ComponentList(ComponentType) = @ptrCast(@alignCast(list_ptr));
                 component_list.get(idx.*).?.deinit();
                 component_list.remove(idx.*) catch unreachable;
             }
 
             fn add_component(alloc: *const std.mem.Allocator, list_ptr: *anyopaque, idx_out: *gen.GenerationalIndex) void {
-                const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(list_ptr));
+                const component_list: *ComponentList(ComponentType) = @ptrCast(@alignCast(list_ptr));
                 const component = ComponentType.init(alloc.*) catch unreachable;
                 idx_out.* = component_list.insert(component) catch unreachable;
             }
 
             fn component_list_size(list_ptr: *anyopaque) usize {
-                const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(list_ptr));
+                const component_list: *ComponentList(ComponentType) = @ptrCast(@alignCast(list_ptr));
                 return component_list.data.items.len;
             }
 
@@ -221,18 +227,18 @@ pub const GenericEcsSystem = struct {
                     return true;
                 }
 
-                const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(list_ptr));
+                const component_list: *ComponentList(ComponentType) = @ptrCast(@alignCast(list_ptr));
                 const component = component_list.get(component_idx.*).?;
 
                 var component_object_map = std.json.ObjectMap.init(alloc.*);
                 errdefer component_object_map.deinit();
 
-                component_object_map.put("_ecs_COMPONENT_NAME", std.json.Value{ .string = ComponentType.COMPONENT_NAME, }) catch return false;
+                component_object_map.put("COMPONENT_NAME", std.json.Value{ .string = ComponentType.COMPONENT_NAME }) catch return false;
                 component.serialize(alloc.*, entity.*, &component_object_map) catch return false;
 
-                const serialized_value = std.json.Value { .object = component_object_map };
+                const serialized_value = std.json.Value{ .object = component_object_map };
                 object.put(ComponentType.COMPONENT_UUID, serialized_value) catch return false;
-                
+
                 return true;
             }
 
@@ -243,7 +249,10 @@ pub const GenericEcsSystem = struct {
                     // TODO ideally we dont do this.
                     component.deinit();
 
-                    const component_object_map = switch (v) { .object => |obj| obj, else => return false, };
+                    const component_object_map = switch (v) {
+                        .object => |obj| obj,
+                        else => return false,
+                    };
                     component.* = ComponentType.deserialize(alloc.*, entity.*, component_object_map) catch return false;
 
                     return true;
@@ -253,13 +262,13 @@ pub const GenericEcsSystem = struct {
             }
 
             fn component_editor_ui(imui: *eng.Imui, entity: *const Entity, list_ptr: *anyopaque, component_idx: *const gen.GenerationalIndex, key: u64) void {
-                const component_list: *ComponentList(ComponentType) = @alignCast(@ptrCast(list_ptr));
+                const component_list: *ComponentList(ComponentType) = @ptrCast(@alignCast(list_ptr));
                 const component = component_list.get(component_idx.*).?;
                 ComponentType.editor_ui(imui, entity.*, component, .{key}) catch unreachable;
             }
         };
 
-        return ComponentInfo.Functions {
+        return ComponentInfo.Functions{
             .fn_component_list_deinit = Functions.component_list_deinit,
             .fn_remove_component = Functions.remove_component,
             .fn_add_component = Functions.add_component,
@@ -268,11 +277,11 @@ pub const GenericEcsSystem = struct {
             .fn_deserialize_component = Functions.deserialize_component,
             .fn_component_editor_ui = Functions.component_editor_ui,
         };
-    } 
+    }
 
     pub fn register_component(self: *GenericEcsSystem, comptime T: type) !void {
         const type_id = comptime get_type_id(T);
-        std.log.info("register component {s} as {}", .{@typeName(T), type_id});
+        std.log.info("register component {s} as {}", .{ @typeName(T), type_id });
 
         if (self.components.get(type_id) == null) {
             const component_list = try self.alloc.create(ComponentList(T));
@@ -281,8 +290,9 @@ pub const GenericEcsSystem = struct {
             component_list.* = try ComponentList(T).init(self.alloc);
             errdefer component_list.deinit();
 
-            const component_info = ComponentInfo {
+            const component_info = ComponentInfo{
                 .name = T.COMPONENT_NAME,
+                .uuid = T.COMPONENT_UUID,
                 .component_list = component_list,
                 .functions = generate_component_functions(T),
                 .entity_ref_list = .empty,
@@ -306,25 +316,53 @@ pub const GenericEcsSystem = struct {
             }
 
             fn deinit(alloc: *const std.mem.Allocator, opaque_ptr: *anyopaque) void {
-                const ptr: *ResourceType = @alignCast(@ptrCast(opaque_ptr));
+                const ptr: *ResourceType = @ptrCast(@alignCast(opaque_ptr));
                 ptr.deinit();
                 alloc.destroy(ptr);
             }
+
+            fn serialize(alloc: *const std.mem.Allocator, map: *std.json.ObjectMap, opaque_ptr: *anyopaque) bool {
+                const resource: *ResourceType = @ptrCast(@alignCast(opaque_ptr));
+                if (@hasDecl(ResourceType, "serialize")) {
+                    resource.serialize(alloc.*, map) catch |err| {
+                        std.log.err("Failed to serialize resource {s}: {}", .{ @typeName(ResourceType), err });
+                        return false;
+                    };
+                }
+                return true;
+            }
+
+            fn deserialize(ecs: *GenericEcsSystem, map: *const std.json.ObjectMap) bool {
+                if (!ecs.resource_exists(ResourceType)) {
+                    ecs.create_resource(ResourceType) catch return false;
+                }
+                const resource = ecs.get_resource(ResourceType) orelse return false;
+                if (@hasDecl(ResourceType, "deserialize")) {
+                    resource.deserialize(map) catch |err| {
+                        std.log.err("Failed to deserialize resource {s}: {}", .{ @typeName(ResourceType), err });
+                        return false;
+                    };
+                }
+                return true;
+            }
         };
 
-        return ResourceInfo.Functions {
+        return ResourceInfo.Functions{
             .fn_init = Functions.init,
             .fn_deinit = Functions.deinit,
+            .fn_serialize = Functions.serialize,
+            .fn_deserialize = Functions.deserialize,
         };
     }
 
     pub fn register_resource(self: *GenericEcsSystem, comptime ResourceType: type) !void {
         const type_id = comptime get_type_id(ResourceType);
-        std.log.info("register resource {s} as {}", .{@typeName(ResourceType), type_id});
+        std.log.info("register resource {s} as {}", .{ @typeName(ResourceType), type_id });
 
         if (self.resources.get(type_id) == null) {
-            const resource_info = ResourceInfo {
+            const resource_info = ResourceInfo{
                 .name = ResourceType.RESOURCE_NAME,
+                .uuid = ResourceType.RESOURCE_UUID,
                 .data = null,
                 .functions = generate_resource_functions(ResourceType),
             };
@@ -344,12 +382,12 @@ pub const GenericEcsSystem = struct {
 
     pub fn create_resource_generic(self: *GenericEcsSystem, type_id: u64) !void {
         const resource_info = self.resources.getPtr(type_id) orelse return error.ResourceNotRegistered;
-        
+
         if (resource_info.data != null) {
             std.log.warn("create resource called on resource that already exists: {s}", .{resource_info.name});
             return;
         }
-        
+
         const result = resource_info.functions.fn_init(&self.alloc, &resource_info.data);
         switch (result) {
             -1 => return error.AllocatorError,
@@ -360,7 +398,7 @@ pub const GenericEcsSystem = struct {
 
     pub fn destroy_resource(self: *GenericEcsSystem, comptime ResourceType: type) void {
         const type_id = comptime get_type_id(ResourceType);
-        try self.destroy_resource_generic(self, type_id);
+        self.destroy_resource_generic(type_id);
     }
 
     pub fn destroy_resource_generic(self: *GenericEcsSystem, type_id: u64) void {
@@ -372,14 +410,13 @@ pub const GenericEcsSystem = struct {
         }
     }
 
-    pub fn get_resource(self: *GenericEcsSystem, comptime ResourceType: type) !*ResourceType {
+    pub fn get_resource(self: *GenericEcsSystem, comptime ResourceType: type) ?*ResourceType {
         const type_id = comptime get_type_id(ResourceType);
-        const resource_info = self.resources.getPtr(type_id) orelse return error.ResourceNotRegistered;
-        if (resource_info.data) |data_opaque_ptr| {
-            return @alignCast(@ptrCast(data_opaque_ptr));
-        } else {
-            return error.ResourceNotCreated;
-        }
+        const resource_info = self.resources.getPtr(type_id) orelse {
+            std.log.err("Attempted to get resource which has not been registered: {s}", .{@typeName(ResourceType)});
+            return null;
+        };
+        if (resource_info.data) |data_opaque_ptr| return @ptrCast(@alignCast(data_opaque_ptr)) else return null;
     }
 
     pub fn resource_exists(self: *const GenericEcsSystem, comptime ResourceType: type) bool {
@@ -392,13 +429,13 @@ pub const GenericEcsSystem = struct {
         var components = std.AutoHashMap(u64, gen.GenerationalIndex).init(self.alloc);
         errdefer components.deinit();
 
-        return Entity {
+        return Entity{
             .idx = try self.entity_data.insert(.{
                 .components = components,
             }),
         };
     }
-    
+
     pub fn remove_entity(self: *GenericEcsSystem, entity: Entity) void {
         const ent = self.entity_data.get(entity.idx) orelse return;
 
@@ -415,7 +452,7 @@ pub const GenericEcsSystem = struct {
             component_info.entity_ref_list.items[pair.value_ptr.index] = null;
         }
         ent.components.deinit();
-        
+
         self.entity_data.remove(entity.idx) catch unreachable;
     }
 
@@ -514,19 +551,24 @@ pub const GenericEcsSystem = struct {
             _ = component_info.functions.fn_serialize_component(&alloc, &object, &entity, component_info.component_list, pair.value_ptr);
         }
 
-        return std.json.Value { .object = object };
+        return std.json.Value{ .object = object };
     }
 
     pub fn deserialize_to_entity(self: *GenericEcsSystem, value: std.json.Value) !Entity {
         const alloc = eng.get().general_allocator;
 
-        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType, };
+        const object = switch (value) {
+            .object => |obj| obj,
+            else => return error.InvalidType,
+        };
 
         const entity = try self.create_new_entity();
         errdefer self.remove_entity(entity);
 
         const ent = self.entity_data.get(entity.idx) orelse return error.EntityDoesNotExist;
-        if (object.get("name")) |v| blk: { ent.name = sr.deserialize_value(?[]const u8, alloc, v) catch break :blk; }
+        if (object.get("name")) |v| blk: {
+            ent.name = sr.deserialize_value(?[]const u8, alloc, v) catch break :blk;
+        }
 
         var component_iter = self.components.iterator();
         while (component_iter.next()) |pair| {
@@ -551,7 +593,7 @@ pub const GenericEcsSystem = struct {
         index: usize,
 
         pub fn init(ecs: *GenericEcsSystem) EntityIterator {
-            return EntityIterator {
+            return EntityIterator{
                 .ecs = ecs,
                 .index = 0,
             };
@@ -565,12 +607,10 @@ pub const GenericEcsSystem = struct {
             while (self.index < self.ecs.entity_data.data.items.len) {
                 defer self.index += 1;
                 if (self.ecs.entity_data.data.items[self.index].item_data) |_| {
-                    const entity: Entity = .{
-                        .idx = .{
-                            .generation = self.ecs.entity_data.data.items[self.index].generation,
-                            .index = self.index,
-                        }
-                    };
+                    const entity: Entity = .{ .idx = .{
+                        .generation = self.ecs.entity_data.data.items[self.index].generation,
+                        .index = self.index,
+                    } };
                     return entity;
                 }
             }
@@ -617,7 +657,7 @@ pub const GenericEcsSystem = struct {
             }
 
             pub fn create_generic_iterator(self: *QueryIteratorSelf) GenericQueryIterator(QueryComponents) {
-                return GenericQueryIterator(QueryComponents) {
+                return GenericQueryIterator(QueryComponents){
                     .iter_ptr = @ptrCast(self),
                     .next_function_ptr = generic_next,
                     .reset_function_ptr = generic_reset,
@@ -637,18 +677,18 @@ pub const GenericEcsSystem = struct {
                         }
                         break :blk components;
                     };
-                    
+
                     return components orelse continue;
                 }
                 return null;
             }
 
             fn generic_next(self_generic: *anyopaque) ?ComponentValuePointersTuple(QueryComponents) {
-                return @as(*QueryIteratorSelf, @alignCast(@ptrCast(self_generic))).next();
+                return @as(*QueryIteratorSelf, @ptrCast(@alignCast(self_generic))).next();
             }
 
             fn generic_reset(self_generic: *anyopaque) void {
-                @as(*QueryIteratorSelf, @alignCast(@ptrCast(self_generic))).reset();
+                @as(*QueryIteratorSelf, @ptrCast(@alignCast(self_generic))).reset();
             }
         };
     }
@@ -661,7 +701,7 @@ fn ComponentValuePointersTuple(comptime ComponentTypes: anytype) type {
     for (info.@"struct".fields, 0..) |_, idx| {
         const T = *ComponentTypes[idx];
 
-        component_type_fields[idx] = std.builtin.Type.StructField {
+        component_type_fields[idx] = std.builtin.Type.StructField{
             .name = std.fmt.comptimePrint("{d}", .{idx}),
             .type = T,
             .default_value_ptr = null,
@@ -670,14 +710,12 @@ fn ComponentValuePointersTuple(comptime ComponentTypes: anytype) type {
         };
     }
 
-    return @Type(.{
-        .@"struct" = .{
-            .is_tuple = true,
-            .fields = &component_type_fields,
-            .decls = &.{},
-            .layout = .auto,
-        }
-    });
+    return @Type(.{ .@"struct" = .{
+        .is_tuple = true,
+        .fields = &component_type_fields,
+        .decls = &.{},
+        .layout = .auto,
+    } });
 }
 
 pub fn GenericQueryIterator(comptime QueryComponents: anytype) type {
@@ -698,7 +736,6 @@ pub fn GenericQueryIterator(comptime QueryComponents: anytype) type {
     };
 }
 
-
 const ComponentA = struct {
     i: i32,
 
@@ -708,7 +745,7 @@ const ComponentA = struct {
 
     pub fn init(alloc: std.mem.Allocator) !ComponentA {
         _ = alloc;
-        return ComponentA {
+        return ComponentA{
             .i = 0,
         };
     }
@@ -723,7 +760,7 @@ const ComponentB = struct {
 
     pub fn init(alloc: std.mem.Allocator) !ComponentB {
         _ = alloc;
-        return ComponentB {
+        return ComponentB{
             .i = 0,
         };
     }
@@ -738,7 +775,7 @@ const ResourceA = struct {
 
     pub fn init(alloc: std.mem.Allocator) !ResourceA {
         _ = alloc;
-        return ResourceA {
+        return ResourceA{
             .value = 0,
         };
     }

@@ -18,13 +18,14 @@ pub const widgets = @import("widgets.zig");
 const Self = @This();
 
 pub const RESOURCE_NAME = "Imui";
+pub const RESOURCE_UUID = "ab051013-4298-4841-b260-f75e4f8b80f7";
 
 pub const FontEnum = enum(usize) {
     GeistMono = 0,
     Geist,
     Count,
 
-    fn font_paths(font_enum: FontEnum) struct {json: []const u8, png: []const u8} {
+    fn font_paths(font_enum: FontEnum) struct { json: []const u8, png: []const u8 } {
         switch (font_enum) {
             FontEnum.GeistMono => return .{
                 .json = "res:/GeistMono-Regular.json",
@@ -101,15 +102,15 @@ pub const WidgetFlags = packed struct(u32) {
 
     pub inline fn get_allow_overflow_flag(flags: *const WidgetFlags, axis: Axis) bool {
         switch (axis) {
-            .X => { return flags.allows_overflow_x; },
-            .Y => { return flags.allows_overflow_y; },
+            .X => return flags.allows_overflow_x,
+            .Y => return flags.allows_overflow_y,
         }
     }
 
     pub inline fn get_floating_flag(flags: *const WidgetFlags, axis: Axis) bool {
         switch (axis) {
-            .X => { return flags.floating_x; },
-            .Y => { return flags.floating_y; },
+            .X => return flags.floating_x,
+            .Y => return flags.floating_y,
         }
     }
 };
@@ -187,9 +188,9 @@ pub const Widget = struct {
     padding_px: RectPixels = .{},
 
     // anchor determines the position within the potential space allowed by the layout
-    anchor: [2]f32 = .{0.0, 0.0},
+    anchor: [2]f32 = .{ 0.0, 0.0 },
     // pivot determines the coordinate on the widget's box that sticks to the anchor
-    pivot: [2]f32 = .{0.0, 0.0},
+    pivot: [2]f32 = .{ 0.0, 0.0 },
 
     widget_data: ?*anyopaque = null,
 
@@ -198,7 +199,7 @@ pub const Widget = struct {
             self.computed_relative_position[0] + self.computed_pixel_offset[0],
             self.computed_relative_position[1] + self.computed_pixel_offset[1],
         };
-        return RectPixels {
+        return RectPixels{
             .left = position[0],
             .top = position[1],
             .right = position[0] + self.border_width_px.left + self.padding_px.left + self.computed_size[0] + self.padding_px.right + self.border_width_px.right,
@@ -208,7 +209,7 @@ pub const Widget = struct {
 
     pub fn content_rect(self: *const Widget) RectPixels {
         const r = self.rect();
-        return RectPixels {
+        return RectPixels{
             .left = r.left + self.border_width_px.left + self.padding_px.left,
             .right = r.right - self.border_width_px.right - self.padding_px.right,
             .top = r.top + self.border_width_px.top + self.padding_px.top,
@@ -218,7 +219,7 @@ pub const Widget = struct {
 
     pub fn outer_rect(self: *const Widget) RectPixels {
         const r = self.rect();
-        return RectPixels {
+        return RectPixels{
             .left = r.left - self.margin_px.left,
             .right = r.right + self.margin_px.right,
             .top = r.top - self.margin_px.top,
@@ -338,7 +339,7 @@ pub fn deinit(self: *Self) void {
 
 pub fn init() !Self {
     const alloc = eng.get().general_allocator;
-    
+
     // Initialize fonts
     var fonts: [@intFromEnum(FontEnum.Count)]font.Font = [_]font.Font{undefined} ** @intFromEnum(FontEnum.Count);
     for (0..@intFromEnum(FontEnum.Count)) |idx| {
@@ -353,7 +354,7 @@ pub fn init() !Self {
         fonts[idx] = font_obj;
     }
 
-    var self = Self {
+    var self = Self{
         .alloc = alloc,
         .parent_stack = .empty,
         .palette_stack = .empty,
@@ -425,7 +426,7 @@ inline fn apply_padding(widget: *Widget, axis: usize) void {
     switch (axis) {
         0 => widget.computed.size[0] += widget.padding_px.left + widget.padding_px.right,
         1 => widget.computed.size[1] += widget.padding_px.top + widget.padding_px.bottom,
-        else => {}
+        else => {},
     }
 }
 
@@ -433,17 +434,14 @@ inline fn apply_border_padding(widget: *Widget, axis: usize) void {
     switch (axis) {
         0 => widget.computed.size[0] += widget.border_width_px.left + widget.border_width_px.right,
         1 => widget.computed.size[1] += widget.border_width_px.top + widget.border_width_px.bottom,
-        else => {}
+        else => {},
     }
 }
 
 fn compute_standalone_widget_size(self: *Self, widget: *Widget, axis: usize) void {
     const text_bounds = if (widget.text_content) |tc| blk: {
         if (widget.computed_text_bounds == null) {
-            widget.computed_text_bounds = self.get_font(tc.font).text_bounds_2d_pixels(
-                tc.text,
-                tc.size
-            );
+            widget.computed_text_bounds = self.get_font(tc.font).text_bounds_2d_pixels(tc.text, tc.size);
         }
         break :blk widget.computed_text_bounds.?;
     } else null;
@@ -457,7 +455,7 @@ fn compute_standalone_widget_size(self: *Self, widget: *Widget, axis: usize) voi
                 switch (axis) {
                     0 => break :blk text_bounds.?.width(),
                     1 => break :blk text_bounds.?.height() - self.get_font(text.font).font_metrics.descender,
-                    else => {unreachable;}
+                    else => unreachable,
                 }
             } else blk: {
                 std.log.warn("widget with size kind \"Text Content\" does not have any text content.", .{});
@@ -478,7 +476,7 @@ pub fn add_widget(self: *Self, widget: Widget, priority: ?u32) WidgetId {
         text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
     }
 
-    const widget_id = WidgetId {
+    const widget_id = WidgetId{
         .pointer = owned_widget,
     };
 
@@ -491,12 +489,10 @@ pub fn add_widget(self: *Self, widget: Widget, priority: ?u32) WidgetId {
     owned_widget.priority = priority orelse parent_priority;
 
     if (priority != null) {
-        self.root_widgets.append(self.alloc, .{ .widget = widget_id, .priority = owned_widget.priority, }) catch unreachable;
+        self.root_widgets.append(self.alloc, .{ .widget = widget_id, .priority = owned_widget.priority }) catch unreachable;
     }
 
-    (if (owned_widget.key == DontCareKey) self.this_frame_widgets_map().put(owned_widget.key, widget_id)
-    else self.this_frame_widgets_map().putNoClobber(owned_widget.key, widget_id))
-    catch |err| {
+    (if (owned_widget.key == DontCareKey) self.this_frame_widgets_map().put(owned_widget.key, widget_id) else self.this_frame_widgets_map().putNoClobber(owned_widget.key, widget_id)) catch |err| {
         std.log.err("Failed to put widget in frame map: {}", .{err});
         unreachable;
     };
@@ -513,7 +509,7 @@ fn add_root_widget(self: *Self, widget: Widget, priority: ?u32) WidgetId {
         text.text = self.arena().allocator().dupe(u8, text.text) catch unreachable;
     }
 
-    const widget_id = WidgetId {
+    const widget_id = WidgetId{
         .pointer = owned_widget,
     };
 
@@ -524,7 +520,7 @@ fn add_root_widget(self: *Self, widget: Widget, priority: ?u32) WidgetId {
         unreachable;
     };
 
-    self.root_widgets.append(self.alloc, .{ .widget = widget_id, .priority = owned_widget.priority, }) catch unreachable;
+    self.root_widgets.append(self.alloc, .{ .widget = widget_id, .priority = owned_widget.priority }) catch unreachable;
     self.parent_stack.append(self.alloc, widget_id) catch unreachable;
 
     return widget_id;
@@ -595,14 +591,14 @@ pub fn get_widget_data(self: *Self, comptime WidgetDataType: type, widget_id: Wi
         if (self.get_widget_from_last_frame(widget_id)) |lfw| {
             widget_data_state = .Cont;
 
-            const lfw_data_ptr: *WidgetDataType = @alignCast(@ptrCast(lfw.widget_data orelse return error.LastFrameWidgetHadNullData));
+            const lfw_data_ptr: *WidgetDataType = @ptrCast(@alignCast(lfw.widget_data orelse return error.LastFrameWidgetHadNullData));
             switch (@typeInfo(WidgetDataType)) {
                 .@"struct", .@"enum", .@"union" => {
                     widget_data.* = try lfw_data_ptr.clone(self.arena().allocator());
                 },
                 else => {
                     widget_data.* = lfw_data_ptr.*;
-                }
+                },
             }
         } else {
             widget_data_state = .Init;
@@ -613,13 +609,13 @@ pub fn get_widget_data(self: *Self, comptime WidgetDataType: type, widget_id: Wi
                 },
                 else => {
                     widget_data.* = std.mem.zeroes(WidgetDataType);
-                }
+                },
             }
         }
     }
 
     return .{
-        @alignCast(@ptrCast(widget.widget_data orelse return error.WidgetDoesNotHaveData)),
+        @ptrCast(@alignCast(widget.widget_data orelse return error.WidgetDoesNotHaveData)),
         widget_data_state,
     };
 }
@@ -633,11 +629,10 @@ pub fn get_widget_from_last_frame(self: *Self, widget_id: WidgetId) ?*const Widg
     }
 }
 
-
 fn add_fullscreen_root_widget(self: *Self, priority: u32) WidgetId {
     const swapchain_size = eng.get().gfx.swapchain_size();
-    const root_widget = Widget {
-        .semantic_size = [_]SemanticSize{.{.kind = .None, .value = 0.0, }} ** 2,
+    const root_widget = Widget{
+        .semantic_size = [_]SemanticSize{.{ .kind = .None, .value = 0.0 }} ** 2,
         .key = gen_key(.{@src()}),
         .computed_size = .{ @floatFromInt(swapchain_size[0]), @floatFromInt(swapchain_size[1]) },
         .computed_relative_position = .{ 0.0, 0.0 },
@@ -663,10 +658,7 @@ fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId, axis: usi
 
     const parent = self.get_widget(widget.parent orelse return) orelse unreachable;
     const parent_content_rect = parent.content_rect();
-    const parent_content_anchor_pos = [2]f32{
-        parent_content_rect.left,
-        parent_content_rect.top
-    };
+    const parent_content_anchor_pos = [2]f32{ parent_content_rect.left, parent_content_rect.top };
 
     // if floating on this axis then the relative position has been manually applied, skip
     if (!widget.flags.get_floating_flag(@enumFromInt(axis))) {
@@ -700,7 +692,7 @@ fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId, axis: usi
 
     // adjust relative position to account for anchor and pivot
     // find the potential space that the widget can take up according to the layout .
-    // This contains a compromise which allows a widget to wiggle a bit inside its allowed space 
+    // This contains a compromise which allows a widget to wiggle a bit inside its allowed space
     // but overall positioning is still ultimately controlled by the layout.
     const potential_space_size = blk: {
         var p = parent.content_size()[axis];
@@ -714,11 +706,11 @@ fn compute_widget_relative_positions(self: *Self, widget_id: WidgetId, axis: usi
     // apply anchor and pivot.
     // anchor determines the position within the potential space allowed by the layout
     // pivot determines the coordinate on the widget's box that sticks to the anchor
-    widget.computed_pixel_offset[axis] = widget_margin_offset[axis]
-        - (widget.pivot[axis] * widget.size()[axis]) + (widget.anchor[axis] * potential_space_size);
+    widget.computed_pixel_offset[axis] = widget_margin_offset[axis] -
+        (widget.pivot[axis] * widget.size()[axis]) + (widget.anchor[axis] * potential_space_size);
 }
 
-const SizeResolutionErrors = error {
+const SizeResolutionErrors = error{
     UnableToGetWidget,
     ChildrenSizeWidgetHasNoChildren,
     ParentPercentageUnderChildSize,
@@ -841,7 +833,7 @@ fn recurse_compute_widget_rect(self: *Self, widget_id: WidgetId, axis: usize) Si
             },
             .ParentPercentage => {
                 const parent = self.get_widget(widget.parent orelse return error.WidgetHasNoParent) orelse return error.UnableToGetWidget;
-                
+
                 if (parent.computed_size[axis] != 0.0) {
                     const widget_padding: [2]f32 = .{
                         widget.padding_px.left + widget.padding_px.right + widget.border_width_px.left + widget.border_width_px.right + widget.margin_px.left + widget.margin_px.right,
@@ -895,25 +887,25 @@ fn compute_widget_rects(self: *Self) void {
 }
 
 fn render_imui_widget(
-    self: *Self, 
+    self: *Self,
     widget: *const Widget,
     z_index: usize,
     scissor_rect: RectPixels,
-    render_palette: Palette
+    render_palette: Palette,
 ) void {
     _ = z_index;
     const z_value = @as(f32, @floatFromInt(self.quad_renderer.frame_quads.items.len)) * 0.0001;
 
     if (widget.flags.render_quad) {
-        const quad_texture_props = blk: { 
+        const quad_texture_props = blk: {
             if (widget.texture) |tex_props| {
-                break :blk QuadRenderer.QuadPropertiesTexture {
+                break :blk QuadRenderer.QuadPropertiesTexture{
                     .texture_view = tex_props.texture_view,
                     .sampler = tex_props.sampler,
                 };
-            } else { 
+            } else {
                 break :blk null;
-            } 
+            }
         };
 
         self.quad_renderer.submit_quad(.{
@@ -921,11 +913,11 @@ fn render_imui_widget(
             .z_value = z_value,
             .scissor = scissor_rect,
             .colour = render_palette.background,
-            .border_colour = 
-                // if (widget.key == self.active_item) zm.f32x4(1.0, 0.0, 0.0, 1.0)
-                // else if (widget.key == self.hot_item) zm.f32x4(0.0, 1.0, 0.0, 1.0)
-                // else 
-                    render_palette.border,
+            .border_colour =
+            // if (widget.key == self.active_item) zm.f32x4(1.0, 0.0, 0.0, 1.0)
+            // else if (widget.key == self.hot_item) zm.f32x4(0.0, 1.0, 0.0, 1.0)
+            // else
+            render_palette.border,
             .border_width_px = qr.RectEdges.from_rect_pixels(widget.border_width_px),
             .corner_radii_px = widget.corner_radii_px,
             .texture = quad_texture_props,
@@ -942,12 +934,9 @@ fn render_imui_widget(
         const y = rect.top + (font_metrics.ascender * text.size);
 
         self.get_font(text.font).submit_text_2d(text.text, .{
-            .position = .{ .x = x, .y = y, },
+            .position = .{ .x = x, .y = y },
             .z_value = z_value + 0.00005,
-            .colour = 
-                if (text.colour) |colour| colour
-                else if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light
-                else render_palette.text_dark,
+            .colour = if (text.colour) |colour| colour else if (zm.any(render_palette.background < zm.f32x4s(0.5), 3)) render_palette.text_light else render_palette.text_dark,
             .pixel_height = text.size,
             .scissor = scissor_rect,
         }) catch |err| {
@@ -957,11 +946,11 @@ fn render_imui_widget(
 }
 
 fn render_imui_recursive(
-    self: *Self, 
+    self: *Self,
     widget_id: WidgetId,
     z_index: usize,
     parent_scissor: RectPixels,
-    parent_palette: Palette
+    parent_palette: Palette,
 ) void {
     const widget = self.get_widget(widget_id) orelse return;
 
@@ -1010,8 +999,12 @@ fn render_imui_recursive(
     };
 
     var widget_palette = parent_palette;
-    if (widget.background_colour) |bc| { widget_palette.background = bc; }
-    if (widget.border_colour) |bc| { widget_palette.border = bc; }
+    if (widget.background_colour) |bc| {
+        widget_palette.background = bc;
+    }
+    if (widget.border_colour) |bc| {
+        widget_palette.border = bc;
+    }
     if (widget.text_content) |tx| {
         if (tx.colour) |tc| {
             widget_palette.text_light = tc;
@@ -1054,8 +1047,8 @@ pub fn render_imui(self: *Self, cmd: *_gfx.CommandBuffer) !void {
 
     // widget rects must be computed before rendering
     self.compute_widget_rects();
-    
-    const screen_scissor = RectPixels {
+
+    const screen_scissor = RectPixels{
         .left = 0.0,
         .top = 0.0,
         .right = @floatFromInt(eng.get().gfx.swapchain_size()[0]),
@@ -1119,7 +1112,7 @@ pub fn start_new_frame(self: *Self) void {
 
 pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(WidgetId) {
     const widget = self.get_widget(widget_id).?;
-    var widget_signal = WidgetSignal(WidgetId) {
+    var widget_signal = WidgetSignal(WidgetId){
         .id = widget_id,
     };
 
@@ -1189,7 +1182,7 @@ pub fn generate_widget_signals(self: *Self, widget_id: WidgetId) WidgetSignal(Wi
 }
 
 pub fn combine_signals(signals: anytype, id: anytype) WidgetSignal(@TypeOf(id)) {
-    var combined = WidgetSignal(@TypeOf(id)) {
+    var combined = WidgetSignal(@TypeOf(id)){
         .id = id,
     };
 
@@ -1232,13 +1225,13 @@ pub fn push_layout_id(self: *Self, widget_id: WidgetId) void {
 }
 
 pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) WidgetId {
-    return self.push_layout_widget(Widget {
+    return self.push_layout_widget(Widget{
         .key = gen_key(key),
         .layout_axis = layout_axis,
-        .semantic_size = [2]SemanticSize {
+        .semantic_size = [2]SemanticSize{
             // TODO should these be .ParentPercentage .value = 1.0?
-            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
-            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true },
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true },
         },
         .flags = .{
             .render = false,
@@ -1247,17 +1240,14 @@ pub fn push_layout(self: *Self, layout_axis: Axis, key: anytype) WidgetId {
 }
 
 fn floating_layout_widget(layout_axis: Axis, floating_x: f32, floating_y: f32, key: anytype) Widget {
-    return Widget {
+    return Widget{
         .key = gen_key(key),
         .layout_axis = layout_axis,
-        .semantic_size = [2]SemanticSize {
-            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
-            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true, },
+        .semantic_size = [2]SemanticSize{
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true },
+            SemanticSize{ .kind = .ChildrenSize, .value = 1.0, .shrinkable = true },
         },
-        .computed_relative_position = .{
-            floating_x,
-            floating_y
-        },
+        .computed_relative_position = .{ floating_x, floating_y },
         .flags = .{
             .render = false,
             .floating_x = true,
@@ -1297,7 +1287,7 @@ pub fn set_floating_layout_position(self: *Self, widget_id: WidgetId, floating_x
 pub fn push_form_layout_item(self: *Self, key: anytype) WidgetId {
     const form_item_layout = self.push_layout(.X, key ++ .{@src()});
     const form_item_widget = self.get_widget(form_item_layout) orelse unreachable;
-    form_item_widget.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true, };
+    form_item_widget.semantic_size[0] = .{ .kind = .ParentPercentage, .value = 1.0, .shrinkable = true };
     form_item_widget.children_gap = 5;
     form_item_widget.flags.is_form_layout_item = true;
     return form_item_layout;

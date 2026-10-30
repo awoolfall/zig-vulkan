@@ -42,7 +42,10 @@ pub fn init(alloc: std.mem.Allocator) !Self {
 }
 
 pub fn editor_ui(imui: *eng.Imui, entity: eng.ecs.Entity, component: *Self, key: anytype) !void {
-    _ = imui; _ = entity; _ = component; _ = key;
+    _ = imui;
+    _ = entity;
+    _ = component;
+    _ = key;
 }
 
 pub fn serialize(self: *Self, alloc: std.mem.Allocator, entity: eng.ecs.Entity, object: *std.json.ObjectMap) !void {
@@ -63,7 +66,7 @@ pub fn deinit_runtime_data(self: *Self) void {
     switch (self.runtime_data) {
         .None => {},
         .Body => |body| blk: {
-            const physics_system = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) catch break :blk;
+            const physics_system = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) orelse break :blk;
             physics_system.zphysics.system.getBodyInterfaceMut().removeAndDestroyBody(body.id);
         },
         .Character => |character| {
@@ -92,7 +95,7 @@ fn set_full_user_data(self: *const Self, data: u64) !void {
     };
 
     if (body_id) |bid| {
-        const physics_system = try eng.get().ecs.get_resource(eng.physics.PhysicsSystem);
+        const physics_system = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) orelse return error.PhysicsResourceDoesNotExist;
         var write_lock = try physics_system.init_body_write_lock(bid);
         defer write_lock.deinit();
 
@@ -119,7 +122,7 @@ pub fn set_user_data(self: *const Self, data: u16) !void {
 }
 
 pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity, settings: @import("physics_component.zig").PhysicsSettings, transform: eng.Transform) !void {
-    const phys = try eng.get().ecs.get_resource(eng.physics.PhysicsSystem);
+    const phys = eng.get().ecs.get_resource(eng.physics.PhysicsSystem) orelse return error.PhysicsResourceDoesNotExist;
 
     self.deinit_runtime_data();
 
@@ -130,7 +133,7 @@ pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity, settings: @impor
         .Body => |b| {
             var shape_settings = b.shape;
             shape_settings.offset_transform.scale *= transform.scale; // TODO: find a better solution for this
-            
+
             const shape = try phys.create_shape(shape_settings);
             defer shape.release();
 
@@ -141,11 +144,7 @@ pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity, settings: @impor
                 .is_sensor = b.is_sensor,
             }, .activate);
 
-            self.runtime_data = .{
-                .Body = .{
-                    .id = body,
-                }
-            };
+            self.runtime_data = .{ .Body = .{ .id = body } };
         },
         .Character => |character| {
             const zphy_character = try character.settings.create_character(transform, phys);
@@ -153,11 +152,7 @@ pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity, settings: @impor
 
             zphy_character.addToPhysicsSystem(.{});
 
-            self.runtime_data = .{
-                .Character = .{
-                    .character = zphy_character,
-                }
-            };
+            self.runtime_data = .{ .Character = .{ .character = zphy_character } };
         },
         .CharacterVirtual => |character_virtual| {
             const zphy_virtual_character = try character_virtual.settings.create_character_virtual(transform, phys);
@@ -166,7 +161,7 @@ pub fn update_runtime_data(self: *Self, entity: eng.ecs.Entity, settings: @impor
             var zphy_character: ?*zphy.Character = null;
             var body_filter: ?physics.IgnoreIdsBodyFilter = null;
             if (character_virtual.create_character) {
-                var character_settings = physics.CharacterSettings {
+                var character_settings = physics.CharacterSettings{
                     .shape = character_virtual.settings.shape,
                     .up_direction = character_virtual.settings.up_direction,
                     .supporting_volume = character_virtual.settings.supporting_volume,

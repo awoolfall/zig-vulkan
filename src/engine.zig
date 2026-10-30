@@ -2,6 +2,7 @@ const std = @import("std");
 const AppInterface = @import("app_interface.zig");
 const eng = @import("self");
 const db = @import("debug/debug.zig");
+const Editor = @import("editor.zig");
 
 const znoise = @import("znoise");
 const zmesh = @import("zmesh");
@@ -9,6 +10,7 @@ const zmesh = @import("zmesh");
 const Self = @This();
 
 const Log = std.log.scoped(.Engine);
+const EnableEditor: bool = true;
 
 os: eng.os.Platform,
 window: eng.os.Window,
@@ -17,6 +19,8 @@ time: eng.TimeState,
 input: eng.input.InputState,
 asset_manager: eng.assets.AssetManager,
 ecs: eng.ecs.GenericEcsSystem,
+
+editor: if (EnableEditor) Editor else void,
 
 general_allocator: std.mem.Allocator,
 frame_arena: std.heap.ArenaAllocator,
@@ -31,14 +35,20 @@ exe_path: []u8,
 pub export fn deinit(self: *Self) void {
     self.gfx.flush();
 
+    std.log.info("Deinitialising app.", .{});
     _ = self.app_interface.fn_deinit();
 
+    std.log.info("Deinitialising engine.", .{});
     // deinit ecs before unloading app shared library since it
     // relies on function pointers that may exist in that lib
     self.ecs.deinit();
 
+    if (EnableEditor) self.editor.deinit();
+
     if (self.app_dll) |*app_dll| {
+        self.app_interface.fn_app_dll_unload(self);
         app_dll.close();
+        self.app_dll = null;
     }
     self.app_dll_filewatcher.deinit();
 
@@ -117,7 +127,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
 
     Log.debug("Initialising asset manager.", .{});
     engine.asset_manager = blk: {
-        const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "../../res"});
+        const resources_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{ engine.exe_path, "../../res" });
         defer engine.general_allocator.free(resources_path);
 
         break :blk try eng.assets.AssetManager.init(engine.general_allocator, resources_path);
@@ -143,7 +153,7 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     }
 
     Log.debug("Loading App shared library.", .{});
-    const app_dll_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{engine.exe_path, "app.dll"});
+    const app_dll_path = try std.fs.path.join(engine.general_allocator, &[_][]const u8{ engine.exe_path, "app.dll" });
     defer engine.general_allocator.free(app_dll_path);
 
     engine.app_dll_filewatcher = try eng.assets.FileWatcher.init(engine.general_allocator, app_dll_path, 1000);
@@ -152,6 +162,9 @@ pub fn init(alloc: std.mem.Allocator) !*Self {
     engine.app_dll = null;
     try engine.reload_app_dll();
     errdefer engine.app_dll.?.close();
+
+    if (EnableEditor) engine.editor = try Editor.init();
+    errdefer if (EnableEditor) engine.editor.deinit();
 
     Log.debug("Finished initialising engine.", .{});
 
@@ -172,16 +185,18 @@ pub inline fn main_window(self: *Self) *eng.os.Window {
 }
 
 fn reload_app_dll(self: *Self) !void {
+    std.log.info("Reloading app shared library.", .{});
+
     if (self.app_dll) |*app_dll| {
         self.app_interface.fn_app_dll_unload(self);
         app_dll.close();
         self.app_dll = null;
     }
 
-    const app_dll_path = try std.fs.path.join(self.general_allocator, &[_][]const u8{self.exe_path, "app.dll"});
+    const app_dll_path = try std.fs.path.join(self.general_allocator, &[_][]const u8{ self.exe_path, "app.dll" });
     defer self.general_allocator.free(app_dll_path);
 
-    const running_app_dll_path = try std.fs.path.join(self.general_allocator, &[_][]const u8{self.exe_path, "app.running.dll"});
+    const running_app_dll_path = try std.fs.path.join(self.general_allocator, &[_][]const u8{ self.exe_path, "app.running.dll" });
     defer self.general_allocator.free(running_app_dll_path);
 
     try std.fs.copyFileAbsolute(app_dll_path, running_app_dll_path, .{});
@@ -215,7 +230,7 @@ pub export fn run(engine: *Self) void {
                         break :main_loop;
                     };
                 }
-                
+
                 // Reset the frame allocator
                 if (!engine.frame_arena.reset(.retain_capacity)) {
                     std.log.warn("failed to reset frame arena while retaining capacity", .{});
@@ -226,16 +241,33 @@ pub export fn run(engine: *Self) void {
 
                 engine.input.start_new_frame();
 
-                if (engine.ecs.resource_exists(eng.physics.PhysicsSystem)) blk: {
-                    const physics_system = engine.ecs.get_resource(eng.physics.PhysicsSystem) catch |err| {
-                        std.log.warn("Failed to get physics system resource: {}", .{err});
-                        break :blk;
-                    };
-                    var physics_iter = engine.ecs.query_iterator(.{eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent});
-                    physics_system.update(physics_iter.create_generic_iterator());
+                if (engine.ecs.get_resource(eng.Imui)) |imui| {
+                    imui.start_new_frame();
                 }
 
-                if (engine.app_interface.fn_update() != 0) {
+                if (engine.ecs.get_resource(eng.physics.PhysicsSystem)) |physics| {
+                    var physics_iter = engine.ecs.query_iterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent });
+                    physics.update(physics_iter.create_generic_iterator());
+                }
+
+                if (EnableEditor) {
+                    engine.editor.update() catch |err| {
+                        std.log.err("Editor error: {}", .{err});
+                        engine.main_window().close_window();
+                        break :main_loop;
+                    };
+                } else {
+                    const update_result = engine.app_interface.fn_update();
+                    if (update_result != 0) {
+                        std.log.err("App update error: {}", .{update_result});
+                        engine.main_window().close_window();
+                        break :main_loop;
+                    }
+                }
+
+                const render_result = engine.app_interface.fn_render();
+                if (render_result != 0) {
+                    std.log.err("App render error: {}", .{render_result});
                     engine.main_window().close_window();
                     break :main_loop;
                 }

@@ -8,6 +8,7 @@ const physics = eng.physics;
 const Self = @This();
 
 pub const RESOURCE_NAME = "Physics System";
+pub const RESOURCE_UUID = "3a2446a5-f1b8-4553-9328-1b08ae81d59b";
 
 pub const UpdateRateHz = 15;
 pub const UpdateRateS = (1.0 / @as(comptime_float, @floatFromInt(UpdateRateHz)));
@@ -38,7 +39,7 @@ pub fn deinit(self: *Self) void {
 
 pub fn init() !Self {
     const alloc = eng.get().general_allocator;
-    
+
     var zphysics = try ZphysicsInterface.init(alloc);
     errdefer zphysics.deinit();
 
@@ -52,7 +53,7 @@ pub fn init() !Self {
     }
     errdefer if (debug_renderer) |r| alloc.destroy(r);
 
-    return Self {
+    return Self{
         .alloc = alloc,
         .debug_renderer = if (debug_renderer_enabled()) debug_renderer.? else undefined,
         .zphysics = zphysics,
@@ -62,14 +63,18 @@ pub fn init() !Self {
 
 pub fn update(
     self: *Self,
-    components_query_iterator: eng.ecs.GenericQueryIterator(.{ eng.ecs.TransformComponent, eng.ecs.PhysicsComponent, eng.ecs.PhysicsRuntimeComponent })
+    components_query_iterator: eng.ecs.GenericQueryIterator(.{
+        eng.ecs.TransformComponent,
+        eng.ecs.PhysicsComponent,
+        eng.ecs.PhysicsRuntimeComponent,
+    }),
 ) void {
     const time = &eng.get().time;
 
     // find out how many times we need to update to hit UpdateRateHz
     const ns_since_last_update = time.frame_start_time.since(self.last_update_time) + self.last_update_time_offset;
     const times_to_update = @divFloor(ns_since_last_update, UpdateRateNs);
-    
+
     const physics_delta_time: f32 = UpdateRateS * @as(f32, @floatCast(eng.get().time.time_scale));
 
     self.zphysics.system.optimizeBroadPhase(); // TODO: conditional on how many new entities were added?
@@ -80,9 +85,7 @@ pub fn update(
 
             components_query_iterator.reset();
             while (components_query_iterator.next()) |components| {
-                const entity_transform: *eng.ecs.TransformComponent,
-                const entity_physics: *eng.ecs.PhysicsComponent,
-                const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
+                const entity_transform: *eng.ecs.TransformComponent, const entity_physics: *eng.ecs.PhysicsComponent, const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
 
                 switch (entity_physics_runtime.runtime_data) {
                     .None => {
@@ -117,9 +120,7 @@ pub fn update(
             // Snapshot pre-step positions into last_frame_data for visual interpolation.
             components_query_iterator.reset();
             while (components_query_iterator.next()) |components| {
-                const entity_transform: *eng.ecs.TransformComponent,
-                _,
-                const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
+                const entity_transform: *eng.ecs.TransformComponent, _, const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
                 switch (entity_physics_runtime.runtime_data) {
                     .None => {},
                     .Body => |body| {
@@ -138,19 +139,16 @@ pub fn update(
             }
 
             // Run physics update
-            self.zphysics.system.update(physics_delta_time, .{})
-                catch std.log.err("Unable to update physics", .{});
+            self.zphysics.system.update(physics_delta_time, .{}) catch std.log.err("Unable to update physics", .{});
 
             // After physics update set all entity transforms to match physics bodies
 
             components_query_iterator.reset();
             while (components_query_iterator.next()) |components| {
-                _,
-                const entity_physics: *eng.ecs.PhysicsComponent,
-                const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
+                _, const entity_physics: *eng.ecs.PhysicsComponent, const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
 
                 switch (entity_physics_runtime.runtime_data) {
-                    .None => {}, 
+                    .None => {},
                     .Body => |_| {},
                     .Character => |character| {
                         character.character.postSimulation(0.1, true);
@@ -158,7 +156,7 @@ pub fn update(
                     .CharacterVirtual => |character| {
                         const extended_update_settings = switch (entity_physics.settings) {
                             .CharacterVirtual => |v| v.extended_update_settings,
-                            else => null
+                            else => null,
                         };
 
                         // Run update for virtual character
@@ -169,7 +167,7 @@ pub fn update(
                                 &ext,
                                 .{
                                     .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
-                                }
+                                },
                             );
                         } else {
                             character.virtual.update(
@@ -177,7 +175,7 @@ pub fn update(
                                 self.zphysics.system.getGravity(),
                                 .{
                                     .body_filter = if (character.body_filter) |*b| @ptrCast(b) else null,
-                                }
+                                },
                             );
                         }
 
@@ -193,20 +191,18 @@ pub fn update(
         }
 
         // update last_update_time and last_update_time_offset
-        // last_update_time_offset accounts for the portion of time between the 
-        // last sub-frame physics update and the actual frame time 
+        // last_update_time_offset accounts for the portion of time between the
+        // last sub-frame physics update and the actual frame time
         self.last_update_time = time.frame_start_time;
         self.last_update_time_offset = @mod(ns_since_last_update, UpdateRateNs);
 
         // update entity transforms to match updated physics
         components_query_iterator.reset();
         while (components_query_iterator.next()) |components| {
-            const entity_transform: *eng.ecs.TransformComponent,
-            const entity_physics: *eng.ecs.PhysicsComponent,
-            const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
-            
+            const entity_transform: *eng.ecs.TransformComponent, const entity_physics: *eng.ecs.PhysicsComponent, const entity_physics_runtime: *eng.ecs.PhysicsRuntimeComponent = components;
+
             switch (entity_physics_runtime.runtime_data) {
-                .None => {}, 
+                .None => {},
                 .Body => |body| {
                     entity_transform.transform.position = zm.loadArr3(body_interface.getPosition(body.id));
                     entity_transform.transform.rotation = zm.loadArr4(body_interface.getRotation(body.id));
@@ -253,7 +249,7 @@ pub fn calculate_entity_visual_transform(self: *const Self, entity: eng.ecs.Enti
         };
 
         const t = offset_seconds / UpdateRateS;
-        return eng.Transform {
+        return eng.Transform{
             .position = zm.lerp(physics_runtime.last_frame_data.position, pos, t),
             .rotation = zm.slerp(physics_runtime.last_frame_data.rotation, rot, t),
             .scale = transform_component.transform.scale,
@@ -272,15 +268,11 @@ pub fn debug_draw_bodies(self: *Self, cmd: *eng.gfx.CommandBuffer, projection: z
 pub fn create_shape(self: *const Self, shape: physics.Shape) !*zphy.Shape {
     _ = self;
     var shape_settings = switch (shape.shape) {
-        .Capsule => |*c|
-            (try zphy.CapsuleShapeSettings.create(c.half_height, c.radius)).asShapeSettings(),
-        .Sphere => |*s|
-            (try zphy.SphereShapeSettings.create(s.radius)).asShapeSettings(),
-        .Box => |*b|
-            (try zphy.BoxShapeSettings.create([3]f32{b.width / 2.0, b.height / 2.0, b.depth / 2.0})).asShapeSettings(),
-        .ModelCompoundConvexHull => |m|
-            (try (try eng.get().asset_manager.get_asset(eng.assets.ModelAsset, m)).gen_static_compound_physics_shape()).asShapeSettings(),
-        };
+        .Capsule => |*c| (try zphy.CapsuleShapeSettings.create(c.half_height, c.radius)).asShapeSettings(),
+        .Sphere => |*s| (try zphy.SphereShapeSettings.create(s.radius)).asShapeSettings(),
+        .Box => |*b| (try zphy.BoxShapeSettings.create([3]f32{ b.width / 2.0, b.height / 2.0, b.depth / 2.0 })).asShapeSettings(),
+        .ModelCompoundConvexHull => |m| (try (try eng.get().asset_manager.get_asset(eng.assets.ModelAsset, m)).gen_static_compound_physics_shape()).asShapeSettings(),
+    };
     defer shape_settings.release();
 
     if (zm.any(shape.offset_transform.scale != zm.f32x4s(1.0), 3)) {
@@ -292,9 +284,9 @@ pub fn create_shape(self: *const Self, shape: physics.Shape) !*zphy.Shape {
 
     if (zm.any(shape.offset_transform.position != zm.f32x4s(0.0), 3) or zm.any(shape.offset_transform.rotation != zm.qidentity(), 4)) {
         const decorated_shape = try zphy.DecoratedShapeSettings.createRotatedTranslated(
-            shape_settings, 
-            shape.offset_transform.rotation, 
-            zm.vecToArr3(shape.offset_transform.position)
+            shape_settings,
+            shape.offset_transform.rotation,
+            zm.vecToArr3(shape.offset_transform.position),
         );
 
         shape_settings.release();
@@ -321,7 +313,7 @@ pub const BodyReadLock = struct {
         errdefer read_lock.unlock();
 
         if (read_lock.body) |locked_body| {
-            return BodyReadLock {
+            return BodyReadLock{
                 .lock_interface = lock_interface,
                 .read_lock = read_lock,
                 .body = locked_body,
@@ -353,7 +345,7 @@ pub const BodyWriteLock = struct {
         errdefer write_lock.unlock();
 
         if (write_lock.body) |locked_body| {
-            return BodyWriteLock {
+            return BodyWriteLock{
                 .lock_interface = @constCast(lock_interface),
                 .write_lock = write_lock,
                 .body = locked_body,
@@ -375,7 +367,7 @@ const UserDataStruct = packed struct(u64) {
 };
 
 pub fn construct_entity_user_data(generational_idx: eng.util.gen.GenerationalIndex, additional_data: u16) u64 {
-    const entity_user_data = UserDataStruct {
+    const entity_user_data = UserDataStruct{
         .index = @intCast(generational_idx.index),
         .generation = generational_idx.generation,
         .additional_data = additional_data,
@@ -383,10 +375,10 @@ pub fn construct_entity_user_data(generational_idx: eng.util.gen.GenerationalInd
     return @bitCast(entity_user_data);
 }
 
-pub fn extract_entity_from_user_data(user_data: u64) struct{ entity: eng.util.gen.GenerationalIndex, additional_data: u16 } {
+pub fn extract_entity_from_user_data(user_data: u64) struct { entity: eng.util.gen.GenerationalIndex, additional_data: u16 } {
     const entity_user_data: UserDataStruct = @bitCast(user_data);
     return .{
-        .entity = eng.util.gen.GenerationalIndex {
+        .entity = eng.util.gen.GenerationalIndex{
             .index = @intCast(entity_user_data.index),
             .generation = entity_user_data.generation,
         },
@@ -409,14 +401,11 @@ pub fn get_raycast_normal(self: *Self, position: zm.F32x4, body_id: zphy.BodyId,
 }
 
 pub fn raycast(self: *const Self, ray: eng.util.Ray) ?RaycastHit {
-    const zphy_ray = zphy.RRayCast {
+    const zphy_ray = zphy.RRayCast{
         .origin = zm.vecToArr4(ray.origin),
         .direction = zm.vecToArr4(ray.direction),
     };
-    const r = self.zphysics.system.getNarrowPhaseQuery().castRay(
-        zphy_ray,
-        .{}
-    );
+    const r = self.zphysics.system.getNarrowPhaseQuery().castRay(zphy_ray, .{});
     if (!r.has_hit) return null;
     return RaycastHit.init_from_zphy(r.hit, zphy_ray);
 }
@@ -427,7 +416,7 @@ pub const RaycastHit = struct {
     sub_shape_id: zphy.SubShapeId,
 
     fn init_from_zphy(raycast_result: zphy.RayCastResult, ray: zphy.RRayCast) RaycastHit {
-        return RaycastHit {
+        return RaycastHit{
             .position = zm.loadArr4(ray.origin) + zm.loadArr4(ray.direction) * zm.f32x4s(raycast_result.fraction),
             .body_id = raycast_result.body_id,
             .sub_shape_id = raycast_result.sub_shape_id,

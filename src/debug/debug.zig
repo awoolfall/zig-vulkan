@@ -7,6 +7,7 @@ const Camera = eng.Camera;
 const Self = @This();
 
 pub const RESOURCE_NAME = "Debug";
+pub const RESOURCE_UUID = "5f19e53f-d127-4278-a47a-b03183d81992";
 
 const MAX_LINES = 1024;
 
@@ -53,16 +54,16 @@ pub fn deinit(self: *Self) void {
 
 pub fn init() !Self {
     const alloc = eng.get().general_allocator;
-    
+
     const lines_vertex_input = try gfx.VertexInput.init(.{
         .bindings = &.{
-            .{ .binding = 0, .stride = 3 * @sizeOf([4]f32), .input_rate = .Instance, },
+            .{ .binding = 0, .stride = 3 * @sizeOf([4]f32), .input_rate = .Instance },
         },
         .attributes = &.{
-            .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4, },
-            .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4, },
-            .{ .name = "COLOR",     .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4, },
-        }, 
+            .{ .name = "TEXCOORD0", .location = 0, .binding = 0, .offset = 0 * @sizeOf([4]f32), .format = .F32x4 },
+            .{ .name = "TEXCOORD1", .location = 1, .binding = 0, .offset = 1 * @sizeOf([4]f32), .format = .F32x4 },
+            .{ .name = "COLOR", .location = 2, .binding = 0, .offset = 2 * @sizeOf([4]f32), .format = .F32x4 },
+        },
     });
     defer lines_vertex_input.deinit();
 
@@ -82,23 +83,23 @@ pub fn init() !Self {
 
     const lines_instance_buffer = try gfx.Buffer.init(
         @sizeOf(LineDetails) * MAX_LINES,
-        .{ .VertexBuffer = true, },
-        .{ .CpuWrite = true, },
+        .{ .VertexBuffer = true },
+        .{ .CpuWrite = true },
     );
     errdefer lines_instance_buffer.deinit();
 
     const camera_buffer = try gfx.Buffer.init(
         @sizeOf(CameraData),
-        .{ .ConstantBuffer = true, },
-        .{ .CpuWrite = true, },
+        .{ .ConstantBuffer = true },
+        .{ .CpuWrite = true },
     );
     errdefer camera_buffer.deinit();
 
     const camera_descriptor_layout = try gfx.DescriptorLayout.init(.{
         .bindings = &.{
-            gfx.DescriptorBindingInfo {
+            gfx.DescriptorBindingInfo{
                 .binding = 0,
-                .shader_stages = .{ .Vertex = true, },
+                .shader_stages = .{ .Vertex = true },
                 .binding_type = .UniformBuffer,
             },
         },
@@ -107,18 +108,18 @@ pub fn init() !Self {
 
     const camera_descriptor_pool = try gfx.DescriptorPool.init(.{
         .max_sets = 1,
-        .strategy = .{ .Layout = camera_descriptor_layout, },
+        .strategy = .{ .Layout = camera_descriptor_layout },
     });
     errdefer camera_descriptor_pool.deinit();
 
-    const camera_descriptor_set = try (try camera_descriptor_pool.get()).allocate_set(gfx.DescriptorSetInfo {
+    const camera_descriptor_set = try (try camera_descriptor_pool.get()).allocate_set(gfx.DescriptorSetInfo{
         .layout = camera_descriptor_layout,
     });
     errdefer camera_descriptor_set.deinit();
 
     try (try camera_descriptor_set.get()).update(.{
         .writes = &.{
-            gfx.DescriptorSetUpdateWriteInfo {
+            gfx.DescriptorSetUpdateWriteInfo{
                 .binding = 0,
                 .data = .{ .UniformBuffer = .{
                     .buffer = camera_buffer,
@@ -127,40 +128,40 @@ pub fn init() !Self {
         },
     });
 
-    const attachments = &[_]gfx.AttachmentInfo {
-        gfx.AttachmentInfo {
+    const attachments = &[_]gfx.AttachmentInfo{
+        gfx.AttachmentInfo{
             .name = "colour",
             .format = gfx.GfxState.ldr_format,
             .initial_layout = .ColorAttachmentOptimal,
             .final_layout = .ColorAttachmentOptimal,
         },
-        gfx.AttachmentInfo {
+        gfx.AttachmentInfo{
             .name = "depth",
             .format = gfx.GfxState.depth_format,
             .initial_layout = .Undefined,
             .final_layout = .DepthStencilAttachmentOptimal,
             .load_op = .Clear,
             .stencil_load_op = .Clear,
-            .clear_value = gfx.ClearValue { .depth_stencil = .{ .depth = 0.0, .stencil = 0 } },
+            .clear_value = gfx.ClearValue{ .depth_stencil = .{ .depth = 0.0, .stencil = 0 } },
         },
     };
 
     const render_pass = try gfx.RenderPass.init(.{
         .attachments = attachments,
         .subpasses = &.{
-            gfx.SubpassInfo {
-                .attachments = &.{ "colour" },
+            gfx.SubpassInfo{
+                .attachments = &.{"colour"},
                 .depth_attachment = "depth",
             },
         },
         .dependencies = &.{
-            gfx.SubpassDependencyInfo {
+            gfx.SubpassDependencyInfo{
                 .src_subpass = null,
                 .dst_subpass = 0,
-                .src_stage_mask = .{ .color_attachment_output = true, },
+                .src_stage_mask = .{ .color_attachment_output = true },
                 .src_access_mask = .{},
-                .dst_stage_mask = .{ .color_attachment_output = true, },
-                .dst_access_mask = .{ .color_attachment_write = true, },
+                .dst_stage_mask = .{ .color_attachment_output = true },
+                .dst_access_mask = .{ .color_attachment_write = true },
             },
         },
     });
@@ -178,7 +179,7 @@ pub fn init() !Self {
             .entry_point = "ps_main",
         },
         .cull_mode = .CullNone,
-        .depth_test = .{ .write = true, },
+        .depth_test = .{ .write = true },
         .descriptor_set_layouts = &.{
             camera_descriptor_layout,
         },
@@ -198,7 +199,7 @@ pub fn init() !Self {
         .alloc = alloc,
         .lines = try std.ArrayList(DebugLine).initCapacity(alloc, MAX_LINES),
         .lines_instance_buffer = lines_instance_buffer,
-        
+
         .render_pass = render_pass,
         .lines_pipeline = lines_pipeline,
         .framebuffer = framebuffer,
@@ -237,9 +238,9 @@ pub fn draw_point(self: *Self, debug_point: DebugPoint) void {
 
 pub fn render_cmd(self: *Self, cmd: *gfx.CommandBuffer, camera: *const Camera) !void {
     defer self.lines.clearRetainingCapacity();
-    
+
     if (self.lines.items.len > 0) {
-        cmd.cmd_begin_render_pass(gfx.CommandBuffer.BeginRenderPassInfo {
+        cmd.cmd_begin_render_pass(gfx.CommandBuffer.BeginRenderPassInfo{
             .render_pass = self.render_pass,
             .framebuffer = self.framebuffer,
             .render_area = .full_screen_pixels(),
@@ -247,43 +248,43 @@ pub fn render_cmd(self: *Self, cmd: *gfx.CommandBuffer, camera: *const Camera) !
         defer cmd.cmd_end_render_pass();
 
         cmd.cmd_set_viewports(.{
-            .viewports = &.{ .full_screen_viewport(), },
+            .viewports = &.{.full_screen_viewport()},
         });
         cmd.cmd_set_scissors(.{
-            .scissors = &.{ .full_screen_pixels(), },
+            .scissors = &.{.full_screen_pixels()},
         });
 
         cmd.cmd_bind_graphics_pipeline(self.lines_pipeline);
 
-        cmd.cmd_bind_vertex_buffers(gfx.CommandBuffer.BindVertexBuffersInfo {
+        cmd.cmd_bind_vertex_buffers(gfx.CommandBuffer.BindVertexBuffersInfo{
             .buffers = &.{
-                gfx.VertexBufferInput {
+                gfx.VertexBufferInput{
                     .buffer = self.lines_instance_buffer,
                 },
             },
         });
 
         {
-            const mapped_camera_buffer = try (try self.camera_buffer.get()).map(.{ .write = .EveryFrame, });
+            const mapped_camera_buffer = try (try self.camera_buffer.get()).map(.{ .write = .EveryFrame });
             defer mapped_camera_buffer.unmap();
 
-            mapped_camera_buffer.data(CameraData).* = CameraData {
+            mapped_camera_buffer.data(CameraData).* = CameraData{
                 .view = camera.transform.generate_view_matrix(),
                 .projection = camera.generate_perspective_matrix(gfx.GfxState.get().swapchain_aspect()),
             };
         }
 
-        cmd.cmd_bind_descriptor_sets(gfx.CommandBuffer.BindDescriptorSetInfo {
-            .descriptor_sets = &.{ self.camera_descriptor_set, },
+        cmd.cmd_bind_descriptor_sets(gfx.CommandBuffer.BindDescriptorSetInfo{
+            .descriptor_sets = &.{self.camera_descriptor_set},
         });
 
         {
-            const mapped_lines_buffer = try (try self.lines_instance_buffer.get()).map(.{ .write = .EveryFrame, });
+            const mapped_lines_buffer = try (try self.lines_instance_buffer.get()).map(.{ .write = .EveryFrame });
             defer mapped_lines_buffer.unmap();
 
             const mapped_slice = mapped_lines_buffer.data_array(LineDetails, Self.MAX_LINES);
             for (self.lines.items, 0..) |line, idx| {
-                mapped_slice[idx] = LineDetails {
+                mapped_slice[idx] = LineDetails{
                     .start_point = line.p0,
                     .end_point = line.p1,
                     .colour = line.colour,
@@ -291,7 +292,7 @@ pub fn render_cmd(self: *Self, cmd: *gfx.CommandBuffer, camera: *const Camera) !
             }
         }
 
-        cmd.cmd_draw(gfx.CommandBuffer.DrawInfo {
+        cmd.cmd_draw(gfx.CommandBuffer.DrawInfo{
             .vertex_count = 6,
             .instance_count = @intCast(self.lines.items.len),
         });
@@ -304,11 +305,11 @@ pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: gfx.ImageView.
     const lines_slice = self.lines.constSlice();
 
     {
-        var mapped_buffer = self.lines_instance_buffer.map(.{ .write = true, }) catch unreachable;
+        var mapped_buffer = self.lines_instance_buffer.map(.{ .write = true }) catch unreachable;
         defer mapped_buffer.unmap();
 
         for (lines_slice, 0..) |line, i| {
-            mapped_buffer.data_array(LineDetails, MAX_LINES)[i] = LineDetails {
+            mapped_buffer.data_array(LineDetails, MAX_LINES)[i] = LineDetails{
                 .start_point = zm.f32x4(line.p0[0], line.p0[1], line.p0[2], 1.0),
                 .end_point = zm.f32x4(line.p1[0], line.p1[1], line.p1[2], 1.0),
                 .colour = line.colour,
@@ -318,12 +319,12 @@ pub fn render(self: *Self, camera_buffer: *const gfx.Buffer, rtv: gfx.ImageView.
 
     gfx_state.cmd_set_render_target(&.{rtv}, null);
     gfx_state.cmd_set_topology(.TriangleList);
-    gfx_state.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true, });
+    gfx_state.cmd_set_rasterizer_state(.{ .FillBack = false, .FrontCounterClockwise = true });
     gfx_state.cmd_set_constant_buffers(.Vertex, 0, &[_]*const gfx.Buffer{camera_buffer});
     gfx_state.cmd_set_vertex_buffers(0, &[_]gfx.VertexBufferInput{
-        .{ .buffer = &self.lines_instance_buffer, .stride = @sizeOf(LineDetails), .offset = @sizeOf(zm.F32x4) * 0, },
-        .{ .buffer = &self.lines_instance_buffer, .stride = @sizeOf(LineDetails), .offset = @sizeOf(zm.F32x4) * 1, },
-        .{ .buffer = &self.lines_instance_buffer, .stride = @sizeOf(LineDetails), .offset = @sizeOf(zm.F32x4) * 2, },
+        .{ .buffer = &self.lines_instance_buffer, .stride = @sizeOf(LineDetails), .offset = @sizeOf(zm.F32x4) * 0 },
+        .{ .buffer = &self.lines_instance_buffer, .stride = @sizeOf(LineDetails), .offset = @sizeOf(zm.F32x4) * 1 },
+        .{ .buffer = &self.lines_instance_buffer, .stride = @sizeOf(LineDetails), .offset = @sizeOf(zm.F32x4) * 2 },
     });
     gfx_state.cmd_set_vertex_shader(&self.lines_vertex_shader);
     gfx_state.cmd_set_pixel_shader(&self.lines_pixel_shader);
@@ -346,4 +347,3 @@ pub const DebugPoint = struct {
 };
 
 const LINES_SHADER = @embedFile("lines.slang");
-
