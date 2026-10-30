@@ -4,30 +4,30 @@ const zm = @import("self").zmath;
 
 pub fn serialize_value(comptime Type: type, alloc: std.mem.Allocator, value: Type) !std.json.Value {
     switch (Type) {
-        void => return std.json.Value { .object = std.json.ObjectMap.init(alloc), },
-        bool => return std.json.Value { .bool = value, },
-        i16 => return std.json.Value { .integer = @intCast(value), },
-        i32 => return std.json.Value { .integer = @intCast(value), },
-        i64 => return std.json.Value { .integer = value, },
-        u16 => return std.json.Value { .integer = @intCast(value), },
-        u32 => return std.json.Value { .integer = @intCast(value), },
-        u64 => return std.json.Value { .integer = @intCast(value), },
-        usize => return std.json.Value { .integer = @intCast(value), },
-        f64 => return std.json.Value { .float = value, },
-        f32 => return std.json.Value { .float = @floatCast(value), },
-        ([]const u8) => return std.json.Value { .string = try alloc.dupe(u8, value), },
+        void => return std.json.Value{ .object = std.json.ObjectMap.init(alloc) },
+        bool => return std.json.Value{ .bool = value },
+        i16 => return std.json.Value{ .integer = @intCast(value) },
+        i32 => return std.json.Value{ .integer = @intCast(value) },
+        i64 => return std.json.Value{ .integer = value },
+        u16 => return std.json.Value{ .integer = @intCast(value) },
+        u32 => return std.json.Value{ .integer = @intCast(value) },
+        u64 => return std.json.Value{ .integer = @intCast(value) },
+        usize => return std.json.Value{ .integer = @intCast(value) },
+        f64 => return std.json.Value{ .float = value },
+        f32 => return std.json.Value{ .float = @floatCast(value) },
+        ([]const u8) => return std.json.Value{ .string = try alloc.dupe(u8, value) },
         zm.F32x4 => {
             var array = try std.array_list.Managed(std.json.Value).initCapacity(alloc, 4);
             errdefer array.deinit();
             for (0..4) |idx| {
-                try array.append(std.json.Value { .float = value[idx] });
+                try array.append(std.json.Value{ .float = value[idx] });
             }
-            return std.json.Value { .array = array };
+            return std.json.Value{ .array = array };
         },
         else => {
             switch (@typeInfo(Type)) {
-                .optional => |opt| return if (value == null) std.json.Value { .null = {} } else try serialize_value(opt.child, alloc, value.?),
-                .@"enum" => return std.json.Value { .string = try alloc.dupe(u8, @tagName(value)), },
+                .optional => |opt| return if (value == null) std.json.Value{ .null = {} } else try serialize_value(opt.child, alloc, value.?),
+                .@"enum" => return std.json.Value{ .string = try alloc.dupe(u8, @tagName(value)) },
                 .@"struct" => |struct_type| return try serialize_struct(Type, alloc, value, struct_type),
                 .@"union" => |union_type| return try serialize_union(Type, alloc, value, union_type),
                 .pointer => |pointer_type| return try serialize_pointer(Type, alloc, value, pointer_type),
@@ -36,6 +36,10 @@ pub fn serialize_value(comptime Type: type, alloc: std.mem.Allocator, value: Typ
             }
         },
     }
+}
+
+pub inline fn serialize_object_value(alloc: std.mem.Allocator, obj: *std.json.ObjectMap, comptime Type: type, name: []const u8, value: Type) !void {
+    try obj.put(name, try serialize_value(Type, alloc, value));
 }
 
 fn serialize_struct(comptime Type: type, alloc: std.mem.Allocator, value: Type, struct_type: std.builtin.Type.Struct) !std.json.Value {
@@ -49,7 +53,7 @@ fn serialize_struct(comptime Type: type, alloc: std.mem.Allocator, value: Type, 
             try object.put(field.name, try serialize_value(field.type, alloc, @field(value, field.name)));
         }
 
-        return std.json.Value { .object = object };
+        return std.json.Value{ .object = object };
     }
 }
 
@@ -67,7 +71,7 @@ fn serialize_union(comptime Type: type, alloc: std.mem.Allocator, value: Type, u
                 }
             }
 
-            return std.json.Value { .object = object };
+            return std.json.Value{ .object = object };
         } else {
             @compileError("Serializing unions without a tag type are not supported");
         }
@@ -87,7 +91,7 @@ fn serialize_pointer(comptime Type: type, alloc: std.mem.Allocator, value: Type,
         try list.append(try serialize_value(pointer_type.child, alloc, v));
     }
 
-    return std.json.Value { .array = list };
+    return std.json.Value{ .array = list };
 }
 
 fn serialize_array(comptime Type: type, alloc: std.mem.Allocator, value: Type, array_type: std.builtin.Type.Array) !std.json.Value {
@@ -96,28 +100,71 @@ fn serialize_array(comptime Type: type, alloc: std.mem.Allocator, value: Type, a
     inline for (0..array_type.len) |idx| {
         try array.append(try serialize_value(array_type.child, alloc, value[idx]));
     }
-    return std.json.Value { .array = array };
+    return std.json.Value{ .array = array };
 }
 
 pub fn deserialize_value(comptime Type: type, alloc: std.mem.Allocator, maybe_value: ?std.json.Value) !Type {
     const value = maybe_value orelse return error.MissingRequiredField;
 
     switch (Type) {
-        void => switch (value) { .object => {}, else => return error.InvalidType, },
-        bool => switch (value) { .bool => |b| return b, else => return error.InvalidType, },
-        i16 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
-        i32 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
-        i64 => switch (value) { .integer => |i| return i, else => return error.InvalidType, },
-        u16 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
-        u32 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
-        u64 => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
-        usize => switch (value) { .integer => |i| return @intCast(i), else => return error.InvalidType, },
-        f64 => switch (value) { .float => |f| return f, .integer => |i| return @floatFromInt(i), else => return error.InvalidType, },
-        f32 => switch (value) { .float => |f| return @floatCast(f), .integer => |i| return @floatFromInt(i), else => return error.InvalidType, },
-        ([]const u8) => switch (value) { .string => |s| return try alloc.dupe(u8, s), else => return error.InvalidType, },
+        void => switch (value) {
+            .object => {},
+            else => return error.InvalidType,
+        },
+        bool => switch (value) {
+            .bool => |b| return b,
+            else => return error.InvalidType,
+        },
+        i16 => switch (value) {
+            .integer => |i| return @intCast(i),
+            else => return error.InvalidType,
+        },
+        i32 => switch (value) {
+            .integer => |i| return @intCast(i),
+            else => return error.InvalidType,
+        },
+        i64 => switch (value) {
+            .integer => |i| return i,
+            else => return error.InvalidType,
+        },
+        u16 => switch (value) {
+            .integer => |i| return @intCast(i),
+            else => return error.InvalidType,
+        },
+        u32 => switch (value) {
+            .integer => |i| return @intCast(i),
+            else => return error.InvalidType,
+        },
+        u64 => switch (value) {
+            .integer => |i| return @intCast(i),
+            else => return error.InvalidType,
+        },
+        usize => switch (value) {
+            .integer => |i| return @intCast(i),
+            else => return error.InvalidType,
+        },
+        f64 => switch (value) {
+            .float => |f| return f,
+            .integer => |i| return @floatFromInt(i),
+            else => return error.InvalidType,
+        },
+        f32 => switch (value) {
+            .float => |f| return @floatCast(f),
+            .integer => |i| return @floatFromInt(i),
+            else => return error.InvalidType,
+        },
+        ([]const u8) => switch (value) {
+            .string => |s| return try alloc.dupe(u8, s),
+            else => return error.InvalidType,
+        },
         zm.F32x4 => {
-            const arr = switch (value) { .array => |arr| arr, else => return error.InvalidType, };
-            if (arr.items.len != 4) { return error.InvalidNumberOfArrayElements; }
+            const arr = switch (value) {
+                .array => |arr| arr,
+                else => return error.InvalidType,
+            };
+            if (arr.items.len != 4) {
+                return error.InvalidNumberOfArrayElements;
+            }
             var f32x4 = zm.f32x4s(0.0);
             inline for (0..4) |idx| {
                 f32x4[idx] = try deserialize_value(f32, alloc, arr.items[idx]);
@@ -126,8 +173,14 @@ pub fn deserialize_value(comptime Type: type, alloc: std.mem.Allocator, maybe_va
         },
         else => {
             switch (@typeInfo(Type)) {
-                .optional => |opt| switch (value) { .null => return null, else => return try deserialize_value(opt.child, alloc, value), },
-                .@"enum" => switch (value) { .string => |s| return std.meta.stringToEnum(Type, s) orelse return error.InvalidEnum, else => return error.InvalidType, },
+                .optional => |opt| switch (value) {
+                    .null => return null,
+                    else => return try deserialize_value(opt.child, alloc, value),
+                },
+                .@"enum" => switch (value) {
+                    .string => |s| return std.meta.stringToEnum(Type, s) orelse return error.InvalidEnum,
+                    else => return error.InvalidType,
+                },
                 .@"struct" => |struct_type| return try deserialize_struct(Type, alloc, value, struct_type),
                 .@"union" => |union_type| return try deserialize_union(Type, alloc, value, union_type),
                 .pointer => |pointer_type| return try deserialize_pointer(Type, alloc, value, pointer_type),
@@ -138,11 +191,23 @@ pub fn deserialize_value(comptime Type: type, alloc: std.mem.Allocator, maybe_va
     }
 }
 
+const DeserializeError = error{
+    ValueDoesNotExist,
+};
+
+pub inline fn deserialize_object_value(alloc: std.mem.Allocator, obj: *const std.json.ObjectMap, comptime T: type, name: []const u8) !T {
+    const v = obj.get(name) orelse return DeserializeError.ValueDoesNotExist;
+    return try deserialize_value(T, alloc, v);
+}
+
 fn deserialize_struct(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value, struct_type: std.builtin.Type.Struct) !Type {
     if (@hasDecl(Type, "deserialize")) {
         return try Type.deserialize(alloc, value);
     } else {
-        const object = switch (value) { .object => |obj| obj, else => return error.InvalidType };
+        const object = switch (value) {
+            .object => |obj| obj,
+            else => return error.InvalidType,
+        };
 
         // default values arena
         var arena = std.heap.ArenaAllocator.init(alloc);
@@ -170,7 +235,10 @@ fn deserialize_union(comptime Type: type, alloc: std.mem.Allocator, value: std.j
         return try Type.deserialize(alloc, value);
     } else {
         if (union_type.tag_type) |_| {
-            const object = switch (value) { .object => |obj| obj, else => return error.InvalidType };
+            const object = switch (value) {
+                .object => |obj| obj,
+                else => return error.InvalidType,
+            };
 
             var iterator = object.iterator();
             if (iterator.next()) |pair| {
@@ -193,8 +261,11 @@ fn deserialize_pointer(comptime Type: type, alloc: std.mem.Allocator, value: std
         else => @compileError(std.fmt.comptimePrint("Deerializing pointer type is not supported: {}", .{Type})),
     }
 
-    const array = switch (value) { .array => |arr| arr, else => return error.InvalidType };
-    
+    const array = switch (value) {
+        .array => |arr| arr,
+        else => return error.InvalidType,
+    };
+
     const slice = try alloc.alloc(pointer_type.child, array.items.len);
     errdefer alloc.free(slice);
 
@@ -208,7 +279,10 @@ fn deserialize_pointer(comptime Type: type, alloc: std.mem.Allocator, value: std
 }
 
 fn deserialize_array(comptime Type: type, alloc: std.mem.Allocator, value: std.json.Value, array_type: std.builtin.Type.Array) !Type {
-    const arr = switch (value) { .array => |arr| arr, else => return error.InvalidType, };
+    const arr = switch (value) {
+        .array => |arr| arr,
+        else => return error.InvalidType,
+    };
     var ret_array: Type = undefined;
     inline for (0..array_type.len) |idx| {
         ret_array[idx] = try deserialize_value(array_type.child, alloc, arr.items[idx]);
